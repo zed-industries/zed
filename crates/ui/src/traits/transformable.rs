@@ -8,6 +8,6 @@ pub trait Transformable {
     fn transform(self, transformation: Transformation) -> Self;
 
     /// Rotates the element continuously, one full turn per `period`, using
-    /// [`gpui::Svg::with_rotation_animation`].
+    /// [`gpui::TimedTransformation::rotation`].
     fn animate_rotation(self, period: Duration) -> Self;
 }

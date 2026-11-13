@@ -61,14 +61,6 @@ pub struct Scene {
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
     animations: Vec<SpriteAnimation>,
-    animated_sprites: Vec<AnimatedSprite>,
-    animation_frame_interval: Option<Duration>,
-}
-
-struct AnimatedSprite {
-    index: usize,
-    animation: SpriteAnimation,
-    base_color: Hsla,
 }
 
 #[expect(missing_docs)]
@@ -87,48 +79,47 @@ impl Scene {
         self.polychrome_sprites.clear();
         self.surfaces.clear();
         self.animations.clear();
-        self.animated_sprites.clear();
-        self.animation_frame_interval = None;
     }
 
-    /// Registers an animation that sprites inserted into this scene can refer to.
-    pub(crate) fn insert_animation(&mut self, animation: SpriteAnimation) -> SpriteAnimationId {
-        self.animations.push(animation);
-        SpriteAnimationId(self.animations.len() as u32)
+    /// Inserts a sprite that [`Self::advance_animations`] keeps moving. The
+    /// sprite's color is taken as its color before the animation's alpha.
+    pub(crate) fn insert_animated_sprite(
+        &mut self,
+        mut sprite: MonochromeSprite,
+        mut animation: SpriteAnimation,
+    ) {
+        sprite.animation = SpriteAnimationId(self.animations.len() as u32);
+        animation.base_color = sprite.color;
+        if self.try_insert_primitive(sprite.into()) {
+            self.animations.push(animation);
+        }
     }
 
-    fn animation(&self, id: SpriteAnimationId) -> Option<SpriteAnimation> {
-        let index = (id.0 as usize).checked_sub(1)?;
-        self.animations.get(index).copied()
-    }
-
-    /// Whether any primitive in this scene animates, meaning the scene must
-    /// keep being presented even when nothing is redrawn.
-    pub(crate) fn has_animations(&self) -> bool {
-        !self.animated_sprites.is_empty()
-    }
-
-    /// The longest time between presents that every animation in this scene
-    /// allows, or `None` when one of them wants every frame.
+    /// How long the window may wait between presents of this scene while only
+    /// its animations need a frame: `None` when nothing in it animates, and
+    /// zero when an animation wants every frame.
     pub(crate) fn animation_frame_interval(&self) -> Option<Duration> {
-        self.animation_frame_interval
+        self.animations
+            .iter()
+            .map(|animation| {
+                animation
+                    .transformation
+                    .min_frame_interval()
+                    .unwrap_or_default()
+            })
+            .min()
     }
 
-    /// Moves every animated primitive to its pose at `elapsed` time on the
-    /// app's synced animation clock, without the scene being rebuilt.
+    /// Moves every animated sprite to its pose at `elapsed` time on the app's
+    /// synced animation clock, without the scene being rebuilt.
     pub(crate) fn advance_animations(&mut self, elapsed: Duration) {
-        for animated in &self.animated_sprites {
-            let Some(sprite) = self.monochrome_sprites.get_mut(animated.index) else {
+        for animation in &self.animations {
+            let Some(sprite) = self.monochrome_sprites.get_mut(animation.sprite_index) else {
                 continue;
             };
-            let SpriteAnimation {
-                transformation,
-                center,
-                scale_factor,
-            } = animated.animation;
-            let pose = transformation.at(elapsed);
-            sprite.transformation = pose.into_matrix(center, scale_factor);
-            sprite.color = animated.base_color.opacity(pose.alpha_factor());
+            let pose = animation.transformation.at(elapsed);
+            sprite.transformation = pose.into_matrix(animation.center, animation.scale_factor);
+            sprite.color = animation.base_color.opacity(pose.alpha_factor());
         }
     }
 
@@ -173,10 +164,14 @@ impl Scene {
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
-        let primitive = primitive.into();
+        self.try_insert_primitive(primitive.into());
+    }
+
+    /// Returns whether the primitive was kept, rather than clipped away.
+    fn try_insert_primitive(&mut self, primitive: Primitive) -> bool {
         let clipped_bounds = primitive.clipped_bounds();
         if clipped_bounds.is_empty() {
-            return;
+            return false;
         }
 
         let kind = primitive.kind();
@@ -199,6 +194,7 @@ impl Scene {
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
+        true
     }
 
     fn push_primitive(&mut self, primitive: Primitive, order: DrawOrder) {
@@ -232,14 +228,15 @@ impl Scene {
         for operation in &prev_scene.paint_operations[range] {
             match operation {
                 PaintOperation::Primitive(primitive) => {
-                    let mut primitive = primitive.clone();
-                    // Animation ids index the scene they were registered with.
-                    if let Primitive::MonochromeSprite(sprite) = &mut primitive
-                        && let Some(animation) = prev_scene.animation(sprite.animation)
+                    // Animation ids index the scene they were inserted into.
+                    if let Primitive::MonochromeSprite(sprite) = primitive
+                        && let Some(animation) =
+                            prev_scene.animations.get(sprite.animation.0 as usize)
                     {
-                        sprite.animation = self.insert_animation(animation);
+                        self.insert_animated_sprite(*sprite, *animation);
+                    } else {
+                        self.insert_primitive(primitive.clone());
                     }
-                    self.insert_primitive(primitive)
                 }
                 PaintOperation::StartLayer => self.push_layer(),
                 PaintOperation::EndLayer => self.pop_layer(),
@@ -261,22 +258,13 @@ impl Scene {
             .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
         self.surfaces.sort_by_key(|surface| surface.order);
 
+        // Sorting moved the sprites, so animations learn where theirs ended up.
         if !self.animations.is_empty() {
             for (index, sprite) in self.monochrome_sprites.iter().enumerate() {
-                if let Some(animation) = self.animation(sprite.animation) {
-                    self.animated_sprites.push(AnimatedSprite {
-                        index,
-                        animation,
-                        base_color: sprite.color,
-                    });
+                if let Some(animation) = self.animations.get_mut(sprite.animation.0 as usize) {
+                    animation.sprite_index = index;
                 }
             }
-            self.animation_frame_interval = self
-                .animated_sprites
-                .iter()
-                .map(|animated| animated.animation.transformation.min_frame_interval())
-                .min()
-                .flatten();
         }
     }
 
@@ -918,17 +906,23 @@ pub struct MonochromeSprite {
     pub transformation: TransformationMatrix,
 }
 
-/// Refers to an animation registered with the scene a sprite is inserted into.
+/// Refers to an animation of the scene a sprite is inserted into.
 ///
 /// A single `u32` so it fits the sprite's existing padding and leaves the
 /// instance layout unchanged on every backend; renderers ignore it.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct SpriteAnimationId(u32);
 
 impl SpriteAnimationId {
     /// No animation.
-    pub const NONE: Self = Self(0);
+    pub const NONE: Self = Self(u32::MAX);
+}
+
+impl Default for SpriteAnimationId {
+    fn default() -> Self {
+        Self::NONE
+    }
 }
 
 /// A [`TimedTransformation`] the window applies to a sprite right before
@@ -938,6 +932,8 @@ pub(crate) struct SpriteAnimation {
     transformation: TimedTransformation,
     center: Point<Pixels>,
     scale_factor: f32,
+    base_color: Hsla,
+    sprite_index: usize,
 }
 
 impl SpriteAnimation {
@@ -950,6 +946,8 @@ impl SpriteAnimation {
             transformation,
             center,
             scale_factor,
+            base_color: Hsla::default(),
+            sprite_index: usize::MAX,
         }
     }
 }

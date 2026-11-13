@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::Transformation;
 use gpui::{App, IntoElement, Rems, RenderOnce, Size, Styled, Window, svg};
+use gpui::{TimedTransformation, Transformation};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 
@@ -104,7 +104,10 @@ impl RenderOnce for Vector {
             .text_color(self.color.color(cx))
             .with_transformation(self.transformation)
             .when_some(self.rotation_period, |svg, period| {
-                svg.with_rotation_animation(period)
+                svg.with_timed_transformation(TimedTransformation::rotation(
+                    period,
+                    self.transformation,
+                ))
             })
     }
 }

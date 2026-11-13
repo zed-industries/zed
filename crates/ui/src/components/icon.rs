@@ -8,7 +8,7 @@ use std::time::Duration;
 pub use decorated_icon::*;
 use gpui::{
     AnimationElement, AnyElement, Hsla, ImgResourceLoader, IntoElement, Rems, Resource,
-    Transformation, img, svg,
+    TimedTransformation, Transformation, img, svg,
 };
 pub use icon_decoration::*;
 pub use icons::*;
@@ -263,7 +263,10 @@ impl RenderOnce for Icon {
 
         svg.with_transformation(self.transformation)
             .when_some(self.rotation_period, |svg, period| {
-                svg.with_rotation_animation(period)
+                svg.with_timed_transformation(TimedTransformation::rotation(
+                    period,
+                    self.transformation,
+                ))
             })
             .size(self.size)
             .flex_none()

@@ -1287,11 +1287,8 @@ pub struct Window {
         SingleSubscriberSet<Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
-    /// Whether the rendered scene contains animated primitives, so it must keep
-    /// being presented every frame even when nothing is redrawn.
-    scene_animating: Rc<Cell<bool>>,
-    /// The frame interval the rendered scene's animations ask for while
-    /// nothing else needs a frame.
+    /// The rendered scene's [`Scene::animation_frame_interval`]. While it is
+    /// `Some`, the scene must keep being presented even when nothing is redrawn.
     scene_animation_interval: Rc<Cell<Option<Duration>>>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
@@ -1742,8 +1739,7 @@ impl Window {
         profiler::journal::record_window_visibility(handle.window_id(), visibility);
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
-        let scene_animating = Rc::new(Cell::new(false));
-        let scene_animation_interval = Rc::new(Cell::new(None));
+        let scene_animation_interval = Rc::new(Cell::new(None::<Duration>));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
 
@@ -1909,7 +1905,6 @@ impl Window {
             let invalidator = invalidator.clone();
             let active = active.clone();
             let needs_present = needs_present.clone();
-            let scene_animating = scene_animating.clone();
             let scene_animation_interval = scene_animation_interval.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
@@ -1976,7 +1971,8 @@ impl Window {
                     || request_frame_options.require_presentation
                     || needs_present.get()
                     || high_rate_input;
-                let has_frame_demand = has_demand_besides_animation || scene_animating.get();
+                let has_frame_demand =
+                    has_demand_besides_animation || scene_animation_interval.get().is_some();
 
                 let should_throttle = !request_frame_options.require_presentation;
                 let inactive_without_high_rate_input =
@@ -1994,7 +1990,7 @@ impl Window {
                 );
                 let animation_frame_interval = scene_animation_interval
                     .get()
-                    .filter(|_| !has_demand_besides_animation);
+                    .filter(|interval| !has_demand_besides_animation && !interval.is_zero());
                 let min_frame_interval = min_frame_interval.max(animation_frame_interval);
 
                 let now = Instant::now();
@@ -2061,7 +2057,7 @@ impl Window {
                 let should_draw = invalidator.is_dirty() || force_render;
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || scene_animating.get()
+                    || scene_animation_interval.get().is_some()
                     || high_rate_input;
                 if should_draw {
                     measure("frame duration", || {
@@ -2105,7 +2101,7 @@ impl Window {
                     .update(&mut cx, |_, window, _| {
                         if window.invalidator.is_dirty()
                             || !window.next_frame_callbacks.borrow().is_empty()
-                            || window.scene_animating.get()
+                            || window.scene_animation_interval.get().is_some()
                         {
                             window.platform_window.schedule_frame();
                         }
@@ -2125,7 +2121,7 @@ impl Window {
                 // source explicitly.
                 if invalidator.is_dirty()
                     || !next_frame_callbacks.borrow().is_empty()
-                    || scene_animating.get()
+                    || scene_animation_interval.get().is_some()
                 {
                     invalidator.wake_platform();
                 }
@@ -2445,7 +2441,6 @@ impl Window {
             visibility_observers: SingleSubscriberSet::new(),
             hovered,
             needs_present,
-            scene_animating,
             scene_animation_interval,
             input_rate_tracker,
             #[cfg(feature = "profiler")]
@@ -3876,8 +3871,6 @@ impl Window {
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
-        self.scene_animating
-            .set(self.rendered_frame.scene.has_animations());
         self.scene_animation_interval
             .set(self.rendered_frame.scene.animation_frame_interval());
         self.next_frame.clear();
@@ -5469,18 +5462,22 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| size.ceil());
 
-        let animation = animation
-            .map(|animation| self.next_frame.scene.insert_animation(animation))
-            .unwrap_or(SpriteAnimationId::NONE);
-        self.next_frame.scene.insert_primitive(MonochromeSprite {
+        let sprite = MonochromeSprite {
             order: 0,
-            animation,
+            animation: SpriteAnimationId::NONE,
             bounds: final_bounds,
             content_mask,
             color: color.opacity(element_opacity),
             tile,
             transformation,
-        });
+        };
+        match animation {
+            Some(animation) => self
+                .next_frame
+                .scene
+                .insert_animated_sprite(sprite, animation),
+            None => self.next_frame.scene.insert_primitive(sprite),
+        }
 
         Ok(())
     }
