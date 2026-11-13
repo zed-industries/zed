@@ -19,12 +19,12 @@ use git::{
     status::{FileStatus, StatusCode, TrackedStatus},
 };
 use gpui::{
-    Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
-    DismissEvent, Div, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollEvent,
-    ScrollHandle, ScrollStrategy, SharedString, Stateful, Subscription, Task, TextStyleRefinement,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
-    px, uniform_list,
+    Action, Anchor, AnyElement, App, AvailableSpace, Bounds, ClickEvent, ClipboardItem,
+    DefiniteLength, DevicePixels, DismissEvent, Div, DragMoveEvent, ElementId, Empty, Entity,
+    EventEmitter, FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels,
+    Point, ScrollEvent, ScrollHandle, ScrollStrategy, SharedString, Stateful, Subscription, Task,
+    TextStyleRefinement, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
+    container_query, deferred, point, prelude::*, px, uniform_list,
 };
 use language::line_diff;
 use markdown::{Markdown, MarkdownElement};
@@ -84,6 +84,44 @@ const REFS_COLUMN_INDEX: usize = 0;
 const GRAPH_COLUMN_INDEX: usize = 1;
 const GRAPH_LAYOUT_TABLE_OFFSET: usize = 2;
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
+
+const REF_CHIP_GAP: Rems = rems(0.25);
+const REF_LABEL_PADDING: Rems = rems(0.375);
+
+enum RefChipMeasurement {
+    Reference(usize),
+    Overflow(usize),
+}
+
+fn fitting_ref_count(
+    ref_count: usize,
+    available_width: DevicePixels,
+    gap: DevicePixels,
+    mut measure: impl FnMut(RefChipMeasurement) -> DevicePixels,
+) -> usize {
+    let mut prefix_width = DevicePixels(0);
+    let mut visible_count = usize::from(ref_count > 0);
+    for index in 0..ref_count {
+        if index > 0 {
+            prefix_width += gap;
+        }
+        prefix_width += measure(RefChipMeasurement::Reference(index));
+        if prefix_width > available_width {
+            break;
+        }
+        let count = index + 1;
+        if count == ref_count {
+            // The final chip can fit even when the preceding prefix plus its badge could not.
+            return count;
+        }
+        if prefix_width + gap + measure(RefChipMeasurement::Overflow(ref_count - count))
+            <= available_width
+        {
+            visible_count = count;
+        }
+    }
+    visible_count
+}
 
 struct CopiedState {
     copied_at: Option<Instant>,
@@ -1906,6 +1944,118 @@ impl GitGraph {
         Some(SharedString::from(name.to_string()))
     }
 
+    fn ref_chip(name: SharedString, accent_color: Hsla, is_head: bool, background: Hsla) -> Chip {
+        Chip::new(name)
+            .label_size(LabelSize::Small)
+            .truncate()
+            .map(|chip| {
+                if is_head {
+                    chip.icon(IconName::Check)
+                        .bg_color(background.blend(accent_color.opacity(0.25)))
+                        .border_color(accent_color.opacity(0.5))
+                } else {
+                    chip.icon(IconName::GitBranch)
+                        .icon_color(Color::Custom(accent_color))
+                        .bg_color(background.blend(accent_color.opacity(0.08)))
+                        .border_color(accent_color.opacity(0.25))
+                }
+            })
+    }
+
+    fn prioritize_head_ref(
+        ref_names: &mut [SharedString],
+        head_branch_name: &Option<SharedString>,
+    ) {
+        if let Some(index) = ref_names
+            .iter()
+            .position(|name| Self::is_head_ref(name, head_branch_name))
+        {
+            ref_names[..=index].rotate_right(1);
+        }
+    }
+
+    fn render_fitting_ref_chips(
+        &self,
+        ref_names: Vec<SharedString>,
+        head_branch_name: &Option<SharedString>,
+        accent_color: Hsla,
+        background: Hsla,
+        commit_idx: usize,
+        show_connector: bool,
+        width: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let available_space = gpui::size(AvailableSpace::MaxContent, AvailableSpace::MaxContent);
+        // Sum snapped metrics in device pixels so fractional display scales cannot
+        // introduce floating-point errors at exact fitting boundaries.
+        let scale_factor = window.scale_factor();
+        let device_pixels = |width: Pixels| DevicePixels((width * scale_factor).round().to_i32());
+        let gap = device_pixels(window.pixel_snap(REF_CHIP_GAP.to_pixels(window.rem_size())));
+        let available_width = device_pixels(width)
+            - device_pixels(window.pixel_snap(REF_LABEL_PADDING.to_pixels(window.rem_size())))
+            - if show_connector { gap } else { DevicePixels(0) };
+        let visible_count = fitting_ref_count(ref_names.len(), available_width, gap, |chip| {
+            let chip = match chip {
+                RefChipMeasurement::Reference(index) => {
+                    let name = &ref_names[index];
+                    Self::ref_chip(
+                        name.clone(),
+                        accent_color,
+                        Self::is_head_ref(name, head_branch_name),
+                        background,
+                    )
+                }
+                RefChipMeasurement::Overflow(hidden_count) => {
+                    Chip::new(format!("+{hidden_count}")).label_size(LabelSize::Small)
+                }
+            };
+            device_pixels(
+                chip.into_any_element()
+                    .layout_as_root(available_space, window, cx)
+                    .width,
+            )
+        });
+
+        h_flex()
+            .h_full()
+            .w_full()
+            .min_w_0()
+            .gap(REF_CHIP_GAP)
+            .pl(REF_LABEL_PADDING)
+            .children(
+                ref_names
+                    .iter()
+                    .take(visible_count)
+                    .enumerate()
+                    .map(|(index, name)| {
+                        div()
+                            .min_w_0()
+                            .when(index > 0, |this| this.flex_none())
+                            .child(self.render_ref_chip(
+                                name.clone(),
+                                accent_color,
+                                Self::is_head_ref(name, head_branch_name),
+                                commit_idx,
+                                background,
+                                cx,
+                            ))
+                    }),
+            )
+            .when(visible_count < ref_names.len(), |this| {
+                this.child(self.render_ref_count_chip(
+                    ref_names[visible_count..].to_vec(),
+                    accent_color,
+                    commit_idx,
+                    cx,
+                ))
+            })
+            .when(show_connector, |this| {
+                this.child(Self::render_dashed_connector(accent_color.opacity(0.5)))
+            })
+            .into_any_element()
+    }
+
     /// Renders a ref chip for the commit at `commit_idx`. Chips get a
     /// right-click handler that opens a ref-specific context menu, so that
     /// custom commands can be resolved against the clicked ref.
@@ -1922,26 +2072,19 @@ impl GitGraph {
         let chip_id = SharedString::from(format!("git-graph-ref-chip-{commit_idx}-{name}"));
 
         div()
+            .debug_selector({
+                let chip_id = chip_id.clone();
+                move || chip_id.to_string()
+            })
             .id(chip_id)
             .min_w_0()
             .overflow_hidden()
-            .child(
-                Chip::new(name.clone())
-                    .label_size(LabelSize::Small)
-                    .truncate()
-                    .map(|chip| {
-                        if is_head {
-                            chip.icon(IconName::Check)
-                                .bg_color(background.blend(accent_color.opacity(0.25)))
-                                .border_color(accent_color.opacity(0.5))
-                        } else {
-                            chip.icon(IconName::GitBranch)
-                                .icon_color(Color::Custom(accent_color))
-                                .bg_color(background.blend(accent_color.opacity(0.08)))
-                                .border_color(accent_color.opacity(0.25))
-                        }
-                    }),
-            )
+            .child(Self::ref_chip(
+                name.clone(),
+                accent_color,
+                is_head,
+                background,
+            ))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener({
@@ -1975,9 +2118,11 @@ impl GitGraph {
             .collect::<Vec<_>>()
             .join("\n");
         let chip_id = SharedString::from(format!("git-graph-ref-count-chip-{commit_idx}"));
+        let hidden_count = hidden_refs.len();
 
         div()
             .id(chip_id)
+            .debug_selector(move || format!("git-graph-ref-count-chip-{commit_idx}-{hidden_count}"))
             .flex_none()
             .cursor_pointer()
             .child(
@@ -3976,39 +4121,10 @@ impl GitGraph {
             let visible_row_idx = absolute_idx - first_visible_row;
             let top = visible_row_idx as f32 * row_height - vertical_scroll_offset;
             let accent_color = accent_colors.color_for_index(commit.color_idx as u32);
-            let ref_names = commit.data.ref_names.clone();
-
-            // When a commit carries multiple refs we only render a single badge
-            // (preferring the checked-out branch, falling back to the first ref)
-            // plus a "+N" counter, so the gutter stays legible instead of
-            // cramming several truncated chips together.
-            let (primary_name, is_head) = match ref_names
-                .iter()
-                .find(|name| Self::is_head_ref(name.as_ref(), &head_branch_name))
-            {
-                Some(head_ref) => (head_ref.clone(), true),
-                None => match ref_names.first() {
-                    Some(first) => (first.clone(), false),
-                    None => continue,
-                },
-            };
-
-            let primary_chip = self.render_ref_chip(
-                primary_name.clone(),
-                accent_color,
-                is_head,
-                absolute_idx,
-                background,
-                cx,
-            );
-
-            let hidden_refs = ref_names
-                .iter()
-                .filter(|name| *name != &primary_name)
-                .cloned()
-                .collect::<Vec<_>>();
-            let count_chip = (!hidden_refs.is_empty())
-                .then(|| self.render_ref_count_chip(hidden_refs, accent_color, absolute_idx, cx));
+            let mut ref_names = commit.data.ref_names.clone();
+            Self::prioritize_head_ref(&mut ref_names, &head_branch_name);
+            let head_branch_name = head_branch_name.clone();
+            let graph = cx.entity().downgrade();
 
             elements.push(
                 div()
@@ -4017,21 +4133,24 @@ impl GitGraph {
                     .left_0()
                     .w_full()
                     .h(row_height)
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .w_full()
-                            .min_w_0()
-                            .items_center()
-                            .justify_start()
-                            .gap_1()
-                            .pl_1p5()
-                            .child(primary_chip)
-                            .children(count_chip)
-                            .when(show_connector, |this| {
-                                this.child(Self::render_dashed_connector(accent_color.opacity(0.5)))
-                            }),
-                    )
+                    .child(container_query(move |size, window, cx| {
+                        graph
+                            .update(cx, |graph, cx| {
+                                graph.render_fitting_ref_chips(
+                                    ref_names,
+                                    &head_branch_name,
+                                    accent_color,
+                                    background,
+                                    absolute_idx,
+                                    show_connector,
+                                    size.width,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .log_err()
+                            .unwrap_or_else(|| Empty.into_any_element())
+                    }))
                     .into_any_element(),
             );
         }
@@ -5426,6 +5545,275 @@ mod tests {
     use smallvec::{SmallVec, smallvec};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
+
+    fn fit_widths(
+        widths: &[Pixels],
+        available_width: Pixels,
+        gap: Pixels,
+        mut badge_width: impl FnMut(usize) -> Pixels,
+    ) -> usize {
+        let device_pixels = |width: Pixels| DevicePixels(width.to_i32());
+        fitting_ref_count(
+            widths.len(),
+            device_pixels(available_width),
+            device_pixels(gap),
+            |chip| {
+                device_pixels(match chip {
+                    RefChipMeasurement::Reference(index) => widths[index],
+                    RefChipMeasurement::Overflow(hidden_count) => badge_width(hidden_count),
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn test_ref_prefix_fitting() {
+        let widths = [px(40.), px(50.), px(80.)];
+        let fit = |width| fit_widths(&widths, px(width), px(4.), |_| px(20.));
+        assert_eq!(fit(178.), 3);
+        assert_eq!(fit(177.), 2);
+        assert_eq!(fit(118.), 2);
+        assert_eq!(fit(117.), 1);
+        assert_eq!(fit(0.), 1);
+        assert_eq!(fit_widths(&[], px(0.), px(4.), |_| unreachable!()), 0);
+        assert_eq!(
+            fit_widths(&[px(100.)], px(10.), px(4.), |_| unreachable!()),
+            1
+        );
+
+        // The full row fits, although two chips and the overflow badge do not.
+        assert_eq!(fit_widths(&[px(10.); 3], px(38.), px(4.), |_| px(40.)), 3);
+        // A long second ref must not be skipped to display a later short one.
+        assert_eq!(
+            fit_widths(&[px(10.), px(1000.), px(10.)], px(100.), px(4.), |_| px(
+                20.
+            )),
+            1
+        );
+
+        let mut measured_counts = Vec::new();
+        assert_eq!(
+            fit_widths(&[px(10.); 12], px(55.), px(4.), |hidden_count| {
+                measured_counts.push(hidden_count);
+                if hidden_count >= 10 { px(30.) } else { px(10.) }
+            }),
+            3
+        );
+        assert!(measured_counts.contains(&10));
+        assert!(measured_counts.contains(&9));
+    }
+
+    #[test]
+    fn test_ref_primary_preserves_remaining_order() {
+        let mut refs = ["alpha", "tag: v1", "HEAD -> main", "beta"].map(SharedString::from);
+        GitGraph::prioritize_head_ref(&mut refs, &Some("main".into()));
+        assert_eq!(
+            refs,
+            ["HEAD -> main", "alpha", "tag: v1", "beta"].map(SharedString::from)
+        );
+        let original = refs.clone();
+        GitGraph::prioritize_head_ref(&mut refs, &None);
+        assert_eq!(refs, original);
+        GitGraph::prioritize_head_ref(&mut [], &Some("main".into()));
+    }
+
+    struct RefLabelsTestView {
+        graph: Entity<GitGraph>,
+        width: Pixels,
+    }
+
+    impl Render for RefLabelsTestView {
+        fn render(
+            &mut self,
+            window: &mut Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div()
+                .debug_selector(|| "ref-labels-test".into())
+                .relative()
+                .w(self.width)
+                .h(px(100.))
+                .child(self.graph.update(cx, |graph, cx| {
+                    graph.render_graph_ref_labels(window, cx).into_any_element()
+                }))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_ref_labels_resize_in_same_frame(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({".git": {}, "file.txt": "content"}),
+        )
+        .await;
+        let refs = [
+            "alpha",
+            "beta",
+            "feature/a-very-long-reference-name",
+            "tag: v1",
+        ]
+        .map(SharedString::from);
+        let mut rng = StdRng::seed_from_u64(42);
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: Oid::random(&mut rng),
+                parents: smallvec![],
+                ref_names: refs.to_vec(),
+            })],
+        );
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.graph_data.commits.len(), 1);
+            assert_eq!(graph.graph_data.commits[0].data.ref_names, refs);
+        });
+        for (rem_size, scale_factor, gap, padding) in [
+            (16., 2., 4., 6.),
+            (14., 1., 3., 5.),
+            (14., 1.5, 10. / 3., 16. / 3.),
+            (15., 2., 3.5, 5.5),
+        ] {
+            cx.update(|window, cx| {
+                theme_settings::adjust_ui_font_size(cx, |_| px(rem_size));
+                window.set_scale_factor(scale_factor);
+                window.set_rem_size(px(rem_size));
+            });
+            let gap = px(gap);
+            let padding = px(padding);
+            let mut measurements = None;
+            cx.draw(
+                point(px(0.), px(0.)),
+                gpui::size(px(1000.), px(100.)),
+                |window, cx| {
+                    let space = gpui::size(AvailableSpace::MaxContent, AvailableSpace::MaxContent);
+                    let widths = refs
+                        .iter()
+                        .map(|name| {
+                            GitGraph::ref_chip(
+                                name.clone(),
+                                gpui::Hsla::default(),
+                                false,
+                                gpui::Hsla::default(),
+                            )
+                            .into_any_element()
+                            .layout_as_root(space, window, cx)
+                            .width
+                        })
+                        .collect::<Vec<_>>();
+                    let badge_width = Chip::new("+2")
+                        .label_size(LabelSize::Small)
+                        .into_any_element()
+                        .layout_as_root(space, window, cx)
+                        .width;
+                    measurements = Some((widths, badge_width));
+                    Empty
+                },
+            );
+            let (widths, badge_width) = measurements.expect("chip measurements");
+            let snap_sum = |width: Pixels| (width * scale_factor).round() / scale_factor;
+            let all_width = snap_sum(widths.iter().copied().sum::<Pixels>() + gap * 4. + padding);
+            let partial_width = snap_sum(widths[0] + widths[1] + badge_width + gap * 3. + padding);
+            let labels = cx.update(|window, cx| {
+                window.replace_root(cx, |_, _| RefLabelsTestView {
+                    graph: graph.clone(),
+                    width: all_width,
+                })
+            });
+            let draw_at_width = |width, cx: &mut gpui::VisualTestContext| {
+                labels.update(cx, |labels, cx| {
+                    labels.width = width;
+                    cx.notify();
+                });
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+            };
+
+            draw_at_width(all_width, cx);
+            let row = cx.debug_bounds("ref-labels-test").expect("reference row");
+            let mut previous_right = row.left();
+            for (selector, natural_width) in [
+                "git-graph-ref-chip-0-alpha",
+                "git-graph-ref-chip-0-beta",
+                "git-graph-ref-chip-0-feature/a-very-long-reference-name",
+                "git-graph-ref-chip-0-tag: v1",
+            ]
+            .into_iter()
+            .zip(&widths)
+            {
+                let chip = cx.debug_bounds(selector).unwrap_or_else(|| panic!("missing {selector}: rem={rem_size}, scale={scale_factor}, width={all_width:?}, measured={widths:?}, row={row:?}"));
+                assert!((chip.size.width - *natural_width).abs() < px(0.01));
+                assert!(chip.left() >= previous_right);
+                assert!(chip.right() <= row.right());
+                previous_right = chip.right();
+            }
+            assert!(cx.debug_bounds("git-graph-ref-chip-0-tag: v1").is_some());
+            assert!(cx.debug_bounds("git-graph-ref-count-chip-0-1").is_none());
+            draw_at_width(partial_width, cx);
+            assert!(cx.debug_bounds("git-graph-ref-chip-0-beta").is_some());
+            assert!(
+                cx.debug_bounds("git-graph-ref-chip-0-feature/a-very-long-reference-name")
+                    .is_none()
+            );
+            let primary = cx
+                .debug_bounds("git-graph-ref-chip-0-alpha")
+                .expect("primary");
+            let second = cx
+                .debug_bounds("git-graph-ref-chip-0-beta")
+                .expect("second reference");
+            let badge = cx
+                .debug_bounds("git-graph-ref-count-chip-0-2")
+                .expect("overflow badge");
+            let row = cx.debug_bounds("ref-labels-test").expect("reference row");
+            assert!((primary.size.width - widths[0]).abs() < px(0.01));
+            assert!((second.size.width - widths[1]).abs() < px(0.01));
+            assert!((badge.size.width - badge_width).abs() < px(0.01));
+            assert!(primary.right() <= second.left());
+            assert!(second.right() <= badge.left());
+            assert!(badge.right() <= row.right());
+            draw_at_width(partial_width - px(1. / scale_factor), cx);
+            assert!(
+                cx.debug_bounds("git-graph-ref-chip-0-beta").is_none(),
+                "rem={rem_size}, scale={scale_factor}, partial_width={partial_width:?}"
+            );
+            assert!(cx.debug_bounds("git-graph-ref-count-chip-0-3").is_some());
+            draw_at_width(widths[0] + badge_width + gap * 2. + padding - px(10.), cx);
+            let primary = cx
+                .debug_bounds("git-graph-ref-chip-0-alpha")
+                .expect("primary stays visible");
+            assert!(primary.size.width > px(0.));
+            assert!(primary.size.width < widths[0]);
+            let badge = cx
+                .debug_bounds("git-graph-ref-count-chip-0-3")
+                .expect("overflow badge");
+            let row = cx.debug_bounds("ref-labels-test").expect("reference row");
+            assert!(primary.right() <= badge.left());
+            assert!(badge.right() <= row.right());
+            draw_at_width(all_width, cx);
+            assert!(cx.debug_bounds("git-graph-ref-chip-0-tag: v1").is_some());
+            assert!(cx.debug_bounds("git-graph-ref-count-chip-0-3").is_none());
+        }
+    }
 
     #[gpui::test]
     fn test_graph_dates_use_date_format(cx: &mut App) {
