@@ -131,10 +131,7 @@ impl ToggleButtonWithIcon {
         }
     }
 
-    /// Creates an icon-only toggle with an accessible name.
-    ///
-    /// `label` is announced by assistive technology but is not displayed.
-    /// Use [`ToggleButtonGroup::auto_width`] for square buttons sized to the group's height.
+    /// Creates an icon-only toggle, using `label` as its accessible name.
     pub fn icon_only(
         label: impl Into<SharedString>,
         icon: IconName,
