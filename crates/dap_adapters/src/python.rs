@@ -486,6 +486,7 @@ impl PythonDebugAdapter {
                 host,
                 port,
                 timeout,
+                stdio_proxy: None,
             }),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: user_env.unwrap_or_default(),
