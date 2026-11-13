@@ -7595,6 +7595,26 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
             // fooˇ bar
         "});
 
+        // Does not strip when the first line is not a comment.
+        cx.set_state(indoc! {"
+            let x = 1;ˇ
+            // bar
+        "});
+        cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
+        cx.assert_editor_state(indoc! {"
+            let x = 1;ˇ // bar
+        "});
+
+        // Strips when the first line ends in a trailing comment.
+        cx.set_state(indoc! {"
+            let x = 1; // fooˇ
+            // bar
+        "});
+        cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
+        cx.assert_editor_state(indoc! {"
+            let x = 1; // fooˇ bar
+        "});
+
         // No-whitespace join also strips the comment prefix.
         cx.set_state(indoc! {"
             // ˇfoo

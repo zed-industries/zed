@@ -5900,12 +5900,17 @@ impl Editor {
                             .collect::<String>();
 
                         if !line_text_after_indent.is_empty() {
+                            // marker should only be stripped if line we append to is itself a comment
+                            let upper_line_is_comment = snapshot
+                                .language_scope_at(end_of_line)
+                                .is_some_and(|scope| scope.override_name() == Some("comment"));
                             let block_prefixes = language_scope
                                 .block_comment()
                                 .into_iter()
                                 .chain(language_scope.documentation_comment())
                                 .filter(|comment| {
-                                    language_scope.override_name() == Some("comment")
+                                    upper_line_is_comment
+                                        && language_scope.override_name() == Some("comment")
                                         && !comment.prefix.is_empty()
                                         && !line_text_after_indent.starts_with(comment.end.as_ref())
                                 })
@@ -5915,6 +5920,7 @@ impl Editor {
                                 .iter()
                                 .map(|p| p.as_ref())
                                 .chain(block_prefixes)
+                                .filter(|_| upper_line_is_comment)
                                 .map(|prefix| (prefix, false));
                             let all_prefixes = comment_prefixes.chain(
                                 language_scope
