@@ -1285,6 +1285,11 @@ impl TerminalBuilder {
                     shell_kind.tty_escape_args(),
                 );
 
+                // Some libraries (LMDB, GPU drivers) open fds without `O_CLOEXEC`, and
+                // alacritty's `pre_exec` doesn't close them, so the shell would inherit them.
+                #[cfg(target_os = "linux")]
+                mark_open_fds_close_on_exec().log_err();
+
                 //Setup the pty...
                 let pty = match open_pty(&pty_options, TerminalBounds::default(), window_id) {
                     Ok(pty) => pty,
@@ -3655,6 +3660,29 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
     .into()
 }
 
+#[cfg(target_os = "linux")]
+fn mark_open_fds_close_on_exec() -> Result<()> {
+    for entry in std::fs::read_dir("/proc/self/fd")? {
+        let Ok(fd) = entry?.file_name().to_string_lossy().parse::<libc::c_int>() else {
+            continue;
+        };
+        let is_stdio = fd <= 2;
+        if is_stdio {
+            continue;
+        }
+
+        let result = unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        if result == -1 {
+            let error = std::io::Error::last_os_error();
+            // EBADF: the fd was the `read_dir` handle itself or was closed concurrently.
+            if error.raw_os_error() != Some(libc::EBADF) {
+                return Err(error.into());
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -3672,6 +3700,24 @@ mod tests {
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_mark_open_fds_close_on_exec() -> Result<()> {
+        use std::os::fd::AsRawFd as _;
+
+        let file = std::fs::File::open("/dev/null")?;
+        let fd = file.as_raw_fd();
+        assert_ne!(unsafe { libc::fcntl(fd, libc::F_SETFD, 0) }, -1);
+
+        mark_open_fds_close_on_exec()?;
+
+        assert_ne!(
+            unsafe { libc::fcntl(fd, libc::F_GETFD) } & libc::FD_CLOEXEC,
+            0
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_init_command_startup_marker_commands_do_not_contain_marker() {
