@@ -2216,6 +2216,7 @@ impl ThreadView {
                 return;
             }
             if let Some(entry) = self.message_queue.try_fast_track(is_generating) {
+                self.message_editor.focus_handle(cx).focus(window, cx);
                 self.dispatch_queued_entry(entry, window, cx);
             }
             return;
@@ -3120,6 +3121,7 @@ impl ThreadView {
         }
         let is_generating = self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
         if let Some(entry) = self.message_queue.send_now(id, is_generating) {
+            self.message_editor.focus_handle(cx).focus(window, cx);
             self.dispatch_queued_entry(entry, window, cx);
         }
     }
@@ -3136,8 +3138,6 @@ impl ThreadView {
         self.sync_queue_flag_to_native_thread(cx);
 
         cx.emit(AcpThreadViewEvent::Interacted);
-
-        self.message_editor.focus_handle(cx).focus(window, cx);
 
         // A queued message can itself be a built-in command (e.g. the user typed
         // `/compact` while a turn was generating). Detect that so we run it as a

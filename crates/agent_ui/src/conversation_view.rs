@@ -5083,6 +5083,107 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_auto_sending_queued_messages_preserves_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (background_conversation, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(background_conversation.clone(), cx);
+        let background_thread = active_thread(&background_conversation, cx);
+        message_editor(&background_conversation, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("first", window, cx);
+        });
+        background_thread.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let session_id = background_thread.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["second".into()], vec![], window, cx);
+            view.add_to_queue(vec!["third".into()], vec![], window, cx);
+            view.thread.read(cx).session_id().clone()
+        });
+
+        let foreground_conversation = background_conversation.update_in(cx, |view, window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    view.agent.clone(),
+                    view.connection_store.clone(),
+                    view.connection_key.clone(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    view.workspace.clone(),
+                    view.project.clone(),
+                    view.thread_store.clone(),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+        add_to_workspace(foreground_conversation.clone(), cx);
+        let foreground_editor = message_editor(&foreground_conversation, cx);
+        foreground_editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.simulate_input("before");
+
+        for (remaining, expected_text) in [(1, "before typing"), (0, "before typing typing")] {
+            connection.end_turn(session_id.clone(), acp_v1::StopReason::EndTurn);
+            cx.run_until_parked();
+
+            background_thread.read_with(cx, |view, cx| {
+                assert_eq!(view.message_queue.len(), remaining);
+                assert_eq!(view.thread.read(cx).status(), ThreadStatus::Generating);
+            });
+            foreground_editor.update_in(cx, |editor, window, cx| {
+                assert!(editor.focus_handle(cx).is_focused(window));
+            });
+            cx.simulate_input(" typing");
+            assert_eq!(
+                foreground_editor.read_with(cx, |editor, cx| editor.text(cx)),
+                expected_text
+            );
+            assert!(
+                message_editor(&background_conversation, cx)
+                    .read_with(cx, |editor, cx| { editor.is_empty(cx) })
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_manual_queued_message_sends_focus_composer(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for send_now in [false, true] {
+            let (conversation, cx) =
+                setup_conversation_view(StubAgentServer::default_response(), cx).await;
+            add_to_workspace(conversation.clone(), cx);
+            let thread_view = active_thread(&conversation, cx);
+            thread_view.update_in(cx, |view, window, cx| {
+                view.add_to_queue(vec!["queued".into()], vec![], window, cx);
+                let entry = view.message_queue.first().expect("queued message");
+                let id = entry.id;
+                entry.editor.focus_handle(cx).focus(window, cx);
+                if send_now {
+                    view.send_queued_message_now(id, window, cx);
+                } else {
+                    view.send(window, cx);
+                }
+                assert!(view.message_queue.is_empty());
+                assert!(view.message_editor.focus_handle(cx).is_focused(window));
+            });
+            cx.run_until_parked();
+            message_editor(&conversation, cx).update_in(cx, |editor, window, cx| {
+                assert!(editor.focus_handle(cx).is_focused(window));
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_queued_message_steer_defaults_off_and_toggles(cx: &mut TestAppContext) {
         init_test(cx);
 
