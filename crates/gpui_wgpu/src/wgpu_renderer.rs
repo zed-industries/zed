@@ -1,10 +1,10 @@
-use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
+use crate::{CompositorGpuHint, DeviceErrorState, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
 use collections::FxHashMap;
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch,
-    ScaledPixels, Scene, Size, get_gamma_correction_ratios,
+    AtlasTextureId, Bounds, DevicePixels, GpuSpecs, PaintedPath, PrimitiveBatch, ScaledPixels,
+    Scene, Size, get_gamma_correction_ratios, quad_depth, quad_depth_scale,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const MAX_INSTANCE_BUFFER_SIZE: u64 = 256 * 1024 * 1024;
 
@@ -59,8 +59,19 @@ fn least_common_multiple(left: u64, right: u64) -> u64 {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalParams {
     viewport_size: [f32; 2],
+    path_paint_base: u32,
+    path_curve_base: u32,
+    depth_scale: f32,
+    quad_count: u32,
     premultiplied_alpha: u32,
     pad: u32,
+}
+
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+struct DepthTexture {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
 }
 
 #[repr(C)]
@@ -96,21 +107,6 @@ struct GammaParams {
     _pad: u32,
 }
 
-#[derive(Clone, Debug)]
-#[repr(C)]
-struct PathSprite {
-    bounds: Bounds<ScaledPixels>,
-}
-
-#[derive(Clone, Debug)]
-#[repr(C)]
-struct PathRasterizationVertex {
-    xy_position: Point<ScaledPixels>,
-    st_position: Point<f32>,
-    color: Background,
-    bounds: Bounds<ScaledPixels>,
-}
-
 pub struct WgpuSurfaceConfig {
     pub size: Size<DevicePixels>,
     pub transparent: bool,
@@ -125,15 +121,16 @@ pub struct WgpuSurfaceConfig {
 
 struct WgpuPipelines {
     quads: wgpu::RenderPipeline,
+    opaque_quads: wgpu::RenderPipeline,
     shadows: wgpu::RenderPipeline,
-    path_rasterization: wgpu::RenderPipeline,
-    paths: wgpu::RenderPipeline,
+    path_tiles: wgpu::RenderPipeline,
     underlines: wgpu::RenderPipeline,
     mono_sprites: wgpu::RenderPipeline,
     subpixel_sprites: Option<wgpu::RenderPipeline>,
     poly_sprites: wgpu::RenderPipeline,
     #[allow(dead_code)]
     surfaces: wgpu::RenderPipeline,
+    premultiplied_alpha: bool,
 }
 
 /// One frame allocation of instance data, ready to bind.
@@ -147,9 +144,23 @@ struct InstanceBinding {
     first_instance: u32,
 }
 
+struct PathTileBinding {
+    tiles: InstanceBinding,
+    paint_base: u32,
+    curve_base: u32,
+}
+
+/// Where one array of instance data was written this frame.
+struct InstanceAllocation {
+    offset: u64,
+    size: u64,
+    first_instance: u32,
+}
+
 struct InstanceBindings {
     quads: InstanceBinding,
     shadows: InstanceBinding,
+    path_tiles: PathTileBinding,
     underlines: InstanceBinding,
     monochrome_sprites: InstanceBinding,
     subpixel_sprites: InstanceBinding,
@@ -159,6 +170,7 @@ struct InstanceBindings {
 struct WgpuBindGroupLayouts {
     globals: wgpu::BindGroupLayout,
     instances: wgpu::BindGroupLayout,
+    path_tiles: wgpu::BindGroupLayout,
     texture: wgpu::BindGroupLayout,
     surfaces: wgpu::BindGroupLayout,
 }
@@ -182,19 +194,13 @@ enum InstanceData {
 struct WgpuResources {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    surface: wgpu::Surface<'static>,
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas_sampler: wgpu::Sampler,
     atlas_texture_bind_groups: FxHashMap<AtlasTextureId, CachedTextureBindGroup>,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
-    path_globals_bind_group: wgpu::BindGroup,
     instance_data: InstanceData,
-    path_intermediate_texture: Option<wgpu::Texture>,
-    path_intermediate_view: Option<wgpu::TextureView>,
-    path_msaa_texture: Option<wgpu::Texture>,
-    path_msaa_view: Option<wgpu::TextureView>,
 }
 
 struct CachedTextureBindGroup {
@@ -202,13 +208,43 @@ struct CachedTextureBindGroup {
     bind_group: wgpu::BindGroup,
 }
 
-impl WgpuResources {
-    fn invalidate_intermediate_textures(&mut self) {
-        self.path_intermediate_texture = None;
-        self.path_intermediate_view = None;
-        self.path_msaa_texture = None;
-        self.path_msaa_view = None;
-    }
+struct WgpuRendererCore {
+    resources: WgpuResources,
+    atlas: Arc<WgpuAtlas>,
+    gamma_offset: u64,
+    instance_data_capacity: u64,
+    max_instance_data_size: u64,
+    instance_data_alignment: u64,
+    uses_webgl_instance_data: bool,
+    rendering_params: RenderingParameters,
+    is_bgr: bool,
+    dual_source_blending: bool,
+    transient_attachments: bool,
+    adapter_info: wgpu::AdapterInfo,
+    depth_texture: Option<DepthTexture>,
+    /// Read by the headless renderer to create its render target.
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "bench-support", feature = "test-support")
+    ))]
+    target_format: wgpu::TextureFormat,
+    max_texture_size: u32,
+}
+
+/// GPU resources of a windowed renderer. A surface is only ever configured against the
+/// device that owns `core`, so it cannot outlive it: there is no surface-only state.
+enum RendererState {
+    /// Frames can be drawn.
+    Ready {
+        surface: wgpu::Surface<'static>,
+        core: WgpuRendererCore,
+    },
+    /// The native surface is gone (Android `TerminateWindow`, browser context loss) but
+    /// the device, pipelines, and atlas remain so `replace_surface` can resume without
+    /// re-uploading cached textures.
+    Unconfigured { core: WgpuRendererCore },
+    /// Released by `destroy`, or dropped for a device recovery that has not succeeded yet.
+    Released,
 }
 
 pub struct WgpuRenderer {
@@ -218,40 +254,33 @@ pub struct WgpuRenderer {
     /// Compositor GPU hint for adapter selection (unused on WASM).
     #[allow(dead_code)]
     compositor_gpu: Option<CompositorGpuHint>,
-    resources: Option<WgpuResources>,
+    state: RendererState,
     surface_config: wgpu::SurfaceConfiguration,
     atlas: Arc<WgpuAtlas>,
-    path_globals_offset: u64,
-    gamma_offset: u64,
-    instance_data_capacity: u64,
-    max_instance_data_size: u64,
-    instance_data_alignment: u64,
-    uses_webgl_instance_data: bool,
-    rendering_params: RenderingParameters,
-    is_bgr: bool,
-    dual_source_blending: bool,
-    adapter_info: wgpu::AdapterInfo,
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
     max_texture_size: u32,
-    last_error: Arc<Mutex<Option<String>>>,
+    is_bgr: bool,
     failed_frame_count: u32,
-    device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    surface_configured: bool,
+    device_errors: Arc<DeviceErrorState>,
+    observed_error_generation: u64,
+    last_surface_error: Option<String>,
     needs_redraw: bool,
 }
 
 impl WgpuRenderer {
-    fn resources(&self) -> &WgpuResources {
-        self.resources
-            .as_ref()
-            .expect("GPU resources not available")
+    fn core(&self) -> Option<&WgpuRendererCore> {
+        match &self.state {
+            RendererState::Ready { core, .. } | RendererState::Unconfigured { core } => Some(core),
+            RendererState::Released => None,
+        }
     }
 
-    fn resources_mut(&mut self) -> &mut WgpuResources {
-        self.resources
-            .as_mut()
-            .expect("GPU resources not available")
+    fn core_mut(&mut self) -> Option<&mut WgpuRendererCore> {
+        match &mut self.state {
+            RendererState::Ready { core, .. } | RendererState::Unconfigured { core } => Some(core),
+            RendererState::Released => None,
+        }
     }
 
     /// Creates a new WgpuRenderer from raw window handles.
@@ -290,7 +319,7 @@ impl WgpuRenderer {
             .borrow()
             .as_ref()
             .map(|ctx| ctx.instance.clone())
-            .unwrap_or_else(|| WgpuContext::instance(Box::new(window.clone())));
+            .unwrap_or_else(|| WgpuContext::instance(Some(Box::new(window.clone()))));
 
         // Safety: The caller guarantees that the window handle is valid for the
         // lifetime of this renderer. In practice, the RawWindow struct is created
@@ -302,12 +331,18 @@ impl WgpuRenderer {
         };
 
         let mut ctx_ref = gpu_context.borrow_mut();
+        let surface_configured = ctx_ref.is_none();
         let context = match ctx_ref.as_mut() {
             Some(context) => {
                 context.check_compatible_with_surface(&surface)?;
                 context
             }
-            None => ctx_ref.insert(WgpuContext::new(instance, &surface, compositor_gpu)?),
+            None => ctx_ref.insert(WgpuContext::new(
+                instance,
+                &surface,
+                &config,
+                compositor_gpu,
+            )?),
         };
 
         let atlas = Arc::new(WgpuAtlas::from_context(context));
@@ -317,6 +352,7 @@ impl WgpuRenderer {
             context,
             surface,
             config,
+            surface_configured,
             compositor_gpu,
             atlas,
         )
@@ -343,18 +379,22 @@ impl WgpuRenderer {
         config: WgpuSurfaceConfig,
     ) -> anyhow::Result<Self> {
         let atlas = Arc::new(WgpuAtlas::from_context(context));
-        Self::new_internal(None, context, surface, config, None, atlas)
+        Self::new_internal(None, context, surface, config, false, None, atlas)
     }
 
-    fn new_internal(
-        gpu_context: Option<GpuContext>,
-        context: &WgpuContext,
-        surface: wgpu::Surface<'static>,
-        config: WgpuSurfaceConfig,
-        compositor_gpu: Option<CompositorGpuHint>,
-        atlas: Arc<WgpuAtlas>,
-    ) -> anyhow::Result<Self> {
-        let surface_caps = surface.get_capabilities(&context.adapter);
+    /// Returns the surface configuration for `config`, along with the transparent and
+    /// opaque alpha modes that the surface supports.
+    pub(crate) fn surface_configuration(
+        surface: &wgpu::Surface<'_>,
+        adapter: &wgpu::Adapter,
+        device: &wgpu::Device,
+        config: &WgpuSurfaceConfig,
+    ) -> anyhow::Result<(
+        wgpu::SurfaceConfiguration,
+        wgpu::CompositeAlphaMode,
+        wgpu::CompositeAlphaMode,
+    )> {
+        let surface_caps = surface.get_capabilities(adapter);
         let preferred_formats = [
             wgpu::TextureFormat::Bgra8Unorm,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -363,12 +403,18 @@ impl WgpuRenderer {
             .iter()
             .find(|f| surface_caps.formats.contains(f))
             .copied()
-            .or_else(|| surface_caps.formats.iter().find(|f| !f.is_srgb()).copied())
+            .or_else(|| {
+                surface_caps
+                    .formats
+                    .iter()
+                    .find(|format| !format.has_srgb_suffix())
+                    .copied()
+            })
             .or_else(|| surface_caps.formats.first().copied())
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Surface reports no supported texture formats for adapter {:?}",
-                    context.adapter.get_info().name
+                    adapter.get_info().name
                 )
             })?;
 
@@ -382,7 +428,7 @@ impl WgpuRenderer {
                     .ok_or_else(|| {
                         anyhow::anyhow!(
                             "Surface reports no supported alpha modes for adapter {:?}",
-                            context.adapter.get_info().name
+                            adapter.get_info().name
                         )
                     })
             };
@@ -403,7 +449,6 @@ impl WgpuRenderer {
             opaque_alpha_mode
         };
 
-        let device = Arc::clone(&context.device);
         let max_texture_size = device.limits().max_texture_dimension_2d;
 
         let requested_width = config.size.width.0 as u32;
@@ -422,6 +467,7 @@ impl WgpuRenderer {
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width: clamped_width.max(1),
             height: clamped_height.max(1),
             present_mode: config
@@ -432,190 +478,52 @@ impl WgpuRenderer {
             alpha_mode,
             view_formats: vec![],
         };
-        // Configure the surface immediately. The adapter selection process already validated
-        // that this adapter can successfully configure this surface.
-        surface.configure(&context.device, &surface_config);
 
-        let queue = Arc::clone(&context.queue);
-        let rendering_params = RenderingParameters::new(&context.adapter, surface_format);
-        let uses_webgl_instance_data = context.uses_webgl_instance_data();
-        let dual_source_blending =
-            context.supports_dual_source_blending() && !uses_webgl_instance_data;
-        let bind_group_layouts = Self::create_bind_group_layouts(&device, uses_webgl_instance_data);
-        let pipelines = Self::create_pipelines(
-            &device,
-            &bind_group_layouts,
-            surface_format,
-            alpha_mode,
-            rendering_params.path_sample_count,
-            dual_source_blending,
-            uses_webgl_instance_data,
-        );
+        Ok((surface_config, transparent_alpha_mode, opaque_alpha_mode))
+    }
 
-        let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("atlas_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+    fn new_internal(
+        gpu_context: Option<GpuContext>,
+        context: &WgpuContext,
+        surface: wgpu::Surface<'static>,
+        config: WgpuSurfaceConfig,
+        surface_configured: bool,
+        compositor_gpu: Option<CompositorGpuHint>,
+        atlas: Arc<WgpuAtlas>,
+    ) -> anyhow::Result<Self> {
+        let (surface_config, transparent_alpha_mode, opaque_alpha_mode) =
+            Self::surface_configuration(&surface, &context.adapter, &context.device, &config)?;
+        // Adapter selection configures the surface with this same configuration when it
+        // creates the context, so only configure it here when that did not happen.
+        if !surface_configured {
+            surface.configure(&context.device, &surface_config);
+        }
 
-        let uniform_alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
-        let globals_size = std::mem::size_of::<GlobalParams>() as u64;
-        let gamma_size = std::mem::size_of::<GammaParams>() as u64;
-        let path_globals_offset = globals_size.next_multiple_of(uniform_alignment);
-        let gamma_offset = (path_globals_offset + globals_size).next_multiple_of(uniform_alignment);
-
-        let globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("globals_buffer"),
-            size: gamma_offset + gamma_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let (
-            instance_data,
-            instance_data_capacity,
-            max_instance_data_size,
-            instance_data_alignment,
-        ) = if uses_webgl_instance_data {
-            let max_texture_dimension = device.limits().max_texture_dimension_2d;
-            let max_instance_data_size = (u64::from(max_texture_dimension).pow(2)
-                * INSTANCE_TEXTURE_TEXEL_SIZE)
-                .min(MAX_INSTANCE_BUFFER_SIZE);
-            let initial_capacity = (2 * 1024 * 1024).min(max_instance_data_size);
-            let (instance_data, capacity) =
-                Self::create_instance_texture(&device, initial_capacity, max_texture_dimension);
-            (
-                instance_data,
-                capacity,
-                max_instance_data_size,
-                INSTANCE_TEXTURE_TEXEL_SIZE,
-            )
-        } else {
-            // Every frame allocation is exposed as one storage-buffer binding, so
-            // its backing buffer must satisfy both the allocation and binding limits.
-            let max_buffer_size = device
-                .limits()
-                .max_buffer_size
-                .min(device.limits().max_storage_buffer_binding_size)
-                .min(MAX_INSTANCE_BUFFER_SIZE);
-            let initial_capacity = (2 * 1024 * 1024).min(max_buffer_size);
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("instance_buffer"),
-                size: initial_capacity,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            (
-                InstanceData::Storage(buffer),
-                initial_capacity,
-                max_buffer_size,
-                device.limits().min_storage_buffer_offset_alignment as u64,
-            )
-        };
-
-        let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globals_bind_group"),
-            layout: &bind_group_layouts.globals,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &globals_buffer,
-                        offset: 0,
-                        size: Some(NonZeroU64::new(globals_size).unwrap()),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &globals_buffer,
-                        offset: gamma_offset,
-                        size: Some(NonZeroU64::new(gamma_size).unwrap()),
-                    }),
-                },
-            ],
-        });
-
-        let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("path_globals_bind_group"),
-            layout: &bind_group_layouts.globals,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &globals_buffer,
-                        offset: path_globals_offset,
-                        size: Some(NonZeroU64::new(globals_size).unwrap()),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &globals_buffer,
-                        offset: gamma_offset,
-                        size: Some(NonZeroU64::new(gamma_size).unwrap()),
-                    }),
-                },
-            ],
-        });
-
-        let adapter_info = context.adapter.get_info();
-
-        let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let last_error_clone = Arc::clone(&last_error);
-        device.on_uncaptured_error(Arc::new(move |error| {
-            let mut guard = last_error_clone.lock().unwrap();
-            *guard = Some(error.to_string());
-        }));
-
-        let resources = WgpuResources {
-            device,
-            queue,
-            surface,
-            pipelines,
-            bind_group_layouts,
-            atlas_sampler,
-            atlas_texture_bind_groups: FxHashMap::default(),
-            globals_buffer,
-            globals_bind_group,
-            path_globals_bind_group,
-            instance_data,
-            // Defer intermediate texture creation to first draw call via ensure_intermediate_textures().
-            // This avoids panics when the device/surface is in an invalid state during initialization.
-            path_intermediate_texture: None,
-            path_intermediate_view: None,
-            path_msaa_texture: None,
-            path_msaa_view: None,
-        };
+        let surface_format = surface_config.format;
+        let alpha_mode = surface_config.alpha_mode;
+        let max_texture_size = context.device.limits().max_texture_dimension_2d;
+        let core = WgpuRendererCore::new(context, atlas.clone(), surface_format, alpha_mode);
 
         Ok(Self {
             context: gpu_context,
             compositor_gpu,
-            resources: Some(resources),
+            state: RendererState::Ready { surface, core },
             surface_config,
             atlas,
-            path_globals_offset,
-            gamma_offset,
-            instance_data_capacity,
-            max_instance_data_size,
-            instance_data_alignment,
-            uses_webgl_instance_data,
-            rendering_params,
-            is_bgr: false,
-            dual_source_blending,
-            adapter_info,
             transparent_alpha_mode,
             opaque_alpha_mode,
             max_texture_size,
-            last_error,
+            is_bgr: false,
             failed_frame_count: 0,
-            device_lost: context.device_lost_flag(),
-            surface_configured: true,
+            device_errors: Arc::clone(context.errors()),
+            observed_error_generation: 0,
+            last_surface_error: None,
             needs_redraw: false,
         })
     }
+}
 
+impl WgpuRendererCore {
     fn create_bind_group_layouts(
         device: &wgpu::Device,
         uses_webgl_instance_data: bool,
@@ -674,6 +582,30 @@ impl WgpuRenderer {
             label: Some("instances_layout"),
             entries: &[instance_data_entry],
         });
+
+        // Path tiles read their curves and paints too. The texture transport
+        // reads all three from the one instance texture.
+        let path_tiles = if uses_webgl_instance_data {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("path_tiles_layout"),
+                entries: &[instance_data_entry],
+            })
+        } else {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("path_tiles_layout"),
+                entries: &[
+                    instance_data_entry,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        ..instance_data_entry
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        ..instance_data_entry
+                    },
+                ],
+            })
+        };
 
         let texture = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("texture_layout"),
@@ -744,6 +676,7 @@ impl WgpuRenderer {
         WgpuBindGroupLayouts {
             globals,
             instances,
+            path_tiles,
             texture,
             surfaces,
         }
@@ -792,7 +725,6 @@ impl WgpuRenderer {
         layouts: &WgpuBindGroupLayouts,
         surface_format: wgpu::TextureFormat,
         alpha_mode: wgpu::CompositeAlphaMode,
-        path_sample_count: u32,
         dual_source_blending: bool,
         uses_webgl_instance_data: bool,
     ) -> WgpuPipelines {
@@ -838,11 +770,11 @@ impl WgpuRenderer {
             None
         };
 
-        let blend_mode = match alpha_mode {
-            wgpu::CompositeAlphaMode::PreMultiplied => {
-                wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING
-            }
-            _ => wgpu::BlendState::ALPHA_BLENDING,
+        let premultiplied_alpha = alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
+        let blend_mode = if premultiplied_alpha {
+            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING
+        } else {
+            wgpu::BlendState::ALPHA_BLENDING
         };
 
         let color_target = wgpu::ColorTargetState {
@@ -859,7 +791,7 @@ impl WgpuRenderer {
                                texture_layout: Option<&wgpu::BindGroupLayout>,
                                topology: wgpu::PrimitiveTopology,
                                color_targets: &[Option<wgpu::ColorTargetState>],
-                               sample_count: u32,
+                               depth_write_enabled: bool,
                                module: &wgpu::ShaderModule| {
             let mut bind_group_layouts = vec![Some(globals_layout), Some(data_layout)];
             bind_group_layouts.extend(texture_layout.map(Some));
@@ -893,12 +825,14 @@ impl WgpuRenderer {
                     unclipped_depth: false,
                     conservative: false,
                 },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(depth_write_enabled),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
             })
@@ -913,7 +847,24 @@ impl WgpuRenderer {
             None,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
-            1,
+            false,
+            &shader_module,
+        );
+
+        let opaque_quads = create_pipeline(
+            "opaque_quads",
+            "vs_opaque_quad",
+            "fs_opaque_quad",
+            &layouts.globals,
+            &layouts.instances,
+            None,
+            wgpu::PrimitiveTopology::TriangleStrip,
+            &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            true,
             &shader_module,
         );
 
@@ -926,54 +877,20 @@ impl WgpuRenderer {
             None,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
-            1,
+            false,
             &shader_module,
         );
 
-        let path_rasterization = create_pipeline(
-            "path_rasterization",
-            "vs_path_rasterization",
-            "fs_path_rasterization",
+        let path_tiles = create_pipeline(
+            "path_tiles",
+            "vs_path_tile",
+            "fs_path_tile",
             &layouts.globals,
-            &layouts.instances,
+            &layouts.path_tiles,
             None,
-            wgpu::PrimitiveTopology::TriangleList,
-            &[Some(wgpu::ColorTargetState {
-                format: surface_format,
-                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            path_sample_count,
-            &shader_module,
-        );
-
-        let paths_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-        };
-
-        let paths = create_pipeline(
-            "paths",
-            "vs_path",
-            "fs_path",
-            &layouts.globals,
-            &layouts.instances,
-            Some(&layouts.texture),
             wgpu::PrimitiveTopology::TriangleStrip,
-            &[Some(wgpu::ColorTargetState {
-                format: surface_format,
-                blend: Some(paths_blend),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            1,
+            &[Some(color_target.clone())],
+            false,
             &shader_module,
         );
 
@@ -986,7 +903,7 @@ impl WgpuRenderer {
             None,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
-            1,
+            false,
             &shader_module,
         );
 
@@ -999,7 +916,7 @@ impl WgpuRenderer {
             Some(&layouts.texture),
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
-            1,
+            false,
             &shader_module,
         );
 
@@ -1030,7 +947,7 @@ impl WgpuRenderer {
                     blend: Some(subpixel_blend),
                     write_mask: wgpu::ColorWrites::COLOR,
                 })],
-                1,
+                false,
                 subpixel_module,
             ))
         } else {
@@ -1046,7 +963,7 @@ impl WgpuRenderer {
             Some(&layouts.texture),
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
-            1,
+            false,
             &shader_module,
         );
 
@@ -1059,156 +976,58 @@ impl WgpuRenderer {
             None,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target)],
-            1,
+            false,
             &shader_module,
         );
 
         WgpuPipelines {
             quads,
+            opaque_quads,
             shadows,
-            path_rasterization,
-            paths,
+            path_tiles,
             underlines,
             mono_sprites,
             subpixel_sprites,
             poly_sprites,
             surfaces,
+            premultiplied_alpha,
         }
     }
+}
 
-    fn create_path_intermediate(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        width: u32,
-        height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("path_intermediate"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (texture, view)
-    }
-
-    fn create_msaa_if_needed(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        width: u32,
-        height: u32,
-        sample_count: u32,
-    ) -> Option<(wgpu::Texture, wgpu::TextureView)> {
-        if sample_count <= 1 {
-            return None;
-        }
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("path_msaa"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Some((texture, view))
-    }
-
+impl WgpuRenderer {
+    /// Records the new drawable size and reconfigures the surface when one is present.
+    /// The size is kept even without GPU resources so that recovery restores it.
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         let width = size.width.0 as u32;
         let height = size.height.0 as u32;
 
-        if width != self.surface_config.width || height != self.surface_config.height {
-            let clamped_width = width.min(self.max_texture_size);
-            let clamped_height = height.min(self.max_texture_size);
-
-            if clamped_width != width || clamped_height != height {
-                warn!(
-                    "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
-                     Clamping to ({}, {}). Window content may not fill the entire window.",
-                    width, height, self.max_texture_size, clamped_width, clamped_height
-                );
-            }
-
-            self.surface_config.width = clamped_width.max(1);
-            self.surface_config.height = clamped_height.max(1);
-            let surface_config = self.surface_config.clone();
-
-            let Some(resources) = self.resources.as_mut() else {
-                return;
-            };
-
-            // Wait for any in-flight GPU work to complete before destroying textures
-            if let Err(e) = resources.device.poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            }) {
-                warn!("Failed to poll device during resize: {e:?}");
-            }
-
-            // Destroy old textures before allocating new ones to avoid GPU memory spikes
-            if let Some(ref texture) = resources.path_intermediate_texture {
-                texture.destroy();
-            }
-            if let Some(ref texture) = resources.path_msaa_texture {
-                texture.destroy();
-            }
-
-            resources
-                .surface
-                .configure(&resources.device, &surface_config);
-
-            // Invalidate intermediate textures - they will be lazily recreated
-            // in draw() after we confirm the surface is healthy. This avoids
-            // panics when the device/surface is in an invalid state during resize.
-            resources.invalidate_intermediate_textures();
-        }
-    }
-
-    fn ensure_intermediate_textures(&mut self) {
-        if self.resources().path_intermediate_texture.is_some() {
+        if width == self.surface_config.width && height == self.surface_config.height {
             return;
         }
 
-        let format = self.surface_config.format;
-        let width = self.surface_config.width;
-        let height = self.surface_config.height;
-        let path_sample_count = self.rendering_params.path_sample_count;
-        let resources = self.resources_mut();
+        let clamped_width = width.min(self.max_texture_size);
+        let clamped_height = height.min(self.max_texture_size);
+        if clamped_width != width || clamped_height != height {
+            warn!(
+                "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
+                 Clamping to ({}, {}). Window content may not fill the entire window.",
+                width, height, self.max_texture_size, clamped_width, clamped_height
+            );
+        }
+        self.surface_config.width = clamped_width.max(1);
+        self.surface_config.height = clamped_height.max(1);
 
-        let (t, v) = Self::create_path_intermediate(&resources.device, format, width, height);
-        resources.path_intermediate_texture = Some(t);
-        resources.path_intermediate_view = Some(v);
-
-        let (path_msaa_texture, path_msaa_view) = Self::create_msaa_if_needed(
-            &resources.device,
-            format,
-            width,
-            height,
-            path_sample_count,
-        )
-        .map(|(t, v)| (Some(t), Some(v)))
-        .unwrap_or((None, None));
-        resources.path_msaa_texture = path_msaa_texture;
-        resources.path_msaa_view = path_msaa_view;
+        if let RendererState::Ready { surface, core } = &self.state {
+            surface.configure(&core.resources.device, &self.surface_config);
+        }
     }
 
     pub fn set_subpixel_layout(&mut self, is_bgr: bool) {
         self.is_bgr = is_bgr;
+        if let Some(core) = self.core_mut() {
+            core.is_bgr = is_bgr;
+        }
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
@@ -1217,28 +1036,19 @@ impl WgpuRenderer {
         } else {
             self.opaque_alpha_mode
         };
+        if new_alpha_mode == self.surface_config.alpha_mode {
+            return;
+        }
+        self.surface_config.alpha_mode = new_alpha_mode;
+        let format = self.surface_config.format;
 
-        if new_alpha_mode != self.surface_config.alpha_mode {
-            self.surface_config.alpha_mode = new_alpha_mode;
-            let surface_config = self.surface_config.clone();
-            let path_sample_count = self.rendering_params.path_sample_count;
-            let dual_source_blending = self.dual_source_blending;
-            let uses_webgl_instance_data = self.uses_webgl_instance_data;
-            let Some(resources) = self.resources.as_mut() else {
-                return;
-            };
-            resources
-                .surface
-                .configure(&resources.device, &surface_config);
-            resources.pipelines = Self::create_pipelines(
-                &resources.device,
-                &resources.bind_group_layouts,
-                surface_config.format,
-                surface_config.alpha_mode,
-                path_sample_count,
-                dual_source_blending,
-                uses_webgl_instance_data,
-            );
+        let Some(core) = self.core_mut() else {
+            return;
+        };
+        core.rebuild_pipelines(format, new_alpha_mode);
+
+        if let RendererState::Ready { surface, core } = &self.state {
+            surface.configure(&core.resources.device, &self.surface_config);
         }
     }
 
@@ -1255,16 +1065,19 @@ impl WgpuRenderer {
     }
 
     pub fn supports_dual_source_blending(&self) -> bool {
-        self.dual_source_blending
+        self.core().is_some_and(|core| core.dual_source_blending)
     }
 
-    pub fn gpu_specs(&self) -> GpuSpecs {
-        GpuSpecs {
-            is_software_emulated: self.adapter_info.device_type == wgpu::DeviceType::Cpu,
-            device_name: self.adapter_info.name.clone(),
-            driver_name: self.adapter_info.driver.clone(),
-            driver_info: self.adapter_info.driver_info.clone(),
-        }
+    /// Returns `None` once GPU resources have been released by `destroy` or a pending
+    /// device recovery.
+    pub fn gpu_specs(&self) -> Option<GpuSpecs> {
+        let adapter_info = &self.core()?.adapter_info;
+        Some(GpuSpecs {
+            is_software_emulated: adapter_info.device_type == wgpu::DeviceType::Cpu,
+            device_name: adapter_info.name.clone(),
+            driver_name: adapter_info.driver.clone(),
+            driver_info: adapter_info.driver_info.clone(),
+        })
     }
 
     pub fn max_texture_size(&self) -> u32 {
@@ -1274,11 +1087,11 @@ impl WgpuRenderer {
     pub fn draw(&mut self, scene: &Scene) -> bool {
         #[cfg(target_family = "wasm")]
         if self.device_lost() {
-            if self.surface_configured {
+            if matches!(self.state, RendererState::Ready { .. }) {
                 log::error!(
                     "Browser graphics context was lost; rendering has stopped. Reload the page to recover."
                 );
-                self.surface_configured = false;
+                self.unconfigure_surface();
             }
             return false;
         }
@@ -1287,12 +1100,14 @@ impl WgpuRenderer {
         // Android background/rotation transitions).  Attempting to acquire
         // a texture from an unconfigured surface can block indefinitely on
         // some drivers (Adreno).
-        if !self.surface_configured {
+        let RendererState::Ready { surface, core } = &mut self.state else {
             return false;
-        }
+        };
 
-        let last_error = self.last_error.lock().unwrap().take();
-        if let Some(error) = last_error {
+        if let Some(error) = self.last_surface_error.take().or_else(|| {
+            self.device_errors
+                .observe_error(&mut self.observed_error_generation)
+        }) {
             self.failed_frame_count += 1;
             log::error!(
                 "GPU error during frame (failure {} of 10): {error}",
@@ -1303,9 +1118,6 @@ impl WgpuRenderer {
             if self.failed_frame_count > 10 {
                 panic!("Too many consecutive GPU errors. Last error: {error}");
             } else if self.failed_frame_count > 5 {
-                if let Some(res) = self.resources.as_mut() {
-                    res.invalidate_intermediate_textures();
-                }
                 self.atlas.clear();
                 self.needs_redraw = true;
                 self.failed_frame_count = 0;
@@ -1315,44 +1127,222 @@ impl WgpuRenderer {
             self.failed_frame_count = 0;
         }
 
-        self.atlas.before_frame();
-
-        let frame = match self.resources().surface.get_current_texture() {
+        let frame = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 // Textures must be destroyed before the surface can be reconfigured.
                 drop(frame);
-                let surface_config = self.surface_config.clone();
-                let resources = self.resources_mut();
-                resources
-                    .surface
-                    .configure(&resources.device, &surface_config);
+                surface.configure(&core.resources.device, &self.surface_config);
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                let surface_config = self.surface_config.clone();
-                let resources = self.resources_mut();
-                resources
-                    .surface
-                    .configure(&resources.device, &surface_config);
+                surface.configure(&core.resources.device, &self.surface_config);
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Validation => {
-                *self.last_error.lock().unwrap() =
-                    Some("Surface texture validation error".to_string());
+                self.last_surface_error = Some("Surface texture validation error".to_string());
                 return false;
             }
         };
 
-        // Now that we know the surface is healthy, ensure intermediate textures exist
-        self.ensure_intermediate_textures();
-
+        // The acquired texture is the authority on frame dimensions; the surface
+        // configuration is only a request.
+        let size = Size {
+            width: DevicePixels(frame.texture.width() as i32),
+            height: DevicePixels(frame.texture.height() as i32),
+        };
         let frame_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        if let Err(error) = core.render_frame(scene, &frame_view, size, wgpu::Color::TRANSPARENT) {
+            log::error!("{error:#}");
+            return false;
+        }
+
+        core.resources.queue.present(frame);
+        true
+    }
+}
+
+impl WgpuRendererCore {
+    fn new(
+        context: &WgpuContext,
+        atlas: Arc<WgpuAtlas>,
+        target_format: wgpu::TextureFormat,
+        alpha_mode: wgpu::CompositeAlphaMode,
+    ) -> Self {
+        let device = Arc::clone(&context.device);
+        let queue = Arc::clone(&context.queue);
+        let rendering_params = RenderingParameters::new();
+        let uses_webgl_instance_data = context.uses_webgl_instance_data();
+        let dual_source_blending =
+            context.supports_dual_source_blending() && !uses_webgl_instance_data;
+        let bind_group_layouts = Self::create_bind_group_layouts(&device, uses_webgl_instance_data);
+        let pipelines = Self::create_pipelines(
+            &device,
+            &bind_group_layouts,
+            target_format,
+            alpha_mode,
+            dual_source_blending,
+            uses_webgl_instance_data,
+        );
+        let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("atlas_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let uniform_alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
+        let globals_size = std::mem::size_of::<GlobalParams>() as u64;
+        let gamma_size = std::mem::size_of::<GammaParams>() as u64;
+        let gamma_offset = globals_size.next_multiple_of(uniform_alignment);
+        let globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("globals_buffer"),
+            size: gamma_offset + gamma_size,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let (
+            instance_data,
+            instance_data_capacity,
+            max_instance_data_size,
+            instance_data_alignment,
+        ) = if uses_webgl_instance_data {
+            let max_texture_dimension = device.limits().max_texture_dimension_2d;
+            let max_instance_data_size = (u64::from(max_texture_dimension).pow(2)
+                * INSTANCE_TEXTURE_TEXEL_SIZE)
+                .min(MAX_INSTANCE_BUFFER_SIZE);
+            let initial_capacity = (2 * 1024 * 1024).min(max_instance_data_size);
+            let (instance_data, capacity) =
+                Self::create_instance_texture(&device, initial_capacity, max_texture_dimension);
+            (
+                instance_data,
+                capacity,
+                max_instance_data_size,
+                INSTANCE_TEXTURE_TEXEL_SIZE,
+            )
+        } else {
+            let max_buffer_size = device
+                .limits()
+                .max_buffer_size
+                .min(device.limits().max_storage_buffer_binding_size)
+                .min(MAX_INSTANCE_BUFFER_SIZE);
+            let initial_capacity = (2 * 1024 * 1024).min(max_buffer_size);
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("instance_buffer"),
+                size: initial_capacity,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            (
+                InstanceData::Storage(buffer),
+                initial_capacity,
+                max_buffer_size,
+                device.limits().min_storage_buffer_offset_alignment as u64,
+            )
+        };
+        let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("globals_bind_group"),
+            layout: &bind_group_layouts.globals,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &globals_buffer,
+                        offset: 0,
+                        size: NonZeroU64::new(globals_size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &globals_buffer,
+                        offset: gamma_offset,
+                        size: NonZeroU64::new(gamma_size),
+                    }),
+                },
+            ],
+        });
+        let max_texture_size = device.limits().max_texture_dimension_2d;
+
+        Self {
+            resources: WgpuResources {
+                device,
+                queue,
+                pipelines,
+                bind_group_layouts,
+                atlas_sampler,
+                atlas_texture_bind_groups: FxHashMap::default(),
+                globals_buffer,
+                globals_bind_group,
+                instance_data,
+            },
+            atlas,
+            gamma_offset,
+            instance_data_capacity,
+            max_instance_data_size,
+            instance_data_alignment,
+            uses_webgl_instance_data,
+            rendering_params,
+            is_bgr: false,
+            dual_source_blending,
+            transient_attachments: context.supports_transient_attachments(),
+            adapter_info: context.adapter.get_info(),
+            depth_texture: None,
+            #[cfg(all(
+                not(target_family = "wasm"),
+                any(test, feature = "bench-support", feature = "test-support")
+            ))]
+            target_format,
+            max_texture_size,
+        }
+    }
+
+    fn resources(&self) -> &WgpuResources {
+        &self.resources
+    }
+
+    fn rebuild_pipelines(
+        &mut self,
+        surface_format: wgpu::TextureFormat,
+        alpha_mode: wgpu::CompositeAlphaMode,
+    ) {
+        self.resources.pipelines = Self::create_pipelines(
+            &self.resources.device,
+            &self.resources.bind_group_layouts,
+            surface_format,
+            alpha_mode,
+            self.dual_source_blending,
+            self.uses_webgl_instance_data,
+        );
+    }
+
+    fn resources_mut(&mut self) -> &mut WgpuResources {
+        &mut self.resources
+    }
+
+    fn render_frame(
+        &mut self,
+        scene: &Scene,
+        target_view: &wgpu::TextureView,
+        size: Size<DevicePixels>,
+        clear_color: wgpu::Color,
+    ) -> Result<wgpu::SubmissionIndex> {
+        anyhow::ensure!(
+            size.width.0 > 0 && size.height.0 > 0,
+            "invalid render target size: {size:?}"
+        );
+        anyhow::ensure!(
+            size.width.0 as u32 <= self.max_texture_size
+                && size.height.0 as u32 <= self.max_texture_size,
+            "render target size {size:?} exceeds maximum texture dimension {}",
+            self.max_texture_size
+        );
+
+        self.atlas.before_frame();
 
         let gamma_params = GammaParams {
             gamma_ratios: self.rendering_params.gamma_ratios,
@@ -1361,57 +1351,26 @@ impl WgpuRenderer {
             is_bgr: self.is_bgr as u32,
             _pad: 0,
         };
+        self.resources.queue.write_buffer(
+            &self.resources.globals_buffer,
+            self.gamma_offset,
+            bytemuck::bytes_of(&gamma_params),
+        );
 
-        let globals = GlobalParams {
-            viewport_size: [
-                self.surface_config.width as f32,
-                self.surface_config.height as f32,
-            ],
-            premultiplied_alpha: if self.surface_config.alpha_mode
-                == wgpu::CompositeAlphaMode::PreMultiplied
-            {
-                1
-            } else {
-                0
-            },
-            pad: 0,
-        };
-
-        let path_globals = GlobalParams {
-            premultiplied_alpha: 0,
-            ..globals
-        };
-
-        {
-            let resources = self.resources();
-            resources.queue.write_buffer(
-                &resources.globals_buffer,
-                0,
-                bytemuck::bytes_of(&globals),
-            );
-            resources.queue.write_buffer(
-                &resources.globals_buffer,
-                self.path_globals_offset,
-                bytemuck::bytes_of(&path_globals),
-            );
-            resources.queue.write_buffer(
-                &resources.globals_buffer,
-                self.gamma_offset,
-                bytemuck::bytes_of(&gamma_params),
-            );
-        }
-
-        if let Err(error) = self.record_frame(scene, &frame_view) {
-            log::error!("{error:#}");
-            self.resources().queue.submit(std::iter::empty());
-            return false;
-        }
-
-        frame.present();
-        true
+        self.record_frame(scene, target_view, size, clear_color)
+            .inspect_err(|_| {
+                // Queue writes are staged before encoding; flush them even if the frame fails.
+                self.resources.queue.submit(std::iter::empty());
+            })
     }
 
-    fn record_frame(&mut self, scene: &Scene, frame_view: &wgpu::TextureView) -> Result<()> {
+    fn record_frame(
+        &mut self,
+        scene: &Scene,
+        frame_view: &wgpu::TextureView,
+        size: Size<DevicePixels>,
+        clear_color: wgpu::Color,
+    ) -> Result<wgpu::SubmissionIndex> {
         let mut instance_offset = 0;
         let instance_bindings = self
             .write_instances(scene, &mut instance_offset)
@@ -1427,7 +1386,32 @@ impl WgpuRenderer {
                     scene.polychrome_sprites.len(),
                 )
             })?;
+        let depth_scale = quad_depth_scale(scene.quads.len());
+        let globals = GlobalParams {
+            viewport_size: [size.width.0 as f32, size.height.0 as f32],
+            path_paint_base: instance_bindings.path_tiles.paint_base,
+            path_curve_base: instance_bindings.path_tiles.curve_base,
+            depth_scale,
+            quad_count: scene.quads.len() as u32,
+            premultiplied_alpha: self.resources().pipelines.premultiplied_alpha as u32,
+            pad: 0,
+        };
+        self.resources().queue.write_buffer(
+            &self.resources().globals_buffer,
+            0,
+            bytemuck::bytes_of(&globals),
+        );
         self.prepare_texture_bind_groups(scene);
+        self.ensure_depth_texture(size);
+        let depth_view = &self
+            .depth_texture
+            .as_ref()
+            .context("depth texture missing")?
+            .view;
+        // Quads are written first, so their instance indices are their
+        // indices in `scene.quads` on both transports, which the quad depths
+        // rely on.
+        debug_assert_eq!(instance_bindings.quads.first_instance, 0);
 
         let mut encoder =
             self.resources()
@@ -1443,23 +1427,62 @@ impl WgpuRenderer {
                     view: frame_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
                 ..Default::default()
             });
+            pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
 
+            self.draw_instances(
+                &instance_bindings.quads,
+                &self.resources().pipelines.opaque_quads,
+                instance_range(0..scene.quads.len()),
+                &mut pass,
+            );
+
+            let viewport_width = size.width.0 as f32;
+            let viewport_height = size.height.0 as f32;
+            let mut quad_cursor: u32 = 0;
+            let mut path_tile_cursor = 0;
             for batch in scene.batches() {
+                // Quad shaders assign each quad its own depth.
+                // In every other batch type, the depth is fixed to the position of the quad cursor.
+                let (minimum_depth, maximum_depth) = if matches!(&batch, PrimitiveBatch::Quads(_)) {
+                    (0.0, 1.0)
+                } else {
+                    let depth = quad_depth(quad_cursor, depth_scale);
+                    (depth, depth)
+                };
+                pass.set_viewport(
+                    0.0,
+                    0.0,
+                    viewport_width,
+                    viewport_height,
+                    minimum_depth,
+                    maximum_depth,
+                );
+
                 match batch {
-                    PrimitiveBatch::Quads(range) => self.draw_instances(
-                        &instance_bindings.quads,
-                        &self.resources().pipelines.quads,
-                        instance_range(range),
-                        &mut pass,
-                    ),
+                    PrimitiveBatch::Quads(range) => {
+                        quad_cursor += range.len() as u32;
+                        self.draw_instances(
+                            &instance_bindings.quads,
+                            &self.resources().pipelines.quads,
+                            instance_range(range),
+                            &mut pass,
+                        )
+                    }
                     PrimitiveBatch::Shadows(range) => self.draw_instances(
                         &instance_bindings.shadows,
                         &self.resources().pipelines.shadows,
@@ -1467,40 +1490,17 @@ impl WgpuRenderer {
                         &mut pass,
                     ),
                     PrimitiveBatch::Paths(range) => {
-                        let paths = &scene.paths[range];
-                        if paths.is_empty() {
-                            continue;
-                        }
-
-                        drop(pass);
-                        let rasterized = self.draw_paths_to_intermediate(
-                            &mut encoder,
-                            paths,
-                            &mut instance_offset,
-                        )?;
-
-                        pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("main_pass_continued"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: frame_view,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Load,
-                                    store: wgpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            ..Default::default()
-                        });
-
-                        if rasterized {
-                            self.draw_paths_from_intermediate(
-                                paths,
-                                &mut instance_offset,
-                                &mut pass,
-                            )?;
-                        }
+                        let tiles_start = path_tile_cursor;
+                        path_tile_cursor += scene.paths[range]
+                            .iter()
+                            .map(PaintedPath::tile_count)
+                            .sum::<usize>();
+                        self.draw_instances(
+                            &instance_bindings.path_tiles.tiles,
+                            &self.resources().pipelines.path_tiles,
+                            instance_range(tiles_start..path_tile_cursor),
+                            &mut pass,
+                        )
                     }
                     PrimitiveBatch::Underlines(range) => self.draw_instances(
                         &instance_bindings.underlines,
@@ -1547,10 +1547,46 @@ impl WgpuRenderer {
             }
         }
 
-        self.resources()
+        let submission = self
+            .resources()
             .queue
             .submit(std::iter::once(encoder.finish()));
-        Ok(())
+        Ok(submission)
+    }
+
+    fn ensure_depth_texture(&mut self, size: Size<DevicePixels>) {
+        let width = size.width.0 as u32;
+        let height = size.height.0 as u32;
+        if let Some(depth_texture) = &self.depth_texture
+            && depth_texture.texture.width() == width
+            && depth_texture.texture.height() == height
+        {
+            return;
+        }
+        let usage = if self.transient_attachments {
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TRANSIENT_ATTACHMENT
+        } else {
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+        };
+        let texture = self
+            .resources()
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("depth_texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: DEPTH_FORMAT,
+                usage,
+                view_formats: &[],
+            });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.depth_texture = Some(DepthTexture { texture, view });
     }
 
     fn write_instances(
@@ -1569,6 +1605,7 @@ impl WgpuRenderer {
                 instance_offset,
                 &scene.shadows,
             )?,
+            path_tiles: self.write_path_tiles(scene, instance_offset)?,
             underlines: self.write_instance_binding(
                 "underlines_bind_group",
                 instance_offset,
@@ -1673,7 +1710,6 @@ impl WgpuRenderer {
             return;
         }
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
         pass.set_bind_group(1, &instances.bind_group, &[]);
         pass.draw(
             0..4,
@@ -1699,7 +1735,6 @@ impl WgpuRenderer {
             return Ok(());
         };
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, &sprite_instances.bind_group, &[]);
         pass.set_bind_group(2, &texture.bind_group, &[]);
         pass.draw(
@@ -1719,132 +1754,13 @@ impl WgpuRenderer {
         }
     }
 
-    fn draw_paths_from_intermediate(
-        &mut self,
-        paths: &[Path<ScaledPixels>],
-        instance_offset: &mut u64,
-        pass: &mut wgpu::RenderPass<'_>,
-    ) -> Result<()> {
-        let first_path = &paths[0];
-        let sprites: Vec<PathSprite> = if paths.last().map(|p| &p.order) == Some(&first_path.order)
-        {
-            paths
-                .iter()
-                .map(|p| PathSprite {
-                    bounds: p.clipped_bounds(),
-                })
-                .collect()
-        } else {
-            let mut bounds = first_path.clipped_bounds();
-            for path in paths.iter().skip(1) {
-                bounds = bounds.union(&path.clipped_bounds());
-            }
-            vec![PathSprite { bounds }]
-        };
-
-        let Some(path_intermediate_view) = self.resources().path_intermediate_view.clone() else {
-            return Ok(());
-        };
-        let instances =
-            self.write_instance_binding("path_sprites_bind_group", instance_offset, &sprites)?;
-        let texture = self.create_texture_bind_group(
-            "path_intermediate_texture_bind_group",
-            &path_intermediate_view,
-        );
-        let resources = self.resources();
-        pass.set_pipeline(&resources.pipelines.paths);
-        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
-        pass.set_bind_group(1, &instances.bind_group, &[]);
-        pass.set_bind_group(2, &texture, &[]);
-        pass.draw(
-            0..4,
-            instances.first_instance..instances.first_instance + sprites.len() as u32,
-        );
-        Ok(())
-    }
-
-    fn draw_paths_to_intermediate(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        paths: &[Path<ScaledPixels>],
-        instance_offset: &mut u64,
-    ) -> Result<bool> {
-        let mut vertices = Vec::new();
-        for path in paths {
-            let bounds = path.clipped_bounds();
-            vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
-                xy_position: v.xy_position,
-                st_position: v.st_position,
-                color: path.color,
-                bounds,
-            }));
-        }
-
-        if vertices.is_empty() {
-            return Ok(false);
-        }
-
-        let vertex_binding = self.write_instance_binding(
-            "path_rasterization_bind_group",
-            instance_offset,
-            &vertices,
-        )?;
-
-        let resources = self.resources();
-        let Some(path_intermediate_view) = resources.path_intermediate_view.as_ref() else {
-            return Ok(false);
-        };
-
-        let (target_view, resolve_target) = if let Some(ref msaa_view) = resources.path_msaa_view {
-            (msaa_view, Some(path_intermediate_view))
-        } else {
-            (path_intermediate_view, None)
-        };
-
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("path_rasterization_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                ..Default::default()
-            });
-
-            pass.set_pipeline(&resources.pipelines.path_rasterization);
-            pass.set_bind_group(0, &resources.path_globals_bind_group, &[]);
-            pass.set_bind_group(1, &vertex_binding.bind_group, &[]);
-            // The path rasterization shader loads records by vertex index
-            // rather than instance index, so the allocation's base shifts the
-            // vertex range here.
-            pass.draw(
-                vertex_binding.first_instance
-                    ..vertex_binding.first_instance + vertices.len() as u32,
-                0..1,
-            );
-        }
-
-        Ok(true)
-    }
-
-    fn write_instance_binding<T>(
-        &mut self,
-        label: &str,
-        instance_offset: &mut u64,
-        instances: &[T],
-    ) -> Result<InstanceBinding> {
-        let data = unsafe { Self::instance_bytes(instances) };
+    /// The alignment of an allocation of `byte_len` bytes of `stride`-sized
+    /// records, and the bytes it takes up from that aligned offset.
+    fn instance_allocation_layout(&self, stride: u64, byte_len: u64) -> (u64, u64) {
         // wgpu rejects zero-sized bindings, so empty primitive arrays still
         // reserve the 16-byte minimum.
-        let size = (data.len() as u64).max(16);
-        let stride = (std::mem::size_of::<T>() as u64).max(1);
-        let (alignment, allocation_size) = if self.uses_webgl_instance_data {
+        let size = byte_len.max(16);
+        if self.uses_webgl_instance_data {
             // The texture transport has no binding offset: the shader indexes
             // the instance texture absolutely, so each allocation must start on
             // a whole instance (a stride multiple) and a whole texel, and must
@@ -1856,7 +1772,36 @@ impl WgpuRenderer {
             )
         } else {
             (self.instance_data_alignment.max(1), size)
-        };
+        }
+    }
+
+    /// The most space `instances` can take up, including alignment padding.
+    fn instance_allocation_bound<T>(&self, instances: &[T]) -> u64 {
+        let stride = (std::mem::size_of::<T>() as u64).max(1);
+        let (alignment, allocation_size) =
+            self.instance_allocation_layout(stride, std::mem::size_of_val(instances) as u64);
+        alignment + allocation_size
+    }
+
+    /// Grows the instance data up front if `size` more bytes won't fit, so the
+    /// allocations that follow land in the same buffer or texture.
+    fn reserve_instance_data(&mut self, instance_offset: &mut u64, size: u64) -> Result<()> {
+        if *instance_offset + size > self.instance_data_capacity {
+            self.grow_instance_data(size)?;
+            *instance_offset = 0;
+        }
+        Ok(())
+    }
+
+    fn write_instance_data<T>(
+        &mut self,
+        instance_offset: &mut u64,
+        instances: &[T],
+    ) -> Result<InstanceAllocation> {
+        let data = unsafe { Self::instance_bytes(instances) };
+        let stride = (std::mem::size_of::<T>() as u64).max(1);
+        let (alignment, allocation_size) =
+            self.instance_allocation_layout(stride, data.len() as u64);
         let mut offset = (*instance_offset).next_multiple_of(alignment);
         if offset + allocation_size > self.instance_data_capacity {
             self.grow_instance_data(allocation_size)?;
@@ -1879,6 +1824,35 @@ impl WgpuRenderer {
                 }
             }
         }
+        Ok(InstanceAllocation {
+            offset,
+            size: (data.len() as u64).max(16),
+            first_instance,
+        })
+    }
+
+    fn instance_binding_resource(
+        &self,
+        allocation: &InstanceAllocation,
+    ) -> wgpu::BindingResource<'_> {
+        match &self.resources().instance_data {
+            InstanceData::Storage(buffer) => wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: allocation.offset,
+                size: NonZeroU64::new(allocation.size),
+            }),
+            InstanceData::Texture { view, .. } => wgpu::BindingResource::TextureView(view),
+        }
+    }
+
+    fn write_instance_binding<T>(
+        &mut self,
+        label: &str,
+        instance_offset: &mut u64,
+        instances: &[T],
+    ) -> Result<InstanceBinding> {
+        let allocation = self.write_instance_data(instance_offset, instances)?;
+        let resources = self.resources();
         let bind_group = resources
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1886,23 +1860,79 @@ impl WgpuRenderer {
                 layout: &resources.bind_group_layouts.instances,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: match &resources.instance_data {
-                        InstanceData::Storage(buffer) => {
-                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer,
-                                offset,
-                                size: NonZeroU64::new(size),
-                            })
-                        }
-                        InstanceData::Texture { view, .. } => {
-                            wgpu::BindingResource::TextureView(view)
-                        }
-                    },
+                    resource: self.instance_binding_resource(&allocation),
                 }],
             });
         Ok(InstanceBinding {
             bind_group,
-            first_instance,
+            first_instance: allocation.first_instance,
+        })
+    }
+
+    fn write_path_tiles(
+        &mut self,
+        scene: &Scene,
+        instance_offset: &mut u64,
+    ) -> Result<PathTileBinding> {
+        let mut paint_data = Vec::with_capacity(scene.paths.len());
+        let mut curve_data = Vec::new();
+        let mut tile_data = Vec::new();
+        for path in &scene.paths {
+            path.append_to(&mut paint_data, &mut curve_data, &mut tile_data);
+        }
+
+        // All three arrays are bound together, so they must not be split by a
+        // grow partway through.
+        let reserved = self.instance_allocation_bound(&paint_data)
+            + self.instance_allocation_bound(&curve_data)
+            + self.instance_allocation_bound(&tile_data);
+        self.reserve_instance_data(instance_offset, reserved)?;
+
+        let paints = self.write_instance_data(instance_offset, &paint_data)?;
+        let curves = self.write_instance_data(instance_offset, &curve_data)?;
+        let tiles = self.write_instance_data(instance_offset, &tile_data)?;
+
+        let resources = self.resources();
+        let bind_group = if self.uses_webgl_instance_data {
+            resources
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("path_tiles_bind_group"),
+                    layout: &resources.bind_group_layouts.path_tiles,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.instance_binding_resource(&tiles),
+                    }],
+                })
+        } else {
+            resources
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("path_tiles_bind_group"),
+                    layout: &resources.bind_group_layouts.path_tiles,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: self.instance_binding_resource(&tiles),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self.instance_binding_resource(&curves),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.instance_binding_resource(&paints),
+                        },
+                    ],
+                })
+        };
+        Ok(PathTileBinding {
+            tiles: InstanceBinding {
+                bind_group,
+                first_instance: tiles.first_instance,
+            },
+            paint_base: paints.first_instance,
+            curve_base: curves.first_instance,
         })
     }
 
@@ -2032,7 +2062,9 @@ impl WgpuRenderer {
         }
         Ok(())
     }
+}
 
+impl WgpuRenderer {
     /// Mark the surface as unconfigured so rendering is skipped until a new
     /// surface is provided via [`replace_surface`](Self::replace_surface).
     ///
@@ -2041,11 +2073,13 @@ impl WgpuRenderer {
     /// (e.g. Android `TerminateWindow`) but you intend to re-create the
     /// surface later without losing cached atlas textures.
     pub fn unconfigure_surface(&mut self) {
-        self.surface_configured = false;
-        // Drop intermediate textures since they reference the old surface size.
-        if let Some(res) = self.resources.as_mut() {
-            res.invalidate_intermediate_textures();
-        }
+        self.state = match std::mem::replace(&mut self.state, RendererState::Released) {
+            RendererState::Ready { core, surface } => {
+                drop(surface);
+                RendererState::Unconfigured { core }
+            }
+            state @ (RendererState::Unconfigured { .. } | RendererState::Released) => state,
+        };
     }
 
     /// Replace the wgpu surface with a new one (e.g. after Android destroys
@@ -2077,6 +2111,7 @@ impl WgpuRenderer {
         } else {
             self.opaque_alpha_mode
         };
+        let alpha_mode_changed = alpha_mode != self.surface_config.alpha_mode;
 
         self.surface_config.width = width;
         self.surface_config.height = height;
@@ -2085,19 +2120,24 @@ impl WgpuRenderer {
             self.surface_config.present_mode = mode;
         }
 
-        {
-            let res = self
-                .resources
-                .as_mut()
-                .expect("GPU resources not available");
-            surface.configure(&res.device, &self.surface_config);
-            res.surface = surface;
-
-            // Invalidate intermediate textures — they'll be recreated lazily.
-            res.invalidate_intermediate_textures();
+        let mut core = match std::mem::replace(&mut self.state, RendererState::Released) {
+            RendererState::Ready {
+                core,
+                surface: old_surface,
+            } => {
+                drop(old_surface);
+                core
+            }
+            RendererState::Unconfigured { core } => core,
+            RendererState::Released => {
+                anyhow::bail!("Cannot replace the surface: GPU resources have been released")
+            }
+        };
+        if alpha_mode_changed {
+            core.rebuild_pipelines(self.surface_config.format, alpha_mode);
         }
-
-        self.surface_configured = true;
+        surface.configure(&core.resources.device, &self.surface_config);
+        self.state = RendererState::Ready { surface, core };
 
         Ok(())
     }
@@ -2105,12 +2145,12 @@ impl WgpuRenderer {
     pub fn destroy(&mut self) {
         // Release surface-bound GPU resources eagerly so the underlying native
         // window can be destroyed before the renderer itself is dropped.
-        self.resources.take();
+        self.state = RendererState::Released;
     }
 
     /// Returns true if the GPU device was lost and recovery is needed.
     pub fn device_lost(&self) -> bool {
-        self.device_lost.load(std::sync::atomic::Ordering::SeqCst)
+        self.device_errors.device_lost()
     }
 
     /// Returns true if a redraw is needed because GPU state was cleared.
@@ -2143,31 +2183,6 @@ impl WgpuRenderer {
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
 
-        let surface = if needs_new_context {
-            log::warn!("GPU device lost, recreating context...");
-
-            // Drop old resources to release Arc<Device>/Arc<Queue> and GPU resources
-            self.resources = None;
-            *gpu_context.borrow_mut() = None;
-
-            // Wait briefly for the GPU driver to stabilize, then try to
-            // recreate the context without software renderers. If this fails
-            // the caller should request another frame and retry — the real GPU
-            // may need more time to come back (e.g. after suspend/resume).
-            std::thread::sleep(std::time::Duration::from_millis(350));
-
-            let instance = WgpuContext::instance(Box::new(window.clone()));
-            let surface = create_surface(&instance, window_handle.as_raw())?;
-            let new_context =
-                WgpuContext::new_rejecting_software(instance, &surface, self.compositor_gpu)?;
-            *gpu_context.borrow_mut() = Some(new_context);
-            surface
-        } else {
-            let ctx_ref = gpu_context.borrow();
-            let instance = &ctx_ref.as_ref().unwrap().instance;
-            create_surface(instance, window_handle.as_raw())?
-        };
-
         let config = WgpuSurfaceConfig {
             size: gpui::Size {
                 width: gpui::DevicePixels(self.surface_config.width as i32),
@@ -2176,24 +2191,322 @@ impl WgpuRenderer {
             transparent: self.surface_config.alpha_mode != wgpu::CompositeAlphaMode::Opaque,
             preferred_present_mode: Some(self.surface_config.present_mode),
         };
+
+        let surface = if needs_new_context {
+            log::warn!("GPU device lost, recreating context...");
+
+            // Drop old resources to release Arc<Device>/Arc<Queue> and GPU resources
+            self.state = RendererState::Released;
+            *gpu_context.borrow_mut() = None;
+
+            // Wait briefly for the GPU driver to stabilize, then try to
+            // recreate the context without software renderers. If this fails
+            // the caller should request another frame and retry — the real GPU
+            // may need more time to come back (e.g. after suspend/resume).
+            std::thread::sleep(std::time::Duration::from_millis(350));
+
+            let instance = WgpuContext::instance(Some(Box::new(window.clone())));
+            let surface = create_surface(&instance, window_handle.as_raw())?;
+            let new_context = WgpuContext::new_rejecting_software(
+                instance,
+                &surface,
+                &config,
+                self.compositor_gpu,
+            )?;
+            *gpu_context.borrow_mut() = Some(new_context);
+            surface
+        } else {
+            let ctx_ref = gpu_context.borrow();
+            let instance = &ctx_ref.as_ref().unwrap().instance;
+            create_surface(instance, window_handle.as_raw())?
+        };
+
         let gpu_context = Rc::clone(gpu_context);
         let ctx_ref = gpu_context.borrow();
         let context = ctx_ref.as_ref().expect("context should exist");
 
-        self.resources = None;
+        self.state = RendererState::Released;
         self.atlas.handle_device_lost(context);
 
+        let is_bgr = self.is_bgr;
         *self = Self::new_internal(
             Some(gpu_context.clone()),
             context,
             surface,
             config,
+            needs_new_context,
             self.compositor_gpu,
             self.atlas.clone(),
         )?;
+        self.set_subpixel_layout(is_bgr);
 
         log::info!("GPU recovery complete");
         Ok(())
+    }
+}
+
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+struct HeadlessRenderTarget {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+}
+
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+impl HeadlessRenderTarget {
+    fn size(&self) -> Size<DevicePixels> {
+        Size {
+            width: DevicePixels(self.texture.width() as i32),
+            height: DevicePixels(self.texture.height() as i32),
+        }
+    }
+}
+
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+pub struct WgpuHeadlessRenderer {
+    context: WgpuContext,
+    core: WgpuRendererCore,
+    render_target: Option<HeadlessRenderTarget>,
+    observed_error_generation: u64,
+}
+
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+impl WgpuHeadlessRenderer {
+    pub fn new() -> anyhow::Result<Self> {
+        let (context, target_format) = WgpuContext::new_headless()?;
+        // The device may be shared with earlier renderers; observe only errors raised from
+        // here on, including any while this renderer builds its pipelines.
+        let observed_error_generation = context.errors().current_generation();
+        let atlas = Arc::new(WgpuAtlas::from_context(&context));
+        let core = WgpuRendererCore::new(
+            &context,
+            atlas,
+            target_format,
+            wgpu::CompositeAlphaMode::Opaque,
+        );
+
+        Ok(Self {
+            context,
+            core,
+            render_target: None,
+            observed_error_generation,
+        })
+    }
+
+    fn ensure_render_target(&mut self, size: Size<DevicePixels>) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            size.width.0 > 0 && size.height.0 > 0,
+            "invalid headless render target size: {size:?}"
+        );
+        anyhow::ensure!(
+            size.width.0 as u32 <= self.core.max_texture_size
+                && size.height.0 as u32 <= self.core.max_texture_size,
+            "headless render target size {size:?} exceeds maximum texture dimension {}",
+            self.core.max_texture_size
+        );
+        if self
+            .render_target
+            .as_ref()
+            .is_some_and(|target| target.size() == size)
+        {
+            return Ok(());
+        }
+
+        let texture = self
+            .core
+            .resources
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("headless_render_target"),
+                size: wgpu::Extent3d {
+                    width: size.width.0 as u32,
+                    height: size.height.0 as u32,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.core.target_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.render_target = Some(HeadlessRenderTarget { texture, view });
+        Ok(())
+    }
+
+    fn check_gpu_errors(&mut self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.context.device_lost(),
+            "GPU device was lost during headless rendering"
+        );
+        if let Some(error) = self
+            .context
+            .errors()
+            .observe_error(&mut self.observed_error_generation)
+        {
+            anyhow::bail!("GPU error during headless rendering: {error}");
+        }
+        Ok(())
+    }
+
+    fn render(&mut self, scene: &Scene, size: Size<DevicePixels>) -> anyhow::Result<()> {
+        self.check_gpu_errors()?;
+        self.ensure_render_target(size)?;
+        let view = self
+            .render_target
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
+            .view
+            .clone();
+        self.core
+            .render_frame(scene, &view, size, wgpu::Color::BLACK)?;
+        Ok(())
+    }
+
+    /// Copies the current render target back to the CPU. Dimensions come from the
+    /// target texture itself, so the copy can never disagree with what was rendered.
+    fn read_image(&mut self) -> anyhow::Result<image::RgbaImage> {
+        let target = self
+            .render_target
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?;
+        let width = target.texture.width();
+        let height = target.texture.height();
+        let bytes_per_row = width
+            .checked_mul(4)
+            .ok_or_else(|| anyhow::anyhow!("Headless render target row size overflowed"))?;
+        let padded_bytes_per_row = bytes_per_row
+            .checked_next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            .ok_or_else(|| anyhow::anyhow!("Headless padded row size overflowed"))?;
+        let buffer_size = u64::from(padded_bytes_per_row)
+            .checked_mul(u64::from(height))
+            .ok_or_else(|| anyhow::anyhow!("Headless readback buffer size overflowed"))?;
+        anyhow::ensure!(
+            buffer_size <= self.core.resources.device.limits().max_buffer_size,
+            "Headless readback buffer size {buffer_size} exceeds maximum buffer size {}",
+            self.core.resources.device.limits().max_buffer_size
+        );
+        let readback_buffer = self
+            .core
+            .resources
+            .device
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("headless_readback_buffer"),
+                size: buffer_size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder =
+            self.core
+                .resources
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("headless_readback_encoder"),
+                });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let submission = self
+            .core
+            .resources
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        readback_buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                if sender.send(result).is_err() {
+                    log::error!("Headless readback receiver was dropped before mapping completed");
+                }
+            });
+        self.core
+            .resources
+            .device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(std::time::Duration::from_secs(30)),
+            })
+            .map_err(|error| anyhow::anyhow!("Failed to wait for headless rendering: {error}"))?;
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .map_err(|error| anyhow::anyhow!("Failed to receive headless mapping result: {error}"))?
+            .map_err(|error| anyhow::anyhow!("Failed to map headless readback buffer: {error}"))?;
+        self.check_gpu_errors()?;
+
+        let mapped_data = readback_buffer.slice(..).get_mapped_range()?;
+        let pixel_capacity = usize::try_from(u64::from(bytes_per_row) * u64::from(height))
+            .map_err(|_| anyhow::anyhow!("Headless image size exceeds addressable memory"))?;
+        let mut pixels = Vec::with_capacity(pixel_capacity);
+        for row in mapped_data
+            .chunks_exact(padded_bytes_per_row as usize)
+            .take(height as usize)
+        {
+            pixels.extend_from_slice(&row[..bytes_per_row as usize]);
+        }
+        drop(mapped_data);
+        readback_buffer.unmap();
+
+        if self.core.target_format == wgpu::TextureFormat::Bgra8Unorm {
+            for pixel in pixels.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
+        }
+
+        image::RgbaImage::from_raw(width, height, pixels)
+            .ok_or_else(|| anyhow::anyhow!("Failed to create image from headless pixel data"))
+    }
+}
+
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
+    fn render_scene_to_image(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+    ) -> anyhow::Result<image::RgbaImage> {
+        self.render(scene, size)?;
+        self.read_image()
+    }
+
+    fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> anyhow::Result<()> {
+        self.render(scene, size)
+    }
+
+    fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
+        self.core.atlas.clone()
     }
 }
 
@@ -2218,21 +2531,14 @@ fn create_surface(
 }
 
 struct RenderingParameters {
-    path_sample_count: u32,
     gamma_ratios: [f32; 4],
     grayscale_enhanced_contrast: f32,
     subpixel_enhanced_contrast: f32,
 }
 
 impl RenderingParameters {
-    fn new(adapter: &wgpu::Adapter, surface_format: wgpu::TextureFormat) -> Self {
+    fn new() -> Self {
         use std::env;
-
-        let format_features = adapter.get_texture_format_features(surface_format);
-        let path_sample_count = [4, 2, 1]
-            .into_iter()
-            .find(|&n| format_features.flags.sample_count_supported(n))
-            .unwrap_or(1);
 
         let gamma = env::var("ZED_FONTS_GAMMA")
             .ok()
@@ -2254,7 +2560,6 @@ impl RenderingParameters {
             .max(0.0);
 
         Self {
-            path_sample_count,
             gamma_ratios,
             grayscale_enhanced_contrast,
             subpixel_enhanced_contrast,
@@ -2266,10 +2571,162 @@ impl RenderingParameters {
 mod tests {
     use super::*;
     use gpui::{
-        BorderStyle, ColorSpace, ContentMask, Corners, Edges, Hsla, MonochromeSprite,
-        PolychromeSprite, Quad, Shadow, SubpixelSprite, Underline, linear_color_stop,
-        linear_gradient,
+        BorderStyle, ColorSpace, ContentMask, Corners, Edges, Hsla, MonochromeSprite, PathCurve,
+        PathPaint, PathTile, Point, PolychromeSprite, Quad, Shadow, Size, SubpixelSprite,
+        Underline, linear_color_stop, linear_gradient,
     };
+    #[cfg(target_os = "linux")]
+    use gpui::{DevicePixels, PlatformHeadlessRenderer, Scene};
+
+    #[cfg(target_os = "linux")]
+    fn device_size(width: i32, height: i32) -> Size<DevicePixels> {
+        Size {
+            width: DevicePixels(width),
+            height: DevicePixels(height),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn solid_quad(x: f32, y: f32, width: f32, height: f32, color: Hsla) -> Quad {
+        let bounds = Bounds {
+            origin: Point {
+                x: x.into(),
+                y: y.into(),
+            },
+            size: Size {
+                width: width.into(),
+                height: height.into(),
+            },
+        };
+        Quad {
+            order: 0,
+            border_style: BorderStyle::Solid,
+            bounds,
+            content_mask: ContentMask { bounds },
+            background: color.into(),
+            border_color: color,
+            corner_radii: Corners::default(),
+            border_widths: Edges::default(),
+        }
+    }
+
+    /// Channels are compared with a small tolerance so the assertions hold across
+    /// drivers without pinning exact rasterizer output.
+    #[cfg(target_os = "linux")]
+    fn assert_pixel(image: &image::RgbaImage, x: u32, y: u32, expected: [u8; 4]) {
+        let actual = image.get_pixel(x, y).0;
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| actual.abs_diff(expected) <= 3),
+            "pixel ({x}, {y}) was {actual:?}, expected {expected:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    const RED: [u8; 4] = [255, 0, 0, 255];
+    #[cfg(target_os = "linux")]
+    const BLUE: [u8; 4] = [0, 0, 255, 255];
+    #[cfg(target_os = "linux")]
+    const BLACK: [u8; 4] = [0, 0, 0, 255];
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_draws_quads_with_distinct_colors() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let mut scene = Scene::default();
+        scene.insert_primitive(solid_quad(0.0, 0.0, 32.0, 32.0, gpui::red()));
+        scene.insert_primitive(solid_quad(32.0, 0.0, 32.0, 32.0, gpui::blue()));
+        scene.finish();
+
+        let image = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
+        assert_eq!(image.dimensions(), (64, 32));
+        assert_pixel(&image, 8, 16, RED);
+        assert_pixel(&image, 24, 16, RED);
+        assert_pixel(&image, 40, 16, BLUE);
+        assert_pixel(&image, 56, 16, BLUE);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_captures_each_requested_size() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let mut scene = Scene::default();
+        scene.insert_primitive(solid_quad(2.0, 2.0, 4.0, 3.0, gpui::red()));
+        scene.finish();
+
+        // 13 px rows are 52 bytes, forcing readback to strip copy-row padding.
+        let image = renderer.render_scene_to_image(&scene, device_size(13, 7))?;
+        assert_eq!(image.dimensions(), (13, 7));
+        assert_pixel(&image, 0, 0, BLACK);
+        assert_pixel(&image, 3, 3, RED);
+        assert_pixel(&image, 12, 6, BLACK);
+
+        let image = renderer.render_scene_to_image(&scene, device_size(17, 9))?;
+        assert_eq!(image.dimensions(), (17, 9));
+        assert_pixel(&image, 3, 3, RED);
+        assert_pixel(&image, 16, 8, BLACK);
+
+        let image = renderer.render_scene_to_image(&Scene::default(), device_size(13, 7))?;
+        assert_eq!(image.dimensions(), (13, 7));
+        assert!(image.pixels().all(|pixel| pixel.0 == BLACK));
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_reuses_target_for_same_size() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let target_texture = |renderer: &WgpuHeadlessRenderer| {
+            renderer
+                .render_target
+                .as_ref()
+                .map(|target| target.texture.clone())
+        };
+
+        renderer.render_scene(&Scene::default(), device_size(16, 16))?;
+        let first = target_texture(&renderer);
+        assert!(first.is_some());
+
+        renderer.render_scene(&Scene::default(), device_size(16, 16))?;
+        assert_eq!(target_texture(&renderer), first);
+
+        renderer.render_scene(&Scene::default(), device_size(16, 17))?;
+        assert_ne!(target_texture(&renderer), first);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_rejects_invalid_sizes() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let too_large = renderer.core.max_texture_size as i32 + 1;
+
+        for size in [
+            device_size(0, 8),
+            device_size(8, 0),
+            device_size(-1, 8),
+            device_size(too_large, 8),
+        ] {
+            assert!(
+                renderer.render_scene(&Scene::default(), size).is_err(),
+                "{size:?} should be rejected"
+            );
+            assert!(
+                renderer
+                    .render_scene_to_image(&Scene::default(), size)
+                    .is_err(),
+                "{size:?} should be rejected"
+            );
+        }
+
+        // Rejection must leave the renderer usable.
+        let image = renderer.render_scene_to_image(&Scene::default(), device_size(4, 4))?;
+        assert_eq!(image.dimensions(), (4, 4));
+        Ok(())
+    }
 
     #[test]
     fn webgl_shader_is_valid_wgsl_without_storage_buffers() {
@@ -2301,8 +2758,9 @@ mod tests {
     fn webgl_record_sizes_match_shader_word_strides() {
         assert_eq!(std::mem::size_of::<Quad>(), 40 * 4);
         assert_eq!(std::mem::size_of::<Shadow>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), 26 * 4);
-        assert_eq!(std::mem::size_of::<PathSprite>(), 4 * 4);
+        assert_eq!(std::mem::size_of::<PathTile>(), 14 * 4);
+        assert_eq!(std::mem::size_of::<PathCurve>(), 10 * 4);
+        assert_eq!(std::mem::size_of::<PathPaint>(), 28 * 4);
         assert_eq!(std::mem::size_of::<Underline>(), 16 * 4);
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
@@ -2378,7 +2836,7 @@ mod tests {
             },
         };
 
-        let bytes = unsafe { WgpuRenderer::instance_bytes(std::slice::from_ref(&quad)) };
+        let bytes = unsafe { WgpuRendererCore::instance_bytes(std::slice::from_ref(&quad)) };
         let words: &[u32] = bytemuck::cast_slice(bytes);
         assert_eq!(
             words,

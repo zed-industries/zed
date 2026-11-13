@@ -7,7 +7,53 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::LanguageModelCompletionError;
+use crate::{LanguageModelCompletionError, LanguageModelId};
+use collections::HashMap;
+use std::sync::Mutex;
+
+/// Default number of concurrent requests a provider allows per model.
+///
+/// One limit is shared by every request to a model across the app: threads,
+/// subagents, summaries, and inline assists. It is set well above normal
+/// parallel use so it only stops runaway fan-out.
+pub const DEFAULT_MODEL_CONCURRENCY: usize = 16;
+
+/// A provider's local concurrency caps, one [`RateLimiter`] per model id.
+///
+/// Upstream rate limits are per credential and model family, and exceeding
+/// them surfaces as retryable errors. This only bounds how many requests Zed
+/// has in flight to one model at once.
+pub struct ModelRateLimiters {
+    limit: usize,
+    limiters: Mutex<HashMap<LanguageModelId, RateLimiter>>,
+}
+
+impl ModelRateLimiters {
+    pub fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            limiters: Mutex::default(),
+        }
+    }
+
+    /// Returns the limiter shared by every request to `model_id`.
+    pub fn for_model(&self, model_id: &LanguageModelId) -> RateLimiter {
+        let mut limiters = self
+            .limiters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        limiters
+            .entry(model_id.clone())
+            .or_insert_with(|| RateLimiter::new(self.limit))
+            .clone()
+    }
+}
+
+impl Default for ModelRateLimiters {
+    fn default() -> Self {
+        Self::new(DEFAULT_MODEL_CONCURRENCY)
+    }
+}
 
 #[derive(Clone)]
 pub struct RateLimiter {

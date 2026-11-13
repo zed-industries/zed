@@ -44,7 +44,8 @@ impl ToggleButtonPosition {
 }
 
 pub struct ButtonConfiguration {
-    label: SharedString,
+    label: Option<SharedString>,
+    aria_label: Option<SharedString>,
     icon: Option<IconName>,
     on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     selected: bool,
@@ -95,7 +96,8 @@ impl private::ToggleButtonStyle for ToggleButtonSimple {}
 impl ButtonBuilder for ToggleButtonSimple {
     fn into_configuration(self) -> ButtonConfiguration {
         ButtonConfiguration {
-            label: self.label,
+            label: Some(self.label),
+            aria_label: None,
             icon: None,
             on_click: self.on_click,
             selected: self.selected,
@@ -107,6 +109,7 @@ impl ButtonBuilder for ToggleButtonSimple {
 pub struct ToggleButtonWithIcon {
     label: SharedString,
     icon: IconName,
+    icon_only: bool,
     on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     selected: bool,
     tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -121,9 +124,22 @@ impl ToggleButtonWithIcon {
         Self {
             label: label.into(),
             icon,
+            icon_only: false,
             on_click: Box::new(on_click),
             selected: false,
             tooltip: None,
+        }
+    }
+
+    /// Creates an icon-only toggle, using `label` as its accessible name.
+    pub fn icon_only(
+        label: impl Into<SharedString>,
+        icon: IconName,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            icon_only: true,
+            ..Self::new(label, icon, on_click)
         }
     }
 
@@ -142,8 +158,14 @@ impl private::ToggleButtonStyle for ToggleButtonWithIcon {}
 
 impl ButtonBuilder for ToggleButtonWithIcon {
     fn into_configuration(self) -> ButtonConfiguration {
+        let (label, aria_label) = if self.icon_only {
+            (None, Some(self.label))
+        } else {
+            (Some(self.label), None)
+        };
         ButtonConfiguration {
-            label: self.label,
+            label,
+            aria_label,
             icon: Some(self.icon),
             on_click: self.on_click,
             selected: self.selected,
@@ -237,6 +259,8 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T
 
     /// Makes the button group size itself to fit the content of the buttons,
     /// rather than filling the full width of its parent.
+    ///
+    /// Icon-only buttons use the group's button height as their width.
     pub fn auto_width(mut self) -> Self {
         self.auto_width = true;
         self
@@ -279,10 +303,16 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
     for ToggleButtonGroup<T, COLS, ROWS>
 {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let button_size = match self.size {
+            ToggleButtonGroupSize::Medium => ButtonSize::Medium,
+            ToggleButtonGroupSize::Large => ButtonSize::Large,
+            _ => ButtonSize::Default,
+        };
         let custom_height = match self.size {
             ToggleButtonGroupSize::Custom(height) => Some(height),
             _ => None,
         };
+        let button_height = custom_height.unwrap_or_else(|| button_size.rems());
 
         let entries =
             self.rows.into_iter().enumerate().map(|(row_index, row)| {
@@ -290,6 +320,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                 row.into_iter().enumerate().map(move |(col_index, button)| {
                     let ButtonConfiguration {
                         label,
+                        aria_label,
                         icon,
                         on_click,
                         selected,
@@ -297,9 +328,11 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                     } = button.into_configuration();
 
                     let entry_index = row_index * COLS + col_index;
+                    let icon_only = label.is_none();
 
                     ButtonLike::new((group_name.clone(), entry_index))
                         .when(!self.auto_width, |this| this.full_width())
+                        .when_some(aria_label, |this, label| this.aria_label(label))
                         .rounding(Some(
                             ToggleButtonPosition {
                                 leftmost: col_index == 0,
@@ -319,34 +352,36 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                         .when(self.style == ToggleButtonGroupStyle::Filled, |button| {
                             button.style(ButtonStyle::Filled)
                         })
-                        .when(self.size == ToggleButtonGroupSize::Medium, |button| {
-                            button.size(ButtonSize::Medium)
-                        })
-                        .when(self.size == ToggleButtonGroupSize::Large, |button| {
-                            button.size(ButtonSize::Large)
-                        })
+                        .size(button_size)
                         .when_some(custom_height, |button, height| button.height(height.into()))
+                        .when(icon_only, |button| {
+                            button
+                                .size(ButtonSize::None)
+                                .height(button_height.into())
+                                .when(self.auto_width, |button| button.width(button_height))
+                        })
                         .child(
                             h_flex()
-                                .w_full()
-                                .px_2()
-                                .gap_1p5()
+                                .when(!icon_only, |this| this.w_full().px_2().gap_1p5())
                                 .justify_center()
                                 .flex_none()
                                 .when_some(icon, |this, icon| {
-                                    this.py_2()
-                                        .child(Icon::new(icon).size(IconSize::XSmall).map(|this| {
+                                    this.when(!icon_only, |this| this.py_2()).child(
+                                        Icon::new(icon).size(IconSize::XSmall).map(|this| {
                                             if entry_index == self.selected_index || selected {
                                                 this.color(Color::Accent)
                                             } else {
                                                 this.color(Color::Muted)
                                             }
-                                        }))
+                                        }),
+                                    )
                                 })
-                                .child(Label::new(label).size(self.label_size).when(
-                                    entry_index == self.selected_index || selected,
-                                    |this| this.color(Color::Accent),
-                                )),
+                                .when_some(label, |this, label| {
+                                    this.child(Label::new(label).size(self.label_size).when(
+                                        entry_index == self.selected_index || selected,
+                                        |this| this.color(Color::Accent),
+                                    ))
+                                }),
                         )
                         .when_some(tooltip, |this, tooltip| {
                             this.tooltip(move |window, cx| tooltip(window, cx))
@@ -517,6 +552,37 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                         .into_any_element(),
                     ),
                     single_example(
+                        "Icon-only group",
+                        ToggleButtonGroup::single_row(
+                            "icon_only_outlined",
+                            [
+                                ToggleButtonWithIcon::icon_only(
+                                    "All",
+                                    IconName::Menu,
+                                    |_, _, _| {},
+                                )
+                                .tooltip(Tooltip::text("Show Threads and Commits")),
+                                ToggleButtonWithIcon::icon_only(
+                                    "Threads",
+                                    IconName::Thread,
+                                    |_, _, _| {},
+                                )
+                                .tooltip(Tooltip::text("Show Only Threads")),
+                                ToggleButtonWithIcon::icon_only(
+                                    "Commits",
+                                    IconName::GitCommit,
+                                    |_, _, _| {},
+                                )
+                                .tooltip(Tooltip::text("Show Only Commits")),
+                            ],
+                        )
+                        .auto_width()
+                        .size(ToggleButtonGroupSize::Custom(rems_from_px(24_f32)))
+                        .selected_index(1)
+                        .style(ToggleButtonGroupStyle::Outlined)
+                        .into_any_element(),
+                    ),
+                    single_example(
                         "Single Row Group with icons",
                         ToggleButtonGroup::single_row(
                             "single_row_test_icon_outlined",
@@ -617,7 +683,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                             ],
                         )
                         .selected_index(3)
-                        .width(rems_from_px(100_f32))
                         .style(ToggleButtonGroupStyle::Filled)
                         .into_any_element(),
                     ),
@@ -637,7 +702,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                             ],
                         )
                         .selected_index(3)
-                        .width(rems_from_px(100_f32))
                         .style(ToggleButtonGroupStyle::Filled)
                         .into_any_element(),
                     ),

@@ -3,10 +3,11 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use futures::lock::OwnedMutexGuard;
+use github_releases::{
+    AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
+    latest_github_release,
+};
 use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
-use http_client::github::AssetKind;
-use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 use project::lsp_store::lsp_ext_command;
@@ -30,6 +31,7 @@ use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::command::{Stdio, new_command};
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
+use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
@@ -70,12 +72,6 @@ impl RustLspAdapter {
 }
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
-
-#[cfg(target_os = "linux")]
-enum LibcType {
-    Gnu,
-    Musl,
-}
 
 impl RustLspAdapter {
     fn convert_rust_analyzer_schema(raw_schema: &serde_json::Value) -> serde_json::Value {
@@ -141,58 +137,10 @@ impl RustLspAdapter {
     }
 
     #[cfg(target_os = "linux")]
-    async fn determine_libc_type() -> LibcType {
-        use futures::pin_mut;
-
-        async fn from_ldd_version() -> Option<LibcType> {
-            use util::command::new_command;
-
-            let ldd_output = new_command("ldd").arg("--version").output().await.ok()?;
-            let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
-
-            if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {
-                Some(LibcType::Gnu)
-            } else if ldd_version.contains("musl") {
-                Some(LibcType::Musl)
-            } else {
-                None
-            }
-        }
-
-        if let Some(libc_type) = from_ldd_version().await {
-            return libc_type;
-        }
-
-        let Ok(dir_entries) = smol::fs::read_dir("/lib").await else {
-            // defaulting to gnu because nix doesn't have /lib files due to not following FHS
-            return LibcType::Gnu;
-        };
-        let dir_entries = dir_entries.filter_map(async move |e| e.ok());
-        pin_mut!(dir_entries);
-
-        let mut has_musl = false;
-        let mut has_gnu = false;
-
-        while let Some(entry) = dir_entries.next().await {
-            let file_name = entry.file_name();
-            let file_name = file_name.to_string_lossy();
-            if file_name.starts_with("ld-musl-") {
-                has_musl = true;
-            } else if file_name.starts_with("ld-linux-") {
-                has_gnu = true;
-            }
-        }
-
-        match (has_musl, has_gnu) {
-            (true, _) => LibcType::Musl,
-            (_, true) => LibcType::Gnu,
-            _ => LibcType::Gnu,
-        }
-    }
-
-    #[cfg(target_os = "linux")]
     async fn build_arch_server_name_linux() -> String {
-        let libc = match Self::determine_libc_type().await {
+        use util::libc_type::{LibcType, host_libc_type};
+
+        let libc = match host_libc_type().await {
             LibcType::Musl => "musl",
             LibcType::Gnu => "gnu",
         };
@@ -381,8 +329,9 @@ impl LspAdapter for RustLspAdapter {
                 let text = format!("{name}: {signature}");
                 let prefix = "struct S { ";
                 let source = Rope::from_iter([prefix, &text, " }"]);
-                let runs =
-                    language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let runs = language
+                    .highlight_text(&source, prefix.len()..prefix.len() + text.len())
+                    .collect();
                 mk_label(text, &|| 0..completion.label.len(), runs)
             }
             (
@@ -393,8 +342,9 @@ impl LspAdapter for RustLspAdapter {
                 let text = format!("{name}: {signature}",);
                 let prefix = "let ";
                 let source = Rope::from_iter([prefix, &text, " = ();"]);
-                let runs =
-                    language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let runs = language
+                    .highlight_text(&source, prefix.len()..prefix.len() + text.len())
+                    .collect();
                 mk_label(text, &|| 0..completion.label.len(), runs)
             }
             (
@@ -430,8 +380,9 @@ impl LspAdapter for RustLspAdapter {
                     .filter(|it| it.contains(&label))
                     .and_then(|it| Some((it, FULL_SIGNATURE_REGEX.find(it)?)))
                 {
-                    let source = Rope::from(function_signature);
-                    let runs = language.highlight_text(&source, 0..function_signature.len());
+                    let runs = language
+                        .highlight_text(function_signature, 0..function_signature.len())
+                        .collect();
                     mk_label(
                         function_signature.to_owned(),
                         &|| match_.range().start + 3..match_.range().end - 1,
@@ -441,17 +392,14 @@ impl LspAdapter for RustLspAdapter {
                     let text = format!("{label}{suffix}");
                     let source = Rope::from_iter([prefix, " ", &text, " {}"]);
                     let run_start = prefix.len() + 1;
-                    let runs = language.highlight_text(&source, run_start..run_start + text.len());
+                    let runs = language
+                        .highlight_text(&source, run_start..run_start + text.len())
+                        .collect();
                     mk_label(text, &|| 0..label.len(), runs)
-                } else if completion
-                    .detail
-                    .as_ref()
-                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
-                {
+                } else if detail_right.is_some_and(|detail| detail.starts_with("macro_rules! ")) {
                     let text = completion.label.clone();
                     let len = text.len();
-                    let source = Rope::from(text.as_str());
-                    let runs = language.highlight_text(&source, 0..len);
+                    let runs = language.highlight_text(text.as_str(), 0..len).collect();
                     mk_label(text, &|| 0..completion.label.len(), runs)
                 } else if detail_left.is_none() {
                     return None;
@@ -548,7 +496,7 @@ impl LspAdapter for RustLspAdapter {
                         detail_left.take();
                     }
 
-                    runs.extend(language.highlight_text(&Rope::from(&label), 0..label.len()));
+                    runs.extend(language.highlight_text(label.as_str(), 0..label.len()));
                 } else {
                     let highlight_name = kind.and_then(|kind| match kind {
                         lsp::CompletionItemKind::STRUCT
@@ -667,10 +615,12 @@ impl LspAdapter for RustLspAdapter {
                 return Some(CodeLabel::new(
                     name.to_string(),
                     0..name.len(),
-                    language.highlight_text(
-                        &Rope::from_iter([prefix, name, "}"]),
-                        prefix.len()..prefix.len() + name.len(),
-                    ),
+                    language
+                        .highlight_text(
+                            &Rope::from_iter([prefix, name, "}"]),
+                            prefix.len()..prefix.len() + name.len(),
+                        )
+                        .collect(),
                 ));
             }
             _ => return None,
@@ -681,7 +631,9 @@ impl LspAdapter for RustLspAdapter {
         Some(CodeLabel::new(
             format!("{prefix}{name}"),
             filter_range,
-            language.highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range),
+            language
+                .highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range)
+                .collect(),
         ))
     }
 
@@ -727,6 +679,7 @@ impl LspAdapter for RustLspAdapter {
         &self,
         command_name: &str,
         arguments: &[serde_json::Value],
+        _path_style: PathStyle,
     ) -> Option<ClientCommand> {
         match command_name {
             "rust-analyzer.showReferences" => Some(ClientCommand::ShowLocations),
@@ -891,7 +844,8 @@ impl LspInstaller for RustLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,
@@ -1270,16 +1224,19 @@ async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Result<Option<(Option<TargetInfo>, Arc<Path>)>> {
+    let directory = abs_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?;
+    if !has_cargo_manifest(directory).await? {
+        return Ok(None);
+    }
+
     let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
     let output = command
-        .current_dir(
-            abs_path
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?,
-        )
+        .current_dir(directory)
         .arg("metadata")
         .arg("--no-deps")
         .arg("--format-version")
@@ -1294,6 +1251,18 @@ async fn target_info_from_abs_path(
 
     let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)?;
     Ok(target_info_from_metadata(metadata, abs_path))
+}
+
+async fn has_cargo_manifest(directory: &Path) -> Result<bool> {
+    let resolved_directory = fs::canonicalize(directory).await?;
+    for ancestor in resolved_directory.ancestors() {
+        match fs::metadata(ancestor.join("Cargo.toml")).await {
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(false)
 }
 
 fn target_info_from_metadata(
@@ -1480,7 +1449,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
-    use util::path;
+    use util::{path, paths::SanitizedPath};
 
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
@@ -1574,6 +1543,58 @@ mod tests {
         let highlight_type = grammar.highlight_id_for_name("type").unwrap();
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
         let highlight_field = grammar.highlight_id_for_name("property").unwrap();
+
+        let macro_detail_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    detail: Some("macro_rules! println".to_string()),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        let macro_description_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        assert_eq!(macro_detail_label, macro_description_label);
+
+        let macro_label = macro_detail_label.unwrap();
+        assert_eq!(macro_label.text, "println!");
+        assert_eq!(macro_label.filter_range, 0..8);
+
+        let macro_import_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: Some("(use std::println)".to_string()),
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(macro_import_label.text, "println! (use std::println)");
+        assert_eq!(macro_import_label.filter_range, 0..8);
 
         assert_eq!(
             adapter
@@ -2291,6 +2312,67 @@ mod tests {
 
             assert_eq!(target_info_from_metadata(metadata, absolute_path), expected);
         }
+    }
+
+    #[test]
+    fn target_info_from_abs_path_without_manifest() -> Result<()> {
+        let temporary_directory = tempfile::tempdir()?;
+        let project_root = temporary_directory.path().canonicalize()?;
+        let project_root = SanitizedPath::new(&project_root);
+
+        for relative_path in ["main.rs", "nested/src/main.rs"] {
+            let source_path = project_root.join(relative_path);
+            std::fs::create_dir_all(source_path.parent().context("source has no parent")?)?;
+            std::fs::write(&source_path, "fn main() {}")?;
+
+            assert_eq!(
+                smol::block_on(target_info_from_abs_path(&source_path, None))?,
+                None
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn target_info_from_abs_path_with_ancestor_manifest() -> Result<()> {
+        let temporary_directory = tempfile::tempdir()?;
+        let project_root = temporary_directory.path().canonicalize()?;
+        let project_root = SanitizedPath::new(&project_root);
+        let source_directory = project_root.join("src/nested");
+        let source_path = source_directory.join("main.rs");
+        std::fs::create_dir_all(&source_directory)?;
+        std::fs::write(&source_path, "fn main() {}")?;
+        std::fs::write(
+            project_root.join("Cargo.toml"),
+            r#"
+[package]
+name = "task-context-package"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "task-context-bin"
+path = "src/nested/main.rs"
+
+[workspace]
+"#,
+        )?;
+
+        assert_eq!(
+            smol::block_on(target_info_from_abs_path(&source_path, None))?,
+            Some((
+                Some(TargetInfo {
+                    package_name: "task-context-package".into(),
+                    target_name: "task-context-bin".into(),
+                    target_kind: TargetKind::Bin,
+                    required_features: Vec::new(),
+                }),
+                Arc::from(project_root.as_path()),
+            ))
+        );
+
+        Ok(())
     }
 
     #[test]

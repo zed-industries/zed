@@ -2,7 +2,6 @@
 #  - 'community champion' for community champions
 #  - 'bot' for bot accounts
 #  - 'staff' for staff team members
-#  - 'guild' for guild members
 #  - 'first contribution' for first-time external contributors
 # Labels issues by author:
 #  - 'community champion' for community champions
@@ -47,13 +46,6 @@ jobs:
             const STAFF_LABEL = 'staff';
             const STAFF_TEAM_SLUG = 'staff';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
-            const GUILD_LABEL = 'guild';
-            // Guild cohort members are outside collaborators holding one of these
-            // custom repository roles, not members of an org team.
-            const GUILD_ROLE_NAMES = [
-              'Guild Assign issues/PRs',
-              'Guild Assign issues/PRs and Close PRs',
-            ];
             const COMMUNITY_CHAMPION_LABEL = 'community champion';
             const COMMUNITY_CHAMPIONS = [
               '0x2CA',
@@ -152,26 +144,6 @@ jobs:
 
             const isStaffMember = (author) => isTeamMember(STAFF_TEAM_SLUG, author);
 
-            const isGuildMember = async (author) => {
-              try {
-                const response = await github.rest.repos.getCollaboratorPermissionLevel({
-                  owner: 'zed-industries',
-                  repo: 'zed',
-                  username: author
-                });
-                // role_name is the effective (highest) role; for cohort outside
-                // collaborators that is the custom role. Built-in roles come back
-                // lowercased and won't match.
-                const roleName = (response.data.role_name || '').toLowerCase();
-                return GUILD_ROLE_NAMES.some((name) => name.toLowerCase() === roleName);
-              } catch (error) {
-                if (error.status !== 404) {
-                  throw error;
-                }
-                return false;
-              }
-            };
-
             const getIssueLabels = () => {
               if (listIncludesAuthor(COMMUNITY_CHAMPIONS, author)) {
                 return [COMMUNITY_CHAMPION_LABEL];
@@ -195,10 +167,6 @@ jobs:
 
               if (listIncludesAuthor(COMMUNITY_CHAMPIONS, author)) {
                 labelsToAdd.push(COMMUNITY_CHAMPION_LABEL);
-              }
-
-              if (await isGuildMember(author)) {
-                labelsToAdd.push(GUILD_LABEL);
               }
 
               // We use inverted logic here due to a suspected GitHub bug where first-time contributors

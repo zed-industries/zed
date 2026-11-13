@@ -20,7 +20,7 @@ pub use settings::{
     EditPredictionDataCollectionChoice, EditPredictionPromptFormatContent, EditPredictionProvider,
     EditPredictionsMode, FormatOnSave, Formatter, FormatterList, InlayHintKind,
     LanguageSettingsContent, LineEndingSetting, LspInsertMode, REST_OF_LANGUAGE_SERVERS,
-    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, SoftWrapIndent, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -65,6 +65,8 @@ pub struct LanguageSettings {
     pub hard_tabs: bool,
     /// How to soft-wrap long lines of text.
     pub soft_wrap: settings::SoftWrap,
+    /// How to indent soft-wrapped continuation lines.
+    pub soft_wrap_indent: settings::SoftWrapIndent,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
@@ -495,6 +497,8 @@ impl InlayHintSettings {
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot).
 #[derive(Clone, Debug, Default)]
 pub struct EditPredictionSettings {
+    /// Whether to show the edit prediction button in the status bar.
+    pub button: bool,
     /// The provider that supplies edit predictions.
     pub provider: settings::EditPredictionProvider,
     /// Disable edit predictions for files matching these glob patterns.
@@ -523,7 +527,7 @@ pub struct EditPredictionSettings {
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: settings::EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
-    pub copilot: CopilotSettings,
+    pub copilot: CopilotEditPredictionSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
     /// Settings specific to Ollama.
@@ -596,13 +600,11 @@ pub struct DisabledGlob {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct CopilotSettings {
+pub struct CopilotEditPredictionSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
-    /// Enterprise URI for Copilot.
-    pub enterprise_uri: Option<String>,
     /// Whether the Copilot Next Edit Suggestions feature is enabled.
     pub enable_next_edit_suggestions: Option<bool>,
     /// Automatic prediction debounce delay.
@@ -840,6 +842,7 @@ impl settings::Settings for AllLanguageSettings {
                 tab_size: settings.tab_size.unwrap(),
                 hard_tabs: settings.hard_tabs.unwrap(),
                 soft_wrap: settings.soft_wrap.unwrap(),
+                soft_wrap_indent: settings.soft_wrap_indent.unwrap(),
                 preferred_line_length: settings.preferred_line_length.unwrap(),
                 show_wrap_guides: settings.show_wrap_guides.unwrap(),
                 wrap_guides: settings.wrap_guides.unwrap(),
@@ -952,10 +955,9 @@ impl settings::Settings for AllLanguageSettings {
             .collect();
 
         let copilot = edit_predictions.copilot.unwrap();
-        let copilot_settings = CopilotSettings {
+        let copilot_settings = CopilotEditPredictionSettings {
             proxy: copilot.proxy,
             proxy_no_verify: copilot.proxy_no_verify,
-            enterprise_uri: copilot.enterprise_uri,
             enable_next_edit_suggestions: copilot.enable_next_edit_suggestions,
             prediction_debounce: copilot.prediction_debounce.unwrap(),
         };
@@ -1030,6 +1032,7 @@ impl settings::Settings for AllLanguageSettings {
 
         Self {
             edit_predictions: EditPredictionSettings {
+                button: edit_predictions.button.unwrap(),
                 provider: if let Some(provider) = edit_prediction_provider {
                     provider
                 } else {

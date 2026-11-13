@@ -51,12 +51,25 @@ impl LocalExecutor {
         }
     }
 
+    /// Creates a thread-safe handle that submits `Send` futures to this executor's dispatch destination.
+    pub fn to_send(&self) -> SendLocalExecutor {
+        SendLocalExecutor {
+            _scheduler: self.scheduler.clone(),
+            dispatch: self.dispatch.clone(),
+        }
+    }
+
     pub fn session_id(&self) -> SessionId {
         self.session_id
     }
 
     pub fn scheduler(&self) -> &Arc<dyn Scheduler> {
         &self.scheduler
+    }
+
+    /// Whether this executor runs on a [`TestScheduler`](crate::TestScheduler).
+    pub fn is_test(&self) -> bool {
+        self.scheduler.as_test().is_some()
     }
 
     #[track_caller]
@@ -188,6 +201,36 @@ impl LocalExecutor {
     }
 }
 
+/// Submits `Send` futures from any thread to a [`LocalExecutor`]'s dispatch destination.
+///
+/// Retains the scheduler and dispatch destination independently of the original executor.
+#[derive(Clone)]
+pub struct SendLocalExecutor {
+    _scheduler: Arc<dyn Scheduler>,
+    dispatch: Arc<dyn Fn(Runnable<RunnableMeta>) + Send + Sync>,
+}
+
+impl SendLocalExecutor {
+    /// Spawns a future whose polls run on the original executor's dispatch thread.
+    #[track_caller]
+    pub fn spawn<F>(&self, future: F) -> Task<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let dispatch = self.dispatch.clone();
+        let location = Location::caller();
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta {
+                location,
+                spawned: crate::SpawnTime(Instant::now()),
+            })
+            .spawn(move |_| future, move |runnable| dispatch(runnable));
+        runnable.schedule();
+        Task(TaskState::Spawned(task))
+    }
+}
+
 /// Boxes the user-supplied dedicated closure into the type-erased shape
 /// expected by [`Scheduler::spawn_dedicated`]. The user's `Fut::Output` is
 /// boxed as `Box<dyn Any + Send + Sync>` on the dedicated side and downcast
@@ -288,6 +331,11 @@ impl BackgroundExecutor {
 
     pub fn scheduler(&self) -> &Arc<dyn Scheduler> {
         &self.scheduler
+    }
+
+    /// Whether this executor runs on a [`TestScheduler`](crate::TestScheduler).
+    pub fn is_test(&self) -> bool {
+        self.scheduler.as_test().is_some()
     }
 
     /// Spawn a closure on a fresh session pinned to its own [`LocalExecutor`].

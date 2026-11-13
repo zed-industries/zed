@@ -463,6 +463,14 @@ pub enum ThemeColorField {
 }
 
 impl ThemeColors {
+    pub fn panel_background_for_overlay(&self) -> Hsla {
+        if self.background.a >= 1.0 || self.panel_background.a >= 1.0 {
+            self.background.blend(self.panel_background)
+        } else {
+            self.panel_overlay_background
+        }
+    }
+
     pub fn color(&self, field: ThemeColorField) -> Hsla {
         match field {
             ThemeColorField::Border => self.border,
@@ -635,9 +643,33 @@ pub struct ThemeStyles {
 
 #[cfg(test)]
 mod tests {
+    use gpui::Rgba;
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn panel_background_for_overlay() {
+        let mut colors = ThemeColors::light();
+        colors.panel_overlay_background = Hsla::from(gpui::rgb(0xff0000));
+
+        for (panel, background, expected) in [
+            (0x58585a00, 0xdcdcddff, 0xdcdcddff),
+            (0x00000080, 0xdcdcddff, 0x6d6d6eff),
+            (0xebebecff, 0x24252900, 0xebebecff),
+            (0xebebec00, 0x24252900, 0xff0000ff),
+            (0xebebec00, 0x24252980, 0xff0000ff),
+            (0x24252980, 0x24252980, 0xff0000ff),
+        ] {
+            colors.panel_background = Hsla::from(gpui::rgba(panel));
+            colors.background = Hsla::from(gpui::rgba(background));
+            assert_eq!(
+                u32::from(Rgba::from(colors.panel_background_for_overlay())),
+                expected,
+                "panel {panel:#010x}, background {background:#010x}"
+            );
+        }
+    }
 
     #[test]
     fn override_a_single_theme_color() {

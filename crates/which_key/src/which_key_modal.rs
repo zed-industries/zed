@@ -8,7 +8,7 @@ use settings::Settings;
 use std::rc::Rc;
 use theme_settings::ThemeSettings;
 use ui::{DynamicSpacing, prelude::*};
-use workspace::{ModalView, Workspace};
+use workspace::Workspace;
 
 use crate::{
     bindings_for_which_key, map_pending_keystrokes,
@@ -53,10 +53,6 @@ impl WhichKeyModal {
         };
         this.update_pending_keys(window, cx);
         this
-    }
-
-    pub fn dismiss(&self, cx: &mut Context<Self>) {
-        cx.emit(DismissEvent)
     }
 
     fn update_pending_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -117,6 +113,7 @@ impl Render for WhichKeyModal {
                 self.pending_keys.clone(),
                 self.bindings.clone(),
                 self.scroll_handle.clone(),
+                max_panel_width,
                 max_content_height,
             ))
     }
@@ -127,11 +124,5 @@ impl EventEmitter<DismissEvent> for WhichKeyModal {}
 impl Focusable for WhichKeyModal {
     fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
-    }
-}
-
-impl ModalView for WhichKeyModal {
-    fn render_bare(&self) -> bool {
-        true
     }
 }

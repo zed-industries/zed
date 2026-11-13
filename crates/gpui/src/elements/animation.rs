@@ -196,14 +196,6 @@ impl<E> SpringAnimationElement<E> {
     }
 }
 
-impl<E: IntoElement + 'static> IntoElement for SpringAnimationElement<E> {
-    type Element = SpringAnimationElement<E>;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl<E: ParentElement> ParentElement for AnimationElement<E> {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         let Some(element) = &mut self.element else {
@@ -219,14 +211,6 @@ impl<E> AnimationElement<E> {
     /// to the element being animated.
     pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> AnimationElement<E> {
         self.element = self.element.map(f);
-        self
-    }
-}
-
-impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
-    type Element = AnimationElement<E>;
-
-    fn into_element(self) -> Self::Element {
         self
     }
 }
@@ -268,7 +252,7 @@ impl<E: IntoElement + 'static> Element for SpringAnimationElement<E> {
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         window.with_element_state(global_id.unwrap(), |state, window| {
-            let now = Instant::now();
+            let now = cx.background_executor().now();
             let initial = self.initial.unwrap_or(self.target);
             let mut state = state.unwrap_or_else(|| SpringElementState {
                 spring: SpringState {
@@ -400,7 +384,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         window.with_element_state(global_id.unwrap(), |state, window| {
             let mut state = state.unwrap_or_else(|| AnimationState {
-                start: Instant::now(),
+                start: cx.background_executor().now(),
                 animation_ix: 0,
                 delayed_frame_pending: Rc::new(Cell::new(false)),
             });
@@ -421,7 +405,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                     // Reduce modulo the duration before f32 conversion, which loses sub-second precision at scale.
                     Duration::from_nanos((elapsed.as_nanos() % duration.as_nanos()) as u64)
                 } else {
-                    state.start.elapsed()
+                    cx.background_executor().now() - state.start
                 };
                 let mut delta = elapsed.as_secs_f32() / duration.as_secs_f32();
 
@@ -431,7 +415,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                         if animation_ix >= self.animations.len() - 1 {
                             done = true;
                         } else {
-                            state.start = Instant::now();
+                            state.start = cx.background_executor().now();
                             state.animation_ix += 1;
                         }
                         delta = 1.0;
@@ -525,6 +509,15 @@ mod easing {
     /// The Quint ease-out function, which starts quickly and decelerates to a stop
     pub fn ease_out_quint() -> impl Fn(f32) -> f32 {
         move |delta| 1.0 - (1.0 - delta).powi(5)
+    }
+
+    /// A heartbeat: a strong beat, a weaker one, then a rest. Starts and ends at 0 and peaks at 1.
+    pub fn heartbeat(delta: f32) -> f32 {
+        let beat = |center: f32, width: f32, height: f32| {
+            let x = (delta - center) / width;
+            height * (-x * x).exp()
+        };
+        beat(0.2, 0.06, 1.0) + beat(0.4, 0.05, 0.58)
     }
 
     /// Apply the given easing function, first in the forward direction and then in the reverse direction
