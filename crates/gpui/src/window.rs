@@ -6188,7 +6188,9 @@ impl Window {
                 self.mouse_position = back.start_position;
                 PlatformInput::BackGesture(back)
             }
-            PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
+            PlatformInput::KeyDown(_)
+            | PlatformInput::KeyUp(_)
+            | PlatformInput::MouseCaptureLost(_) => event,
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
@@ -6449,9 +6451,14 @@ impl Window {
             }
         }
 
-        // Auto-release pointer capture on mouse up
-        if event.is::<MouseUpEvent>() && self.captured_hitbox.is_some() {
-            self.captured_hitbox = None;
+        // A cancelled gesture also releases GPUI's pointer capture.
+        if event.is::<crate::MouseCaptureLostEvent>() {
+            cx.stop_active_drag(self);
+            if self.captured_hitbox.take().is_some() {
+                self.refresh();
+            }
+        } else if event.is::<MouseUpEvent>() {
+            self.release_pointer();
         }
 
         // Runs after the listeners so that a drag they start takes effect in this event. Resolving
@@ -9542,6 +9549,67 @@ mod tests {
                     move |path: &PathBuf, _, _| observed_drops.borrow_mut().push(path.clone())
                 })
         }
+    }
+
+    #[gpui::test]
+    fn mouse_capture_loss_cancels_click_and_drag(cx: &mut TestAppContext) {
+        use crate::MouseCaptureLostEvent;
+
+        struct Target(Rc<Cell<usize>>);
+        impl Render for Target {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let clicks = self.0.clone();
+                div()
+                    .id("capture-target")
+                    .size_full()
+                    .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
+                    .on_drag((), |_, _, _, cx| cx.new(|_| Empty))
+            }
+        }
+
+        let clicks = Rc::new(Cell::new(0));
+        let handle = cx.add_window(|_, _| Target(clicks.clone()));
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.hovered.set(true);
+            window.active.set(true);
+            window.draw(cx).clear(cx);
+            let position = point(px(10.), px(10.));
+            let down = MouseDownEvent {
+                position,
+                ..Default::default()
+            };
+            let up = MouseUpEvent {
+                position,
+                ..Default::default()
+            };
+
+            window.dispatch_event(down.clone().to_platform_input(), cx);
+            window.dispatch_event(MouseCaptureLostEvent.to_platform_input(), cx);
+            window.dispatch_event(up.clone().to_platform_input(), cx);
+            assert_eq!(clicks.get(), 0);
+
+            window.dispatch_event(down.clone().to_platform_input(), cx);
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: point(px(20.), px(20.)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.has_active_drag());
+            let hitbox = window.rendered_frame.hitboxes[0].id;
+            window.capture_pointer(hitbox);
+            window.dispatch_event(MouseCaptureLostEvent.to_platform_input(), cx);
+            assert!(!cx.has_active_drag());
+            assert!(window.captured_hitbox().is_none());
+
+            window.dispatch_event(down.to_platform_input(), cx);
+            window.dispatch_event(up.to_platform_input(), cx);
+            assert_eq!(clicks.get(), 1);
+        })
+        .unwrap();
     }
 
     #[gpui::test]

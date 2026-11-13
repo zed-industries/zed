@@ -205,6 +205,20 @@ impl InputEvent for MouseUpEvent {
 
 impl MouseEvent for MouseUpEvent {}
 
+/// The platform revoked native mouse capture before the gesture completed.
+#[derive(Clone, Copy, Debug)]
+pub struct MouseCaptureLostEvent;
+
+impl Sealed for MouseCaptureLostEvent {}
+
+impl InputEvent for MouseCaptureLostEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MouseCaptureLost(self)
+    }
+}
+
+impl MouseEvent for MouseCaptureLostEvent {}
+
 impl MouseUpEvent {
     /// Returns true if this mouse up event should focus the element.
     pub fn is_focusing(&self) -> bool {
@@ -800,6 +814,8 @@ pub enum PlatformInput {
     MouseDown(MouseDownEvent),
     /// The mouse was released.
     MouseUp(MouseUpEvent),
+    /// Native mouse capture was revoked.
+    MouseCaptureLost(MouseCaptureLostEvent),
     /// Mouse pressure.
     MousePressure(MousePressureEvent),
     /// The mouse was moved.
@@ -831,6 +847,7 @@ impl PlatformInput {
             PlatformInput::ModifiersChanged { .. } => None,
             PlatformInput::MouseDown(event) => Some(event),
             PlatformInput::MouseUp(event) => Some(event),
+            PlatformInput::MouseCaptureLost(event) => Some(event),
             PlatformInput::MouseMove(event) => Some(event),
             PlatformInput::MousePressure(event) => Some(event),
             PlatformInput::MouseExited(event) => Some(event),
@@ -851,6 +868,7 @@ impl PlatformInput {
             PlatformInput::ModifiersChanged(event) => Some(event),
             PlatformInput::MouseDown(_) => None,
             PlatformInput::MouseUp(_) => None,
+            PlatformInput::MouseCaptureLost(_) => None,
             PlatformInput::MouseMove(_) => None,
             PlatformInput::MousePressure(_) => None,
             PlatformInput::MouseExited(_) => None,
@@ -873,6 +891,7 @@ impl PlatformInput {
             PlatformInput::ModifiersChanged(_) => "modifiers_changed",
             PlatformInput::MouseDown(_) => "mouse_down",
             PlatformInput::MouseUp(_) => "mouse_up",
+            PlatformInput::MouseCaptureLost(_) => "mouse_capture_lost",
             PlatformInput::MousePressure(_) => "mouse_pressure",
             PlatformInput::MouseMove(_) => "mouse_move",
             PlatformInput::MouseExited(_) => "mouse_exited",
