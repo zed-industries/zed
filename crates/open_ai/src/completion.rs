@@ -69,6 +69,7 @@ pub fn into_open_ai(
     max_tokens_parameter: ChatCompletionMaxTokensParameter,
     reasoning_effort: Option<ReasoningEffort>,
     interleaved_reasoning: bool,
+    prompt_caching: bool,
 ) -> Result<crate::Request> {
     let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request
@@ -86,7 +87,10 @@ pub fn into_open_ai(
 
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
+    let mut last_cache_message_index = None;
     for message in request.messages {
+        let message_wants_cache = message.cache;
+        let mut message_added_content = false;
         let reasoning_details = interleaved_reasoning
             .then(|| message.reasoning_details.clone())
             .flatten();
@@ -104,8 +108,12 @@ pub fn into_open_ai(
                         !text.is_empty()
                     };
                     if should_add {
+                        message_added_content = true;
                         add_message_content_part(
-                            MessagePart::Text { text },
+                            MessagePart::Text {
+                                text,
+                                cache_control: None,
+                            },
                             message.role,
                             &mut messages,
                             reasoning_details.clone(),
@@ -123,6 +131,7 @@ pub fn into_open_ai(
                 }
                 MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => {}
                 MessageContent::Image(image) => {
+                    message_added_content = true;
                     add_message_content_part(
                         MessagePart::Image {
                             image_url: ImageUrl {
@@ -179,6 +188,7 @@ pub fn into_open_ai(
                         .map(|part| match part {
                             LanguageModelToolResultContent::Text(text) => MessagePart::Text {
                                 text: text.to_string(),
+                                cache_control: None,
                             },
                             LanguageModelToolResultContent::Image(image) => MessagePart::Image {
                                 image_url: ImageUrl {
@@ -189,12 +199,37 @@ pub fn into_open_ai(
                         })
                         .collect();
 
+                    message_added_content = true;
                     messages.push(crate::RequestMessage::Tool {
                         content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
             }
+        }
+        if prompt_caching && message_wants_cache && message_added_content {
+            last_cache_message_index = messages.len().checked_sub(1).and_then(|index| {
+                let content = request_message_content_mut(messages.get_mut(index)?)?;
+                let part_count = match content {
+                    crate::MessageContent::Plain(_) => 1,
+                    crate::MessageContent::Multipart(parts) => parts.len(),
+                };
+                Some((index, part_count))
+            });
+        }
+    }
+
+    if prompt_caching && last_cache_message_index.is_some() {
+        if let Some((index, part_count)) = last_cache_message_index
+            && let Some(message) = messages.get_mut(index)
+        {
+            set_message_cache_control(message, part_count);
+        }
+        if let Some(message) = messages
+            .iter_mut()
+            .find(|message| matches!(message, crate::RequestMessage::System { .. }))
+        {
+            set_message_cache_control(message, usize::MAX);
         }
     }
 
@@ -257,6 +292,45 @@ pub fn into_open_ai(
         reasoning_effort,
         service_tier,
     })
+}
+
+fn request_message_content_mut(
+    message: &mut crate::RequestMessage,
+) -> Option<&mut crate::MessageContent> {
+    match message {
+        crate::RequestMessage::System { content }
+        | crate::RequestMessage::User { content }
+        | crate::RequestMessage::Tool { content, .. }
+        | crate::RequestMessage::Assistant {
+            content: Some(content),
+            ..
+        } => Some(content),
+        crate::RequestMessage::Assistant { content: None, .. } => None,
+    }
+}
+
+fn set_message_cache_control(message: &mut crate::RequestMessage, part_count: usize) {
+    let Some(content) = request_message_content_mut(message) else {
+        return;
+    };
+    match content {
+        crate::MessageContent::Plain(text) => {
+            *content = crate::MessageContent::Multipart(vec![MessagePart::Text {
+                text: std::mem::take(text),
+                cache_control: Some(crate::CacheControl::Ephemeral),
+            }]);
+        }
+        crate::MessageContent::Multipart(parts) => {
+            if let Some(MessagePart::Text { cache_control, .. }) = parts
+                .iter_mut()
+                .take(part_count)
+                .rev()
+                .find(|part| matches!(part, MessagePart::Text { .. }))
+            {
+                *cache_control = Some(crate::CacheControl::Ephemeral);
+            }
+        }
+    }
 }
 
 /// `compaction_state_owner` identifies the backend this request will be sent
@@ -1555,6 +1629,154 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prompt_caching_respects_capability_and_cache_boundaries() -> Result<()> {
+        for (enabled, cache) in [(false, true), (true, false), (true, true)] {
+            let request = LanguageModelRequest {
+                messages: [
+                    (Role::System, "system", false),
+                    (Role::User, "earlier", cache),
+                    (Role::Assistant, "answer", false),
+                    (Role::User, "boundary", cache),
+                    (Role::Assistant, "uncached tail", false),
+                    (Role::User, "   ", cache),
+                ]
+                .into_iter()
+                .map(|(role, text, cache)| LanguageModelRequestMessage {
+                    role,
+                    content: vec![MessageContent::Text(text.into())],
+                    cache,
+                    reasoning_details: None,
+                })
+                .collect(),
+                ..Default::default()
+            };
+            let request = into_open_ai(
+                request,
+                "custom-model",
+                false,
+                false,
+                None,
+                ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                None,
+                false,
+                enabled,
+            )?;
+            let serialized = serde_json::to_value(request)?;
+            for (index, text) in ["system", "earlier", "answer", "boundary", "uncached tail"]
+                .into_iter()
+                .enumerate()
+            {
+                let expected = if enabled && cache && (index == 0 || index == 3) {
+                    json!([{
+                        "type": "text",
+                        "text": text,
+                        "cache_control": { "type": "ephemeral" }
+                    }])
+                } else {
+                    json!(text)
+                };
+                assert_eq!(serialized["messages"][index]["content"], expected);
+            }
+            assert_eq!(serialized["messages"].as_array().map(Vec::len), Some(5));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_caching_preserves_boundary_when_messages_are_merged() -> Result<()> {
+        let request = LanguageModelRequest {
+            messages: [("cached", true), ("uncached", false)]
+                .into_iter()
+                .map(|(text, cache)| LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text(text.into())],
+                    cache,
+                    reasoning_details: None,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let request = into_open_ai(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+            None,
+            false,
+            true,
+        )?;
+        let serialized = serde_json::to_value(request)?;
+        assert_eq!(
+            serialized["messages"][0]["content"],
+            json!([
+                { "type": "text", "text": "cached", "cache_control": { "type": "ephemeral" } },
+                { "type": "text", "text": "uncached" }
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_caching_marks_last_text_in_multipart_tool_result() -> Result<()> {
+        let mut message = crate::RequestMessage::Tool {
+            content: crate::MessageContent::Multipart(vec![
+                MessagePart::Text {
+                    text: "first".into(),
+                    cache_control: None,
+                },
+                MessagePart::Text {
+                    text: "last".into(),
+                    cache_control: None,
+                },
+                MessagePart::Image {
+                    image_url: ImageUrl {
+                        url: "https://example.com/image.png".into(),
+                        detail: None,
+                    },
+                },
+            ]),
+            tool_call_id: "call-1".into(),
+        };
+        set_message_cache_control(&mut message, usize::MAX);
+        let serialized = serde_json::to_value(&message)?;
+        assert_eq!(serialized["content"][0].get("cache_control"), None);
+        assert_eq!(
+            serialized["content"][1]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+        assert_eq!(serialized["content"][2].get("cache_control"), None);
+        assert_eq!(serialized["tool_call_id"], "call-1");
+        assert_eq!(
+            serde_json::from_value::<crate::RequestMessage>(serialized)?,
+            message
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cached_text_stays_multipart_when_building_message_content() -> Result<()> {
+        let part = MessagePart::Text {
+            text: "cached".into(),
+            cache_control: Some(crate::CacheControl::Ephemeral),
+        };
+        let mut content = crate::MessageContent::empty();
+        content.push_part(part.clone());
+        let expected = json!([{
+            "type": "text",
+            "text": "cached",
+            "cache_control": { "type": "ephemeral" }
+        }]);
+        assert_eq!(serde_json::to_value(content)?, expected);
+        assert_eq!(
+            serde_json::to_value(crate::MessageContent::from(vec![part]))?,
+            expected
+        );
+        Ok(())
+    }
+
+    #[test]
     fn prompt_cache_key_respects_override_fallback_and_capability() -> Result<()> {
         for (explicit, thread, supported, expected) in [
             (Some("cache"), Some("thread"), true, Some("cache")),
@@ -1577,6 +1799,7 @@ mod tests {
                 None,
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 None,
+                false,
                 false,
             )?;
             let response = into_open_ai_response(
@@ -2428,6 +2651,7 @@ mod tests {
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 effort,
                 false,
+                false,
             )?;
             assert_eq!(
                 response.reasoning.as_ref().map(|config| config.effort),
@@ -2544,6 +2768,7 @@ mod tests {
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 None,
                 false,
+                false,
             )?;
 
             let serialized = serde_json::to_value(&chat)?;
@@ -2611,6 +2836,7 @@ mod tests {
                     model_maximum,
                     parameter,
                     None,
+                    false,
                     false,
                 )?;
                 let serialized = serde_json::to_value(chat)?;
@@ -4283,6 +4509,7 @@ mod tests {
             ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
             true,
+            false,
         )
         .unwrap();
         assert_eq!(
@@ -4312,6 +4539,7 @@ mod tests {
             None,
             ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
+            false,
             false,
         )
         .unwrap();

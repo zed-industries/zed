@@ -841,12 +841,22 @@ impl MessageContent {
     pub fn push_part(&mut self, part: MessagePart) {
         match self {
             MessageContent::Plain(text) => {
-                *self =
-                    MessageContent::Multipart(vec![MessagePart::Text { text: text.clone() }, part]);
+                *self = MessageContent::Multipart(vec![
+                    MessagePart::Text {
+                        text: text.clone(),
+                        cache_control: None,
+                    },
+                    part,
+                ]);
             }
             MessageContent::Multipart(parts) if parts.is_empty() => match part {
-                MessagePart::Text { text } => *self = MessageContent::Plain(text),
-                MessagePart::Image { .. } => *self = MessageContent::Multipart(vec![part]),
+                MessagePart::Text {
+                    text,
+                    cache_control: None,
+                } => *self = MessageContent::Plain(text),
+                MessagePart::Image { .. } | MessagePart::Text { .. } => {
+                    *self = MessageContent::Multipart(vec![part])
+                }
             },
             MessageContent::Multipart(parts) => parts.push(part),
         }
@@ -855,7 +865,11 @@ impl MessageContent {
 
 impl From<Vec<MessagePart>> for MessageContent {
     fn from(mut parts: Vec<MessagePart>) -> Self {
-        if let [MessagePart::Text { text }] = parts.as_mut_slice() {
+        if let [MessagePart::Text {
+            text,
+            cache_control: None,
+        }] = parts.as_mut_slice()
+        {
             MessageContent::Plain(std::mem::take(text))
         } else {
             MessageContent::Multipart(parts)
@@ -867,9 +881,19 @@ impl From<Vec<MessagePart>> for MessageContent {
 #[serde(tag = "type")]
 pub enum MessagePart {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
     #[serde(rename = "image_url")]
     Image { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CacheControl {
+    Ephemeral,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]

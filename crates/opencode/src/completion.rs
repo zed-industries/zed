@@ -97,6 +97,7 @@ pub async fn stream_completion(
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 effort,
                 model.interleaved_reasoning(),
+                false,
             )?;
             prepare_deepseek_reasoning_content(&mut request, model.interleaved_reasoning());
             let stream = open_ai::stream_completion(
