@@ -11,14 +11,14 @@ use anyhow::{Context as _, Result};
 use editor::items::open_resolved_target;
 use editor::scroll::Autoscroll;
 use editor::{
-    Editor, EditorEvent, EditorSettingsScrollbarProxy, MAX_TAB_TITLE_LEN, MultiBufferOffset,
-    SelectionEffects,
+    Editor, EditorEvent, EditorSettings, EditorSettingsScrollbarProxy, MAX_TAB_TITLE_LEN,
+    MultiBufferOffset, SelectionEffects,
 };
 use gpui::{
     Action, AnyElement, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, ImageSource, InteractiveElement, IntoElement, IsZero, Pixels, Render,
-    Resource, RetainAllImageCache, ScrollHandle, SharedString, SharedUri, Subscription, Task,
-    WeakEntity, Window, point, px,
+    Focusable, Global, ImageSource, InteractiveElement, IntoElement, IsZero, OngoingScroll, Pixels,
+    Render, Resource, RetainAllImageCache, ScrollEvent, ScrollHandle, SharedString, SharedUri,
+    Subscription, Task, WeakEntity, Window, point, px,
 };
 use language::{Buffer, LanguageRegistry};
 use markdown::{
@@ -77,6 +77,7 @@ pub struct MarkdownPreviewView {
     _markdown_subscription: Subscription,
     active_source_index: Option<usize>,
     scroll_handle: ScrollHandle,
+    ongoing_scroll: OngoingScroll,
     image_cache: Entity<RetainAllImageCache>,
     base_directory: Option<PathBuf>,
     pending_update_task: Option<Task<Result<()>>>,
@@ -422,6 +423,7 @@ impl MarkdownPreviewView {
                 markdown,
                 active_source_index: None,
                 scroll_handle: ScrollHandle::new(),
+                ongoing_scroll: OngoingScroll::default(),
                 image_cache: RetainAllImageCache::new(cx),
                 base_directory: None,
                 pending_update_task: None,
@@ -901,6 +903,30 @@ impl MarkdownPreviewView {
         }
     }
 
+    fn handle_scroll(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = EditorSettings::get_global(cx);
+        let sensitivity = if event.modifiers.alt {
+            settings.fast_scroll_sensitivity
+        } else {
+            settings.scroll_sensitivity
+        }
+        .max(0.01);
+
+        let mut delta = event.delta.pixel_delta(window.line_height());
+        if event.delta.precise() {
+            self.ongoing_scroll.filter(&mut delta, event.touch_phase);
+        }
+
+        let current_offset = self.scroll_handle.offset();
+        let new_offset_y = (current_offset.y + delta.y * sensitivity)
+            .clamp(-self.scroll_handle.max_offset().y, Pixels::ZERO);
+        if new_offset_y != current_offset.y {
+            self.scroll_handle
+                .set_offset(point(current_offset.x, new_offset_y));
+            cx.notify();
+        }
+    }
+
     fn scroll_by_amount(&self, distance: Pixels) {
         let offset = self.scroll_handle.offset();
         self.scroll_handle
@@ -1001,7 +1027,8 @@ impl MarkdownPreviewView {
     }
 
     fn scroll_to_top(&mut self, _: &ScrollToTop, _window: &mut Window, cx: &mut Context<Self>) {
-        self.scroll_handle.scroll_to_item(0);
+        let offset = self.scroll_handle.offset();
+        self.scroll_handle.set_offset(point(offset.x, Pixels::ZERO));
         cx.notify();
     }
 
@@ -1949,9 +1976,11 @@ impl Render for MarkdownPreviewView {
                     div()
                         .id("markdown-preview-scroll-container")
                         .size_full()
-                        .overflow_y_scroll()
+                        // The preview scrolls itself in `handle_scroll` so it can honor the editor's scroll sensitivity without changing GPUI's
+                        // generic scroll handling.
+                        .overflow_y_hidden()
                         .track_scroll(&self.scroll_handle)
-                        .restrict_scroll_to_axis()
+                        .on_scroll(cx.listener(MarkdownPreviewView::handle_scroll))
                         .p_4()
                         .child({
                             let markdown_element =
@@ -2369,7 +2398,8 @@ mod tests {
     use gpui::UpdateGlobal as _;
     use gpui::{
         App, AppContext as _, Entity, Focusable as _, Modifiers, MouseButton, MouseDownEvent,
-        MouseUpEvent, TestAppContext, VisualTestContext, WindowHandle, px,
+        MouseUpEvent, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, VisualTestContext,
+        WindowHandle, point, px,
     };
     use language::{Buffer, DiskState, Point};
     use project::{Project, ProjectPath};
@@ -2413,6 +2443,101 @@ mod tests {
             filter_non_rendered_matches(vec![58..65, 1..9, 30..37], &non_rendered_ranges),
             vec![58..65, 1..9]
         );
+    }
+
+    #[gpui::test]
+    async fn preview_scroll_honors_editor_scroll_sensitivity(cx: &mut TestAppContext) {
+        let (project, _, multi_workspace) =
+            markdown_workspace(cx, json!({ "note.md": "Paragraph\n\n".repeat(200) }), false).await;
+        open_project_file(cx, &project, &multi_workspace, "note.md", None, true).await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let scroll_handle = preview.read_with(cx, |preview, _| preview.scroll_handle.clone());
+        let initial_offset = point(px(0.), px(-1000.));
+        assert!(scroll_handle.max_offset().y > px(2000.));
+
+        let set_sensitivity = |cx: &mut VisualTestContext, normal: f32, fast: f32| {
+            cx.update(|_, cx| {
+                settings::SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.editor.scroll_sensitivity = Some(normal);
+                        settings.editor.fast_scroll_sensitivity = Some(fast);
+                    });
+                });
+            });
+        };
+
+        let reset_offset = |cx: &mut VisualTestContext| {
+            preview.update(cx, |_, cx| {
+                scroll_handle.set_offset(initial_offset);
+                cx.notify();
+            });
+            cx.run_until_parked();
+        };
+        set_sensitivity(cx, 1.0, 1.0);
+        reset_offset(cx);
+        cx.simulate_event(ScrollEvent {
+            position: scroll_handle.bounds().center(),
+            delta: ScrollDelta::Lines(point(0., -1.)),
+            touch_phase: TouchPhase::Started,
+            ..ScrollEvent::default()
+        });
+        let line_delta = scroll_handle.offset().y - initial_offset.y;
+        assert!(
+            line_delta < px(0.),
+            "scrolling down should move the preview offset down, got {line_delta:?}"
+        );
+
+        for (normal_sensitivity, fast_sensitivity) in
+            [(1.0_f32, 4.0_f32), (5.0, 15.0), (0.5, 2.0), (0.0, -1.0)]
+        {
+            set_sensitivity(cx, normal_sensitivity, fast_sensitivity);
+            for modifiers in [Modifiers::default(), Modifiers::alt()] {
+                let sensitivity = if modifiers.alt {
+                    fast_sensitivity
+                } else {
+                    normal_sensitivity
+                }
+                .max(0.01);
+
+                for (delta, base_delta) in [
+                    (ScrollDelta::Pixels(point(px(0.), px(-10.))), px(-10.)),
+                    (ScrollDelta::Lines(point(0., -1.)), line_delta),
+                ] {
+                    reset_offset(cx);
+                    cx.simulate_event(ScrollEvent {
+                        position: scroll_handle.bounds().center(),
+                        delta,
+                        modifiers,
+                        touch_phase: TouchPhase::Started,
+                        ..ScrollEvent::default()
+                    });
+
+                    let expected_offset = initial_offset.y + base_delta * sensitivity;
+                    assert!(
+                        (scroll_handle.offset().y - expected_offset).abs() < px(0.01),
+                        "{delta:?} with {modifiers:?}, normal sensitivity {normal_sensitivity} \
+                         and fast sensitivity {fast_sensitivity}: expected {expected_offset:?}, \
+                         got {:?}",
+                        scroll_handle.offset().y
+                    );
+                    assert_eq!(scroll_handle.offset().x, px(0.));
+                }
+            }
+        }
+
+        // Trackpad gestures that are predominantly horizontal must not scroll the preview vertically.
+        set_sensitivity(cx, 5.0, 5.0);
+        reset_offset(cx);
+        cx.simulate_event(ScrollEvent {
+            position: scroll_handle.bounds().center(),
+            delta: ScrollDelta::Pixels(point(px(-10.), px(-2.))),
+            touch_phase: TouchPhase::Started,
+            ..ScrollEvent::default()
+        });
+        assert_eq!(scroll_handle.offset(), initial_offset);
     }
 
     #[gpui::test]
