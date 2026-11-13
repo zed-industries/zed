@@ -51,7 +51,15 @@ jobs:
           esac
 
           if [[ "$requested_revision" == "latest" ]]; then
-            requested_revision="$(curl -fsSL -H 'Snap-Device-Series: 16' "https://api.snapcraft.io/v2/snaps/info/$snap_name" \
+            # The newest revision in latest/edge of every architecture,
+            # since amd64 and arm64 revisions are numbered independently.
+            # Fails gracefully when nothing has been published yet (the
+            # store returns 404 for a registered name without releases).
+            if ! store_info="$(curl -fsSL -H 'Snap-Device-Series: 16' "https://api.snapcraft.io/v2/snaps/info/$snap_name")"; then
+              echo "::error::Could not fetch store info for '$snap_name'; it may have no published revisions yet."
+              exit 1
+            fi
+            requested_revision="$(echo "$store_info" \
               | jq -r '[.["channel-map"][] | select(.channel.risk == "edge" and .channel.track == "latest") | [.channel.architecture, .revision]] | group_by(.[0]) | map(map(.[1]) | max | tostring) | join(",")')"
             if [[ -z "$requested_revision" ]]; then
               echo "::error::Could not find any revision in the latest/edge channel."
