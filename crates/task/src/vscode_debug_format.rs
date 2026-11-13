@@ -52,6 +52,10 @@ pub struct VsCodeDebugTaskFile {
     #[serde(default)]
     version: Option<String>,
     configurations: Vec<VsCodeDebugTaskDefinition>,
+    // Flattening buffers unknown values instead of using serde_json_lenient's
+    // skip path, which rejects trailing commas inside objects and arrays.
+    #[serde(flatten)]
+    _ignored_fields: serde::de::IgnoredAny,
 }
 
 impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
@@ -155,6 +159,78 @@ mod tests {
                 build: None
             }])
         );
+    }
+
+    #[test]
+    fn test_parsing_vscode_launch_json_with_compounds_and_trailing_commas() {
+        let expected = DebugTaskFile(
+            ["Server", "Client"]
+                .into_iter()
+                .map(|label| DebugScenario {
+                    label: label.into(),
+                    adapter: "JavaScript".into(),
+                    config: json!({"request": "launch", "type": "node"}),
+                    tcp_connection: None,
+                    build: None,
+                })
+                .collect(),
+        );
+
+        for compounds in [
+            r#"[{"name": "Full Stack", "configurations": ["Server", "Client"]}]"#,
+            r#"[{"name": "Full Stack", "configurations": ["Server", "Client"],}]"#,
+            r#"[{"name": "Full Stack", "configurations": ["Server", "Client"]},]"#,
+            r#"[{"name": "Full Stack", "configurations": ["Server", "Client",],},]"#,
+        ] {
+            let launch_json = format!(
+                r#"{{
+                    "version": "0.2.0",
+                    "configurations": [
+                        {{"name": "Server", "type": "node", "request": "launch"}},
+                        {{"name": "Client", "type": "node", "request": "launch"}},
+                    ],
+                    "compounds": {compounds},
+                }}"#
+            );
+            let parsed: VsCodeDebugTaskFile = serde_json_lenient::from_str(&launch_json)
+                .expect("deserializing launch.json with compounds");
+            let zed = DebugTaskFile::try_from(parsed).expect("converting to Zed debug templates");
+            pretty_assertions::assert_eq!(zed, expected, "compounds: {compounds}");
+        }
+    }
+
+    #[test]
+    fn test_parsing_vscode_launch_json_rejects_invalid_files() {
+        for (launch_json, expected_error) in [
+            (r#"{}"#, "missing field `configurations`"),
+            (
+                r#"{"configurations": [{"type": "node"}]}"#,
+                "missing field `name`",
+            ),
+            (
+                r#"{"configurations": [{"name": "Server"}]}"#,
+                "missing field `type`",
+            ),
+            (
+                r#"{"configurations": [], "configurations": []}"#,
+                "duplicate field `configurations`",
+            ),
+            (
+                r#"{"configurations": [], "version": "0.2.0", "version": "0.2.0"}"#,
+                "duplicate field `version`",
+            ),
+            (
+                r#"{"configurations": [], "compounds": [,]}"#,
+                "expected value",
+            ),
+        ] {
+            let error = serde_json_lenient::from_str::<VsCodeDebugTaskFile>(launch_json)
+                .expect_err("invalid launch.json must be rejected");
+            assert!(
+                error.to_string().contains(expected_error),
+                "expected {expected_error:?} for {launch_json}, got {error}"
+            );
+        }
     }
 
     #[test]
