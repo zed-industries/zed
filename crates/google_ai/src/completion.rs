@@ -685,6 +685,56 @@ mod tests {
     }
 
     #[test]
+    fn into_google_places_tool_result_images_as_siblings_for_prefixed_gemini_2_5() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                    tool_use_id: "call-1".into(),
+                    tool_name: "read_file".into(),
+                    is_error: false,
+                    content: vec![
+                        LanguageModelToolResultContent::Text("Read image file shot.png".into()),
+                        LanguageModelToolResultContent::Image(LanguageModelImage {
+                            source: "aW1hZ2U=".into(),
+                        }),
+                    ],
+                    output: None,
+                })],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let request = into_google(
+            request,
+            "google/gemini-2.5-flash".to_string(),
+            GoogleModelMode::Default,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        assert_eq!(
+            serialized["contents"][0]["parts"],
+            json!([
+                {
+                    "functionResponse": {
+                        "name": "read_file",
+                        "response": {"output": "Read image file shot.png"},
+                        "id": "call-1"
+                    }
+                },
+                {
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": "aW1hZ2U="
+                    }
+                }
+            ])
+        );
+    }
+
+    #[test]
     fn into_google_turns_off_budget_thinking_when_supported() {
         let mut request = text_request();
         request.thinking_allowed = false;

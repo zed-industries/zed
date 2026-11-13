@@ -356,7 +356,7 @@ impl LanguageModelClient for GoogleCompatibleLanguageModelProvider {
         if !effort_supported {
             request.thinking_effort = None;
         }
-        // Custom and prefixed model IDs aren't in google_ai's hardcoded table, so
+        // Non-Gemini custom model IDs aren't in google_ai's hardcoded table, so
         // avoid falling back to thinking_level when budget-based thinking is off.
         let mode = if !request.thinking_allowed
             && config.supported_thinking_levels.is_empty()
@@ -537,6 +537,29 @@ mod tests {
             custom_adaptive_model.default_thinking_level,
             Some(ThinkingLevel::Medium)
         );
+
+        let prefixed_flash_adaptive_case = parse_available_model(
+            r#"{
+                "name": "google/gemini-3-flash-preview",
+                "max_tokens": 1000000,
+                "mode": { "type": "adaptive" }
+            }"#,
+        );
+        let prefixed_flash_adaptive_model =
+            available_model_to_google_model(&prefixed_flash_adaptive_case);
+        assert_eq!(
+            prefixed_flash_adaptive_model.supported_thinking_levels,
+            vec![
+                ThinkingLevel::Minimal,
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+            ]
+        );
+        assert_eq!(
+            prefixed_flash_adaptive_model.default_thinking_level,
+            Some(ThinkingLevel::High)
+        );
     }
 
     #[gpui::test]
@@ -607,6 +630,11 @@ mod tests {
                                                 "name": "google/gemini-2.5-flash",
                                                 "max_tokens": 1000000,
                                                 "mode": { "type": "thinking", "budget_tokens": 4096 }
+                                            },
+                                            {
+                                                "name": "custom-budget-model",
+                                                "max_tokens": 1000000,
+                                                "mode": { "type": "thinking", "budget_tokens": 2048 }
                                             }
                                         ]
                                     }
@@ -700,15 +728,58 @@ mod tests {
             ..Default::default()
         };
         let mut budget_stream = provider
-            .stream_completion(&budget_model, budget_off_request, &cx.to_async())
+            .stream_completion(&budget_model, budget_off_request.clone(), &cx.to_async())
             .await
             .expect("budget stream should succeed");
         while budget_stream.next().await.is_some() {}
         {
             let recorded = captured_requests.lock().unwrap();
             assert_eq!(recorded.len(), 2);
+            assert_eq!(
+                recorded[1].0,
+                "https://gateway.example.com/v1beta/models/google/gemini-2.5-flash:streamGenerateContent?alt=sse&key=secret-key"
+            );
+            assert_eq!(
+                recorded[1].2["generationConfig"]["thinkingConfig"],
+                serde_json::json!({ "thinkingBudget": 0 })
+            );
+        }
+
+        let adaptive_off_request = LanguageModelRequest {
+            messages: request.messages.clone(),
+            thinking_allowed: false,
+            thinking_effort: Some("high".to_string()),
+            ..Default::default()
+        };
+        let mut adaptive_off_stream = provider
+            .stream_completion(&model, adaptive_off_request, &cx.to_async())
+            .await
+            .expect("adaptive off stream should succeed");
+        while adaptive_off_stream.next().await.is_some() {}
+        {
+            let recorded = captured_requests.lock().unwrap();
+            assert_eq!(recorded.len(), 3);
+            assert_eq!(
+                recorded[2].2["generationConfig"]["thinkingConfig"],
+                serde_json::json!({ "thinkingLevel": "LOW" })
+            );
+        }
+
+        let custom_budget_model = cx
+            .update(|cx| provider.provided_models(cx))
+            .into_iter()
+            .find(|model| model.id().0.as_ref() == "custom-budget-model")
+            .expect("custom budget model should exist");
+        let mut custom_budget_stream = provider
+            .stream_completion(&custom_budget_model, budget_off_request, &cx.to_async())
+            .await
+            .expect("custom budget stream should succeed");
+        while custom_budget_stream.next().await.is_some() {}
+        {
+            let recorded = captured_requests.lock().unwrap();
+            assert_eq!(recorded.len(), 4);
             assert!(
-                recorded[1].2["generationConfig"]
+                recorded[3].2["generationConfig"]
                     .get("thinkingConfig")
                     .is_none()
             );

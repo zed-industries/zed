@@ -41,17 +41,24 @@ fn is_excluded_model(model_id: &str) -> bool {
     })
 }
 
+fn unprefixed_model_id(model_id: &str) -> &str {
+    model_id.rsplit_once('/').map_or(model_id, |(_, name)| name)
+}
+
 /// Models that budget thinking in tokens rather than accepting thinking levels.
 fn uses_thinking_budget(model_id: &str) -> bool {
     matches!(
-        model_id,
+        unprefixed_model_id(model_id),
         "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
     )
 }
 
 /// Thinking-budget models whose thinking can be turned off with a zero budget.
 pub(crate) fn supports_disabling_thinking(model_id: &str) -> bool {
-    matches!(model_id, "gemini-2.5-flash" | "gemini-2.5-flash-lite")
+    matches!(
+        unprefixed_model_id(model_id),
+        "gemini-2.5-flash" | "gemini-2.5-flash-lite"
+    )
 }
 
 /// Models that take tool result media as sibling parts of the function response.
@@ -60,7 +67,7 @@ pub(crate) fn supports_disabling_thinking(model_id: &str) -> bool {
 /// reject sibling media with "Requests ending with a model turn are not supported".
 pub(crate) fn uses_sibling_function_response_media(model_id: &str) -> bool {
     matches!(
-        model_id,
+        unprefixed_model_id(model_id),
         "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
     )
 }
@@ -68,7 +75,7 @@ pub(crate) fn uses_sibling_function_response_media(model_id: &str) -> bool {
 /// Level-based models that accept `MINIMAL`; the others reject it and start at `LOW`.
 fn supports_minimal_thinking(model_id: &str) -> bool {
     matches!(
-        model_id,
+        unprefixed_model_id(model_id),
         "gemini-3-flash-preview"
             | "gemini-3.5-flash"
             | "gemini-3.5-flash-lite"
@@ -78,7 +85,7 @@ fn supports_minimal_thinking(model_id: &str) -> bool {
 
 /// The thinking level Zed selects for a level-based model until the user picks another.
 fn default_thinking_level(model_id: &str) -> ThinkingLevel {
-    match model_id {
+    match unprefixed_model_id(model_id) {
         "gemini-3.5-flash-lite" => ThinkingLevel::Minimal,
         "gemini-3-flash-preview" | "gemini-3.1-pro-preview" => ThinkingLevel::High,
         _ => ThinkingLevel::Medium,
@@ -1063,6 +1070,23 @@ mod tests {
             Some(ThinkingLevel::Low)
         );
         assert_eq!(lowest_thinking_level("gemini-2.5-flash"), None);
+        assert_eq!(
+            lowest_thinking_level("google/gemini-3-flash-preview"),
+            Some(ThinkingLevel::Minimal)
+        );
+        assert_eq!(lowest_thinking_level("google/gemini-2.5-flash"), None);
+        assert_eq!(
+            supported_thinking_levels("google/gemini-3-flash-preview"),
+            (
+                vec![
+                    ThinkingLevel::Minimal,
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                ],
+                ThinkingLevel::High
+            )
+        );
     }
 
     #[test]
