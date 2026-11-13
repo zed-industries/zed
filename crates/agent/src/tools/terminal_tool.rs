@@ -3515,14 +3515,14 @@ mod tests {
             other => panic!("expected unrestricted network access, got {other:?}"),
         }
 
-        // macOS and Linux confine host requests through the allowlist proxy.
+        // Platforms with a sandbox confine host requests through the allowlist proxy.
         match network_request_to_sandbox_network_access(&host_request(&["github.com"])) {
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
             acp_thread::SandboxNetworkAccess::Restricted(allowlist) => {
                 assert!(allowlist.allows("github.com"));
                 assert!(!allowlist.allows("example.com"));
             }
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
             acp_thread::SandboxNetworkAccess::None => {}
             other => panic!("unexpected network access for host request, got {other:?}"),
         }

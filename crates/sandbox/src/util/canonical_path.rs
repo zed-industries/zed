@@ -337,17 +337,21 @@ mod tests {
 
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {
-    use super::CanonicalPathBuf;
-    use std::path::PathBuf;
+    use super::{CanonicalPathBuf, require_windows_grant_shape};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn constructors_enforce_windows_grant_shape() {
         for ok in [r"C:\Users\me", r"\\?\C:\Users\me"] {
             assert!(
-                CanonicalPathBuf::from_canonical(PathBuf::from(ok)).is_ok(),
+                require_windows_grant_shape(Path::new(ok)).is_ok(),
                 "{ok} should be accepted"
             );
         }
+        // `from_canonical` also requires an existing path that still resolves to itself.
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dunce::canonicalize(dir.path()).unwrap();
+        assert!(CanonicalPathBuf::from_canonical(canonical).is_ok());
         for bad in [
             "/home/me/proj",
             r"\\wsl.localhost\Ubuntu\home\me",
