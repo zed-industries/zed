@@ -2791,8 +2791,7 @@ impl Session {
     pub fn refresh_watchers(&mut self, frame_id: u64, cx: &mut Context<Self>) {
         let watches = self.watchers.clone();
         for (_, watch) in watches.into_iter() {
-            self.add_watcher(watch.expression.clone(), frame_id, cx)
-                .detach();
+            self.add_watcher(watch.expression, frame_id, cx).detach();
         }
     }
 

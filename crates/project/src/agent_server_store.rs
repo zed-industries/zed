@@ -362,7 +362,7 @@ impl AgentServerStore {
                 CustomAgentServerSettings::Custom { command, .. } => {
                     let agent_name = AgentId(name.clone().into());
                     self.external_agents.insert(
-                        agent_name.clone(),
+                        agent_name,
                         ExternalAgentEntry::new(
                             Box::new(LocalCustomAgent {
                                 command: command.clone(),
@@ -394,7 +394,7 @@ impl AgentServerStore {
                             }
 
                             self.external_agents.insert(
-                                agent_name.clone(),
+                                agent_name,
                                 ExternalAgentEntry::new(
                                     Box::new(LocalRegistryArchiveAgent {
                                         fs: fs.clone(),
@@ -419,7 +419,7 @@ impl AgentServerStore {
                         }
                         RegistryAgent::Npx(agent) => {
                             self.external_agents.insert(
-                                agent_name.clone(),
+                                agent_name,
                                 ExternalAgentEntry::new(
                                     Box::new(LocalRegistryNpxAgent {
                                         fs: fs.clone(),

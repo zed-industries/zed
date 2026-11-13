@@ -1179,8 +1179,8 @@ impl OpenAiResponseEventMapper {
                         Ok(input) => {
                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
-                                    id: LanguageModelToolUseId::from(call_id.clone()),
-                                    name: name.clone(),
+                                    id: LanguageModelToolUseId::from(call_id),
+                                    name,
                                     is_input_complete: true,
                                     input: LanguageModelToolUseInput::Json(input),
                                     raw_input: arguments.clone(),
@@ -1190,8 +1190,8 @@ impl OpenAiResponseEventMapper {
                         }
                         Err(error) => {
                             events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                id: LanguageModelToolUseId::from(call_id.clone()),
-                                tool_name: name.clone(),
+                                id: LanguageModelToolUseId::from(call_id),
+                                tool_name: name,
                                 raw_input: Arc::<str>::from(arguments.clone()),
                                 json_parse_error: error.to_string(),
                             }));

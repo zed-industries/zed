@@ -1870,7 +1870,7 @@ mod tests {
                 .expect("watch again")
                 .expect("registered again");
             assert_eq!(backend.lock().watch_calls, [path.clone(), path.clone()]);
-            assert_eq!(backend.lock().watched_paths, HashSet::from([path.clone()]));
+            assert_eq!(backend.lock().watched_paths, HashSet::from([path]));
 
             // The backend already dropped this watch, as inotify does when a
             // watched directory is deleted.

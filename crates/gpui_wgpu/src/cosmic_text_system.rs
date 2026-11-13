@@ -364,8 +364,7 @@ impl CosmicTextSystemState {
                         cached.clone()
                     } else {
                         let loaded = self.load_family(fallback_name, features, None)?;
-                        self.font_ids_by_family_cache
-                            .insert(fb_key.clone(), loaded.clone());
+                        self.font_ids_by_family_cache.insert(fb_key, loaded.clone());
                         loaded
                     };
                     let Some(&fb_id) = fb_ids.first() else {
