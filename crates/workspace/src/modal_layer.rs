@@ -58,10 +58,6 @@ pub trait ModalView: ManagedView {
     fn fade_out_background(&self) -> bool {
         false
     }
-
-    fn render_bare(&self) -> bool {
-        false
-    }
 }
 
 trait ModalViewHandle {
@@ -70,7 +66,6 @@ trait ModalViewHandle {
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn subscribe_dismiss(&self, window: &mut Window, cx: &mut Context<ModalLayer>) -> Subscription;
     fn fade_out_background(&self, cx: &mut App) -> bool;
-    fn render_bare(&self, cx: &mut App) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for Entity<V> {
@@ -95,10 +90,6 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
     fn fade_out_background(&self, cx: &mut App) -> bool {
         self.read(cx).fade_out_background()
     }
-
-    fn render_bare(&self, cx: &mut App) -> bool {
-        self.read(cx).render_bare()
-    }
 }
 
 pub struct ActiveModal {
@@ -114,10 +105,10 @@ pub struct ModalLayer {
     // can reveal it again with its exact prior state. Left intact across
     // non-reopenable modals (e.g. the command palette), which may trigger the reopen.
     stashed_modal: Option<Box<dyn ModalViewHandle>>,
-    // Set when a reveal was requested while another modal was still active (e.g. the
-    // which-key popup that is dismissed only after the reopen action fires). The reveal
-    // then happens once that modal closes, so it doesn't matter whether the triggering
-    // modal is dismissed before or after the action dispatches.
+    // Set when a reveal was requested while another modal was still active (e.g. one
+    // that is dismissed only after the reopen action fires). The reveal then happens
+    // once that modal closes, so it doesn't matter whether the triggering modal is
+    // dismissed before or after the action dispatches.
     reveal_stash_when_free: bool,
     dismiss_on_focus_lost: bool,
 }
@@ -209,8 +200,8 @@ impl ModalLayer {
             return false;
         }
         if self.active_modal.is_some() {
-            // Another modal is still closing (e.g. the which-key popup that dismisses
-            // only after this action fires). Reveal once it is gone; see `hide_modal`.
+            // Another modal is still closing (e.g. one that dismisses only after this
+            // action fires). Reveal once it is gone; see `hide_modal`.
             self.reveal_stash_when_free = true;
             return false;
         }
@@ -290,10 +281,6 @@ impl Render for ModalLayer {
         let Some(active_modal) = &self.active_modal else {
             return div().into_any_element();
         };
-
-        if active_modal.modal.render_bare(cx) {
-            return active_modal.modal.view().into_any_element();
-        }
 
         div()
             .absolute()
