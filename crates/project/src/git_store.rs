@@ -448,6 +448,7 @@ impl language::File for IndexTextFile {
             mtime: None,
             is_deleted: false,
             is_historic: true,
+            is_private: self.is_private,
         }
     }
 
