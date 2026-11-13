@@ -9589,7 +9589,7 @@ impl ThreadView {
         // (title, detail line, docs section slug)
         let (title, detail, docs_section): (SharedString, SharedString, Option<&'static str>) =
             match reason {
-                SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
+                SandboxNotAppliedReason::CreationFailed(error) => (
                     "Couldn't create a sandbox".into(),
                     error.user_facing_message().into(),
                     Some(error.docs_section()),
@@ -9624,10 +9624,10 @@ impl ThreadView {
     /// Find the first terminal tool call in the thread whose sandbox couldn't be
     /// created, so a later "disabled for this thread" warning can reuse the same
     /// explanation of *why* the sandbox failed.
-    fn find_thread_sandbox_error(&self, cx: &App) -> Option<acp_thread::LinuxWslSandboxError> {
+    fn find_thread_sandbox_error(&self, cx: &App) -> Option<acp_thread::SandboxCreationError> {
         self.thread.read(cx).entries().iter().find_map(|entry| {
             if let AgentThreadEntry::ToolCall(tool_call) = entry
-                && let Some(SandboxNotAppliedReason::ErrorLinuxWsl(error)) =
+                && let Some(SandboxNotAppliedReason::CreationFailed(error)) =
                     &tool_call.sandbox_not_applied
             {
                 return Some(error.clone());
@@ -10797,10 +10797,8 @@ impl ThreadView {
         // to.
         let granted_path = granted.canonical_or_requested();
         let requested_path = granted.requested.clone();
-        // Grants are stored in the request's own namespace (a Windows path stays
-        // `C:\...`, a WSL path stays `/...`), so a genuine symlink/junction
-        // redirect is just a plain inequality between the request and its
-        // resolved canonical.
+        // A genuine symlink/junction redirect is just a plain inequality between
+        // the request and its resolved canonical.
         let is_redirected = granted
             .resolved
             .as_deref()

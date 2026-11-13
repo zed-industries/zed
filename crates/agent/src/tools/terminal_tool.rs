@@ -671,7 +671,7 @@ async fn run_terminal_tool(
                         }
                         Ok(SandboxFallbackDecision::RunUnsandboxed) => {
                             sandbox_not_applied =
-                                Some(acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error));
+                                Some(acp_thread::SandboxNotAppliedReason::CreationFailed(error));
                             break None;
                         }
                         Ok(SandboxFallbackDecision::Deny) | Err(_) => {
@@ -744,7 +744,7 @@ async fn run_terminal_tool(
                  execution for the rest of this thread."
                 .to_string()
         }
-        acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
+        acp_thread::SandboxNotAppliedReason::CreationFailed(error) => format!(
             "Note: this command ran WITHOUT an OS sandbox because one could not be \
                  created ({}).",
             error.user_facing_message()

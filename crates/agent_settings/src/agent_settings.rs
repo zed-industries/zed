@@ -443,10 +443,9 @@ pub struct SandboxPermissions {
     /// Persistently run agent terminal commands outside the OS sandbox. This is
     /// the model-facing "off switch": when set, the sandboxed terminal tool is
     /// not exposed and the system prompt omits the sandbox section, so the
-    /// model uses the plain `terminal` tool (on Windows, WSL sandbox setup is
-    /// skipped). Distinct from the model-requested `unsandboxed: true` escape
-    /// approved "once" or "for this thread", which keeps the sandboxed
-    /// tool/prompt in place — see `agent::sandboxing`.
+    /// model uses the plain `terminal` tool. Distinct from the model-requested
+    /// `unsandboxed: true` escape approved "once" or "for this thread", which
+    /// keeps the sandboxed tool/prompt in place — see `agent::sandboxing`.
     pub allow_unsandboxed: bool,
     /// Directory subtree grants, each paired with the canonical
     /// (symlink-resolved) target established when the grant was approved.

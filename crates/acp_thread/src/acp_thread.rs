@@ -264,7 +264,7 @@ pub struct SandboxFallbackAuthorizationDetails {
     #[serde(default)]
     pub reason: String,
     /// Slug of the sandboxing docs section that best explains how to fix this
-    /// failure (see [`crate::LinuxWslSandboxError::docs_section`]), rendered as a
+    /// failure (see [`crate::SandboxCreationError::docs_section`]), rendered as a
     /// "Learn more" link. `None` when the cause is unknown.
     #[serde(default)]
     pub docs_section: Option<String>,

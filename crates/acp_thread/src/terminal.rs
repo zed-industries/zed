@@ -82,7 +82,7 @@ pub enum SandboxNetworkAccess {
 /// (and persisted in tool-call metadata) so the UI can
 /// explain what went wrong.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LinuxWslSandboxError {
+pub enum SandboxCreationError {
     /// No usable `bwrap` binary was found on `PATH`.
     BwrapNotFound,
     /// The only `bwrap` found is setuid-root, which Zed refuses to run.
@@ -94,7 +94,7 @@ pub enum LinuxWslSandboxError {
     Other(String),
 }
 
-impl From<sandbox::SandboxError> for LinuxWslSandboxError {
+impl From<sandbox::SandboxError> for SandboxCreationError {
     fn from(error: sandbox::SandboxError) -> Self {
         match error {
             sandbox::SandboxError::BwrapNotFound => Self::BwrapNotFound,
@@ -105,27 +105,27 @@ impl From<sandbox::SandboxError> for LinuxWslSandboxError {
     }
 }
 
-impl LinuxWslSandboxError {
+impl SandboxCreationError {
     /// A short, user-facing explanation of why the sandbox couldn't be created,
     /// suitable for display in the agent panel.
     pub fn user_facing_message(&self) -> String {
         match self {
-            LinuxWslSandboxError::BwrapNotFound => {
+            SandboxCreationError::BwrapNotFound => {
                 "No usable `bwrap` binary was found on your PATH. Install Bubblewrap to let \
                  the agent sandbox terminal commands."
                     .to_string()
             }
-            LinuxWslSandboxError::SetuidRejected => {
+            SandboxCreationError::SetuidRejected => {
                 "The only `bwrap` available is setuid-root, which Zed refuses to run. Install \
                  a non-setuid Bubblewrap to let the agent sandbox terminal commands."
                     .to_string()
             }
-            LinuxWslSandboxError::SandboxProbeFailed => {
+            SandboxCreationError::SandboxProbeFailed => {
                 "`bwrap` is installed but couldn't create a sandbox, likely because \
                  unprivileged user namespaces are disabled on this system."
                     .to_string()
             }
-            LinuxWslSandboxError::Other(message) => message.clone(),
+            SandboxCreationError::Other(message) => message.clone(),
         }
     }
 
@@ -136,15 +136,15 @@ impl LinuxWslSandboxError {
         match self {
             // Both "no bwrap" and "only a setuid-root bwrap" are resolved by
             // installing a non-setuid Bubblewrap.
-            LinuxWslSandboxError::BwrapNotFound | LinuxWslSandboxError::SetuidRejected => {
+            SandboxCreationError::BwrapNotFound | SandboxCreationError::SetuidRejected => {
                 "installing-bubblewrap"
             }
             // A failed probe on Linux is almost always disabled unprivileged
             // user namespaces, which the Ubuntu-specific section covers.
-            LinuxWslSandboxError::SandboxProbeFailed => "installing-bubblewrap-ubuntu",
+            SandboxCreationError::SandboxProbeFailed => "installing-bubblewrap-ubuntu",
             // Catch-all (includes Windows messages): point at the platform
             // overview for the current OS.
-            LinuxWslSandboxError::Other(_) => {
+            SandboxCreationError::Other(_) => {
                 if cfg!(target_os = "windows") {
                     "windows"
                 } else {
@@ -202,7 +202,7 @@ pub fn granted_write_path_to_location_or_log(
 
 impl SandboxWrap {
     /// Whether the OS sandbox for this request can actually be created right now,
-    /// returning a structured [`LinuxWslSandboxError`] when it can't.
+    /// returning a structured [`SandboxCreationError`] when it can't.
     ///
     /// The sandbox implementation never runs a command unsandboxed on its own —
     /// it aborts if it can't create the sandbox. This lets a caller decide, up
@@ -210,11 +210,11 @@ impl SandboxWrap {
     /// (fail-open), or refuse (fail-closed). It runs a brief probe subprocess on
     /// Linux, so call it off the main thread. On platforms whose sandbox can't
     /// fail to set up this way it always returns `Ok`.
-    pub fn can_create_sandbox(&self) -> Result<(), LinuxWslSandboxError> {
+    pub fn can_create_sandbox(&self) -> Result<(), SandboxCreationError> {
         let policy = self
             .to_policy()
-            .map_err(|error| LinuxWslSandboxError::Other(format!("{error:#}")))?;
-        sandbox::Sandbox::can_create(&policy).map_err(LinuxWslSandboxError::from)
+            .map_err(|error| SandboxCreationError::Other(format!("{error:#}")))?;
+        sandbox::Sandbox::can_create(&policy).map_err(SandboxCreationError::from)
     }
 
     /// Translate this request into the cross-platform [`sandbox::SandboxPolicy`].
@@ -324,8 +324,8 @@ impl SandboxWrap {
 /// This is deliberately platform-agnostic — every variant exists on every
 /// platform — so the serialized form stored in the thread database never
 /// depends on which OS wrote it. Linux and Windows can fail to create a
-/// sandbox (`ErrorLinuxWsl`, named for the retired WSL sandbox), and macOS can
-/// grow its own failure cases later without a migration.
+/// sandbox (`CreationFailed`), and macOS can grow its own failure cases later
+/// without a migration.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SandboxNotAppliedReason {
     /// The user disabled the sandbox for the rest of this thread, so the command
@@ -333,10 +333,12 @@ pub enum SandboxNotAppliedReason {
     /// model-requested `unsandboxed: true` escape "for this thread", or when
     /// they chose to run unsandboxed for the thread after a sandbox-creation
     /// failure (in which case a preceding tool call's reason is
-    /// [`SandboxNotAppliedReason::ErrorLinuxWsl`]).
+    /// [`SandboxNotAppliedReason::CreationFailed`]).
     DisabledForThisThread,
     /// The Linux or Windows sandbox could not be created for this command.
-    ErrorLinuxWsl(LinuxWslSandboxError),
+    // Serialized under its original name so existing thread metadata still loads.
+    #[serde(rename = "ErrorLinuxWsl")]
+    CreationFailed(SandboxCreationError),
 }
 
 /// The live sandbox kept alive for its per-command resources (the network proxy
