@@ -15,6 +15,7 @@ use gpui::{
     TaskExt,
 };
 use http_client::HttpClient;
+use itertools::Itertools as _;
 use node_runtime::NodeRuntime;
 use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
@@ -1176,36 +1177,18 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             let dir = installation_dir;
             fs.create_dir(&dir).await?;
 
-            let os = if cfg!(target_os = "macos") {
-                "darwin"
-            } else if cfg!(target_os = "linux") {
-                "linux"
-            } else if cfg!(target_os = "windows") {
-                "windows"
-            } else {
-                anyhow::bail!("unsupported OS");
-            };
-
-            let arch = if cfg!(target_arch = "aarch64") {
-                "aarch64"
-            } else if cfg!(target_arch = "x86_64") {
-                "x86_64"
-            } else {
-                anyhow::bail!("unsupported architecture");
-            };
-
-            let platform_key = format!("{}-{}", os, arch);
-            let target_config = targets.get(&platform_key).with_context(|| {
-                format!(
-                    "no target specified for platform '{}'. Available platforms: {}",
-                    platform_key,
-                    targets
-                        .keys()
-                        .map(|k| k.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })?;
+            let platform_keys = crate::agent_registry_store::current_platform_keys().await;
+            anyhow::ensure!(!platform_keys.is_empty(), "unsupported platform");
+            let target_config = platform_keys
+                .iter()
+                .find_map(|platform_key| targets.get(*platform_key))
+                .with_context(|| {
+                    format!(
+                        "no target specified for platform '{}'. Available platforms: {}",
+                        platform_keys.join("' or '"),
+                        targets.keys().join(", ")
+                    )
+                })?;
 
             env.extend(target_config.env.clone());
             env.extend(extra_env);
