@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use github_releases::AssetKind;
@@ -236,6 +236,7 @@ impl AgentServerStore {
                     env: Default::default(),
                     default_config_options: HashMap::default(),
                     favorite_config_option_values: HashMap::default(),
+                    auto_update: None,
                 }),
             );
         });
@@ -357,6 +358,7 @@ impl AgentServerStore {
             }
         }
 
+        let mut pinned_agents = HashSet::default();
         for (name, settings) in new_settings.iter() {
             match settings {
                 CustomAgentServerSettings::Custom { command, .. } => {
@@ -374,7 +376,9 @@ impl AgentServerStore {
                         ),
                     );
                 }
-                CustomAgentServerSettings::Registry { env, .. } => {
+                CustomAgentServerSettings::Registry {
+                    env, auto_update, ..
+                } => {
                     let Some(agent) = registry_agents_by_id.get(name) else {
                         if registry_store.is_some() {
                             log::debug!("Registry agent '{}' not found in ACP registry", name);
@@ -383,6 +387,9 @@ impl AgentServerStore {
                     };
 
                     let agent_name = AgentId(name.clone().into());
+                    if !auto_update {
+                        pinned_agents.insert(agent_name.clone());
+                    }
                     match agent {
                         RegistryAgent::Binary(agent) => {
                             if !agent.supports_current_platform {
@@ -407,6 +414,7 @@ impl AgentServerStore {
                                         version: agent.metadata.version.clone(),
                                         targets: agent.targets.clone(),
                                         env: env.clone(),
+                                        auto_update: *auto_update,
                                         new_version_available_tx: None,
                                         loading_status_tx: None,
                                     })
@@ -431,6 +439,7 @@ impl AgentServerStore {
                                         args: agent.args.clone(),
                                         distribution_env: agent.env.clone(),
                                         settings_env: env.clone(),
+                                        auto_update: *auto_update,
                                         new_version_available_tx: None,
                                     })
                                         as Box<dyn ExternalAgentServer>,
@@ -458,7 +467,9 @@ impl AgentServerStore {
                 continue;
             };
 
-            if new_version != &old_version {
+            // A pinned agent keeps running its installed version, so a newer
+            // registry version is no reason to reconnect.
+            if new_version != &old_version && !pinned_agents.contains(name) {
                 if let Some(mut tx) = new_version_available_tx {
                     tx.send(Some(new_version.to_string())).ok();
                 }
@@ -1115,6 +1126,41 @@ async fn remove_stale_versioned_archive_cache_dirs(
     Ok(())
 }
 
+/// Records the registry entry of the version that was last installed, so an agent with
+/// `auto_update: false` can keep using it after the registry moves to a newer version.
+const INSTALLED_AGENT_FILE_NAME: &str = "zed_installed_agent.json";
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct InstalledArchiveAgent {
+    version: String,
+    target: RegistryTargetConfig,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct InstalledNpxAgent {
+    version: String,
+    package: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+}
+
+async fn read_installed_agent<T: for<'de> Deserialize<'de>>(fs: &dyn Fs, path: &Path) -> Option<T> {
+    if !fs.is_file(path).await {
+        return None;
+    }
+    let contents = fs.load(path).await.log_err()?;
+    serde_json::from_str(&contents)
+        .with_context(|| format!("parsing installed agent record {path:?}"))
+        .log_err()
+}
+
+async fn write_installed_agent<T: Serialize>(fs: &dyn Fs, path: &Path, record: &T) -> Result<()> {
+    let contents = serde_json::to_string_pretty(record)?;
+    fs.atomic_write(path.to_path_buf(), contents)
+        .await
+        .with_context(|| format!("writing installed agent record {path:?}"))
+}
+
 struct LocalRegistryArchiveAgent {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
@@ -1124,6 +1170,7 @@ struct LocalRegistryArchiveAgent {
     version: SharedString,
     targets: HashMap<String, RegistryTargetConfig>,
     env: HashMap<String, String>,
+    auto_update: bool,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
     loading_status_tx: Option<watch::Sender<Option<String>>>,
 }
@@ -1162,7 +1209,8 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let installation_dir = self.installation_dir.clone();
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
-        let version = self.version.clone();
+        let registry_version = self.version.clone();
+        let auto_update = self.auto_update;
         let loading_status_tx = self.loading_status_tx.take();
 
         cx.spawn(async move |cx| {
@@ -1194,18 +1242,33 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 anyhow::bail!("unsupported architecture");
             };
 
-            let platform_key = format!("{}-{}", os, arch);
-            let target_config = targets.get(&platform_key).with_context(|| {
-                format!(
-                    "no target specified for platform '{}'. Available platforms: {}",
-                    platform_key,
-                    targets
-                        .keys()
-                        .map(|k| k.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })?;
+            let installed_agent_path = dir.join(INSTALLED_AGENT_FILE_NAME);
+            let installed_agent = if auto_update {
+                None
+            } else {
+                read_installed_agent::<InstalledArchiveAgent>(fs.as_ref(), &installed_agent_path)
+                    .await
+            };
+            let is_pinned = installed_agent.is_some();
+            let (version, target_config) = match installed_agent {
+                Some(installed_agent) => (installed_agent.version, installed_agent.target),
+                None => {
+                    let platform_key = format!("{}-{}", os, arch);
+                    let target_config = targets.get(&platform_key).with_context(|| {
+                        format!(
+                            "no target specified for platform '{}'. Available platforms: {}",
+                            platform_key,
+                            targets
+                                .keys()
+                                .map(|k| k.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })?;
+                    (registry_version.to_string(), target_config.clone())
+                }
+            };
+            let target_config = &target_config;
 
             env.extend(target_config.env.clone());
             env.extend(extra_env);
@@ -1214,7 +1277,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             let archive_url = &target_config.archive;
             let version_dir = versioned_archive_cache_dir(
                 &dir,
-                Some(version.as_ref()),
+                Some(&version),
                 archive_url,
                 target_config.sha256.as_deref(),
             );
@@ -1222,8 +1285,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             if !fs.is_dir(&version_dir).await {
                 let mut loading_status_tx = loading_status_tx;
                 if let Some(tx) = loading_status_tx.as_mut() {
-                    tx.send(Some(format!("Installing {}…", version.as_ref())))
-                        .ok();
+                    tx.send(Some(format!("Installing {version}…"))).ok();
                 }
 
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
@@ -1305,6 +1367,19 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 }
             };
 
+            if !is_pinned {
+                write_installed_agent(
+                    fs.as_ref(),
+                    &installed_agent_path,
+                    &InstalledArchiveAgent {
+                        version: version.clone(),
+                        target: target_config.clone(),
+                    },
+                )
+                .await
+                .log_err();
+            }
+
             cx.background_spawn({
                 let fs = fs.clone();
                 let dir = dir.clone();
@@ -1349,6 +1424,7 @@ struct LocalRegistryNpxAgent {
     args: Vec<String>,
     distribution_env: HashMap<String, String>,
     settings_env: HashMap<String, String>,
+    auto_update: bool,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
@@ -1375,9 +1451,13 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let registry_id = self.registry_id.clone();
-        let package = self.package.clone();
-        let args = self.args.clone();
-        let distribution_env = self.distribution_env.clone();
+        let registry_agent = InstalledNpxAgent {
+            version: self.version.to_string(),
+            package: self.package.to_string(),
+            args: self.args.clone(),
+            env: self.distribution_env.clone(),
+        };
+        let auto_update = self.auto_update;
         let settings_env = self.settings_env.clone();
 
         cx.spawn(async move |cx| {
@@ -1399,6 +1479,20 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             let _install_guard = install_lock.lock().await;
 
             fs.create_dir(&install_dir).await?;
+
+            let installed_agent_path = install_dir.join(INSTALLED_AGENT_FILE_NAME);
+            let installed_agent = if auto_update {
+                None
+            } else {
+                read_installed_agent::<InstalledNpxAgent>(fs.as_ref(), &installed_agent_path).await
+            };
+            let is_pinned = installed_agent.is_some();
+            let InstalledNpxAgent {
+                version,
+                package,
+                args,
+                env: distribution_env,
+            } = installed_agent.unwrap_or(registry_agent);
 
             let (package_name, package_spec) = bounded_npm_package_spec(&package);
             let node_modules_dir = install_dir.join("node_modules");
@@ -1422,6 +1516,21 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             }
             let executable =
                 node_runtime::read_package_executable(node_modules_dir, package_name).await?;
+
+            if !is_pinned {
+                write_installed_agent(
+                    fs.as_ref(),
+                    &installed_agent_path,
+                    &InstalledNpxAgent {
+                        version,
+                        package: package.clone(),
+                        args: args.clone(),
+                        env: distribution_env.clone(),
+                    },
+                )
+                .await
+                .log_err();
+            }
 
             let node_binary = node_runtime.binary_path().await?;
             env.extend(node_runtime::npm_command_env(&node_binary));
@@ -1669,6 +1778,12 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: {}
         favorite_config_option_values: HashMap<String, Vec<String>>,
+        /// Whether to update this agent to the latest version from the ACP registry.
+        ///
+        /// When `false`, Zed keeps using the version that's already installed.
+        ///
+        /// Default: true
+        auto_update: bool,
     },
 }
 
@@ -1745,11 +1860,13 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
+                auto_update,
             } => CustomAgentServerSettings::Registry {
                 env,
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
+                auto_update: auto_update.unwrap_or(true),
             },
         }
     }
@@ -1847,6 +1964,7 @@ mod tests {
                 version: "1.0.0".into(),
                 targets,
                 env: HashMap::default(),
+                auto_update: true,
                 new_version_available_tx: None,
                 loading_status_tx: None,
             }
@@ -1887,6 +2005,14 @@ mod tests {
     }
 
     fn set_registry_settings(cx: &mut TestAppContext, agent_names: &[&str]) {
+        set_registry_settings_with_auto_update(cx, agent_names, None);
+    }
+
+    fn set_registry_settings_with_auto_update(
+        cx: &mut TestAppContext,
+        agent_names: &[&str],
+        auto_update: Option<bool>,
+    ) {
         cx.update(|cx| {
             AllAgentServersSettings::override_global(
                 AllAgentServersSettings(
@@ -1900,6 +2026,7 @@ mod tests {
                                     default_mode: None,
                                     default_config_options: HashMap::default(),
                                     favorite_config_option_values: HashMap::default(),
+                                    auto_update,
                                 }
                                 .into(),
                             )
@@ -2226,6 +2353,108 @@ mod tests {
         assert_eq!(std::fs::read(command.path).unwrap(), contents);
     }
 
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_archive_agent_without_auto_update_keeps_installed_version(
+        cx: &mut TestAppContext,
+    ) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let installed_agent_path = installation_dir.join(INSTALLED_AGENT_FILE_NAME);
+        let version_dir = |version: &str| {
+            versioned_archive_cache_dir(&installation_dir, Some(version), TEST_ARCHIVE_URL, None)
+        };
+
+        // With nothing installed yet, the registry version is installed and recorded.
+        let mut agent = make_registry_archive_agent(
+            cx,
+            installation_dir.clone(),
+            static_http_client(b"agent 1.0.0".to_vec()),
+            None,
+        );
+        agent.auto_update = false;
+        let command = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(command.path, version_dir("1.0.0").join("agent"));
+        let installed_agent: InstalledArchiveAgent =
+            serde_json::from_slice(&std::fs::read(&installed_agent_path).unwrap()).unwrap();
+        assert_eq!(installed_agent.version, "1.0.0");
+        assert_eq!(installed_agent.target.archive, TEST_ARCHIVE_URL);
+
+        // A newer registry version is ignored while auto-update is off.
+        agent.version = "2.0.0".into();
+        agent.http_client = static_http_client(b"agent 2.0.0".to_vec());
+        let command = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(command.path, version_dir("1.0.0").join("agent"));
+        assert_eq!(std::fs::read(&command.path).unwrap(), b"agent 1.0.0");
+        assert!(!version_dir("2.0.0").exists());
+
+        // If the pinned version's files are gone, the pinned version is installed again.
+        std::fs::remove_dir_all(version_dir("1.0.0")).unwrap();
+        let command = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(command.path, version_dir("1.0.0").join("agent"));
+        assert!(!version_dir("2.0.0").exists());
+
+        // Turning auto-update back on moves to the registry version and records it.
+        agent.auto_update = true;
+        let command = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(command.path, version_dir("2.0.0").join("agent"));
+        assert_eq!(std::fs::read(&command.path).unwrap(), b"agent 2.0.0");
+        let installed_agent: InstalledArchiveAgent =
+            serde_json::from_slice(&std::fs::read(&installed_agent_path).unwrap()).unwrap();
+        assert_eq!(installed_agent.version, "2.0.0");
+    }
+
+    #[test]
+    fn test_installed_npx_agent_round_trips() {
+        let installed_agent = InstalledNpxAgent {
+            version: "1.2.3".to_string(),
+            package: "@scope/agent@1.2.3".to_string(),
+            args: vec!["--acp".to_string()],
+            env: HashMap::from_iter([("KEY".to_string(), "value".to_string())]),
+        };
+        let json = serde_json::to_string(&installed_agent).unwrap();
+        assert_eq!(
+            serde_json::from_str::<InstalledNpxAgent>(&json).unwrap(),
+            installed_agent
+        );
+    }
+
+    #[test]
+    fn test_registry_auto_update_setting() {
+        let auto_update = |json: serde_json::Value| {
+            let settings: CustomAgentServerSettings =
+                serde_json::from_value::<settings::CustomAgentServerSettings>(json)
+                    .unwrap()
+                    .into();
+            match settings {
+                CustomAgentServerSettings::Registry { auto_update, .. } => auto_update,
+                CustomAgentServerSettings::Custom { .. } => panic!("expected a registry agent"),
+            }
+        };
+        assert!(auto_update(serde_json::json!({ "type": "registry" })));
+        assert!(!auto_update(
+            serde_json::json!({ "type": "registry", "auto_update": false })
+        ));
+    }
+
     #[gpui::test]
     async fn test_find_incomplete_npm_package(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor());
@@ -2363,6 +2592,40 @@ mod tests {
 
         // The watch channel should have received the new version.
         assert_eq!(rx.borrow().as_deref(), Some("2.0.0"));
+    }
+
+    #[gpui::test]
+    fn test_version_change_without_auto_update_does_not_notify(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let registry = init_registry(cx, vec![make_npx_agent("test-agent", "1.0.0")]);
+        set_registry_settings_with_auto_update(cx, &["test-agent"], Some(false));
+        let store = create_agent_server_store(cx);
+
+        let (tx, mut rx) = watch::channel::<Option<String>>(None);
+        store.update(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get_mut(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            entry.server.set_new_version_available_tx(tx);
+        });
+
+        registry.update(cx, |store, cx| {
+            store.set_agents(vec![make_npx_agent("test-agent", "2.0.0")], cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(rx.borrow().as_deref(), None);
+        store.update(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get_mut(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            assert!(
+                entry.server.take_new_version_available_tx().is_some(),
+                "tx should have been transferred to the rebuilt agent"
+            );
+        });
     }
 
     #[gpui::test]

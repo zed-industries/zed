@@ -11,7 +11,7 @@ use gpui::{
     SharedString, Task, TaskExt,
 };
 use http_client::{AsyncBody, HttpClient, StatusCode};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use util::ResultExt;
 
@@ -105,7 +105,7 @@ impl RegistryAgent {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RegistryTargetConfig {
     pub archive: String,
     pub cmd: String,

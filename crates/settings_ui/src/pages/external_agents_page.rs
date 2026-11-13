@@ -390,6 +390,7 @@ impl CustomAgentForm {
                     default_mode: mode,
                     default_config_options: config_options,
                     favorite_config_option_values: favorites,
+                    ..
                 } => {
                     for (key, value) in sorted_pairs(env_map) {
                         env.push(new_kv_row(Some(&key), Some(&value), window, cx));

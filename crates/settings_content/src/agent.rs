@@ -906,6 +906,12 @@ pub enum CustomAgentServerSettings {
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
+        /// Whether to update this agent to the latest version from the ACP registry.
+        ///
+        /// When `false`, Zed keeps using the version that's already installed.
+        ///
+        /// Default: true
+        auto_update: Option<bool>,
     },
 }
 

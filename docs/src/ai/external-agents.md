@@ -21,6 +21,21 @@ Open the registry with {#action zed::AcpRegistry}, or open [Agent Settings](./ag
 
 After installation, the agent appears in the new-thread menu in the Agent Panel and Threads Sidebar.
 
+Zed updates registry agents to the latest version in the registry. To keep using the version that's already installed, set `auto_update` to `false` for that agent:
+
+```json [settings]
+{
+  "agent_servers": {
+    "claude-acp": {
+      "type": "registry",
+      "auto_update": false
+    }
+  }
+}
+```
+
+Remove the setting, or set it to `true`, to update the agent again.
+
 ## Common Agents {#common-agents}
 
 Common External Agents include:

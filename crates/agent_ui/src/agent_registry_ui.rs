@@ -547,6 +547,7 @@ impl AgentRegistryPage {
                                         env: Default::default(),
                                         default_config_options: HashMap::default(),
                                         favorite_config_option_values: HashMap::default(),
+                                        auto_update: None,
                                     }
                                 });
                             }
