@@ -29,7 +29,7 @@ The “Threads Sidebar Auto Open” setting controls whether opening a folder in
 
 Click any thread in the sidebar to switch to it. The Agent Panel updates to show that thread's conversation.
 
-For quick switching without opening the sidebar, use the thread switcher: press {#kb agents_sidebar::ToggleThreadSwitcher} to cycle forward through recent threads, or hold `Shift` while pressing that binding to go backward. This works from both the Agent Panel and the Threads Sidebar.
+For quick switching without opening the sidebar, use the thread switcher: press {#kb agents_sidebar::ToggleThreadSwitcher} to cycle forward through recent threads, or hold `Shift` while pressing that binding to go backward. While the switcher is open, `ctrl-down` and `ctrl-up` also move the selection one thread at a time, as do the arrow keys when no modifier is held. This works from both the Agent Panel and the Threads Sidebar.
 
 ### Thread History {#threads-history}
 
