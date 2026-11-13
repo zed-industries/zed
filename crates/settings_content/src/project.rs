@@ -661,6 +661,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: Option<BranchPickerSettingsContent>,
+    /// Git hosting provider base URLs enabled for repository search in the clone picker.
+    ///
+    /// Default: []
+    pub repository_search_providers: Option<Vec<String>>,
     /// Stash picker settings.
     pub stash_picker: Option<StashPickerSettings>,
     /// Commit view settings.

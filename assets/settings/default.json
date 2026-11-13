@@ -1892,6 +1892,8 @@
       "date_style": "relative",
       "show_author_name": true,
     },
+    // Git hosting provider base URLs enabled for repository search in the clone picker.
+    "repository_search_providers": [],
     // Control which information is shown in the stash picker.
     "stash_picker": {
       // Show "relative" or "absolute" dates in the stash picker.
