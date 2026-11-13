@@ -2591,7 +2591,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git = git?;
-                if !paths.is_empty() {
+                for paths in git_path_chunks(&paths) {
                     let output = git
                         .build_command(&["update-index", "--add", "--remove", "--"])
                         .envs(env.iter())
@@ -2619,7 +2619,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git = git?;
-                if !paths.is_empty() {
+                for paths in git_path_chunks(&paths) {
                     let output = git
                         .build_command(&["reset", "--quiet", "--"])
                         .envs(env.iter())
@@ -3676,6 +3676,35 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         }
     }));
     args
+}
+
+// Windows limits command lines to 32,767 UTF-16 code units. UTF-8 byte lengths
+// plus quotes and separators conservatively bound the path arguments, leaving
+// room for the Git executable path and fixed arguments.
+const MAX_GIT_PATH_ARGUMENTS_LENGTH: usize = 30_000;
+
+fn git_path_chunks(paths: &[RepoPath]) -> impl Iterator<Item = &[RepoPath]> {
+    let mut remaining = paths;
+    std::iter::from_fn(move || {
+        if remaining.is_empty() {
+            return None;
+        }
+
+        let mut length = 0;
+        let mut count = 0;
+        for path in remaining {
+            let next_length = length + path.as_unix_str().len() + 3;
+            if count > 0 && next_length > MAX_GIT_PATH_ARGUMENTS_LENGTH {
+                break;
+            }
+            length = next_length;
+            count += 1;
+        }
+
+        let (chunk, rest) = remaining.split_at(count);
+        remaining = rest;
+        Some(chunk)
+    })
 }
 
 pub(crate) struct GitBinary {
@@ -5660,6 +5689,56 @@ mod tests {
         assert_eq!(
             path,
             git_directory.join(format!("index-{}.tmp", Uuid::nil()))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_stage_and_unstage_many_paths(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        git_command(
+            repo_dir.path(),
+            ["commit", "--allow-empty", "-m", "initial"],
+        );
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let paths = (0..1024)
+            .map(|index| repo_path(&format!("文件 {index:04} {}.txt", "a".repeat(64))))
+            .collect::<Vec<_>>();
+        for path in &paths {
+            fs::write(repo_dir.path().join(path.as_std_path()), "content\n").unwrap();
+        }
+        fs::write(repo_dir.path().join("unrelated.txt"), "unrelated\n").unwrap();
+
+        repo.stage_paths(paths.clone(), Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["diff", "--cached", "--name-only"])
+                .lines()
+                .count(),
+            paths.len()
+        );
+        assert!(
+            git_command_output(
+                repo_dir.path(),
+                ["diff", "--cached", "--name-only", "--", "unrelated.txt"]
+            )
+            .is_empty()
+        );
+
+        repo.unstage_paths(paths, Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        assert!(
+            git_command_output(repo_dir.path(), ["diff", "--cached", "--name-only"]).is_empty()
         );
     }
 
