@@ -69,26 +69,38 @@ parts:
   # machines without a supported GPU). Noble's build links against older
   # glibc, so it loads in the core26 runtime and on any newer host. Only
   # the driver itself, its LLVM and its ICD manifest are primed; the rest
-  # of the package would clash with the core26 Mesa files.
+  # of the package would clash with the core26 Mesa files. libxml2 and
+  # libicu are primed because libLLVM links against libxml2, which hosts
+  # newer than noble may not ship.
   lavapipe-noble:
     plugin: nil
     override-pull: |
       arch="$(dpkg --print-architecture)"
       curl -fsSL -o lvp.deb "https://archive.ubuntu.com/ubuntu/pool/main/m/mesa/mesa-vulkan-drivers_25.2.8-0ubuntu0.24.04.4_${arch}.deb"
       curl -fsSL -o llvm20.deb "https://archive.ubuntu.com/ubuntu/pool/main/l/llvm-toolchain-20/libllvm20_20.1.2-0ubuntu1~24.04.3_${arch}.deb"
+      curl -fsSL -o libxml2.deb "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxml2/libxml2_2.9.14+dfsg-1.3ubuntu3.10_${arch}.deb"
+      curl -fsSL -o libicu.deb "https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu74_74.2-1ubuntu3.1_${arch}.deb"
     override-build: |
       dpkg -x lvp.deb "$SNAPCRAFT_PART_INSTALL"
       dpkg -x llvm20.deb "$SNAPCRAFT_PART_INSTALL"
+      dpkg -x libxml2.deb "$SNAPCRAFT_PART_INSTALL"
+      dpkg -x libicu.deb "$SNAPCRAFT_PART_INSTALL"
 
     # Only the software rasterizer, its LLVM and its ICD manifest; the rest
     # of the package would clash with the core26 Mesa files.
     stage:
       - usr/lib/x86_64-linux-gnu/libvulkan_lvp.so
       - usr/lib/x86_64-linux-gnu/libLLVM.so.20.1
+      - usr/lib/x86_64-linux-gnu/libxml2.so.2*
+      - usr/lib/x86_64-linux-gnu/libicuuc.so.74*
+      - usr/lib/x86_64-linux-gnu/libicudata.so.74*
       - usr/share/vulkan/icd.d/lvp_icd.json
     prime:
       - usr/lib/x86_64-linux-gnu/libvulkan_lvp.so
       - usr/lib/x86_64-linux-gnu/libLLVM.so.20.1
+      - usr/lib/x86_64-linux-gnu/libxml2.so.2*
+      - usr/lib/x86_64-linux-gnu/libicuuc.so.74*
+      - usr/lib/x86_64-linux-gnu/libicudata.so.74*
       - usr/share/vulkan/icd.d/lvp_icd.json
 
 apps:
@@ -111,3 +123,10 @@ apps:
       # files in the list are ignored, and both NVIDIA manifest locations are
       # listed because the driver package may install either.
       VK_DRIVER_FILES: $SNAP/usr/share/vulkan/icd.d/radeon_icd.json:$SNAP/usr/share/vulkan/icd.d/intel_icd.json:$SNAP/usr/share/vulkan/icd.d/intel_hasvk_icd.json:$SNAP/usr/share/vulkan/icd.d/nouveau_icd.json:$SNAP/usr/share/vulkan/icd.d/lvp_icd.json:/usr/share/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json
+      # wgpu also enumerates a GL backend via EGL. That would pull in the
+      # host's GL stack (libEGL -> libEGL_mesa -> libgallium), which may be
+      # built against a newer glibc than the base's and segfaults during
+      # initialization. Pointing glvnd at a nonexistent vendor file makes
+      # eglInitialize fail cleanly, so wgpu skips the GL adapter and renders
+      # through Vulkan only, which the bundled drivers above cover.
+      __EGL_VENDOR_LIBRARY_FILENAMES: /nonexistent-egl-vendor.json
