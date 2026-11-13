@@ -2013,6 +2013,143 @@ mod tests {
         }
     }
 
+    fn remove_event(path: &str) -> notify::Event {
+        notify::Event {
+            paths: vec![PathBuf::from(path)],
+            ..notify::Event::new(EventKind::Remove(notify::event::RemoveKind::Folder))
+        }
+    }
+
+    fn rename_from_event(path: &str) -> notify::Event {
+        notify::Event {
+            paths: vec![PathBuf::from(path)],
+            ..notify::Event::new(EventKind::Modify(notify::event::ModifyKind::Name(
+                notify::event::RenameMode::From,
+            )))
+        }
+    }
+
+    #[test]
+    fn renaming_a_directory_away_rewatches_it_and_its_descendants() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+        let dot_git = Arc::<Path>::from(Path::new("/repo/.git"));
+        let refs_heads = Arc::<Path>::from(Path::new("/repo/.git/refs/heads"));
+        let sibling = Arc::<Path>::from(Path::new("/repo/.gitlab"));
+
+        for path in [&dot_git, &refs_heads, &sibling] {
+            watcher
+                .add(path.clone(), false, |_| {})
+                .expect("add watch")
+                .expect("watch registered");
+        }
+        assert_eq!(backend.lock().watch_calls.len(), 3);
+
+        // `mv .git .git.bak`: inotify reports only a rename of `.git` itself;
+        // the watches on `.git/refs/**` silently follow the moved inodes.
+        watcher.dispatch(Ok(rename_from_event("/repo/.git")));
+
+        for path in [&dot_git, &refs_heads] {
+            watcher
+                .add(path.clone(), false, |_| {})
+                .expect("add watch")
+                .expect("watch registered");
+        }
+        // `.gitlab` merely shares a prefix string and is untouched.
+        watcher
+            .add(sibling.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[
+                dot_git.to_path_buf(),
+                refs_heads.to_path_buf(),
+                sibling.to_path_buf(),
+                dot_git.to_path_buf(),
+                refs_heads.to_path_buf(),
+            ]
+        );
+    }
+
+    #[test]
+    fn removing_a_child_does_not_rewatch_the_parent() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+        let dot_git = Arc::<Path>::from(Path::new("/repo/.git"));
+
+        watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+        watcher.dispatch(Ok(remove_event("/repo/.git/index")));
+        watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+
+        assert_eq!(backend.lock().watch_calls, &[dot_git.to_path_buf()]);
+    }
+
+    #[test]
+    fn recursive_watchers_ignore_removal_of_a_watched_root() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
+        let dot_git = Arc::<Path>::from(Path::new("/repo/.git"));
+
+        watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+        watcher.dispatch(Ok(remove_event("/repo/.git")));
+        watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+
+        assert_eq!(backend.lock().watch_calls, &[dot_git.to_path_buf()]);
+    }
+
+    #[gpui::test]
+    async fn fs_watcher_rewatches_a_path_whose_directory_was_recreated(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let dot_git = temp_dir.path().join(".git");
+        std::fs::create_dir(&dot_git).expect("create .git");
+
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let native_watcher = Arc::new(test_os_watcher(
+            OsWatcherKind::Native,
+            Some(backend.clone()),
+        ));
+        let (tx, _rx) = async_channel::unbounded();
+        let watcher = FsWatcher::new(
+            native_watcher.clone(),
+            Arc::new(test_os_watcher(OsWatcherKind::Poll, None)),
+            crate::RealFs::new(None, cx.executor()),
+            cx.executor(),
+            tx,
+            Default::default(),
+        );
+
+        watcher.add(&dot_git).expect("add .git");
+        assert_eq!(backend.lock().watch_calls, std::slice::from_ref(&dot_git));
+
+        // The directory is deleted and re-created under the same path while the
+        // `FsWatcher` registration survives, so the second `add` is answered
+        // from the registration map and must still re-issue the OS watch.
+        std::fs::remove_dir(&dot_git).expect("remove .git");
+        native_watcher.dispatch(Ok(remove_event(
+            dot_git.to_str().expect("temp dir path is valid UTF-8"),
+        )));
+        std::fs::create_dir(&dot_git).expect("recreate .git");
+
+        watcher.add(&dot_git).expect("re-add .git");
+        assert_eq!(backend.lock().watch_calls, &[dot_git.clone(), dot_git]);
+    }
+
     fn modify_event(path: &str) -> notify::Event {
         notify::Event {
             paths: vec![PathBuf::from(path)],
