@@ -379,6 +379,7 @@ pub mod assets {
     pub const WINDOWS_X86_64: &str = "Zed-x86_64.exe";
     pub const WINDOWS_AARCH64: &str = "Zed-aarch64.exe";
 
+    pub const REMOTE_SERVER_FREEBSD_X86_64: &str = "zed-remote-server-freebsd-x86_64.gz";
     pub const REMOTE_SERVER_MAC_AARCH64: &str = "zed-remote-server-macos-aarch64.gz";
     pub const REMOTE_SERVER_MAC_X86_64: &str = "zed-remote-server-macos-x86_64.gz";
     pub const REMOTE_SERVER_LINUX_AARCH64: &str = "zed-remote-server-linux-aarch64.gz";
@@ -396,6 +397,7 @@ pub mod assets {
             BWRAP_LINUX_X86_64,
             WINDOWS_X86_64,
             WINDOWS_AARCH64,
+            REMOTE_SERVER_FREEBSD_X86_64,
             REMOTE_SERVER_MAC_AARCH64,
             REMOTE_SERVER_MAC_X86_64,
             REMOTE_SERVER_LINUX_AARCH64,

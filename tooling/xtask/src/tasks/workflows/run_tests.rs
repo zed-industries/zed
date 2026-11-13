@@ -49,6 +49,10 @@ pub(crate) fn run_tests() -> Workflow {
         &should_run_tests,
     ]);
 
+    let freebsd_build = should_run_tests
+        .and_always()
+        .then(build_freebsd_remote_server());
+
     let mut jobs = vec![
         orchestrate,
         check_style(),
@@ -83,6 +87,7 @@ pub(crate) fn run_tests() -> Workflow {
             .and_not_in_merge_queue()
             .then(check_workspace_binaries()),
         should_run_tests.and_not_in_merge_queue().then(check_wasm()),
+        freebsd_build,
         should_run_tests.and_always().then(check_dependencies()), // could be more specific here?
         should_check_docs
             .and_not_in_merge_queue()
@@ -931,4 +936,12 @@ fn extension_tests() -> NamedJob<UsesJob> {
         .with(Input::default().add("working-directory", "${{ matrix.extension }}"));
 
     named::job(job)
+}
+
+fn build_freebsd_remote_server() -> NamedJob {
+    named::job(
+        super::run_bundling::setup_freebsd_cross_build(Job::default())
+            .add_env(("CARGO_PROFILE_DEV_DEBUG", "0"))
+            .add_step(named::bash("./script/build-remote-server-freebsd")),
+    )
 }
