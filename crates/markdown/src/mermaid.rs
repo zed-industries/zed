@@ -1859,7 +1859,10 @@ mod tests {
         markdown.read_with(cx, |markdown, _| {
             assert!(!markdown.is_parsing());
             assert!(markdown.has_pending_render());
-            assert_eq!(markdown.autoscroll_request, Some(source_index));
+            assert_eq!(
+                markdown.autoscroll_request,
+                Some(crate::AutoscrollRequest::Reveal(source_index))
+            );
         });
 
         let render_image = cx.update(|_, cx| {
