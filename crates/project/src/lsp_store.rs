@@ -9790,9 +9790,28 @@ impl LspStore {
         let local = self.as_local()?;
 
         // `didSave` registrations may select documents that were never opened in the server,
-        // so every server of the worktree is a candidate.
-        let servers_to_notify = local
+        // so every server of the worktree is a candidate. A reused server keeps the donor
+        // worktree's seed, so that list misses it.
+        let language_servers = buffer.update(cx, |buffer, cx| {
+            local.language_server_ids_for_buffer(buffer, cx)
+        });
+        let mut servers: Vec<_> = local
             .language_servers_for_worktree(worktree_id)
+            .cloned()
+            .collect();
+        for server_id in &language_servers {
+            if servers
+                .iter()
+                .any(|server| server.server_id() == *server_id)
+            {
+                continue;
+            }
+            if let Some(server) = local.running_language_server_for_id(*server_id) {
+                servers.push(server.clone());
+            }
+        }
+        let servers_to_notify = servers
+            .iter()
             .filter_map(|server| {
                 let LanguageServerState::Running { adapter, .. } =
                     local.language_servers.get(&server.server_id())?
@@ -9818,9 +9837,6 @@ impl LspStore {
                 .ok();
         }
 
-        let language_servers = buffer.update(cx, |buffer, cx| {
-            local.language_server_ids_for_buffer(buffer, cx)
-        });
         for language_server_id in language_servers {
             self.simulate_disk_based_diagnostics_events_if_needed(language_server_id, cx);
         }

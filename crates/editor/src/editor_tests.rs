@@ -41230,6 +41230,197 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_did_save_for_restored_external_files(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                "main.rs": "fn main() {}",
+            },
+            "foo": {
+                "bar": {
+                    "live_external.rs": "pub mod live_external {}",
+                    "restored_external.rs": "pub mod restored_external {}",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let did_open_uris = Arc::new(Mutex::new(Vec::<String>::new()));
+    let did_save_uris = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    let project = Project::test(fs, [path!("/root/a").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        save: Some(lsp::TextDocumentSyncSaveOptions::SaveOptions(
+                            lsp::SaveOptions { include_text: None },
+                        )),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+            initializer: Some({
+                let did_open_uris = did_open_uris.clone();
+                let did_save_uris = did_save_uris.clone();
+                Box::new(move |fake_server| {
+                    fake_server
+                        .handle_notification::<lsp::notification::DidOpenTextDocument, _>({
+                            let did_open_uris = did_open_uris.clone();
+                            move |params, _| {
+                                did_open_uris
+                                    .lock()
+                                    .push(params.text_document.uri.to_string());
+                            }
+                        });
+                    fake_server
+                        .handle_notification::<lsp::notification::DidSaveTextDocument, _>({
+                            let did_save_uris = did_save_uris.clone();
+                            move |params, _| {
+                                did_save_uris
+                                    .lock()
+                                    .push(params.text_document.uri.to_string());
+                            }
+                        });
+                })
+            }),
+            ..FakeLspAdapter::default()
+        },
+    );
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace
+            .project()
+            .update(cx, |project, cx| project.worktrees(cx).next().unwrap().read(cx).id())
+    });
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+    let main_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("main.rs")),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    let mut server = fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    // Live case: open an external file the way go-to-definition does.
+    let live_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from("/root/foo/bar/live_external.rs"),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening external file")
+        .downcast::<Editor>()
+        .expect("downcasted external file's open element to editor");
+    cx.run_until_parked();
+    let live_buffer = live_editor.update(cx, |editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("singleton buffer")
+    });
+    assert!(
+        fake_servers.try_recv().is_err(),
+        "external file should join the existing language server"
+    );
+    assert!(
+        did_open_uris
+            .lock()
+            .iter()
+            .any(|uri| uri.ends_with("live_external.rs")),
+        "external buffer should be opened in the reused language server, got didOpen for {:?}",
+        did_open_uris.lock()
+    );
+
+    let live_save = project.update(cx, |project, cx| {
+        project.save_buffers([live_buffer].into_iter().collect(), cx)
+    });
+    live_save.await.unwrap();
+    cx.run_until_parked();
+    assert!(
+        did_save_uris
+            .lock()
+            .iter()
+            .any(|uri| uri.ends_with("live_external.rs")),
+        "didSave should be emitted when saving an external file opened live, got didSave for {:?}",
+        did_save_uris.lock()
+    );
+
+    // Restored case: reopen another external file the way `Editor::deserialize` does
+    // after a restart (see the `open_local_buffer` branch for files outside every worktree).
+    let restored_buffer = workspace
+        .update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/foo/bar/restored_external.rs"), cx)
+            })
+        })
+        .await
+        .expect("open restored external buffer");
+    let restored_editor = cx.update(|window, cx| {
+        cx.new(|cx| Editor::for_buffer(restored_buffer.clone(), Some(project.clone()), window, cx))
+    });
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(Box::new(restored_editor.clone()), true, true, None, window, cx)
+    });
+    cx.run_until_parked();
+    assert!(
+        fake_servers.try_recv().is_err(),
+        "restored external file should join the existing language server"
+    );
+    assert!(
+        did_open_uris
+            .lock()
+            .iter()
+            .any(|uri| uri.ends_with("restored_external.rs")),
+        "restored external buffer should be opened in the reused language server, got didOpen for {:?}",
+        did_open_uris.lock()
+    );
+
+    let restored_save = project.update(cx, |project, cx| {
+        project.save_buffers([restored_buffer].into_iter().collect(), cx)
+    });
+    restored_save.await.unwrap();
+    cx.run_until_parked();
+    assert!(
+        did_save_uris
+            .lock()
+            .iter()
+            .any(|uri| uri.ends_with("restored_external.rs")),
+        "didSave should be emitted when saving a restored external file, got didSave for {:?}",
+        did_save_uris.lock()
+    );
+
+    let _ = (&main_editor, &mut server);
+}
+
+#[gpui::test]
 async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
