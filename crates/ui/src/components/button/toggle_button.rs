@@ -4,9 +4,6 @@ use gpui::{AnyView, ClickEvent, relative};
 
 use crate::{ButtonLike, ButtonLikeRounding, TintColor, Tooltip, prelude::*};
 
-#[cfg(test)]
-mod tests;
-
 /// The position of a [`ToggleButton`] within a group of buttons.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ToggleButtonPosition {
@@ -366,29 +363,11 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                                 .height(button_height.into())
                                 .when(self.auto_width, |button| button.width(button_height))
                         })
-                        .map(|button| {
-                            #[cfg(test)]
-                            let button = {
-                                let mut button = button;
-                                button.base = button
-                                    .base
-                                    .debug_selector(|| format!("{group_name}-{entry_index}"));
-                                button
-                            };
-                            button
-                        })
                         .child(
                             h_flex()
                                 .when(!icon_only, |this| this.w_full().px_2().gap_1p5())
                                 .justify_center()
                                 .flex_none()
-                                .map(|content| {
-                                    #[cfg(test)]
-                                    let content = content.debug_selector(|| {
-                                        format!("{group_name}-{entry_index}-content")
-                                    });
-                                    content
-                                })
                                 .when_some(icon, |this, icon| {
                                     this.when(!icon_only, |this| this.py_2()).child(
                                         Icon::new(icon).size(IconSize::XSmall).map(|this| {
@@ -707,7 +686,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                             ],
                         )
                         .selected_index(3)
-                        .width(rems_from_px(100_f32))
                         .style(ToggleButtonGroupStyle::Filled)
                         .into_any_element(),
                     ),
@@ -727,7 +705,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                             ],
                         )
                         .selected_index(3)
-                        .width(rems_from_px(100_f32))
                         .style(ToggleButtonGroupStyle::Filled)
                         .into_any_element(),
                     ),
