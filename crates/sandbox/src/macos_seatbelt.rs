@@ -21,6 +21,7 @@
 //! Unix domain sockets for local IPC; those do not permit sending packets to
 //! other machines.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::{io::Write, path::PathBuf};
 
@@ -201,7 +202,8 @@ pub fn wrap_invocation(
 /// worktree paths plus any per-command scratch directory the caller wants
 /// allowed) and the standard `/dev/*` write targets are also allowed by
 /// default. Writes to paths in `protected_paths` are denied even when they
-/// would otherwise be writable; contents remain readable. The same holds for
+/// would otherwise be writable; contents remain readable, and the directories
+/// containing them can't be renamed or removed. The same holds for
 /// any path whose final component matches one of `protected_file_names`. Unix
 /// domain socket paths in `allowed_unix_socket_paths` are reachable for local
 /// IPC even when IP network access is otherwise blocked. This does not permit
@@ -365,6 +367,31 @@ fn generate_seatbelt_config(
     (subpath "{escaped_path}"))
 "#
         ));
+    }
+
+    // Seatbelt checks the path at each write, so renaming a directory above a
+    // protected path moves the protected content out from under its `subpath`
+    // rule, where it becomes writable, and it can then be renamed back. Renaming
+    // a directory away, removing it, and renaming another directory over it all
+    // check `file-write-unlink` on that directory's path, so denying it for each
+    // ancestor pins the protected paths in place. `literal` matches only the
+    // directory itself, so entries inside it stay creatable, renamable, and
+    // removable.
+    let protected_path_ancestors: BTreeSet<&Path> = canonical_protected_paths
+        .iter()
+        .flat_map(|protected_path| protected_path.ancestors().skip(1))
+        .collect();
+    if !protected_path_ancestors.is_empty() {
+        config.push_str(
+            r#"
+; Block renaming or removing directories that contain protected paths
+(deny file-write-unlink"#,
+        );
+        for ancestor in protected_path_ancestors {
+            let escaped_path = escape_sandbox_path(ancestor)?;
+            config.push_str(&format!("\n    (literal \"{escaped_path}\")"));
+        }
+        config.push_str(")\n");
     }
 
     // Seatbelt applies the last matching rule, so these denies must follow the
@@ -853,6 +880,203 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&protected_file).unwrap(),
             "target\n"
+        );
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_denies_unlinking_protected_path_ancestors() {
+        let config = generate_seatbelt_config(
+            &[Path::new("/work")],
+            &[
+                Path::new("/work/repo/.git/config"),
+                Path::new("/work/repo/.git/hooks"),
+            ],
+            &[],
+            &[],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
+
+        assert!(config.contains(
+            r#"(deny file-write-unlink
+    (literal "/")
+    (literal "/work")
+    (literal "/work/repo")
+    (literal "/work/repo/.git"))"#
+        ));
+    }
+
+    #[test]
+    fn test_sandbox_blocks_moving_protected_paths_by_renaming_an_ancestor() {
+        // Each case renames a directory above the protected paths, writes to
+        // them at the Git directory's moved location, and renames it back.
+        let cases = [
+            ("the Git directory", "repo/.git", "repo/moved", "repo/moved"),
+            ("the repository", "repo", "moved", "moved/.git"),
+            (
+                "the writable root",
+                "../work",
+                "../moved",
+                "../moved/repo/.git",
+            ),
+        ];
+
+        for allow_fs_write in [false, true] {
+            for (description, from, to, moved_git_dir) in cases {
+                let temp_dir = tempfile::tempdir().unwrap();
+                // Canonicalize so policy paths resolve the macOS `/var` ->
+                // `/private/var` symlink that Seatbelt matches against.
+                let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+                let git_dir = work.join("repo/.git");
+                std::fs::create_dir_all(git_dir.join("hooks")).unwrap();
+                std::fs::write(git_dir.join("config"), "original\n").unwrap();
+                std::fs::write(git_dir.join("hooks/pre-commit"), "original\n").unwrap();
+
+                let output = run_sandboxed_shell(
+                    &work,
+                    &[work.join("repo/.git/config"), work.join("repo/.git/hooks")],
+                    allow_fs_write,
+                    &format!(
+                        "echo ok > ordinary; mv {from} {to}; \
+                         echo evil > {moved_git_dir}/config; \
+                         echo evil > {moved_git_dir}/hooks/pre-commit; \
+                         mv {to} {from}"
+                    ),
+                );
+
+                let context = format!(
+                    "renaming {description} (allow_fs_write: {allow_fs_write}): stderr={}",
+                    String::from_utf8_lossy(&output.stderr),
+                );
+                assert_eq!(
+                    std::fs::read_to_string(work.join("ordinary"))
+                        .ok()
+                        .as_deref(),
+                    Some("ok\n"),
+                    "ordinary file should stay writable: {context}"
+                );
+                for protected_file in ["config", "hooks/pre-commit"] {
+                    assert_eq!(
+                        std::fs::read_to_string(git_dir.join(protected_file))
+                            .ok()
+                            .as_deref(),
+                        Some("original\n"),
+                        "{protected_file} should be untouched: {context}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_sandbox_blocks_creating_protected_path_whose_parents_are_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+        std::fs::create_dir(&work).unwrap();
+        // Name the protected path through a symlink, so it only matches the path
+        // the command writes if its missing components are resolved through the
+        // nearest existing ancestor.
+        let link = work.with_file_name("link");
+        std::os::unix::fs::symlink(&work, &link).unwrap();
+        let protected =
+            crate::HostFilesystemLocation::capture(link.join("a/b/c")).expect("capture a/b/c");
+
+        let output = run_sandboxed_shell(
+            &work,
+            &[protected.macos_canonical_path().to_path_buf()],
+            false,
+            "mkdir -p a/b && echo ok > a/b/sibling && echo x > a/b/c",
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            std::fs::read_to_string(work.join("a/b/sibling"))
+                .ok()
+                .as_deref(),
+            Some("ok\n"),
+            "sibling should stay writable: stderr={stderr}"
+        );
+        assert!(
+            !work.join("a/b/c").exists(),
+            "protected path should not be created: stderr={stderr}"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_allows_git_operations_with_protected_git_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let work = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let repo = work.join("repo");
+        let linked = work.join("linked");
+        let git = |directory: &Path, arguments: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(arguments)
+                .current_dir(directory)
+                .envs(GIT_TEST_ENVIRONMENT)
+                .output()
+                .expect("failed to run git");
+            assert!(
+                output.status.success(),
+                "git {arguments:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "--quiet", "--initial-branch=main"]);
+        std::fs::write(repo.join("file.txt"), "one\n").unwrap();
+        git(&repo, &["add", "file.txt"]);
+        git(&repo, &["commit", "--quiet", "-m", "initial"]);
+
+        let main_protected_paths = [repo.join(".git/config"), repo.join(".git/hooks")];
+        let output = run_sandboxed_shell(
+            &work,
+            &main_protected_paths,
+            false,
+            "git init --quiet --initial-branch=main nested \
+             && cd repo \
+             && echo two >> file.txt \
+             && git add file.txt \
+             && git commit --quiet -m second \
+             && git branch feature \
+             && git pack-refs --all \
+             && git gc --quiet \
+             && git worktree add --quiet ../linked feature",
+        );
+        assert!(
+            output.status.success(),
+            "git should work in a checkout with protected metadata: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(work.join("nested/.git/HEAD").exists());
+        assert!(repo.join(".git/packed-refs").exists());
+        assert!(linked.join("file.txt").exists());
+
+        let linked_git_dir = repo.join(".git/worktrees/linked");
+        let mut linked_protected_paths = main_protected_paths.to_vec();
+        linked_protected_paths.extend([
+            linked.join(".git"),
+            linked_git_dir.join("commondir"),
+            linked_git_dir.join("gitdir"),
+            linked_git_dir.join("config"),
+            linked_git_dir.join("hooks"),
+        ]);
+        let output = run_sandboxed_shell(
+            &work,
+            &linked_protected_paths,
+            false,
+            "cd linked \
+             && echo three >> file.txt \
+             && git commit --quiet -am third \
+             && git worktree add --quiet -b another ../another",
+        );
+        assert!(
+            output.status.success(),
+            "git should work in a linked worktree with protected metadata: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(linked.join("file.txt")).unwrap(),
+            "one\ntwo\nthree\n"
         );
     }
 
@@ -1394,5 +1618,44 @@ mod tests {
             !forbidden_file.exists(),
             "file should not have been created"
         );
+    }
+
+    /// Isolates `git` from the user's global and system configuration, which
+    /// could enable commit signing or hooks that need access outside the test.
+    const GIT_TEST_ENVIRONMENT: [(&str, &str); 6] = [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_AUTHOR_NAME", "Test"),
+        ("GIT_AUTHOR_EMAIL", "test@example.com"),
+        ("GIT_COMMITTER_NAME", "Test"),
+        ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ];
+
+    fn run_sandboxed_shell(
+        writable_directory: &Path,
+        protected_paths: &[PathBuf],
+        allow_fs_write: bool,
+        script: &str,
+    ) -> std::process::Output {
+        let protected_paths: Vec<&Path> = protected_paths.iter().map(PathBuf::as_path).collect();
+        let (program, args, _config_file) = wrap_invocation(
+            "/bin/sh",
+            &["-c".to_string(), script.to_string()],
+            &[writable_directory],
+            &protected_paths,
+            &[],
+            &[],
+            SandboxPermissions {
+                network: NetworkAccess::None,
+                allow_fs_write,
+            },
+        )
+        .unwrap();
+        std::process::Command::new(&program)
+            .args(&args)
+            .current_dir(writable_directory)
+            .envs(GIT_TEST_ENVIRONMENT)
+            .output()
+            .expect("failed to execute sandbox-exec")
     }
 }
