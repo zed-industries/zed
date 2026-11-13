@@ -76,11 +76,18 @@ fn supports_minimal_thinking(model_id: &str) -> bool {
     )
 }
 
+/// Level-based models that accept `XHIGH`; the others cap at `HIGH`.
+fn supports_xhigh_thinking(model_id: &str) -> bool {
+    matches!(model_id, "gemini-4-hydrogen")
+}
+
 /// The thinking level Zed selects for a level-based model until the user picks another.
 fn default_thinking_level(model_id: &str) -> ThinkingLevel {
     match model_id {
         "gemini-3.5-flash-lite" => ThinkingLevel::Minimal,
-        "gemini-3-flash-preview" | "gemini-3.1-pro-preview" => ThinkingLevel::High,
+        "gemini-3-flash-preview" | "gemini-3.1-pro-preview" | "gemini-4-hydrogen" => {
+            ThinkingLevel::High
+        }
         _ => ThinkingLevel::Medium,
     }
 }
@@ -670,6 +677,7 @@ pub enum ThinkingLevel {
     Low,
     Medium,
     High,
+    XHigh,
 }
 
 impl ThinkingLevel {
@@ -679,6 +687,7 @@ impl ThinkingLevel {
             "low" => Some(Self::Low),
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
+            "xhigh" => Some(Self::XHigh),
             _ => None,
         }
     }
@@ -689,6 +698,7 @@ impl ThinkingLevel {
             Self::Low => "Low",
             Self::Medium => "Medium",
             Self::High => "High",
+            Self::XHigh => "Extra High",
         }
     }
 
@@ -698,6 +708,7 @@ impl ThinkingLevel {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::XHigh => "xhigh",
         }
     }
 }
@@ -933,9 +944,11 @@ impl Model {
                         ThinkingLevel::Low,
                         ThinkingLevel::Medium,
                         ThinkingLevel::High,
+                        ThinkingLevel::XHigh,
                     ]
                     .into_iter()
                     .skip_while(|level| *level != lowest)
+                    .filter(|level| *level != ThinkingLevel::XHigh || supports_xhigh_thinking(id))
                     .collect(),
                     Some(default_thinking_level(id)),
                 ),
@@ -1063,7 +1076,79 @@ mod tests {
             lowest_thinking_level("gemini-4-argon"),
             Some(ThinkingLevel::Low)
         );
+        assert_eq!(
+            lowest_thinking_level("gemini-4-hydrogen"),
+            Some(ThinkingLevel::Low)
+        );
         assert_eq!(lowest_thinking_level("gemini-2.5-flash"), None);
+    }
+
+    #[test]
+    fn test_from_listed_thinking_levels_per_model() {
+        let listed_entry = |id: &str| ListModelEntry {
+            name: format!("models/{id}"),
+            display_name: Some(id.to_string()),
+            input_token_limit: Some(1_048_576),
+            output_token_limit: Some(65_536),
+            supported_generation_methods: vec!["generateContent".to_string()],
+            thinking: true,
+        };
+
+        let hydrogen = Model::from_listed(listed_entry("gemini-4-hydrogen")).unwrap();
+        assert!(hydrogen.supports_thinking());
+        assert!(!hydrogen.supports_disabling_thinking());
+        assert_eq!(
+            hydrogen.supported_thinking_levels,
+            vec![
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+                ThinkingLevel::XHigh,
+            ]
+        );
+        assert_eq!(hydrogen.default_thinking_level, Some(ThinkingLevel::High));
+
+        let argon = Model::from_listed(listed_entry("gemini-4-argon")).unwrap();
+        assert_eq!(
+            argon.supported_thinking_levels,
+            vec![
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+            ]
+        );
+        assert_eq!(argon.default_thinking_level, Some(ThinkingLevel::Medium));
+
+        let flash_36 = Model::from_listed(listed_entry("gemini-3.6-flash")).unwrap();
+        assert_eq!(
+            flash_36.supported_thinking_levels,
+            vec![
+                ThinkingLevel::Minimal,
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+            ]
+        );
+        assert_eq!(flash_36.default_thinking_level, Some(ThinkingLevel::Medium));
+    }
+
+    #[test]
+    fn test_thinking_level_xhigh_metadata_and_serde() {
+        assert_eq!(
+            ThinkingLevel::from_effort("xhigh"),
+            Some(ThinkingLevel::XHigh)
+        );
+        assert_eq!(
+            ThinkingLevel::from_effort("XHIGH"),
+            Some(ThinkingLevel::XHigh)
+        );
+        assert_eq!(ThinkingLevel::XHigh.name(), "Extra High");
+        assert_eq!(ThinkingLevel::XHigh.value(), "xhigh");
+
+        let serialized = serde_json::to_value(ThinkingLevel::XHigh).unwrap();
+        assert_eq!(serialized, json!("XHIGH"));
+        let deserialized: ThinkingLevel = serde_json::from_value(json!("XHIGH")).unwrap();
+        assert_eq!(deserialized, ThinkingLevel::XHigh);
     }
 
     #[test]
