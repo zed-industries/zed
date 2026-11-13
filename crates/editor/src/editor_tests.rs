@@ -11039,6 +11039,31 @@ async fn test_copy_and_paste_non_empty_selection_followed_by_empty_selection(
     "});
 }
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[gpui::test]
+async fn test_empty_cursors_do_not_overwrite_primary_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇone\nˇtwo\nˇthree");
+    cx.update_editor(|_, _, cx| {
+        cx.write_to_primary(ClipboardItem::new_string("primary".to_string()))
+    });
+
+    cx.update_editor(|editor, window, cx| editor.move_right(&MoveRight, window, cx));
+    cx.assert_editor_state("oˇne\ntˇwo\ntˇhree");
+    assert_eq!(
+        cx.update_editor(|_, _, cx| cx.read_from_primary().and_then(|item| item.text())),
+        Some("primary".to_string())
+    );
+
+    cx.set_state("«oneˇ»\n«twoˇ»\nthree");
+    assert_eq!(
+        cx.update_editor(|_, _, cx| cx.read_from_primary().and_then(|item| item.text())),
+        Some("one\ntwo".to_string())
+    );
+}
+
 #[gpui::test]
 async fn test_copy_trim(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
