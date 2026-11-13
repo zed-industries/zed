@@ -1382,6 +1382,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     position: point(px(context.width), px(0.0)),
                     index: context.index_converter.utf8_ix,
                     is_emoji: false,
+                    is_replaced: false,
                 });
                 context.width += metrics.width;
             }
@@ -1444,6 +1445,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                         ),
                         index: context.index_converter.utf8_ix,
                         is_emoji,
+                        is_replaced: false,
                     });
                     context.width += glyph_advances[this_glyph_idx];
                 }

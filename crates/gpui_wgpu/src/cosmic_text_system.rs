@@ -389,13 +389,19 @@ impl CosmicTextSystemState {
             .db()
             .faces()
             .filter(|face| face.families.iter().any(|family| *name == family.0))
-            .map(|face| (face.id, face.post_script_name.clone()))
+            .map(|face| {
+                (
+                    face.id,
+                    face.post_script_name.clone(),
+                    matches!(face.source, cosmic_text::fontdb::Source::Binary(_)),
+                )
+            })
             .collect::<SmallVec<[_; 4]>>();
 
         let cosmic_features = cosmic_font_features(features)?;
 
         let mut loaded_font_ids = SmallVec::new();
-        for (database_id, postscript_name) in families {
+        for (database_id, postscript_name, is_embedded_font) in families {
             let key = LoadedFontKey {
                 database_id,
                 font: loaded_font_key.clone(),
@@ -419,13 +425,15 @@ impl CosmicTextSystemState {
 
             // This only decides whether a face can be a primary font. The
             // editor measures layout with the width of 'm' and would panic
-            // without it.
+            // without it. Embedded symbol/icon fonts explicitly registered via
+            // `add_fonts` are allowed so callers can look up glyphs directly.
             //
             // Don't remove the face from the font database. Arabic, Devanagari
             // and emoji fonts often have no Latin glyphs, and they are exactly
             // what cosmic-text falls back to when the primary font lacks a
             // glyph.
             if font.as_swash().charmap().map('m') == 0
+                && !is_embedded_font
                 && !allowed_bad_font_names.contains(&postscript_name.as_str())
             {
                 continue;
@@ -821,6 +829,7 @@ impl CosmicTextSystemState {
                 ),
                 index: glyph.start,
                 is_emoji,
+                is_replaced: false,
             };
 
             if let Some(last_run) = runs

@@ -291,10 +291,10 @@ impl AppleTextSystemState {
 
         let mut font_ids = SmallVec::new();
         let mut postscript_names_seen = HashSet::default();
-        let family = self
-            .memory_source
-            .select_family_by_name(name)
-            .or_else(|_| self.system_source.select_family_by_name(name))?;
+        let (family, is_embedded_font) = match self.memory_source.select_family_by_name(name) {
+            Ok(family) => (family, true),
+            Err(_) => (self.system_source.select_family_by_name(name)?, false),
+        };
         for font in family.fonts() {
             let mut font = font.load()?;
 
@@ -304,9 +304,11 @@ impl AppleTextSystemState {
             {
                 // We use the 'm' character for text measurements in various spots
                 // (e.g., the editor). However, at time of writing some of those usages
-                // will panic if the font has no 'm' glyph.
+                // will panic if the font has no 'm' glyph. Embedded symbol/icon fonts
+                // explicitly registered via `add_fonts` are allowed so callers can look
+                // up glyphs directly.
                 //
-                // Therefore, we check up front that the font has the necessary glyph.
+                // Therefore, we check up front that system fonts have the necessary glyph.
                 let has_m_glyph = font.glyph_for_char('m').is_some();
 
                 // HACK: The 'Segoe Fluent Icons' font does not have an 'm' glyph,
@@ -314,7 +316,7 @@ impl AppleTextSystemState {
                 // the Storybook (on macOS).
                 let is_segoe_fluent_icons = font.full_name() == "Segoe Fluent Icons";
 
-                if !has_m_glyph && !is_segoe_fluent_icons {
+                if !has_m_glyph && !is_embedded_font && !is_segoe_fluent_icons {
                     // I spent far too long trying to track down why a font missing the 'm'
                     // character wasn't loading. This log statement will hopefully save
                     // someone else from suffering the same fate.
@@ -628,6 +630,7 @@ impl AppleTextSystemState {
                     position: point(position.x as f32, position.y as f32).map(px),
                     index: ix_converter.utf8_ix,
                     is_emoji: self.is_emoji(font_id),
+                    is_replaced: false,
                 });
             }
         }

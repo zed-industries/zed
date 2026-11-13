@@ -10,9 +10,9 @@ use std::{
 };
 
 use gpui::{
-    AbsoluteLength, App, Context, DefiniteLength, ElementId, Global, Hsla, Menu, SharedString,
-    TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions, bounds, colors::DefaultColors,
-    div, point, prelude::*, px, relative, rgb, size,
+    AbsoluteLength, App, Context, DefiniteLength, ElementId, Global, Hsla, InlineObject, Menu,
+    SharedString, StyledText, TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    bounds, colors::DefaultColors, div, fill, hsla, point, prelude::*, px, relative, rgb, size,
 };
 use gpui_platform::application;
 use std::iter;
@@ -337,6 +337,7 @@ impl Render for TextExample {
                                     "Kana: が / か\u{3099}; Hangul: 각 / \u{1100}\u{1161}\u{11a8}",
                                 ),
                                 div().child("Emoji: 😀 ❤️ ❤\u{fe0e} 👍🏽 🇯🇵 1\u{fe0f}\u{20e3} 👩‍💻 👨‍👩‍👧‍👦"),
+                                div().child(inline_objects_specimen()),
                             ]),
                     )
                     .child(div().child(CharacterGrid::new().scale(base)))
@@ -364,6 +365,49 @@ impl Render for TextExample {
             )
             .child(div().w(px(240.)).h_full().bg(colors.container))
     }
+}
+
+fn inline_objects_specimen() -> StyledText {
+    let prefix = "Inline objects: baseline badge ";
+    let middle = ", tall box ";
+    let suffix = ". Resize the window to verify UAX #14 wrapping and per-row line height.";
+    let first_start = prefix.len();
+    let first_end = first_start + '\u{fffc}'.len_utf8();
+    let second_start = first_end + middle.len();
+    let second_end = second_start + '\u{fffc}'.len_utf8();
+    let text = format!("{prefix}\u{fffc}{middle}\u{fffc}{suffix}");
+
+    StyledText::new(text)
+        .with_inline_objects(vec![
+            InlineObject {
+                range: first_start..first_end,
+                width: px(44.0),
+                ascent: px(14.0),
+                descent: px(4.0),
+            },
+            InlineObject {
+                range: second_start..second_end,
+                width: px(64.0),
+                ascent: px(24.0),
+                descent: px(11.0),
+            },
+        ])
+        .on_paint_inline_object(|object_index, placement, window, _cx| {
+            let accent = if object_index == 0 {
+                hsla(0.58, 0.70, 0.45, 0.22)
+            } else {
+                hsla(0.08, 0.78, 0.48, 0.22)
+            };
+            let baseline_tick = hsla(0.0, 0.0, 0.15, 0.65);
+            window.paint_quad(fill(placement.bounds, accent).corner_radii(px(4.0)));
+            window.paint_quad(fill(
+                bounds(
+                    point(placement.bounds.origin.x, placement.baseline_y - px(0.5)),
+                    size(placement.bounds.size.width, px(1.0)),
+                ),
+                baseline_tick,
+            ));
+        })
 }
 
 fn run_example() {

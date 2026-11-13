@@ -380,6 +380,11 @@ impl TextSystem {
         self.read_metrics(font_id, |metrics| metrics.bounding_box(font_size))
     }
 
+    /// Get the glyph identifier for the given character in the specified font, if present.
+    pub fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+        self.platform_text_system.glyph_for_char(font_id, ch)
+    }
+
     /// Get the typographic bounds for the given character, in the given font and size.
     pub fn typographic_bounds(
         &self,
@@ -710,6 +715,62 @@ impl WindowTextSystem {
         }
     }
 
+    /// Shape the given line with embedded [`InlineObject`] spans.
+    ///
+    /// Note that this method can only shape a single line of text. It will panic
+    /// if the text contains newlines. If you need to shape multiple lines of text,
+    /// use [`Self::shape_text_with_inline_objects`] instead.
+    pub fn shape_line_with_inline_objects(
+        &self,
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[TextRun],
+        inline_objects: &[InlineObject],
+    ) -> ShapedLine {
+        if inline_objects.is_empty() {
+            return self.shape_line(text, font_size, runs, None);
+        }
+        debug_assert!(
+            text.find('\n').is_none(),
+            "text argument should not contain newlines"
+        );
+
+        let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+        for run in runs {
+            if let Some(last_run) = decoration_runs.last_mut()
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+                && last_run.background_color == run.background_color
+            {
+                last_run.len += run.len as u32;
+                continue;
+            }
+            decoration_runs.push(DecorationRun {
+                len: run.len as u32,
+                color: run.color,
+                background_color: run.background_color,
+                underline: run.underline,
+                strikethrough: run.strikethrough,
+            });
+        }
+
+        let font_runs = self.font_runs(runs);
+        let layout = self.line_layout_cache.layout_line_with_inline_objects(
+            &text,
+            font_size,
+            &font_runs,
+            inline_objects,
+        );
+        self.font_runs_buffer.set(font_runs);
+
+        ShapedLine {
+            layout,
+            text,
+            decoration_runs,
+        }
+    }
+
     /// Shape a multi line string of text, at the given font_size, for painting to the screen.
     /// Subsets of the text can be styled independently with the `runs` parameter.
     /// If `wrap_width` is provided, the line breaks will be adjusted to fit within the given width.
@@ -721,12 +782,29 @@ impl WindowTextSystem {
         wrap_width: Option<Pixels>,
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
+        self.shape_text_with_inline_objects(text, font_size, runs, wrap_width, line_clamp, &[])
+    }
+
+    /// Shape a multi-line string of text with embedded [`InlineObject`] spans.
+    ///
+    /// Inline objects must be sorted by `range.start`, non-overlapping, and must not span across
+    /// newline characters.
+    pub fn shape_text_with_inline_objects(
+        &self,
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[TextRun],
+        wrap_width: Option<Pixels>,
+        line_clamp: Option<usize>,
+        inline_objects: &[InlineObject],
+    ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_buffer.take();
 
         let mut lines = SmallVec::new();
         let max_wrap_lines = line_clamp;
         let mut wrapped_lines = 0;
+        let mut inline_object_cursor = 0;
 
         let mut process_line = |line_text: SharedString, line_start, line_end| {
             font_runs.clear();
@@ -781,13 +859,55 @@ impl WindowTextSystem {
                 run_start += run_len_within_line;
             }
 
-            let layout = self.line_layout_cache.layout_wrapped_line(
-                &line_text,
-                font_size,
-                &font_runs,
-                wrap_width,
-                max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
-            );
+            let max_lines = max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines));
+            let layout = if inline_objects.is_empty() {
+                self.line_layout_cache
+                    .layout_wrapped_line(&line_text, font_size, &font_runs, wrap_width, max_lines)
+            } else {
+                while let Some(object) = inline_objects.get(inline_object_cursor)
+                    && object.range.end <= line_start
+                {
+                    inline_object_cursor += 1;
+                }
+                let slice_start = inline_object_cursor;
+                while let Some(object) = inline_objects.get(inline_object_cursor)
+                    && object.range.start < line_end
+                {
+                    debug_assert!(
+                        object.range.start >= line_start && object.range.end <= line_end,
+                        "InlineObject range {:?} spans across newline boundary {:?}",
+                        object.range,
+                        line_start..line_end,
+                    );
+                    inline_object_cursor += 1;
+                }
+                let line_slice = &inline_objects[slice_start..inline_object_cursor];
+                if line_slice.is_empty() {
+                    self.line_layout_cache.layout_wrapped_line(
+                        &line_text, font_size, &font_runs, wrap_width, max_lines,
+                    )
+                } else if line_start == 0 {
+                    self.line_layout_cache
+                        .layout_wrapped_line_with_inline_objects(
+                            &line_text, font_size, &font_runs, wrap_width, max_lines, line_slice,
+                        )
+                } else {
+                    let rebased: SmallVec<[InlineObject; 4]> = line_slice
+                        .iter()
+                        .map(|object| InlineObject {
+                            range: (object.range.start - line_start)
+                                ..(object.range.end - line_start),
+                            width: object.width,
+                            ascent: object.ascent,
+                            descent: object.descent,
+                        })
+                        .collect();
+                    self.line_layout_cache
+                        .layout_wrapped_line_with_inline_objects(
+                            &line_text, font_size, &font_runs, wrap_width, max_lines, &rebased,
+                        )
+                }
+            };
             wrapped_lines += layout.wrap_boundaries.len();
 
             lines.push(WrappedLine {
