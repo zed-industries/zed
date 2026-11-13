@@ -5613,6 +5613,7 @@ mod tests {
                             for IndexedCell { cell, .. } in line {
                                 // Skip wide character spacers - they're just placeholders for the second cell of wide characters
                                 if cell.is_wide_char_spacer() {
+                                    previous_cell_had_extras = false;
                                     continue;
                                 }
 

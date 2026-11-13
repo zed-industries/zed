@@ -503,6 +503,8 @@ impl TerminalElement {
                 }
                 // Skip wide character spacers - they're just placeholders for the second cell of wide characters
                 if cell.is_wide_char_spacer() {
+                    // The character already covers two cells, so a space after it is real.
+                    previous_cell_had_extras = false;
                     continue;
                 }
 
@@ -3023,5 +3025,37 @@ mod tests {
         // Negative: lines -7, -6, -5, -4
         assert_eq!(negative_filtered.first().unwrap().point.line, -7);
         assert_eq!(negative_filtered.last().unwrap().point.line, -4);
+    }
+
+    #[gpui::test]
+    async fn test_layout_grid_keeps_space_after_wide_character_with_extras(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, _workspace, window_handle) = crate::tests::init_test_with_window(cx).await;
+        let (_pane, terminal, _terminal_view) =
+            crate::tests::add_display_only_terminal(&project, window_handle, false, false, cx);
+
+        window_handle
+            .update(cx, |_multi_workspace, window, cx| {
+                terminal.update(cx, |terminal, cx| {
+                    // Underlined, so that the space is laid out as text.
+                    terminal.write_output("\x1b[4m👍\u{FE0F} a\x1b[0m".as_bytes(), cx);
+                    terminal.sync(window, cx);
+                });
+                let (_, runs, _) = TerminalElement::layout_grid(
+                    terminal.read(cx).last_content.cells.iter(),
+                    0,
+                    &window.text_style(),
+                    None,
+                    0.0,
+                    cx,
+                );
+                let runs = runs
+                    .iter()
+                    .map(|run| (run.start_point.column, run.text.as_str()))
+                    .collect::<Vec<_>>();
+                assert_eq!(runs, vec![(0, "👍\u{FE0F}"), (2, " a")]);
+            })
+            .expect("test window should remain open");
     }
 }
