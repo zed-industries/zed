@@ -22,7 +22,9 @@ use windows::Win32::System::Console::{
     GetConsoleWindow, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
     SetConsoleCtrlHandler,
 };
-use windows::Win32::System::Environment::GetCommandLineW;
+use windows::Win32::System::Environment::{
+    FreeEnvironmentStringsW, GetCommandLineW, GetEnvironmentStringsW,
+};
 use windows::Win32::System::JobObjects::{
     JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
@@ -32,11 +34,11 @@ use windows::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
 use windows::Win32::System::Threading::{
-    CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList,
-    LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, UpdateProcThreadAttribute,
-    WaitForSingleObject,
+    CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+    DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE,
+    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    STARTUPINFOW, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, PROC_THREAD_ATTRIBUTE_INPUT};
 use windows_core::{BOOL, HRESULT, PCSTR, PCWSTR, PWSTR};
@@ -48,6 +50,17 @@ pub(crate) const LAUNCHER_FLAG: &str = "--windows-sandbox-launcher";
 /// reads back to pin the granted folders.
 const FS_READ_WRITE: VOffsetT = 12;
 
+/// The network access a PSEC-sandboxed command gets.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum NetworkAccess {
+    /// All network access blocked.
+    None,
+    /// Only `127.0.0.1:<port>`, the in-process HTTP/HTTPS proxy.
+    LocalhostPort(u16),
+    /// All outbound network access allowed.
+    All,
+}
+
 /// Encode the crate's filesystem/network intent as a PSEC 1.0 FlatBuffer.
 ///
 /// The layout follows the PSEC FlatBuffers schema:
@@ -56,7 +69,7 @@ pub(crate) fn build_spec(
     allow_fs_write: bool,
     writable_paths: &[&Path],
     protected_paths: &[&Path],
-    allow_network: bool,
+    network: NetworkAccess,
 ) -> Result<Vec<u8>> {
     let roots = fixed_drive_roots();
     let mut read_write = Vec::new();
@@ -85,7 +98,7 @@ pub(crate) fn build_spec(
         }
     }
     log::debug!(
-        "[sandbox] PSEC policy: read-write {read_write:?}, read-only {read_only:?}, network {allow_network}"
+        "[sandbox] PSEC policy: read-write {read_write:?}, read-only {read_only:?}, network {network:?}"
     );
 
     // Vtable offsets (`4 + 2 * field index`) and enum values from the schema.
@@ -93,7 +106,10 @@ pub(crate) fn build_spec(
     const CAPABILITIES: VOffsetT = 6;
     const FS_READ_ONLY: VOffsetT = 14;
     const NETWORK_POLICY: VOffsetT = 18;
+    const NETWORK_POLICY_PROXY: VOffsetT = 4;
     const NETWORK_POLICY_EGRESS: VOffsetT = 6;
+    const NETWORK_POLICY_ALLOWED_APPCONTAINER_PEER: VOffsetT = 8;
+    const PROXY_INFO_URL: VOffsetT = 4;
     const ENDPOINT_POLICY_DEFAULT_ACTION: VOffsetT = 4;
     const FILTER_ACTION_DENY: i8 = 0;
     const FILTER_ACTION_ALLOW: i8 = 1;
@@ -111,25 +127,49 @@ pub(crate) fn build_spec(
     };
     let read_write = path_vector(&read_write);
     let read_only = path_vector(&read_only);
-    let capabilities =
-        allow_network.then(|| builder.create_string("internetClient,privateNetworkClientServer"));
+    let capabilities = match network {
+        NetworkAccess::None => None,
+        // Reaching a loopback listener in another process needs both of these.
+        NetworkAccess::LocalhostPort(_) => Some("privateNetworkClientServer,networkLoopback"),
+        NetworkAccess::All => Some("internetClient,privateNetworkClientServer"),
+    }
+    .map(|capabilities| builder.create_string(capabilities));
 
-    let egress = builder.start_table();
-    let default_action = if allow_network {
-        FILTER_ACTION_ALLOW
-    } else {
-        FILTER_ACTION_DENY
+    let network_policy = match network {
+        NetworkAccess::LocalhostPort(port) => {
+            // With a proxy set, PSEC only allows connections to the proxy's address and
+            // port. A proxy without a package identity also needs a peer name, which can
+            // be anything.
+            let url = builder.create_string(&format!("http://127.0.0.1:{port}"));
+            let peer = builder.create_string("Zed");
+            let proxy = builder.start_table();
+            builder.push_slot_always(PROXY_INFO_URL, url);
+            let proxy = builder.end_table(proxy);
+
+            let network_policy = builder.start_table();
+            builder.push_slot_always(NETWORK_POLICY_PROXY, proxy);
+            builder.push_slot_always(NETWORK_POLICY_ALLOWED_APPCONTAINER_PEER, peer);
+            builder.end_table(network_policy)
+        }
+        NetworkAccess::None | NetworkAccess::All => {
+            let egress = builder.start_table();
+            let default_action = if matches!(network, NetworkAccess::All) {
+                FILTER_ACTION_ALLOW
+            } else {
+                FILTER_ACTION_DENY
+            };
+            builder.push_slot(
+                ENDPOINT_POLICY_DEFAULT_ACTION,
+                default_action,
+                FILTER_ACTION_DENY,
+            );
+            let egress = builder.end_table(egress);
+
+            let network_policy = builder.start_table();
+            builder.push_slot_always(NETWORK_POLICY_EGRESS, egress);
+            builder.end_table(network_policy)
+        }
     };
-    builder.push_slot(
-        ENDPOINT_POLICY_DEFAULT_ACTION,
-        default_action,
-        FILTER_ACTION_DENY,
-    );
-    let egress = builder.end_table(egress);
-
-    let network_policy = builder.start_table();
-    builder.push_slot_always(NETWORK_POLICY_EGRESS, egress);
-    let network_policy = builder.end_table(network_policy);
 
     let root = builder.start_table();
     // The inline `SchemaVersion { major: 1, minor: 0 }` struct: two
@@ -308,6 +348,10 @@ fn run_launcher(command_line: &str) -> Result<u32> {
     }
 
     let mut process_information = PROCESS_INFORMATION::default();
+    // A PSEC launch builds a fresh environment unless it's given one, which would
+    // drop everything Zed set for the command, such as the proxy variables. PSEC
+    // still replaces `TEMP`, `TMP` and `LOCALAPPDATA` with the sandbox's own.
+    let environment_block = unsafe { GetEnvironmentStringsW() };
     let created = unsafe {
         CreateProcessW(
             PCWSTR::null(),
@@ -315,14 +359,16 @@ fn run_launcher(command_line: &str) -> Result<u32> {
             None,
             None,
             !inherited_handles.is_empty(),
-            creation_flags,
-            None,
+            creation_flags | CREATE_UNICODE_ENVIRONMENT,
+            Some(environment_block.0.cast_const().cast()),
             PCWSTR::null(),
             &startup_info.StartupInfo,
             &mut process_information,
         )
     };
     unsafe { DeleteProcThreadAttributeList(attribute_list) };
+    unsafe { FreeEnvironmentStringsW(environment_block) }
+        .context("failed to free the environment block")?;
     created.with_context(|| format!("failed to start `{command}` in the sandbox"))?;
     let process = unsafe { OwnedHandle::from_raw_handle(process_information.hProcess.0) };
     let _thread = unsafe { OwnedHandle::from_raw_handle(process_information.hThread.0) };
@@ -603,7 +649,7 @@ mod tests {
                 allow_fs_write,
                 &[&dunce::canonicalize(self.project.path()).unwrap()],
                 &[&self.protected()],
-                false,
+                NetworkAccess::None,
             )
             .unwrap()
         }
@@ -734,12 +780,39 @@ mod tests {
             .unwrap();
         assert!(status.success());
 
-        let spec = build_spec(false, &[&grant], &[], false).unwrap();
+        let spec = build_spec(false, &[&grant], &[], NetworkAccess::None).unwrap();
         let command_line = format!(
             "zed.exe {LAUNCHER_FLAG} {} cmd.exe /c exit 0",
             URL_SAFE_NO_PAD.encode(spec)
         );
         let error = run_launcher(&command_line).unwrap_err();
         assert!(format!("{error:#}").contains("was redirected"), "{error:#}");
+    }
+
+    #[test]
+    fn proxy_policy_only_reaches_the_proxy_port() {
+        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy_port = proxy.local_addr().unwrap().port();
+        let other_port = other.local_addr().unwrap().port();
+        let spec = build_spec(false, &[], &[], NetworkAccess::LocalhostPort(proxy_port)).unwrap();
+        let connect = |port: u16| {
+            run_sandboxed(
+                &spec,
+                &format!(
+                    "powershell -NoProfile -NonInteractive -Command \"(New-Object Net.Sockets.TcpClient).Connect('127.0.0.1', {port})\""
+                ),
+            )
+        };
+
+        let Some(exit_code) = connect(proxy_port) else {
+            return;
+        };
+        assert_eq!(exit_code, 0, "the sandbox should reach the proxy port");
+        assert_ne!(
+            connect(other_port),
+            Some(0),
+            "the sandbox should not reach other loopback ports"
+        );
     }
 }

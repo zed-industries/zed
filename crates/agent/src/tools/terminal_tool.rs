@@ -116,16 +116,9 @@ pub struct SandboxedTerminalToolInput {
     /// rejected. Requesting network access triggers a user approval prompt, so
     /// only list hosts you expect the command to need.
     #[cfg_attr(
-        any(target_os = "macos", target_os = "linux"),
+        any(target_os = "macos", target_os = "linux", target_os = "windows"),
         doc = "\nHost-specific access is enforced by an HTTP/HTTPS proxy, so use \
         `https://` URLs rather than `git@`/`ssh://`."
-    )]
-    #[cfg_attr(
-        target_os = "windows",
-        doc = "\nNOTE: on Windows the sandbox cannot currently restrict network \
-        access to specific hosts. Do not set `allow_hosts` on Windows; request \
-        `allow_all_hosts: true` if the command needs network access, or omit \
-        network permissions entirely."
     )]
     #[serde(default)]
     pub allow_hosts: Vec<String>,
@@ -482,10 +475,13 @@ async fn run_terminal_tool(
 
     // Host-specific network access is enforced by a loopback proxy that
     // confines the sandbox to its port. A non-local project's terminal can't
-    // reach the proxy, and Windows does not support this path yet. Reject the
-    // narrower request rather than silently widening it to all-host access.
-    let can_restrict_to_hosts =
-        (cfg!(target_os = "macos") || cfg!(target_os = "linux")) && is_local_project;
+    // reach the proxy. Reject the narrower request rather than silently
+    // widening it to all-host access.
+    let can_restrict_to_hosts = cfg!(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows"
+    )) && is_local_project;
     if !can_restrict_to_hosts && matches!(network, NetworkRequest::Hosts(_)) {
         return Err(
             "This platform or project cannot restrict sandboxed network access to specific hosts. Use `allow_all_hosts: true` if the command needs network access."
@@ -874,13 +870,13 @@ fn network_request_to_sandbox_network_access(
         NetworkRequest::None => acp_thread::SandboxNetworkAccess::None,
         NetworkRequest::AnyHost => acp_thread::SandboxNetworkAccess::All,
         NetworkRequest::Hosts(hosts) => {
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
             {
                 acp_thread::SandboxNetworkAccess::Restricted(http_proxy::Allowlist::from_patterns(
                     hosts.iter().cloned(),
                 ))
             }
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
             {
                 let _ = hosts;
                 acp_thread::SandboxNetworkAccess::None

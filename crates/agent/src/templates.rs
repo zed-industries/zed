@@ -293,8 +293,7 @@ mod tests {
 
         assert!(rendered.contains("inside a Windows AppContainer sandbox"));
         assert!(rendered.contains("`.git` directories remain protected"));
-        assert!(rendered.contains("do not use this on Windows"));
-        assert!(rendered.contains("such requests are rejected"));
+        assert!(rendered.contains("Host-scoped network access works through an HTTP/HTTPS proxy"));
         assert!(rendered.contains("allow_all_hosts: true"));
         assert!(rendered.contains("git --no-optional-locks status"));
         // Out-of-project `create_directory` grants aren't supported on Windows,

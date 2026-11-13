@@ -59,7 +59,7 @@ By default, sandboxed Zed Agent tool actions have these restrictions:
 | Git metadata        | `.git` directories and linked worktree Git metadata remain readable but are not writable while sandboxed.                                                                              |
 | Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.                                                                                       |
 | Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.                                                                                |
-| Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request. Host-specific enforcement is not available on every platform.                    |
+| Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request.                                                                                  |
 | Local IPC sockets   | Sandboxed commands cannot open Unix-domain sockets (for example, to the desktop session bus or a container daemon), which could otherwise be used to run commands outside the sandbox. |
 
 ## How much can I trust the sandbox? {#trust}
@@ -297,8 +297,9 @@ Sandboxed terminal commands:
 - cannot write elsewhere unless you approve additional paths or broader write access
 - cannot reach the network unless you approve network access
 
-Network access is all-or-nothing rather than host-specific, so host-specific network requests are rejected and the agent
-must request unrestricted network access when a command needs the network.
+When host-specific network access is approved on Windows, Zed uses an HTTP/HTTPS proxy so access can be limited to
+approved hosts. The proxy is set through the proxy environment variables and as the command's WinHTTP proxy. Tools that
+honor neither may need the proxy configured explicitly.
 
 Some programs aren't yet compatible with AppContainer and have to run without the sandbox.
 
