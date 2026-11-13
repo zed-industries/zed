@@ -101,5 +101,13 @@ apps:
       # the dynamic linker refuse to resolve bare sonames via /etc/ld.so.cache.
       # The Vulkan loader dlopens ICDs by bare soname, so the bundled Mesa
       # drivers must come first here; the host directories afterwards provide
-      # anything not bundled (e.g. the NVIDIA ICD).
+      # anything not bundled (e.g. the NVIDIA ICD library).
       LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu
+      # Enumerate only our bundled Mesa ICDs plus the host's NVIDIA one. The
+      # host's Mesa ICD manifests must not be discovered: their libraries were
+      # built for the host's glibc (which may be newer than the base's) and,
+      # for lavapipe, they pull in the host's libgallium, which mismatches the
+      # bundled lavapipe and segfaults during device enumeration. Missing
+      # files in the list are ignored, and both NVIDIA manifest locations are
+      # listed because the driver package may install either.
+      VK_DRIVER_FILES: $SNAP/usr/share/vulkan/icd.d/radeon_icd.json:$SNAP/usr/share/vulkan/icd.d/intel_icd.json:$SNAP/usr/share/vulkan/icd.d/intel_hasvk_icd.json:$SNAP/usr/share/vulkan/icd.d/nouveau_icd.json:$SNAP/usr/share/vulkan/icd.d/lvp_icd.json:/usr/share/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json
