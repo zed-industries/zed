@@ -90,6 +90,94 @@ async fn test_traversal(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_entry_id_is_reused_when_rename_overwrites_existing_path(cx: &mut TestAppContext) {
+    init_test(cx);
+    let result: Result<()> = async {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "destination.rs": "old destination",
+                "source.rs": "source",
+            }),
+        )
+        .await;
+        let tree = Worktree::local(
+            Path::new(path!("/root")),
+            true,
+            fs.clone(),
+            Default::default(),
+            true,
+            WorktreeId::from_proto(0),
+            &mut cx.to_async(),
+        )
+        .await?;
+        cx.run_until_parked();
+        let (source_id, destination_id) = tree.read_with(cx, |tree, _| -> Result<_> {
+            let source = tree
+                .entry_for_path(rel_path("source.rs"))
+                .ok_or_else(|| anyhow::anyhow!("expected the source entry"))?;
+            let destination = tree
+                .entry_for_path(rel_path("destination.rs"))
+                .ok_or_else(|| anyhow::anyhow!("expected the destination entry"))?;
+            assert_ne!(source.inode, destination.inode);
+            Ok((source.id, destination.id))
+        })?;
+
+        // An explicit refresh leaves the overwritten entry in the snapshot until ID selection
+        fs.pause_events();
+        fs.rename(
+            Path::new(path!("/root/source.rs")),
+            Path::new(path!("/root/destination.rs")),
+            fs::RenameOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+        )
+        .await?;
+        tree.read_with(cx, |tree, _| -> Result<_> {
+            Ok(tree
+                .as_local()
+                .ok_or_else(|| anyhow::anyhow!("expected a local worktree"))?
+                .refresh_entries_for_paths(vec![
+                    rel_path("destination.rs").into(),
+                    rel_path("source.rs").into(),
+                ]))
+        })?
+        .recv()
+        .await;
+
+        tree.read_with(cx, |tree, _| -> Result<()> {
+            assert!(tree.entry_for_path(rel_path("source.rs")).is_none());
+            assert!(tree.entry_for_id(destination_id).is_none());
+            assert_eq!(
+                tree.entry_for_path(rel_path("destination.rs"))
+                    .map(|entry| entry.id),
+                Some(source_id),
+            );
+            tree.as_local()
+                .ok_or_else(|| anyhow::anyhow!("expected a local worktree"))?
+                .snapshot()
+                .check_invariants(false);
+            Ok(())
+        })?;
+
+        fs.flush_events(fs.buffered_event_count());
+        cx.run_until_parked();
+        assert_eq!(
+            tree.read_with(cx, |tree, _| {
+                tree.entry_for_path(rel_path("destination.rs"))
+                    .map(|entry| entry.id)
+            }),
+            Some(source_id),
+        );
+        Ok(())
+    }
+    .await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[gpui::test]
 async fn test_entry_id_is_reused_when_rename_events_are_split(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -870,6 +958,156 @@ async fn test_scan_symlinks_always(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_deleted_external_symlink_before_read_dir_cleans_up_watch(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks =
+                    Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({})).await;
+    fs.insert_tree("/outside", json!({"data": {}})).await;
+    fs.create_symlink("/root/link".as_ref(), "/outside/data".into())
+        .await
+        .unwrap();
+
+    fs.before_read_dir(
+        "/root/link",
+        Box::pin({
+            let fs = fs.clone();
+            async move {
+                let mut watched_paths = fs.registered_watch_paths();
+                watched_paths.sort();
+                assert_eq!(
+                    watched_paths,
+                    vec![PathBuf::from("/outside/data"), PathBuf::from("/root")]
+                );
+                fs.remove_file("/root/link".as_ref(), RemoveOptions::default())
+                    .await
+                    .unwrap();
+            }
+        }),
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![rel_path("")]
+        );
+    });
+    assert_eq!(fs.registered_watch_paths(), vec![PathBuf::from("/root")]);
+}
+
+#[gpui::test]
+async fn test_relative_path_for_external_abs_path(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks =
+                    Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir1": {
+                "deps": {},
+                "src": {
+                    "a.rs": "",
+                },
+            },
+            "lib": {
+                "a": {
+                    "deep": {
+                        "d.rs": "",
+                    },
+                    "x.rs": "",
+                },
+                "b": {
+                    "b.rs": "",
+                },
+                "c.rs": "",
+            },
+            "other": {
+                "file.rs": "",
+            },
+        }),
+    )
+    .await;
+
+    fs.create_symlink("/root/dir1/deps/lib".as_ref(), "../../lib".into())
+        .await
+        .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root/dir1"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        let snapshot = tree.as_local().unwrap().snapshot();
+        let lookup = |abs_path: &str| {
+            snapshot
+                .relative_path_for_external_abs_path(Path::new(abs_path))
+                .map(|path| path.as_unix_str().to_string())
+        };
+        assert_eq!(
+            lookup("/root/lib/a/x.rs").as_deref(),
+            Some("deps/lib/a/x.rs")
+        );
+        assert_eq!(lookup("/root/lib/c.rs").as_deref(), Some("deps/lib/c.rs"));
+        assert_eq!(
+            lookup("/root/lib/zzz/new.rs").as_deref(),
+            Some("deps/lib/zzz/new.rs")
+        );
+        assert_eq!(
+            lookup("/root/lib/b-x/file.rs").as_deref(),
+            Some("deps/lib/b-x/file.rs")
+        );
+        assert_eq!(lookup("/root/lib").as_deref(), Some("deps/lib"));
+        assert_eq!(lookup("/root/other/file.rs"), None);
+        assert_eq!(lookup("/root/dir1/src/a.rs"), None);
+    });
+}
+
+#[gpui::test]
 async fn test_scan_symlinks_expanded(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -1573,8 +1811,10 @@ async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext)
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    // Dropping and re-registering the root watch would open a window in
-    // which filesystem events are lost.
+    // Dropping and re-registering the recursive root watch would open a window
+    // in which filesystem events are lost. Non-recursive watches may have been
+    // lost in the overflow, so the rescan reinstalls the root watch before
+    // reading the root again.
     fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
     tree.flush_fs_events(cx).await;
 
@@ -1583,7 +1823,65 @@ async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext)
         .into_iter()
         .filter(|path| path == Path::new("/root"))
         .count();
-    assert_eq!(root_watch_calls, 1);
+    let expected_root_watch_calls = if cfg!(any(target_os = "windows", target_os = "macos")) {
+        1
+    } else {
+        2
+    };
+    assert_eq!(root_watch_calls, expected_root_watch_calls);
+}
+
+// Native watches are recursive on macOS and Windows, so the new directory is
+// covered by the root watch and never watched separately.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[gpui::test]
+async fn test_new_directory_scan_does_not_miss_event_before_adding_watcher(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({})).await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.create_file_before_next_watch_add("/root/new-directory", "/root/new-directory/file.txt");
+    fs.create_dir(Path::new("/root/new-directory"))
+        .await
+        .unwrap();
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("new-directory/file.txt"))
+                .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("new-directory"),
+                rel_path("new-directory/file.txt"),
+            ]
+        );
+    });
 }
 
 #[gpui::test]
@@ -2432,6 +2730,143 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
                 .is_some_and(|f| !f.is_always_included)
         );
     });
+}
+
+#[gpui::test]
+async fn test_symlink_scanner_restart_excluding_external_directory(cx: &mut TestAppContext) {
+    let result = check_symlink_scanner_restart(cx, "../config/target", true).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[gpui::test]
+async fn test_symlink_scanner_restart_excluding_external_file(cx: &mut TestAppContext) {
+    let result = check_symlink_scanner_restart(cx, "../config/target", false).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[gpui::test]
+async fn test_symlink_scanner_restart_excluding_internal_directory(cx: &mut TestAppContext) {
+    let result = check_symlink_scanner_restart(cx, "config/target", true).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[gpui::test]
+async fn test_symlink_scanner_restart_excluding_internal_file(cx: &mut TestAppContext) {
+    let result = check_symlink_scanner_restart(cx, "config/target", false).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+async fn check_symlink_scanner_restart(
+    cx: &mut TestAppContext,
+    target: &str,
+    is_directory: bool,
+) -> Result<()> {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let contents = if is_directory {
+        json!({ "child.rs": "" })
+    } else {
+        json!("")
+    };
+    fs.insert_tree(
+        "/parent",
+        json!({
+            "config": { "target": contents },
+            "worktree": {
+                "config": { "target": contents },
+                "file.rs": "",
+            },
+        }),
+    )
+    .await;
+    fs.create_symlink(Path::new("/parent/worktree/link"), target.into())
+        .await?;
+
+    let tree = Worktree::local(
+        Path::new("/parent/worktree"),
+        true,
+        fs,
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await?;
+    cx.run_until_parked();
+
+    let original_entries = tree.read_with(cx, |tree, _| -> Result<_> {
+        let target = tree
+            .entry_for_path(rel_path("config/target"))
+            .ok_or_else(|| anyhow::anyhow!("expected the target entry"))?;
+        let link = tree
+            .entry_for_path(rel_path("link"))
+            .ok_or_else(|| anyhow::anyhow!("expected the symlink entry"))?;
+        if !link.is_external {
+            assert_eq!(link.inode, target.inode);
+            assert_eq!(link.mtime, target.mtime);
+        }
+        assert_ne!(link.id, target.id);
+        assert!(tree.entry_for_path(rel_path("file.rs")).is_some());
+        Ok(tree
+            .entries(true, 0)
+            .map(|entry| (entry.path.clone(), entry.id))
+            .collect::<Vec<_>>())
+    })?;
+
+    tree.update(cx, |tree, cx| -> Result<()> {
+        tree.as_local_mut()
+            .ok_or_else(|| anyhow::anyhow!("expected a local worktree"))?
+            .share_private_files(cx);
+        Ok(())
+    })?;
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.clone(), entry.id))
+                .collect::<Vec<_>>(),
+            original_entries,
+        );
+    });
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["**/link".to_string()]));
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| -> Result<()> {
+        tree.as_local()
+            .ok_or_else(|| anyhow::anyhow!("expected a local worktree"))?
+            .snapshot()
+            .check_invariants(false);
+        let expected_entries = original_entries
+            .iter()
+            .filter(|(path, _)| !path.starts_with(rel_path("link")))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.clone(), entry.id))
+                .collect::<Vec<_>>(),
+            expected_entries,
+        );
+        for (path, id) in &original_entries {
+            if path.starts_with(rel_path("link")) {
+                assert!(tree.entry_for_id(*id).is_none());
+            } else {
+                assert_eq!(
+                    tree.entry_for_id(*id).map(|entry| (&entry.path, entry.id)),
+                    Some((path, *id)),
+                );
+            }
+        }
+        Ok(())
+    })
 }
 
 #[gpui::test]
@@ -3416,17 +3851,15 @@ async fn test_random_worktree_operations_during_initial_scan(
 
     let settings = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().settings());
 
-    for (i, snapshot) in snapshots.into_iter().enumerate().rev() {
-        let mut updated_snapshot = snapshot.clone();
+    for (i, mut snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
-            if update.scan_id >= updated_snapshot.scan_id() as u64 {
-                updated_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
+            if update.scan_id >= snapshot.scan_id() as u64 {
+                snapshot.apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
         assert_eq!(
-            updated_snapshot.entries(true, 0).collect::<Vec<_>>(),
+            snapshot.entries(true, 0).collect::<Vec<_>>(),
             final_snapshot.entries(true, 0).collect::<Vec<_>>(),
             "wrong updates after snapshot {i}: {updates:#?}",
         );
@@ -6401,6 +6834,193 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
         fired.contains(&"UpdatedRootRepoCommonDir"),
         "UpdatedRootRepoCommonDir should fire after first remote update even when \
          root_repo_common_dir is None, to signal that repo state is now known"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_single_file_worktree_abs_path(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "config".to_string(),
+                visible: true,
+                abs_path: "/home/user/.ssh/config".to_string(),
+                root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
+            },
+            AnyProtoClient::new(NoopProtoClient::new()),
+            PathStyle::Unix,
+            cx,
+        )
+    });
+
+    let file = worktree::File {
+        worktree,
+        path: Arc::from(rel_path("")),
+        disk_state: language::DiskState::New,
+        entry_id: None,
+        is_local: false,
+        is_private: false,
+    };
+
+    cx.read(|cx| {
+        assert_eq!(
+            language::File::full_path(&file, cx),
+            PathBuf::from("config")
+        );
+        assert_eq!(
+            language::File::file_system_abs_path(&file, cx),
+            Some(PathBuf::from("/home/user/.ssh/config"))
+        );
+    });
+}
+
+#[gpui::test]
+fn test_remote_worktree_language_matching(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings
+                .project
+                .all_languages
+                .file_types
+                .get_or_insert_default()
+                .0
+                .extend([
+                    (
+                        "Plain Text".into(),
+                        vec![
+                            "repo/templates/*.html".into(),
+                            #[cfg(unix)]
+                            r"repo\\raw\\*.html".into(),
+                        ]
+                        .into(),
+                    ),
+                    ("SSH Config".into(), vec!["**/.ssh/config".into()].into()),
+                ]);
+        });
+    });
+    let registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+    for (name, suffixes) in [
+        ("Plain Text", vec![]),
+        ("SSH Config", vec![]),
+        ("HTML", vec!["html".into()]),
+        ("Git Commit", vec!["COMMIT_EDITMSG".into()]),
+        ("INI", vec!["config".into()]),
+    ] {
+        registry.register_test_language(language::LanguageConfig {
+            name: name.into(),
+            matcher: language::LanguageMatcher {
+                path_suffixes: suffixes,
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        });
+    }
+
+    let mut actual = Vec::new();
+    for (root_name, abs_path, path, path_style) in [
+        ("repo", "/tmp/repo", "templates/index.html", PathStyle::Unix),
+        ("config", "/home/user/.ssh/config", "", PathStyle::Unix),
+        (
+            "COMMIT_EDITMSG",
+            r"C:\review60307\COMMIT_EDITMSG",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "COMMIT_EDITMSG",
+            r"\\server\share\COMMIT_EDITMSG",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            r"C:\Users\user\.ssh\config",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            r"\\server\share\.ssh\config",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            "C:/Users/user/.ssh/config",
+            "",
+            PathStyle::Windows,
+        ),
+        (".ssh", r"C:\Users\用户\.ssh", "config", PathStyle::Windows),
+        (
+            "repo",
+            r"C:\repo",
+            "templates/index.html",
+            PathStyle::Windows,
+        ),
+        #[cfg(unix)]
+        ("config", r"/home/user\.ssh/config", "", PathStyle::Unix),
+        #[cfg(unix)]
+        ("repo", r"C:\repo", "raw/index.html", PathStyle::Windows),
+    ] {
+        cx.update(|cx| {
+            let worktree = Worktree::remote(
+                1,
+                clock::ReplicaId::new(1),
+                proto::WorktreeMetadata {
+                    id: 1,
+                    root_name: root_name.into(),
+                    visible: true,
+                    abs_path: abs_path.into(),
+                    root_repo_common_dir: None,
+                    root_repo_is_linked_worktree: false,
+                },
+                AnyProtoClient::new(NoopProtoClient::new()),
+                path_style,
+                cx,
+            );
+            let file: Arc<dyn language::File> = Arc::new(worktree::File {
+                worktree,
+                path: Arc::from(rel_path(path)),
+                disk_state: language::DiskState::New,
+                entry_id: None,
+                is_local: false,
+                is_private: false,
+            });
+            actual.push(
+                registry
+                    .language_for_file(&file, None, cx)
+                    .and_then(|id| registry.language_name_for_id(id)),
+            );
+        });
+    }
+    assert_eq!(
+        actual,
+        vec![
+            Some("Plain Text".into()),
+            Some("SSH Config".into()),
+            Some("Git Commit".into()),
+            Some("Git Commit".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("Plain Text".into()),
+            #[cfg(unix)]
+            Some("INI".into()),
+            #[cfg(unix)]
+            Some("Plain Text".into()),
+        ]
     );
 }
 

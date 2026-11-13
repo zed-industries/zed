@@ -17,7 +17,6 @@ use std::{
     fmt, iter,
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub, SubAssign},
     sync::Arc,
-    usize,
 };
 use sum_tree::{Bias, Cursor, Dimensions, FilterCursor, SumTree, Summary, TreeMap};
 use ui::IntoElement as _;
@@ -274,7 +273,7 @@ impl FoldMapWriter<'_> {
         for range in ranges.into_iter() {
             let range = range.start.to_offset(buffer)..range.end.to_offset(buffer);
             let mut folds_cursor =
-                intersecting_folds(&snapshot, &self.0.snapshot.folds, range.clone(), inclusive);
+                intersecting_folds(&snapshot, &self.0.snapshot.folds, range, inclusive);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range =
                     fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer);
@@ -335,7 +334,7 @@ impl FoldMapWriter<'_> {
                     ..inlay_snapshot.to_inlay_offset(buffer_end);
                 edits.push(InlayEdit {
                     old: inlay_range.clone(),
-                    new: inlay_range.clone(),
+                    new: inlay_range,
                 });
 
                 self.0.snapshot.fold_metadata_by_id.insert(
@@ -768,6 +767,13 @@ impl FoldSnapshot {
         &self.inlay_snapshot.buffer
     }
 
+    pub(super) fn is_inlay_offset_folded(&self, offset: InlayOffset) -> bool {
+        let (_, _, item) = self
+            .transforms
+            .find::<InlayOffset, _>((), &offset, Bias::Right);
+        item.is_some_and(|transform| transform.placeholder.is_some())
+    }
+
     #[ztracing::instrument(skip_all)]
     fn fold_width(&self, fold_id: &FoldId) -> Option<Pixels> {
         self.fold_metadata_by_id.get(fold_id)?.width
@@ -948,10 +954,7 @@ impl FoldSnapshot {
     {
         let buffer_offset = offset.to_offset(&self.inlay_snapshot.buffer);
         let inlay_offset = self.inlay_snapshot.to_inlay_offset(buffer_offset);
-        let (_, _, item) = self
-            .transforms
-            .find::<InlayOffset, _>((), &inlay_offset, Bias::Right);
-        item.is_some_and(|t| t.placeholder.is_some())
+        self.is_inlay_offset_folded(inlay_offset)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -2121,7 +2124,7 @@ mod tests {
             let (snapshot, edits) = map.read(inlay_snapshot.clone(), inlay_edits);
             snapshot_edits.push((snapshot.clone(), edits));
 
-            let mut expected_text: String = inlay_snapshot.text().to_string();
+            let mut expected_text: String = inlay_snapshot.text();
             for fold_range in map.merged_folds().into_iter().rev() {
                 let fold_inlay_start = inlay_snapshot.to_inlay_offset(fold_range.start);
                 let fold_inlay_end = inlay_snapshot.to_inlay_offset(fold_range.end);

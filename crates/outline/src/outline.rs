@@ -414,7 +414,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 .next();
             if let Some((rows, _)) = highlight {
                 active_editor.change_selections(
-                    SelectionEffects::scroll(Autoscroll::center()),
+                    SelectionEffects::scroll(Autoscroll::center()).unfold(),
                     window,
                     cx,
                     |s| s.select_ranges([rows.start..rows.start]),

@@ -5,7 +5,6 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
-    usize,
 };
 use tasks_ui::{TaskOverrides, TasksModal};
 
@@ -515,7 +514,7 @@ impl NewProcessModal {
                 };
 
                 for adapter in available_adapters.into_iter() {
-                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.clone()));
+                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter));
                 }
 
                 menu
@@ -570,7 +569,7 @@ impl Render for NewProcessModal {
 
         v_flex()
             .key_context({
-                let mut key_context = KeyContext::new_with_defaults();
+                let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
                 key_context.add("Pane");
                 key_context.add("RunModal");
                 key_context

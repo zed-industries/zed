@@ -39,7 +39,7 @@ use gpui::{
     UpdateGlobal, WeakEntity, Window, point,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::{ConfigurationError, ConfiguredModel, LanguageModelRegistry};
+use language_model::{ConfigurationError, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{DisableAiSettings, Project};
@@ -407,13 +407,13 @@ impl InlineAssistant {
                     "Assistant Invoked",
                     kind = "inline",
                     phase = "invoked",
-                    model = model.model.telemetry_id(),
-                    model_provider = model.provider.id().to_string(),
+                    model = model.telemetry_id(),
+                    model_provider = model.provider_id().to_string(),
                     language_name = buffer.language().map(|language| language.name().to_proto())
                 );
 
                 report_anthropic_event(
-                    &model.model,
+                    &model,
                     AnthropicEventData {
                         completion_type: AnthropicCompletionType::Editor,
                         event: AnthropicEventType::Invoked,
@@ -990,8 +990,8 @@ impl InlineAssistant {
                 let codegen = assist.codegen.read(cx);
                 let session_id = codegen.session_id();
                 let message_id = active_alternative.read(cx).message_id.clone();
-                let model_telemetry_id = model.model.telemetry_id();
-                let model_provider_id = model.model.provider_id().to_string();
+                let model_telemetry_id = model.telemetry_id();
+                let model_provider_id = model.provider_id().to_string();
 
                 let (phase, event_type, anthropic_event_type) = if undo {
                     (
@@ -1019,7 +1019,7 @@ impl InlineAssistant {
                 );
 
                 report_anthropic_event(
-                    &model.model,
+                    &model,
                     AnthropicEventData {
                         completion_type: AnthropicCompletionType::Editor,
                         event: anthropic_event_type,
@@ -1245,9 +1245,7 @@ impl InlineAssistant {
             self.prompt_history.pop_front();
         }
 
-        let Some(ConfiguredModel { model, .. }) =
-            LanguageModelRegistry::read_global(cx).inline_assistant_model()
-        else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() else {
             return;
         };
 

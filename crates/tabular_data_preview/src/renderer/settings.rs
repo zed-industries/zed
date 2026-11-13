@@ -5,8 +5,8 @@ use ui::{
 };
 
 use crate::{
-    TabularDataPreviewPane,
-    settings::{FilterSortOrder, TabularDataPreviewSettings, VerticalAlignment},
+    TableView,
+    settings::{FilterSortOrder, TableViewSettings, VerticalAlignment},
 };
 
 ///// Settings related /////
@@ -18,8 +18,8 @@ fn toggle_entry(
     label: &'static str,
     description: Option<&'static str>,
     selected: bool,
-    view_entity: &Entity<TabularDataPreviewPane>,
-    set: impl Fn(&mut TabularDataPreviewSettings) + 'static,
+    view_entity: &Entity<TableView>,
+    set: impl Fn(&mut TableViewSettings) + 'static,
 ) -> ContextMenu {
     let view_entity = view_entity.clone();
     let entry = ContextMenuEntry::new(label)
@@ -40,9 +40,7 @@ fn toggle_entry(
     menu.item(entry)
 }
 
-pub(crate) fn settings_popover_menu(
-    view_entity: Entity<TabularDataPreviewPane>,
-) -> PopoverMenu<ContextMenu> {
+pub(crate) fn settings_popover_menu(view_entity: Entity<TableView>) -> PopoverMenu<ContextMenu> {
     PopoverMenu::new("table-settings-menu")
         .trigger_with_tooltip(
             IconButton::new("table-settings-trigger", IconName::Filter)
@@ -118,8 +116,8 @@ pub(crate) fn settings_popover_menu(
 #[cfg(feature = "dev-tools")]
 fn append_dev_only_entries(
     menu: ContextMenu,
-    view_entity: &Entity<TabularDataPreviewPane>,
-    settings: &TabularDataPreviewSettings,
+    view_entity: &Entity<TableView>,
+    settings: &TableViewSettings,
 ) -> ContextMenu {
     use crate::settings::RowRenderMechanism;
 

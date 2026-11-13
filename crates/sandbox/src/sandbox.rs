@@ -90,10 +90,12 @@ pub struct SandboxPolicy {
 /// Filesystem policy for a sandboxed command.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SandboxFsPolicy {
-    /// Allow unrestricted filesystem writes except for protected paths, which
-    /// remain readable but not writable.
+    /// Allow unrestricted filesystem writes except for protected paths and
+    /// protected file names, which remain readable but not writable.
     Unrestricted {
         protected_paths: Vec<HostFilesystemLocation>,
+        /// See [`ProtectedFileName`].
+        protected_file_names: Vec<ProtectedFileName>,
     },
     /// Reads are allowed everywhere; writes are confined to these locations
     /// (and the standard ephemeral locations the platform provides). Each is a
@@ -102,7 +104,63 @@ pub enum SandboxFsPolicy {
     Restricted {
         writable_paths: Vec<HostFilesystemLocation>,
         protected_paths: Vec<HostFilesystemLocation>,
+        /// See [`ProtectedFileName`].
+        protected_file_names: Vec<ProtectedFileName>,
     },
+}
+
+/// A file name whose writes are denied wherever it appears on the filesystem.
+///
+/// Matching is on the final path component only, anywhere on the filesystem,
+/// including in directories that do not exist yet when the sandbox is built.
+/// The match is ASCII case-insensitive, because the default macOS filesystem
+/// is case-insensitive and would otherwise let `.ENVRC` stand in for `.envrc`.
+/// Files of that name stay readable; the sandbox denies creating, writing,
+/// truncating, deleting, renaming onto, and linking (hard or symbolic) to a
+/// path whose final component is the name.
+///
+/// This complements path-based protected paths for files whose consumers look
+/// them up by name, such as direnv's `.envrc`, which is read from the working
+/// directory or any of its ancestors.
+///
+/// Only the macOS backend can enforce this today. The Linux and WSL backends
+/// reject any policy that contains protected file names, pending the planned
+/// Linux syscall-interception backend.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ProtectedFileName(String);
+
+impl ProtectedFileName {
+    /// Validate `name` as a single, non-empty path component.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SandboxError::InvalidRequest`] if `name` is empty, is `.` or
+    /// `..`, or contains `/` or a NUL byte.
+    pub fn new(name: impl Into<String>) -> Result<Self, SandboxError> {
+        let name = name.into();
+        let problem = if name.is_empty() {
+            Some("must not be empty")
+        } else if name == "." || name == ".." {
+            Some("must not be `.` or `..`")
+        } else if name.contains('/') {
+            Some("must not contain `/`")
+        } else if name.contains('\0') {
+            Some("must not contain a NUL byte")
+        } else {
+            None
+        };
+        match problem {
+            Some(problem) => Err(SandboxError::InvalidRequest(format!(
+                "invalid protected file name {name:?}: {problem}"
+            ))),
+            None => Ok(Self(name)),
+        }
+    }
+
+    /// The validated file name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Outbound-network policy for a sandboxed command.
@@ -176,6 +234,7 @@ impl SandboxPolicy {
         match &mut self.fs {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: existing,
+                ..
             }
             | SandboxFsPolicy::Restricted {
                 protected_paths: existing,
@@ -184,6 +243,37 @@ impl SandboxPolicy {
         }
         self
     }
+
+    /// Replace the protected file names in the filesystem policy, keeping
+    /// every other part of the policy unchanged.
+    pub fn with_protected_file_names(
+        mut self,
+        protected_file_names: Vec<ProtectedFileName>,
+    ) -> Self {
+        match &mut self.fs {
+            SandboxFsPolicy::Unrestricted {
+                protected_file_names: existing,
+                ..
+            }
+            | SandboxFsPolicy::Restricted {
+                protected_file_names: existing,
+                ..
+            } => *existing = protected_file_names,
+        }
+        self
+    }
+}
+
+fn merge_file_names(
+    mut names: Vec<ProtectedFileName>,
+    other: Vec<ProtectedFileName>,
+) -> Vec<ProtectedFileName> {
+    for name in other {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
 }
 
 fn merge_locations(
@@ -295,50 +385,62 @@ fn linux_location_is_equal_or_descendant(
 
 impl SandboxFsPolicy {
     /// Unrestricted access dominates; otherwise the writable subtrees union.
+    /// Protected paths and protected file names always union.
     pub fn merge(self, other: SandboxFsPolicy) -> SandboxFsPolicy {
         match (self, other) {
             (
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: protected_a,
+                    protected_file_names: names_a,
                 },
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: protected_b,
+                    protected_file_names: names_b,
                 },
             ) => SandboxFsPolicy::Unrestricted {
                 protected_paths: merge_locations(protected_a, protected_b),
+                protected_file_names: merge_file_names(names_a, names_b),
             },
             (
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: protected_a,
+                    protected_file_names: names_a,
                 },
                 SandboxFsPolicy::Restricted {
                     protected_paths: protected_b,
+                    protected_file_names: names_b,
                     ..
                 },
             )
             | (
                 SandboxFsPolicy::Restricted {
                     protected_paths: protected_a,
+                    protected_file_names: names_a,
                     ..
                 },
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: protected_b,
+                    protected_file_names: names_b,
                 },
             ) => SandboxFsPolicy::Unrestricted {
                 protected_paths: merge_locations(protected_a, protected_b),
+                protected_file_names: merge_file_names(names_a, names_b),
             },
             (
                 SandboxFsPolicy::Restricted {
                     writable_paths: writable_a,
                     protected_paths: protected_a,
+                    protected_file_names: names_a,
                 },
                 SandboxFsPolicy::Restricted {
                     writable_paths: writable_b,
                     protected_paths: protected_b,
+                    protected_file_names: names_b,
                 },
             ) => SandboxFsPolicy::Restricted {
                 writable_paths: merge_locations(writable_a, writable_b),
                 protected_paths: merge_locations(protected_a, protected_b),
+                protected_file_names: merge_file_names(names_a, names_b),
             },
         }
     }
@@ -459,6 +561,10 @@ struct FsSetup {
     allow_fs_write: bool,
     writable_paths: Vec<HostFilesystemLocation>,
     protected_paths: Vec<HostFilesystemLocation>,
+    /// Only the Seatbelt backend can enforce these; other platforms reject a
+    /// non-empty list in [`Sandbox::new`].
+    #[cfg(target_os = "macos")]
+    protected_file_names: Vec<ProtectedFileName>,
 }
 
 /// Resolved network plan derived from [`SandboxNetPolicy`]. For the restricted
@@ -516,27 +622,48 @@ impl Sandbox {
     /// created lazily on the first [`Sandbox::wrap`] (so it can chain through an
     /// upstream proxy named in the command's environment), and `bwrap`
     /// availability is checked separately via [`Sandbox::can_create`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SandboxError::UnsupportedPolicy`] on Linux and Windows when the
+    /// policy has any [`ProtectedFileName`]s, because those backends cannot
+    /// enforce them yet.
     pub fn new(policy: SandboxPolicy) -> Result<Self, SandboxError> {
-        let fs = match policy.fs {
-            SandboxFsPolicy::Unrestricted { protected_paths } => FsSetup {
-                allow_fs_write: true,
-                writable_paths: Vec::new(),
-                protected_paths,
-            },
-            SandboxFsPolicy::Restricted {
-                writable_paths,
-                protected_paths,
-            } => {
-                validate_writable_paths_do_not_overlap_protected_paths(
-                    &writable_paths,
-                    &protected_paths,
-                )?;
-                FsSetup {
-                    allow_fs_write: false,
+        let (allow_fs_write, writable_paths, protected_paths, protected_file_names) =
+            match policy.fs {
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths,
+                    protected_file_names,
+                } => (true, Vec::new(), protected_paths, protected_file_names),
+                SandboxFsPolicy::Restricted {
                     writable_paths,
                     protected_paths,
+                    protected_file_names,
+                } => {
+                    validate_writable_paths_do_not_overlap_protected_paths(
+                        &writable_paths,
+                        &protected_paths,
+                    )?;
+                    (false, writable_paths, protected_paths, protected_file_names)
                 }
-            }
+            };
+
+        // Bubblewrap can only protect inodes that exist when the sandbox is
+        // built, so it cannot deny a name in a directory created later. Fail
+        // closed until the planned Linux syscall-interception backend lands.
+        #[cfg(not(target_os = "macos"))]
+        if !protected_file_names.is_empty() {
+            return Err(SandboxError::UnsupportedPolicy(
+                "protected file names are not yet supported by this platform's sandbox".to_string(),
+            ));
+        }
+
+        let fs = FsSetup {
+            allow_fs_write,
+            writable_paths,
+            protected_paths,
+            #[cfg(target_os = "macos")]
+            protected_file_names,
         };
 
         let network = match policy.network {
@@ -855,6 +982,7 @@ impl Sandbox {
             &command.args,
             &writable,
             &protected,
+            &self.fs.protected_file_names,
             &[],
             permissions,
         )
@@ -1153,6 +1281,7 @@ mod tests {
                 fs: SandboxFsPolicy::Restricted {
                     writable_paths: vec![writable_path],
                     protected_paths: vec![protected_git.clone()],
+                    protected_file_names: Vec::new(),
                 },
                 network: SandboxNetPolicy::Blocked,
             });
@@ -1185,6 +1314,7 @@ mod tests {
             fs: SandboxFsPolicy::Restricted {
                 writable_paths: vec![writable_displayed_inside_git],
                 protected_paths: vec![protected_git],
+                protected_file_names: Vec::new(),
             },
             network: SandboxNetPolicy::Blocked,
         })
@@ -1206,38 +1336,62 @@ mod tests {
         let a = SandboxFsPolicy::Restricted {
             writable_paths: vec![location(&dir_a), location(&dir_b)],
             protected_paths: vec![location(&dir_c)],
+            protected_file_names: Vec::new(),
         };
         let b = SandboxFsPolicy::Restricted {
             writable_paths: vec![location(&dir_b), location(&dir_c)],
             protected_paths: vec![location(&dir_c), location(&dir_d)],
+            protected_file_names: Vec::new(),
         };
         assert_eq!(
             a.clone().merge(b),
             SandboxFsPolicy::Restricted {
                 writable_paths: vec![location(&dir_a), location(&dir_b), location(&dir_c)],
                 protected_paths: vec![location(&dir_c), location(&dir_d)],
+                protected_file_names: Vec::new(),
             }
         );
         assert_eq!(
             a.merge(SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_a)],
+                protected_file_names: Vec::new(),
             }),
             SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_c), location(&dir_a)],
+                protected_file_names: Vec::new(),
             }
         );
         assert_eq!(
             SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_d)],
+                protected_file_names: Vec::new(),
             }
             .merge(SandboxFsPolicy::Restricted {
                 writable_paths: vec![location(&dir_a)],
                 protected_paths: vec![location(&dir_c)],
+                protected_file_names: Vec::new(),
             }),
             SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_d), location(&dir_c)],
+                protected_file_names: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn protected_file_name_rejects_anything_but_one_path_component() {
+        for name in ["", ".", "..", "a/b", "/", ".envrc/", "a\0b"] {
+            assert!(
+                matches!(
+                    ProtectedFileName::new(name),
+                    Err(SandboxError::InvalidRequest(_))
+                ),
+                "{name:?} should be rejected"
+            );
+        }
+        for name in [".envrc", "...", "a.b+c", "with space"] {
+            assert_eq!(ProtectedFileName::new(name).unwrap().as_str(), name);
+        }
     }
 
     #[test]
