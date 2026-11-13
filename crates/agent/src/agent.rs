@@ -1,5 +1,6 @@
 mod db;
 mod legacy_thread;
+mod loop_guard;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
