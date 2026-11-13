@@ -98,6 +98,28 @@ impl Editor {
             })
     }
 
+    pub fn toggle_completion_documentation(
+        &mut self,
+        _: &ToggleCompletionDocumentation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.has_visible_completions_menu() {
+            cx.propagate();
+            return;
+        }
+
+        if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut()
+            && menu.source != CompletionsMenuSource::SnippetChoices
+        {
+            // Hiding focused Markdown would otherwise leave focus on a removed element.
+            window.focus(&self.focus_handle, cx);
+            menu.toggle_documentation(cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
     pub(super) fn trigger_completion_on_input(
         &mut self,
         text: &str,
@@ -766,6 +788,9 @@ impl Editor {
                     // below, or the menu is hidden.
                     if let Some(CodeContextMenu::Completions(prev_menu)) =
                         editor.context_menu.borrow_mut().take()
+                        && prev_menu.buffer == menu.buffer
+                        && prev_menu.source != CompletionsMenuSource::SnippetChoices
+                        && menu.source != CompletionsMenuSource::SnippetChoices
                     {
                         let position_matches =
                             if prev_menu.initial_position == menu.initial_position {
@@ -776,9 +801,10 @@ impl Editor {
                                     == menu.initial_position.to_offset(&snapshot)
                             };
                         if position_matches {
-                            // Preserve markdown cache before `set_filter_results` because it will
-                            // try to populate the documentation cache.
-                            menu.preserve_markdown_cache(prev_menu);
+                            // Read visibility from the live menu, since it may have been toggled
+                            // while this request was pending. Preserve the cache before
+                            // `set_filter_results` tries to populate it.
+                            menu.preserve_documentation_state(prev_menu);
                         }
                     };
 

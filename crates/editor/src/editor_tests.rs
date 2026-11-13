@@ -24938,6 +24938,258 @@ async fn test_completion_can_run_commands(cx: &mut TestAppContext) {
     );
 }
 
+fn completion_documentation_visible(cx: &mut EditorLspTestContext) -> bool {
+    let editor = cx.editor.clone();
+    let mut visible = false;
+    cx.draw(
+        gpui::Point::default(),
+        size(px(600.), px(400.)),
+        |window, cx| {
+            visible = editor.update(cx, |editor, cx| {
+                editor
+                    .context_menu
+                    .borrow_mut()
+                    .as_mut()
+                    .expect("expected a completion menu")
+                    .render_aside(size(px(600.), px(400.)), window, cx)
+                    .is_some()
+            });
+            gpui::Empty
+        },
+    );
+    visible
+}
+
+fn completion_documentation_response(is_incomplete: bool) -> lsp::CompletionResponse {
+    lsp::CompletionResponse::List(lsp::CompletionList {
+        is_incomplete,
+        items: ["alpha", "alpine", "echo"]
+            .into_iter()
+            .map(|label| lsp::CompletionItem {
+                label: label.into(),
+                documentation: Some(lsp::Documentation::String(format!(
+                    "Documentation for {label}\nMore documentation"
+                ))),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    })
+}
+
+#[gpui::test]
+async fn test_completion_documentation_toggle_and_reset(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    let mut requests = cx.set_request_handler::<lsp::request::Completion, _, _>(|_, _, _| async {
+        Ok(Some(completion_documentation_response(false)))
+    });
+
+    cx.set_state("obj.ˇ");
+    for initially_visible in [false, true] {
+        update_test_language_settings(&mut cx, &|settings| {
+            settings.defaults.show_completion_documentation = Some(initially_visible);
+        });
+        cx.dispatch_action(ShowCompletions);
+        requests.next().await.expect("completion request");
+        cx.run_until_parked();
+        assert_eq!(completion_documentation_visible(&mut cx), initially_visible);
+
+        cx.dispatch_action(ToggleCompletionDocumentation);
+        assert_eq!(
+            completion_documentation_visible(&mut cx),
+            !initially_visible
+        );
+
+        cx.dispatch_action(ContextMenuNext);
+        assert_eq!(
+            completion_documentation_visible(&mut cx),
+            !initially_visible
+        );
+        cx.simulate_keystroke("a");
+        cx.run_until_parked();
+        check_displayed_completions(vec!["alpha", "alpine"], &mut cx);
+        assert_eq!(
+            completion_documentation_visible(&mut cx),
+            !initially_visible
+        );
+        cx.assert_editor_state("obj.aˇ");
+
+        cx.dispatch_action(Cancel);
+        cx.dispatch_action(ShowCompletions);
+        requests
+            .next()
+            .await
+            .expect("completion request after cancel");
+        cx.run_until_parked();
+        assert_eq!(completion_documentation_visible(&mut cx), initially_visible);
+        cx.dispatch_action(ToggleCompletionDocumentation);
+        cx.dispatch_action(ConfirmCompletion::default());
+        cx.run_until_parked();
+
+        cx.set_state("obj.ˇ");
+        cx.dispatch_action(ShowCompletions);
+        requests
+            .next()
+            .await
+            .expect("completion request after accept");
+        cx.run_until_parked();
+        assert_eq!(completion_documentation_visible(&mut cx), initially_visible);
+        cx.dispatch_action(Cancel);
+    }
+}
+
+#[gpui::test]
+async fn test_completion_documentation_refresh_race(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.show_completion_documentation = Some(false);
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            lsp_fetch_timeout_ms: Some(0),
+            ..Default::default()
+        });
+    });
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    let (requests, mut responses) = futures::channel::mpsc::unbounded();
+    cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let (response, receiver) = oneshot::channel();
+        requests.unbounded_send(response).expect("request receiver");
+        async move { Ok(Some(receiver.await?)) }
+    });
+
+    cx.set_state("obj.ˇ");
+    cx.dispatch_action(ShowCompletions);
+    responses
+        .next()
+        .await
+        .expect("initial request")
+        .send(completion_documentation_response(true))
+        .expect("initial response");
+    cx.run_until_parked();
+    assert!(!completion_documentation_visible(&mut cx));
+
+    for (text, visible) in [("a", true), ("l", false)] {
+        cx.simulate_keystroke(text);
+        let response = responses.next().await.expect("refresh request");
+        cx.dispatch_action(ToggleCompletionDocumentation);
+        assert_eq!(completion_documentation_visible(&mut cx), visible);
+        response
+            .send(completion_documentation_response(true))
+            .expect("refresh response");
+        cx.run_until_parked();
+        assert_eq!(completion_documentation_visible(&mut cx), visible);
+    }
+}
+
+#[gpui::test]
+async fn test_completion_documentation_delayed_resolve(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.show_completion_documentation = Some(false);
+    });
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    let mut requests = cx.set_request_handler::<lsp::request::Completion, _, _>(|_, _, _| async {
+        Ok(Some(lsp::CompletionResponse::Array(vec![
+            lsp::CompletionItem {
+                label: "alpha".into(),
+                ..Default::default()
+            },
+        ])))
+    });
+    let (resolve_requests, mut resolve_responses) = futures::channel::mpsc::unbounded();
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, mut item, _| {
+        let (response, receiver) = oneshot::channel::<()>();
+        resolve_requests
+            .unbounded_send(response)
+            .expect("resolve receiver");
+        async move {
+            receiver.await?;
+            item.documentation = Some(lsp::Documentation::String(
+                "Resolved documentation\nMore documentation".into(),
+            ));
+            Ok(item)
+        }
+    });
+
+    cx.set_state("obj.ˇ");
+    cx.dispatch_action(ShowCompletions);
+    requests.next().await.expect("completion request");
+    let response = resolve_responses.next().await.expect("resolve request");
+    cx.dispatch_action(ToggleCompletionDocumentation);
+    assert!(!completion_documentation_visible(&mut cx));
+    cx.dispatch_action(ToggleCompletionDocumentation);
+    response.send(()).expect("resolve response");
+    cx.run_until_parked();
+    assert!(!completion_documentation_visible(&mut cx));
+    cx.dispatch_action(ToggleCompletionDocumentation);
+    assert!(completion_documentation_visible(&mut cx));
+}
+
+#[gpui::test]
+async fn test_completion_documentation_propagates(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.bind_keys([
+            gpui::KeyBinding::new("cmd-i", Copy, Some("Editor")),
+            gpui::KeyBinding::new("cmd-i", ToggleCompletionDocumentation, Some("Editor")),
+        ]);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    for snippet_choices in [false, true] {
+        if snippet_choices {
+            cx.set_state("ˇ");
+            cx.update_editor(|editor, window, cx| {
+                editor
+                    .insert_snippet(
+                        &[MultiBufferOffset(0)..MultiBufferOffset(0)],
+                        Snippet::parse("${1|alpha,alpine|}").expect("valid snippet"),
+                        window,
+                        cx,
+                    )
+                    .expect("snippet insertion");
+            });
+        } else {
+            cx.set_state("«alphaˇ»");
+        }
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string("before toggle".into()));
+        });
+        cx.simulate_keystroke("cmd-i");
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("alpha".into())
+        );
+        cx.assert_editor_state("«alphaˇ»");
+        if snippet_choices {
+            assert!(cx.editor(|editor, _, _| editor.has_visible_completions_menu()));
+        }
+    }
+}
+
 #[gpui::test]
 async fn test_completion_reuse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
