@@ -850,7 +850,7 @@ pub(crate) fn render_buffer_header(
                                     .child(
                                         ButtonLike::new("filename-button")
                                             .when(ItemSettings::get_global(cx).file_icons, |this| {
-                                                let path = std::path::Path::new(filename.as_str());
+                                                let path = std::path::Path::new(full_path.as_str());
                                                 let icon = FileIcons::get_icon(path, cx)
                                                     .unwrap_or_default();
 

@@ -368,7 +368,7 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
     use serde_json::json;
-    use theme::{ChevronIcons, DirectoryIcons, IconTheme, ThemeRegistry};
+    use theme::{ChevronIcons, DirectoryIcons, FilePatterns, IconTheme, ThemeRegistry};
     use util::path;
     use workspace::MultiWorkspace;
 
@@ -400,6 +400,7 @@ mod tests {
                     expanded: None,
                 },
                 file_icons: HashMap::default(),
+                file_patterns: FilePatterns::default(),
                 file_stems: HashMap::default(),
                 file_suffixes: HashMap::default(),
             };

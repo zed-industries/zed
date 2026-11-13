@@ -12,7 +12,8 @@ use thiserror::Error;
 
 use crate::{
     Appearance, AppearanceContent, ChevronIcons, DEFAULT_ICON_THEME_NAME, DirectoryIcons,
-    IconDefinition, IconTheme, Theme, ThemeFamily, default_icon_theme, deserialize_icon_theme,
+    FilePatterns, IconDefinition, IconTheme, Theme, ThemeFamily, default_icon_theme,
+    deserialize_icon_theme,
 };
 
 /// The metadata for a theme.
@@ -332,6 +333,7 @@ impl ThemeRegistry {
                     collapsed: icon_theme.chevron_icons.collapsed.map(resolve_icon_path),
                     expanded: icon_theme.chevron_icons.expanded.map(resolve_icon_path),
                 },
+                file_patterns: FilePatterns::new(icon_theme.file_patterns),
                 file_stems,
                 file_suffixes,
                 file_icons: icon_theme

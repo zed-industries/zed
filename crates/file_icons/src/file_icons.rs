@@ -28,6 +28,17 @@ impl FileIcons {
     pub fn get_icon(path: &Path, cx: &App) -> Option<SharedString> {
         let this = Self::get(cx);
 
+        // Path patterns come first: they are how a theme tells apart files that
+        // share a name or an extension, e.g. Rails models from other Ruby files.
+        if let Some(icon) = this
+            .icon_theme
+            .file_patterns
+            .icon_keys_for(path)
+            .find_map(|icon_key| this.get_icon_for_type(icon_key, cx))
+        {
+            return Some(icon);
+        }
+
         let get_icon_from_suffix = |suffix: &str| -> Option<SharedString> {
             this.icon_theme
                 .file_stems
@@ -202,6 +213,7 @@ impl FileIcons {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use util::path;
 
     #[gpui::test]
     fn test_folder_indicators_per_setting(cx: &mut gpui::TestAppContext) {
@@ -286,6 +298,80 @@ mod tests {
                 FileIcons::get_folder_indicators(FolderIndicator::Icon, false, &path, cx),
                 "the default must stay `icon` so existing users see no change"
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_file_patterns_pick_icons_by_path(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let icon_theme_json = r#"{
+            "name": "Path Icons",
+            "author": "Zed",
+            "themes": [{
+                "name": "Path Icons",
+                "appearance": "dark",
+                "file_patterns": {
+                    "app/models/**/*.rb": "model",
+                    "**/*_controller.rb": "controller",
+                    "lib/**/*.rb": "no_such_icon",
+                    "app/**/*.rb": "app"
+                },
+                "file_icons": {
+                    "model": { "path": "model.svg" },
+                    "controller": { "path": "controller.svg" },
+                    "app": { "path": "app.svg" }
+                }
+            }]
+        }"#;
+
+        cx.update(|cx| {
+            let registry = ThemeRegistry::global(cx);
+            registry
+                .load_icon_theme(
+                    Path::new(path!("/themes/path-icons.json")),
+                    Path::new(path!("/themes")),
+                    icon_theme_json.as_bytes().to_vec(),
+                )
+                .unwrap();
+            let icon_theme = registry.get_icon_theme("Path Icons").unwrap();
+            GlobalTheme::update_icon_theme(cx, icon_theme);
+        });
+
+        cx.update(|cx| {
+            let icon = |path: &str| FileIcons::get_icon(Path::new(path), cx);
+
+            assert_eq!(
+                icon("app/models/user.rb"),
+                Some(path!("/themes/model.svg").into())
+            );
+            assert_eq!(
+                icon("my-app/app/models/user.rb"),
+                Some(path!("/themes/model.svg").into()),
+                "a path prefixed with the worktree name should still match"
+            );
+            assert_eq!(
+                icon("app/controllers/users_controller.rb"),
+                Some(path!("/themes/controller.svg").into()),
+                "an earlier pattern should win over a later one"
+            );
+            assert_eq!(
+                icon("app/helpers/users_helper.rb"),
+                Some(path!("/themes/app.svg").into())
+            );
+            assert_eq!(
+                icon("lib/tasks/import.rb"),
+                Some("icons/file_icons/ruby.svg".into()),
+                "a pattern whose icon key has no icon should fall back to the suffix"
+            );
+            assert_eq!(
+                icon("user.rb"),
+                Some("icons/file_icons/ruby.svg".into()),
+                "a bare file name should not match directory patterns"
+            );
+            assert_eq!(icon("Cargo.toml"), Some("icons/file_icons/toml.svg".into()));
         });
     }
 

@@ -1,6 +1,8 @@
+use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
 use collections::HashMap;
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use gpui::SharedString;
 
 use crate::Appearance;
@@ -32,12 +34,87 @@ pub struct IconTheme {
     pub named_directory_icons: HashMap<String, DirectoryIcons>,
     /// The icons used for chevrons.
     pub chevron_icons: ChevronIcons,
+    /// The mapping of file path patterns to their associated icon keys.
+    pub file_patterns: FilePatterns,
     /// The mapping of file stems to their associated icon keys.
     pub file_stems: HashMap<String, String>,
     /// The mapping of file suffixes to their associated icon keys.
     pub file_suffixes: HashMap<String, String>,
     /// The mapping of icon keys to icon definitions.
     pub file_icons: HashMap<String, IconDefinition>,
+}
+
+/// Icon keys for files whose path matches a glob pattern.
+///
+/// Patterns are kept in the order the icon theme declares them, so that when
+/// several patterns match the same path, the first one wins.
+#[derive(Debug, Default)]
+pub struct FilePatterns {
+    patterns: Vec<String>,
+    icon_keys: Vec<String>,
+    glob_set: GlobSet,
+}
+
+impl FilePatterns {
+    /// Compiles the given `(pattern, icon key)` pairs.
+    ///
+    /// A pattern that does not start with `**` is matched at any depth, as if
+    /// it started with `**/`, because callers pass paths relative to a
+    /// worktree, prefixed with the worktree name, or absolute. `*` does not
+    /// cross a `/`. Invalid patterns are skipped and logged.
+    pub fn new(patterns: impl IntoIterator<Item = (String, String)>) -> Self {
+        let mut builder = GlobSetBuilder::new();
+        let mut kept_patterns = Vec::new();
+        let mut icon_keys = Vec::new();
+        for (pattern, icon_key) in patterns {
+            let anchored = if pattern.starts_with("**") {
+                pattern.clone()
+            } else {
+                format!("**/{}", pattern.trim_start_matches('/'))
+            };
+            match GlobBuilder::new(&anchored).literal_separator(true).build() {
+                Ok(glob) => {
+                    builder.add(glob);
+                    kept_patterns.push(pattern);
+                    icon_keys.push(icon_key);
+                }
+                Err(error) => {
+                    log::warn!("skipping invalid file pattern {pattern:?} in icon theme: {error}");
+                }
+            }
+        }
+
+        let glob_set = builder.build().unwrap_or_else(|error| {
+            log::warn!("failed to compile file patterns of icon theme: {error}");
+            kept_patterns.clear();
+            icon_keys.clear();
+            GlobSet::empty()
+        });
+
+        Self {
+            patterns: kept_patterns,
+            icon_keys,
+            glob_set,
+        }
+    }
+
+    /// Returns the icon keys of the patterns matching `path`, in declaration order.
+    pub fn icon_keys_for<'a>(&'a self, path: &Path) -> impl Iterator<Item = &'a str> + 'a {
+        let matches = if self.icon_keys.is_empty() {
+            Vec::new()
+        } else {
+            self.glob_set.matches(path)
+        };
+        matches
+            .into_iter()
+            .map(|index| self.icon_keys[index].as_str())
+    }
+}
+
+impl PartialEq for FilePatterns {
+    fn eq(&self, other: &Self) -> bool {
+        self.patterns == other.patterns && self.icon_keys == other.icon_keys
+    }
 }
 
 /// The icons used for directories.
@@ -437,6 +514,7 @@ static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
             collapsed: Some("icons/file_icons/chevron_right.svg".into()),
             expanded: Some("icons/file_icons/chevron_down.svg".into()),
         },
+        file_patterns: FilePatterns::default(),
         file_stems: icon_keys_by_association(FILE_STEMS_BY_ICON_KEY),
         file_suffixes: icon_keys_by_association(FILE_SUFFIXES_BY_ICON_KEY),
         file_icons: HashMap::from_iter(FILE_ICONS.iter().map(|(ty, path)| {
@@ -453,4 +531,88 @@ static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
 /// Returns the default icon theme.
 pub fn default_icon_theme() -> Arc<IconTheme> {
     DEFAULT_ICON_THEME.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn patterns(pairs: &[(&str, &str)]) -> FilePatterns {
+        FilePatterns::new(
+            pairs
+                .iter()
+                .map(|(pattern, key)| (pattern.to_string(), key.to_string())),
+        )
+    }
+
+    fn keys(patterns: &FilePatterns, path: &str) -> Vec<String> {
+        patterns
+            .icon_keys_for(Path::new(path))
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn test_matches_in_declaration_order() {
+        let patterns = patterns(&[
+            ("app/models/**/*.rb", "model"),
+            ("**/*_controller.rb", "controller"),
+            ("app/**/*.rb", "app"),
+        ]);
+
+        assert_eq!(keys(&patterns, "app/models/user.rb"), ["model", "app"]);
+        assert_eq!(
+            keys(&patterns, "app/controllers/users_controller.rb"),
+            ["controller", "app"]
+        );
+        assert_eq!(keys(&patterns, "app/helpers/users_helper.rb"), ["app"]);
+        assert!(keys(&patterns, "config/routes.rb").is_empty());
+    }
+
+    #[test]
+    fn test_patterns_match_at_any_depth() {
+        let patterns = patterns(&[("app/models/**/*.rb", "model"), ("/lib/*.rb", "lib")]);
+
+        // Worktree-relative, prefixed with the worktree name, nested (an engine).
+        assert_eq!(keys(&patterns, "app/models/user.rb"), ["model"]);
+        assert_eq!(keys(&patterns, "my-app/app/models/user.rb"), ["model"]);
+        assert_eq!(
+            keys(&patterns, "engines/billing/app/models/invoice.rb"),
+            ["model"]
+        );
+        assert_eq!(keys(&patterns, "app/models/concerns/named.rb"), ["model"]);
+        // A leading slash does not anchor to anything: paths are not absolute.
+        assert_eq!(keys(&patterns, "lib/tasks.rb"), ["lib"]);
+        // Only the file name: directory patterns have nothing to match.
+        assert!(keys(&patterns, "user.rb").is_empty());
+    }
+
+    #[test]
+    fn test_single_star_does_not_cross_directories() {
+        let patterns = patterns(&[("app/*.rb", "app")]);
+
+        assert_eq!(keys(&patterns, "app/application.rb"), ["app"]);
+        assert!(keys(&patterns, "app/models/user.rb").is_empty());
+    }
+
+    #[test]
+    fn test_matching_is_case_sensitive() {
+        let patterns = patterns(&[("app/models/*.rb", "model")]);
+
+        assert!(keys(&patterns, "App/Models/user.rb").is_empty());
+    }
+
+    #[test]
+    fn test_invalid_patterns_are_skipped() {
+        let patterns = patterns(&[("app/[models/*.rb", "broken"), ("**/*_job.rb", "job")]);
+
+        assert_eq!(keys(&patterns, "app/jobs/sync_job.rb"), ["job"]);
+        assert_eq!(patterns, self::patterns(&[("**/*_job.rb", "job")]));
+    }
+
+    #[test]
+    fn test_no_patterns_match_nothing() {
+        assert!(keys(&FilePatterns::default(), "app/models/user.rb").is_empty());
+        assert!(keys(&patterns(&[]), "app/models/user.rb").is_empty());
+    }
 }

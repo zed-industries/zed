@@ -596,10 +596,12 @@ impl Item for ImageView {
     }
 
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
-        let path = self.image_item.read(cx).abs_path(cx)?;
+        // The worktree-relative path, as the project panel uses, so that icon
+        // theme path patterns pick the same icon for the tab.
+        let path = self.image_item.read(cx).file.path().clone();
         ItemSettings::get_global(cx)
             .file_icons
-            .then(|| FileIcons::get_icon(&path, cx))
+            .then(|| FileIcons::get_icon(path.as_std_path(), cx))
             .flatten()
             .map(Icon::from_path)
     }

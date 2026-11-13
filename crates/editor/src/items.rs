@@ -760,10 +760,7 @@ impl Item for Editor {
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
         ItemSettings::get_global(cx)
             .file_icons
-            .then(|| {
-                path_for_buffer(&self.buffer, 0, true, cx)
-                    .and_then(|path| FileIcons::get_icon(Path::new(&*path), cx))
-            })
+            .then(|| file_icon_for_buffer(&self.buffer, cx))
             .flatten()
             .map(Icon::from_path)
     }
@@ -1105,10 +1102,7 @@ impl Item for Editor {
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         (!TabBarSettings::get_global(cx).show && ItemSettings::get_global(cx).file_icons)
-            .then(|| {
-                path_for_buffer(&self.buffer, 0, true, cx)
-                    .and_then(|path| FileIcons::get_icon(Path::new(&*path), cx))
-            })
+            .then(|| file_icon_for_buffer(&self.buffer, cx))
             .flatten()
             .map(|icon_path| Icon::from_path(icon_path).into_any_element())
     }
@@ -2281,6 +2275,14 @@ pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, select
     } else {
         entry_label_color(selected)
     }
+}
+
+/// The icon for a singleton buffer's file, looked up by its worktree-relative
+/// path so that icon themes can match on directories, not only on the name.
+fn file_icon_for_buffer(buffer: &Entity<MultiBuffer>, cx: &App) -> Option<SharedString> {
+    let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
+    project::File::from_dyn(Some(file))?;
+    FileIcons::get_icon(file.path().as_std_path(), cx)
 }
 
 fn path_for_buffer<'a>(

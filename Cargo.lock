@@ -18158,7 +18158,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "globset",
  "gpui",
+ "log",
  "palette",
  "parking_lot",
  "refineable",

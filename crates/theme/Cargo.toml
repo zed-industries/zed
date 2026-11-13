@@ -19,9 +19,11 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+globset.workspace = true
 gpui.workspace = true
 syntax_theme.workspace = true
 palette.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 refineable.workspace = true
 schemars.workspace = true

@@ -45,6 +45,10 @@ Here is an example icon theme structure:
         "collapsed": "./icons/chevron-right.svg",
         "expanded": "./icons/chevron-down.svg"
       },
+      "file_patterns": {
+        "app/models/**/*.rb": "rails_model",
+        "**/*_controller.rb": "rails_controller"
+      },
       "file_stems": {
         "Makefile": "make"
       },
@@ -56,6 +60,8 @@ Here is an example icon theme structure:
         "audio": { "path": "./icons/audio.svg" },
         "default": { "path": "./icons/file.svg" },
         "make": { "path": "./icons/make.svg" },
+        "rails_controller": { "path": "./icons/rails-controller.svg" },
+        "rails_model": { "path": "./icons/rails-model.svg" },
         "rust": { "path": "./icons/rust.svg" }
         // ...
       }
@@ -65,6 +71,16 @@ Here is an example icon theme structure:
 ```
 
 Each icon path is resolved relative to the root of the extension directory.
+
+## Matching files by path
+
+`file_stems` and `file_suffixes` match a file's name. `file_patterns` matches its path instead, which lets a theme tell apart files that share a name or an extension, such as the models and controllers of a Rails project. Each key is a glob pattern and each value is a key in `file_icons`.
+
+- Patterns are checked before `file_stems` and `file_suffixes`. When several patterns match, the first one in the file wins, so list the more specific ones first.
+- A pattern that does not start with `**` matches at any depth, as if it started with `**/`: `app/models/**/*.rb` matches `app/models/user.rb` as well as `engines/billing/app/models/invoice.rb`.
+- `*` does not match `/`; use `**` to cross directories. Matching is case-sensitive.
+- If the icon key of a matching pattern has no icon, Zed tries the next matching pattern, and then the file's name.
+- A few places only know a file's name, such as agent mentions; there, patterns that mention a directory do not match.
 
 In this example, the extension would have this structure:
 
@@ -79,5 +95,7 @@ icons/
   file.svg
   folder-open.svg
   folder.svg
+  rails-controller.svg
+  rails-model.svg
   rust.svg
 ```

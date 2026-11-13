@@ -2474,9 +2474,15 @@ impl FileFinderDelegate {
                 if !settings.file_icons {
                     return None;
                 }
-                let abs_path = path_match.abs_path(&self.project, cx)?;
-                let file_name = abs_path.file_name()?;
-                let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
+                // Prefer the worktree-relative path, so icon themes can match on
+                // directories without seeing where the project itself lives.
+                let icon = match path_match.relative_path() {
+                    Some(path) => FileIcons::get_icon(path.as_std_path(), cx)?,
+                    None => {
+                        let abs_path = path_match.abs_path(&self.project, cx)?;
+                        FileIcons::get_icon(abs_path.file_name()?.as_ref(), cx)?
+                    }
+                };
                 Some(Icon::from_path(icon).color(Color::Muted))
             }),
         };

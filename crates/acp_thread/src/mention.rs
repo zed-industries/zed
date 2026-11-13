@@ -437,7 +437,10 @@ impl MentionUri {
     pub fn icon_path(&self, cx: &mut App) -> SharedString {
         match self {
             MentionUri::File { abs_path } => {
-                FileIcons::get_icon(abs_path, cx).unwrap_or_else(|| IconName::File.path().into())
+                // Only the name: icon theme path patterns would otherwise also
+                // match the directories the project itself lives in.
+                let name = abs_path.file_name().map_or(abs_path.as_path(), Path::new);
+                FileIcons::get_icon(name, cx).unwrap_or_else(|| IconName::File.path().into())
             }
             MentionUri::PastedImage { .. } => IconName::Image.path().into(),
             MentionUri::Directory { abs_path } => FileIcons::get_folder_icon(false, abs_path, cx)

@@ -21,3 +21,4 @@ util.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

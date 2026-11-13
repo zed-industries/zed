@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use collections::IndexMap;
 use gpui::SharedString;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,11 @@ pub struct IconThemeContent {
     pub named_directory_icons: HashMap<String, DirectoryIconsContent>,
     #[serde(default)]
     pub chevron_icons: ChevronIconsContent,
+    /// Glob patterns matched against a file's path, mapped to icon keys.
+    /// Checked before `file_stems` and `file_suffixes`; the first matching
+    /// pattern wins. A pattern not starting with `**` matches at any depth.
+    #[serde(default)]
+    pub file_patterns: IndexMap<String, String>,
     #[serde(default)]
     pub file_stems: HashMap<String, String>,
     #[serde(default)]
