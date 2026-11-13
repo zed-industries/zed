@@ -327,11 +327,10 @@ impl Editor {
         self.fold_at_level(&actions::FoldAtLevel(9), window, cx);
     }
 
-    /// Folds the document at the level derived from the current line's
-    /// indentation, expanding tabs according to the applicable tab size.
+    /// Folds the document at the level derived from the newest selection's line
+    /// indentation.
     ///
-    /// Empty lines are ignored while whitespace-only lines use their existing
-    /// indentation and the language settings at the start of the line.
+    /// Empty and white-space only lines are ignored.
     pub fn fold_at_current_indentation_level(
         &mut self,
         _: &actions::FoldAtCurrentIndentationLevel,
@@ -344,48 +343,44 @@ impl Editor {
 
         let display_snapshot = self.display_snapshot(cx);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let row =
-            MultiBufferRow(dbg!(self.selections.newest::<Point>(&display_snapshot).head()).row);
-        let max_column = buffer_snapshot.line_len(row);
+        let row = MultiBufferRow(
+            self.selections
+                .newest::<Point>(&display_snapshot)
+                .head()
+                .row,
+        );
 
-        // An empty line provides no indentation from which to derive a level.
-        if max_column == 0 {
+        if buffer_snapshot.is_line_blank(row) {
             return;
         }
 
-        // Resolve settings at the first non-indent character so moving the
-        // cursor across injected languages doesn't change the level.
-        // For whitespace-only lines, use the settings at the start of the line.
-        let line_start = Point::new(row.0, 0);
-        let column = buffer_snapshot
-            .chars_at(line_start)
-            .take_while(|char| matches!(char, ' ' | '\t'))
-            .count() as u32;
-        let column = if column == max_column { 0 } else { column };
-        let offset = buffer_snapshot.point_to_offset(Point::new(row.0, column));
-        let language_settings = buffer_snapshot.language_settings_at(offset, cx);
-
-        // Count the number of spaces before the first non-indent character,
-        // converting tabs to `tab_size` while ensuring that tabs are only
-        // expanded as much as necessary.
-        //
-        // For example, if `tab_size` is 4 and a line starts with ` \t` (1 space
-        // and 1 tab), the number of columns should be 4 and not 5.
-        let mut indentation_columns = 0;
-        let tab_size = language_settings.tab_size.get();
-        for character in buffer_snapshot.chars_at(line_start) {
-            match character {
-                ' ' => indentation_columns += 1,
-                '\t' => indentation_columns += tab_size - (indentation_columns % tab_size),
-                _ => break,
+        let mut current_level = 1;
+        let mut current_row = 0;
+        while current_row < row.0 {
+            match self
+                .snapshot(window, cx)
+                .crease_for_buffer_row(MultiBufferRow(current_row))
+            {
+                Some(crease) => {
+                    let crease_range = crease.range();
+                    if row.0 >= crease_range.end.row {
+                        // The row we're looking for is the last row of the
+                        // crease or beyond, so let's jump to the end of the
+                        // crease range, while keeping the level.
+                        current_row = (current_row + 1).max(crease_range.end.row);
+                    } else {
+                        // Crease contains the row we're looking for, so let's
+                        // continue looking at these rows and increase the level
+                        // by 1.
+                        current_row = current_row + 1;
+                        current_level += 1;
+                    }
+                }
+                None => current_row += 1,
             }
         }
 
-        self.fold_at_level(
-            &actions::FoldAtLevel(indentation_columns / tab_size + 1),
-            window,
-            cx,
-        );
+        self.fold_at_level(&actions::FoldAtLevel(current_level), window, cx);
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, window: &mut Window, cx: &mut Context<Self>) {

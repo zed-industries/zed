@@ -2389,617 +2389,332 @@ fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_at_current_indentation_level(cx: &mut TestAppContext) {
+async fn test_fold_at_current_indentation_level(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(
-            &"
-                class Foo:
-                    def a():
-                        print(1)
-
-                class Bar:
-                    def a():
-                        print(1)
-            "
-            .unindent(),
-            cx,
-        );
-
-        build_editor(buffer, window, cx)
-    });
-
-    editor
-        .update(cx, |editor, window, cx| {
-            // Set the cursor on the `def a()` line to ensure that using
-            // `FoldAtCurrentLevel` will fold all the function definitions on both
-            // classes.
-            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
-            });
-            editor.fold_at_current_indentation_level(
-                &actions::FoldAtCurrentIndentationLevel,
-                window,
-                cx,
-            );
-
-            assert_eq!(
-                editor.display_text(cx),
-                "
-                class Foo:
-                    def a():⋯
-
-                class Bar:
-                    def a():⋯
-            "
-                .unindent(),
-            );
-
-            // Unfold everything again and set the cursor at the beginning of `class
-            // Foo` to ensure that `FoldAtCurrentLevel` will fold all class
-            // definitions.
-            editor.unfold_all(&actions::UnfoldAll, window, cx);
-            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
-            });
-            editor.fold_at_current_indentation_level(
-                &actions::FoldAtCurrentIndentationLevel,
-                window,
-                cx,
-            );
-
-            assert_eq!(
-                editor.display_text(cx),
-                "
-                class Foo:⋯
-
-                class Bar:⋯
-            "
-                .unindent(),
-            );
-        })
-        .unwrap();
-}
-
-#[gpui::test]
-async fn test_fold_at_current_indentation_level_is_column_independent_with_injection(
-    cx: &mut TestAppContext,
-) {
-    init_test(cx, |settings| {
-        settings.languages.0.extend([
-            (
-                "HTML".into(),
-                LanguageSettingsContent {
-                    tab_size: NonZeroU32::new(4),
-                    ..Default::default()
-                },
-            ),
-            (
-                "JavaScript".into(),
-                LanguageSettingsContent {
-                    tab_size: NonZeroU32::new(2),
-                    ..Default::default()
-                },
-            ),
-        ]);
-    });
-
     let mut cx = EditorTestContext::new(cx).await;
-    let html_language = Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "HTML".into(),
-                ..Default::default()
-            },
-            Some(tree_sitter_html::LANGUAGE.into()),
-        )
-        .with_injection_query(
-            r#"
-            (script_element
-                (raw_text) @injection.content
-                (#set! injection.language "javascript"))
-            "#,
-        )
-        .expect("valid HTML injection query"),
-    );
-    let javascript_language = Arc::new(Language::new(
-        LanguageConfig {
-            name: "JavaScript".into(),
-            ..Default::default()
-        },
-        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
-    ));
-    cx.language_registry().add(html_language.clone());
-    cx.language_registry().add(javascript_language);
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(html_language), cx));
+
     cx.set_state(
-        &"<body>
-            ˇ<script>let value = 1;
-                value++;
-            </script>
-        </body>
-        "
-        .unindent(),
-    );
-    cx.run_until_parked();
-
-    cx.update_editor(|editor, window, cx| {
-        let snapshot = editor.buffer.read(cx).snapshot(cx);
-        assert!(snapshot.is_singleton());
-        assert_eq!(snapshot.indent_size_for_line(MultiBufferRow(1)).len, 4);
-        // The first non-whitespace character belongs to HTML, while column 16
-        // is inside the injected JavaScript on that very same buffer row.
-        for (column, expected_indent) in [(4, 4), (16, 2)] {
-            assert_eq!(
-                snapshot
-                    .language_indent_size_at(Point::new(1, column), cx)
-                    .expect("language indentation at fixture position")
-                    .len,
-                expected_indent,
-            );
-        }
-
-        let expected = "<body>
-                <script>let value = 1;⋯
-                </script>
-            </body>
-            "
-        .unindent();
-
-        editor.fold_at_level(&actions::FoldAtLevel(2), window, cx);
-        assert_eq!(editor.display_text(cx), expected);
-
-        for column in [0, 4, 16] {
-            editor.unfold_all(&actions::UnfoldAll, window, cx);
-            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                let cursor = Point::new(1, column);
-                selections.select_ranges([cursor..cursor]);
-            });
-            editor.fold_at_current_indentation_level(
-                &actions::FoldAtCurrentIndentationLevel,
-                window,
-                cx,
-            );
-            assert_eq!(
-                editor.display_text(cx),
-                expected,
-                "folding must use the language at the first non-whitespace character",
-            );
-        }
-    });
-}
-
-#[gpui::test]
-fn test_fold_at_current_indentation_level_with_tabs(cx: &mut TestAppContext) {
-    init_test(cx, |settings| {
-        settings.defaults.tab_size = NonZeroU32::new(4);
-        settings.defaults.hard_tabs = Some(true);
-    });
-
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(
-            &"
-            class Foo:
-            \tdef a():
-            \t\tprint(1)
-
-            class Bar:
-            \tdef b():
-            \t\tprint(2)
-            "
-            .unindent(),
-            cx,
-        );
-        build_editor(buffer, window, cx)
-    });
-
-    editor
-        .update(cx, |editor, window, cx| {
-            for column in [0, 1] {
-                editor.unfold_all(&actions::UnfoldAll, window, cx);
-                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                    let cursor = Point::new(1, column);
-                    selections.select_ranges([cursor..cursor]);
-                });
-                editor.fold_at_current_indentation_level(
-                    &actions::FoldAtCurrentIndentationLevel,
-                    window,
-                    cx,
-                );
-                assert_eq!(
-                    editor.display_text(cx),
-                    "class Foo:
-                        def a():⋯
-
-                    class Bar:
-                        def b():⋯
-                    "
-                    .unindent(),
-                    "cursor column {column}",
-                );
-            }
-        })
-        .unwrap();
-}
-
-#[gpui::test]
-fn test_fold_at_current_indentation_level_with_tabs_and_soft_tab_settings(cx: &mut TestAppContext) {
-    init_test(cx, |settings| {
-        settings.defaults.tab_size = NonZeroU32::new(4);
-        settings.defaults.hard_tabs = Some(false);
-    });
-
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(
-            &"
-            class Foo:
-            \tdef a():
-            \t\tprint(1)
-
-            class Bar:
-            \tdef b():
-            \t\tprint(2)
-            "
-            .unindent(),
-            cx,
-        );
-        build_editor(buffer, window, cx)
-    });
-
-    editor
-        .update(cx, |editor, window, cx| {
-            for column in [0, 1] {
-                editor.unfold_all(&actions::UnfoldAll, window, cx);
-                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                    let cursor = Point::new(1, column);
-                    selections.select_ranges([cursor..cursor]);
-                });
-                editor.fold_at_current_indentation_level(
-                    &actions::FoldAtCurrentIndentationLevel,
-                    window,
-                    cx,
-                );
-                assert_eq!(
-                    editor.display_text(cx),
-                    "class Foo:
-                        def a():⋯
-
-                    class Bar:
-                        def b():⋯
-                    "
-                    .unindent(),
-                    "cursor column {column}",
-                );
-            }
-        })
-        .unwrap();
-}
-
-#[gpui::test]
-fn test_fold_at_current_indentation_level_with_spaces_and_hard_tab_settings(
-    cx: &mut TestAppContext,
-) {
-    init_test(cx, |settings| {
-        settings.defaults.tab_size = NonZeroU32::new(4);
-        settings.defaults.hard_tabs = Some(true);
-    });
-
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(
-            &"
-            class Foo:
-                def a():
-                    print(1)
-
-            class Bar:
-                def b():
-                    print(2)
-            "
-            .unindent(),
-            cx,
-        );
-        build_editor(buffer, window, cx)
-    });
-
-    editor
-        .update(cx, |editor, window, cx| {
-            for column in [0, 4] {
-                editor.unfold_all(&actions::UnfoldAll, window, cx);
-                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                    let cursor = Point::new(1, column);
-                    selections.select_ranges([cursor..cursor]);
-                });
-                editor.fold_at_current_indentation_level(
-                    &actions::FoldAtCurrentIndentationLevel,
-                    window,
-                    cx,
-                );
-                assert_eq!(
-                    editor.display_text(cx),
-                    "class Foo:
-                        def a():⋯
-
-                    class Bar:
-                        def b():⋯
-                    "
-                    .unindent(),
-                    "cursor column {column}",
-                );
-            }
-        })
-        .unwrap();
-}
-
-#[gpui::test]
-fn test_fold_at_current_indentation_level_with_mixed_indentation(cx: &mut TestAppContext) {
-    init_test(cx, |settings| {
-        settings.defaults.tab_size = NonZeroU32::new(4);
-        settings.defaults.hard_tabs = Some(false);
-    });
-
-    let editor = cx.add_window(|window, cx| {
-        // A tab after two spaces reaches column four, not column six.
-        let buffer = MultiBuffer::build_simple(
-            &"
-            class Foo:
-            \tdef a():
-            \t  \tprint(1)
-
-            class Bar:
-            \tdef b():
-            \t  \tprint(2)
-            "
-            .unindent(),
-            cx,
-        );
-        build_editor(buffer, window, cx)
-    });
-    editor
-        .update(cx, |editor, window, cx| {
-            for column in [0, 3] {
-                editor.unfold_all(&actions::UnfoldAll, window, cx);
-                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                    let cursor = Point::new(1, column);
-                    selections.select_ranges([cursor..cursor]);
-                });
-                editor.fold_at_current_indentation_level(
-                    &actions::FoldAtCurrentIndentationLevel,
-                    window,
-                    cx,
-                );
-                assert_eq!(
-                    editor.display_text(cx),
-                    "class Foo:
-                        def a():⋯
-
-                    class Bar:
-                        def b():⋯
-                    "
-                    .unindent(),
-                    "cursor column {column}",
-                );
-            }
-        })
-        .unwrap();
-}
-
-#[gpui::test]
-fn test_fold_at_current_indentation_level_ignores_empty_lines(cx: &mut TestAppContext) {
-    init_test(cx, |settings| {
-        settings.defaults.tab_size = NonZeroU32::new(4);
-        settings.defaults.hard_tabs = Some(false);
-    });
-
-    let text = "
-
-        class Foo:
+        &"
+        ˇclass Foo:
             def a():
                 print(1)
 
         class Bar:
             def b():
                 print(2)
+        "
+        .unindent(),
+    );
 
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        ˇclass Foo:⋯
+
+        class Bar:⋯
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.unfold_all(&actions::UnfoldAll, window, cx);
+    });
+
+    cx.set_selections_state(
+        &"
+        class Foo:
+            ˇdef a():
+                print(1)
+
+        class Bar:
+            def b():
+                print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        class Foo:
+            ˇdef a():⋯
+
+        class Bar:
+            def b():⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_no_ops(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Nothing should be folded if cursor is at an empty line.
+    let state = "
+        ˇ
+        fn work() {
+            run();
+        }
+        "
+    .unindent();
+    cx.set_state(&state);
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+    cx.assert_display_state(&state);
+
+    // Nothing should be folded if cursor is on a blank line with only spaces.
+    let state = "
+        \x20\x20\x20\x20ˇ
+        fn work() {
+            run();
+        }
+        "
+    .unindent();
+    cx.set_state(&state);
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+    cx.assert_display_state(&state);
+
+    // Nothing should be folded if cursor is on a blank line with only tabs.
+    let state = "
+    fn work() {
+        run();
+    }
+    \tˇ"
+    .unindent();
+
+    cx.set_state(&state);
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(&state);
+    assert_eq!(
+        cx.display_text(),
+        "
+        fn work() {
+            run();
+        }
+        \x20\x20\x20\x20"
+            .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_with_multiple_cursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The newest cursor is on the `b()` method, with the older one on the `Foo`
+    // class definition. Ensure that folding at the current indentation level
+    // will use the newest selection.
+    cx.set_state(
+        &"
+        ˇclass Foo:
+            def a():
+                print(1)
+
+        class Bar:
+            ˇdef b():
+                print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    assert_eq!(
+        cx.display_text(),
+        "
+        class Foo:
+            def a():⋯
+
+        class Bar:
+            def b():⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_on_less_spaces_than_tab_size(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &"
+        class Foo:
+          ˇdef a():
+            print(1)
+
+        class Bar:
+          def b():
+            print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        class Foo:
+          ˇdef a():⋯
+
+        class Bar:
+          def b():⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_scans_past_single_row_crease(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let marked_text = "
+        fn first() «{}»
+
+        ˇfn second() «{
+            work();
+        }»
         "
     .unindent();
 
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(&text, cx);
-        build_editor(buffer, window, cx)
-    });
+    cx.set_state(&marked_text.replace(['«', '»'], ""));
+    let crease_ranges = cx.ranges(&marked_text.replace('ˇ', ""));
 
-    editor
-        .update(cx, |editor, window, cx| {
-            for row in [0, 4, 8] {
-                editor.unfold_all(&actions::UnfoldAll, window, cx);
-                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                    let cursor = Point::new(row, 0);
-                    selections.select_ranges([cursor..cursor]);
-                });
-                editor.fold_at_current_indentation_level(
-                    &actions::FoldAtCurrentIndentationLevel,
-                    window,
-                    cx,
-                );
-                assert_eq!(editor.display_text(cx), text, "cursor at ({row}, 0)",);
-            }
-        })
-        .unwrap();
-}
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-#[gpui::test]
-fn test_fold_at_current_indentation_level_on_space_only_lines(cx: &mut TestAppContext) {
-    init_test(cx, |settings| {
-        settings.defaults.tab_size = NonZeroU32::new(4);
-        settings.defaults.hard_tabs = Some(false);
-    });
+        editor.insert_creases(
+            crease_ranges.iter().map(|range| {
+                let start = snapshot.anchor_before(MultiBufferOffset(range.start));
+                let end = snapshot.anchor_after(MultiBufferOffset(range.end));
 
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(
-            &"\x20\x20\x20\x20
-            class Foo:
-                def a():
-                    print(1)
-
-            class Bar:
-                def b():
-                    print(2)
-            \x20\x20\x20\x20"
-                .unindent(),
+                Crease::simple(start..end, FoldPlaceholder::test())
+            }),
             cx,
         );
-        build_editor(buffer, window, cx)
-    });
-
-    editor
-        .update(cx, |editor, window, cx| {
-            for row in [0, 8] {
-                for column in [0, 4] {
-                    editor.unfold_all(&actions::UnfoldAll, window, cx);
-                    editor.change_selections(
-                        SelectionEffects::default(),
-                        window,
-                        cx,
-                        |selections| {
-                            let cursor = Point::new(row, column);
-                            selections.select_ranges([cursor..cursor]);
-                        },
-                    );
-                    editor.fold_at_current_indentation_level(
-                        &actions::FoldAtCurrentIndentationLevel,
-                        window,
-                        cx,
-                    );
-                    assert_eq!(
-                        editor.display_text(cx),
-                        "\x20\x20\x20\x20
-                        class Foo:
-                            def a():⋯
-
-                        class Bar:
-                            def b():⋯
-                        \x20\x20\x20\x20"
-                            .unindent(),
-                        "cursor at ({row}, {column})",
-                    );
-                }
-            }
-        })
-        .unwrap();
-}
-
-#[gpui::test]
-fn test_fold_at_current_indentation_level_on_tab_only_lines(cx: &mut TestAppContext) {
-    init_test(cx, |settings| {
-        settings.defaults.tab_size = NonZeroU32::new(4);
-        settings.defaults.hard_tabs = Some(false);
-    });
-
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(
-            &"\t
-            class Foo:
-                def a():
-                    print(1)
-
-            class Bar:
-                def b():
-                    print(2)
-            \t"
-            .unindent(),
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
             cx,
         );
-        build_editor(buffer, window, cx)
     });
 
-    editor
-        .update(cx, |editor, window, cx| {
-            for row in [0, 8] {
-                for column in [0, 1] {
-                    editor.unfold_all(&actions::UnfoldAll, window, cx);
-                    editor.change_selections(
-                        SelectionEffects::default(),
-                        window,
-                        cx,
-                        |selections| {
-                            let cursor = Point::new(row, column);
-                            selections.select_ranges([cursor..cursor]);
-                        },
-                    );
-                    editor.fold_at_current_indentation_level(
-                        &actions::FoldAtCurrentIndentationLevel,
-                        window,
-                        cx,
-                    );
-                    assert_eq!(
-                        editor.display_text(cx),
-                        "\x20\x20\x20\x20
-                        class Foo:
-                            def a():⋯
+    assert_eq!(
+        cx.display_text(),
+        "
+        fn first() ⋯
 
-                        class Bar:
-                            def b():⋯
-                        \x20\x20\x20\x20"
-                            .unindent(),
-                        "cursor at ({row}, {column})",
-                    );
-                }
-            }
-        })
-        .unwrap();
+        fn second() ⋯
+        "
+        .unindent(),
+    );
 }
 
 #[gpui::test]
-fn test_fold_at_current_indentation_level_with_multiple_cursors(cx: &mut TestAppContext) {
+async fn test_fold_at_current_indentation_level_with_crease_on_shared_boundary_row(
+    cx: &mut TestAppContext,
+) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(
-            &"
-            class Foo:
-                def a():
-                    print(1)
+    let mut cx = EditorTestContext::new(cx).await;
+    let marked_text = "
+        fn first() «{
+            work();
+        ˇ}» fn second() «{}»
 
-            class Bar:
-                def b():
-                    print(2)
-            "
-            .unindent(),
+        fn third() «{
+            work();
+        }»
+        "
+    .unindent();
+
+    cx.set_state(&marked_text.replace(['«', '»'], ""));
+    let crease_ranges = cx.ranges(&marked_text.replace('ˇ', ""));
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        editor.insert_creases(
+            crease_ranges.iter().map(|range| {
+                let start = snapshot.anchor_before(MultiBufferOffset(range.start));
+                let end = snapshot.anchor_after(MultiBufferOffset(range.end));
+
+                Crease::simple(start..end, FoldPlaceholder::test())
+            }),
             cx,
         );
-        build_editor(buffer, window, cx)
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
     });
 
-    editor
-        .update(cx, |editor, window, cx| {
-            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                // Set a cursor at the beginning of the `class Foo:` and
-                // `def b()` lines to ensure that only the newest, the one on
-                // `def b()` is used.
-                selections.select_ranges([
-                    Point::new(1, 0)..Point::new(1, 0),
-                    Point::new(5, 0)..Point::new(5, 0),
-                ]);
-            });
-            editor.fold_at_current_indentation_level(
-                &actions::FoldAtCurrentIndentationLevel,
-                window,
-                cx,
-            );
-            assert_eq!(
-                editor.display_text(cx),
-                "
-                class Foo:
-                    def a():⋯
+    cx.assert_display_state(
+        &"
+        fn first() {
+            work();
+        ˇ} fn second() ⋯
 
-                class Bar:
-                    def b():⋯
-                "
-                .unindent()
-            );
-        })
-        .unwrap();
+        fn third() ⋯
+        "
+        .unindent(),
+    );
 }
 
 #[gpui::test]
