@@ -43,8 +43,10 @@ use std::os::fd::{BorrowedFd, OwnedFd};
 ///   compares `fstat` of this descriptor against `lstat` of the mounted path
 ///   after the mounts, catching a swap between the host check and the mount (the
 ///   post-mount half; see `linux_bubblewrap::validate_binds` and `README.md`).
-/// - **Windows**: the path is canonicalized when the sandbox policy is built,
-///   and the Process Security Environment grants access to that path.
+/// - **Windows**: the canonical path is resolved at approval time and must
+///   still canonicalize to itself when the grant is rebuilt. The Process
+///   Security Environment then checks access against the object a path finally
+///   names, so a later swap is denied, not redirected.
 ///
 /// The type is deliberately **opaque**: it does not `Deref`. Its paths are
 /// readable only through [`HostFilesystemLocation::display`] (for showing the

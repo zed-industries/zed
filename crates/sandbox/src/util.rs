@@ -27,15 +27,14 @@ use std::path::{Path, PathBuf};
 /// and persisted. Protection against a *later* swap comes from rebuilding the
 /// grant with [`HostFilesystemLocation::reopen`], which verifies this value.
 /// Mirrors what [`HostFilesystemLocation::capture`] computes internally.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub fn resolve_canonical(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     Ok(CanonicalPathBuf::resolve(path)?.into_path())
 }
 
-/// Non-Linux/macOS platforms capture no canonical identity of their own (Windows
-/// resolves grants when it builds the sandbox policy), so the requested path is
-/// returned as-is.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// Platforms without a sandbox capture no canonical identity, so the requested
+/// path is returned as-is.
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub fn resolve_canonical(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     Ok(path.as_ref().to_path_buf())
 }

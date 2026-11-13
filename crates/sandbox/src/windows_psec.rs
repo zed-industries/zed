@@ -1,6 +1,7 @@
 //! Native Windows sandbox built on the Process Security Environment (PSEC) API.
 
-use std::ffi::{CStr, OsStr, c_void};
+use std::ffi::{CStr, OsStr, OsString, c_void};
+use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -8,8 +9,14 @@ use std::sync::OnceLock;
 use anyhow::{Context as _, Result, anyhow, ensure};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use flatbuffers::{FlatBufferBuilder, VOffsetT};
-use windows::Win32::Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, TRUE};
+use flatbuffers::{FlatBufferBuilder, ForwardsUOffset, VOffsetT, Vector};
+use windows::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, TRUE,
+};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, GetFinalPathNameByHandleW, OPEN_EXISTING,
+};
 use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives};
 use windows::Win32::System::Console::{
     GetConsoleWindow, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
@@ -37,6 +44,10 @@ use windows_core::{BOOL, HRESULT, PCSTR, PCWSTR, PWSTR};
 /// Argv flag that marks a re-exec of Zed as the PSEC launcher.
 pub(crate) const LAUNCHER_FLAG: &str = "--windows-sandbox-launcher";
 
+/// Vtable offset of the spec's `fs_read_write` field, which the launcher also
+/// reads back to pin the granted folders.
+const FS_READ_WRITE: VOffsetT = 12;
+
 /// Encode the crate's filesystem/network intent as a PSEC 1.0 FlatBuffer.
 ///
 /// The layout follows the PSEC FlatBuffers schema:
@@ -56,12 +67,8 @@ pub(crate) fn build_spec(
             read_write.extend(top_level_directories(root));
         }
     } else {
-        for path in writable_paths {
-            read_write.push(
-                dunce::canonicalize(path)
-                    .with_context(|| format!("invalid writable path `{}`", path.display()))?,
-            );
-        }
+        // Already canonical: resolved and verified by `CanonicalPathBuf`.
+        read_write.extend(writable_paths.iter().map(|path| path.to_path_buf()));
     }
 
     let mut read_only = roots;
@@ -84,7 +91,6 @@ pub(crate) fn build_spec(
     // Vtable offsets (`4 + 2 * field index`) and enum values from the schema.
     const VERSION: VOffsetT = 4;
     const CAPABILITIES: VOffsetT = 6;
-    const FS_READ_WRITE: VOffsetT = 12;
     const FS_READ_ONLY: VOffsetT = 14;
     const NETWORK_POLICY: VOffsetT = 18;
     const NETWORK_POLICY_EGRESS: VOffsetT = 6;
@@ -217,7 +223,13 @@ fn run_launcher(command_line: &str) -> Result<u32> {
     unsafe { SetConsoleCtrlHandler(Some(ignore_console_control), true) }
         .context("failed to install the console control handler")?;
 
+    // PSEC resolves each read-write path when the environment is created.
+    // To make sure a path approved by the user hasn't since become a junction to somewhere else,
+    // we open each folder (without sharing DELETE access, so it can't be renamed) and check it still
+    // resolves to the same path. The handles stay open until the environment exists.
+    let pinned_folders = pin_read_write_folders(&spec)?;
     let environment = SecurityEnvironment::create(&spec)?;
+    drop(pinned_folders);
 
     // PSEC launch doesn't copy standard handles into the child by default, so pass them explicitly.
     let std_handles = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE]
@@ -320,6 +332,86 @@ fn run_launcher(command_line: &str) -> Result<u32> {
     unsafe { GetExitCodeProcess(HANDLE(process.as_raw_handle()), &mut exit_code) }
         .context("failed to read the sandboxed command's exit code")?;
     Ok(exit_code)
+}
+
+type PathVector<'a> = ForwardsUOffset<Vector<'a, ForwardsUOffset<&'a str>>>;
+
+/// The spec's root table, which [`flatbuffers::root`] verifies before reading.
+struct SpecTable<'a>(flatbuffers::Table<'a>);
+
+impl<'a> flatbuffers::Follow<'a> for SpecTable<'a> {
+    type Inner = Self;
+
+    unsafe fn follow(buffer: &'a [u8], location: usize) -> Self {
+        Self(unsafe { flatbuffers::Table::new(buffer, location) })
+    }
+}
+
+impl flatbuffers::Verifiable for SpecTable<'_> {
+    fn run_verifier(
+        verifier: &mut flatbuffers::Verifier,
+        position: usize,
+    ) -> std::result::Result<(), flatbuffers::InvalidFlatbuffer> {
+        verifier
+            .visit_table(position)?
+            .visit_field::<PathVector>("fs_read_write", FS_READ_WRITE, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+fn pin_read_write_folders(spec: &[u8]) -> Result<Vec<OwnedHandle>> {
+    let root = flatbuffers::root::<SpecTable>(spec).context("malformed sandbox policy")?;
+    let paths = unsafe { root.0.get::<PathVector>(FS_READ_WRITE, None) };
+    paths
+        .into_iter()
+        .flatten()
+        .filter_map(|path| pin_folder(path).transpose())
+        .collect()
+}
+
+/// Open `path` so that neither it nor any folder above it can be renamed or
+/// deleted while the handle is open, then check that it still names itself.
+fn pin_folder(path: &str) -> Result<Option<OwnedHandle>> {
+    let wide_path: Vec<u16> = OsStr::new(path).encode_wide().chain([0]).collect();
+    let handle = match unsafe {
+        CreateFileW(
+            PCWSTR(wide_path.as_ptr()),
+            FILE_LIST_DIRECTORY.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    } {
+        Ok(handle) => unsafe { OwnedHandle::from_raw_handle(handle.0) },
+        Err(error) if error.code() == ERROR_ACCESS_DENIED.to_hresult() => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to open the write grant `{path}`"));
+        }
+    };
+
+    let mut buffer = vec![0u16; 32_768];
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            HANDLE(handle.as_raw_handle()),
+            &mut buffer,
+            FILE_NAME_NORMALIZED,
+        )
+    } as usize;
+    ensure!(
+        length != 0 && length < buffer.len(),
+        "failed to resolve the write grant `{path}`"
+    );
+    let final_path = PathBuf::from(OsString::from_wide(&buffer[..length]));
+    let final_path = dunce::simplified(&final_path);
+    ensure!(
+        final_path == Path::new(path),
+        "the write grant `{path}` was redirected to `{}`",
+        final_path.display()
+    );
+    Ok(Some(handle))
 }
 
 /// The limit flags of the job containing this process, or `None` outside a job.
@@ -509,7 +601,7 @@ mod tests {
         fn spec(&self, allow_fs_write: bool) -> Vec<u8> {
             build_spec(
                 allow_fs_write,
-                &[self.project.path()],
+                &[&dunce::canonicalize(self.project.path()).unwrap()],
                 &[&self.protected()],
                 false,
             )
@@ -619,5 +711,35 @@ mod tests {
             std::fs::read_to_string(protected.join("config")).unwrap(),
             "protected"
         );
+    }
+
+    #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "blocking on `mklink` is fine in a test"
+    )]
+    fn launcher_rejects_a_write_grant_that_is_now_a_junction() {
+        if let Err(error) = check_available() {
+            eprintln!("skipping PSEC test: {error:#}");
+            return;
+        }
+        let layout = Layout::new();
+        let project = dunce::canonicalize(layout.project.path()).unwrap();
+        let grant = project.join("grant");
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&grant)
+            .arg(layout.outside.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let spec = build_spec(false, &[&grant], &[], false).unwrap();
+        let command_line = format!(
+            "zed.exe {LAUNCHER_FLAG} {} cmd.exe /c exit 0",
+            URL_SAFE_NO_PAD.encode(spec)
+        );
+        let error = run_launcher(&command_line).unwrap_err();
+        assert!(format!("{error:#}").contains("was redirected"), "{error:#}");
     }
 }

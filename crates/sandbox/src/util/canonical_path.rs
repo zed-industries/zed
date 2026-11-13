@@ -89,7 +89,13 @@ impl CanonicalPathBuf {
                 fd: std::sync::Arc::new(fd),
             })
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(target_os = "windows")]
+        {
+            let path = dunce::canonicalize(path)?;
+            require_windows_grant_shape(&path)?;
+            Ok(Self { path })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         {
             Ok(Self {
                 path: path.to_path_buf(),
@@ -108,10 +114,12 @@ impl CanonicalPathBuf {
     /// symlink leaf (`S_IFLNK` check, [`io::ErrorKind::PermissionDenied`]), and
     /// requires the fd's real path to still equal `path` (also
     /// `PermissionDenied` otherwise) — so any component swapped for a symlink
-    /// after approval fails closed. On **macOS/other** the claimed path is
-    /// trusted verbatim: Seatbelt re-resolves the access path at syscall time
-    /// (so a later swap is denied, not redirected), and Windows resolves the
-    /// path when it builds the sandbox policy.
+    /// after approval fails closed. On **Windows** the claimed path must still
+    /// canonicalize to itself (also `PermissionDenied` otherwise), so a component
+    /// that became a junction or symlink after approval fails closed. On
+    /// **macOS/other** the claimed path is trusted verbatim: Seatbelt re-resolves
+    /// the access path at syscall time, so a later swap is denied, not
+    /// redirected.
     pub(crate) fn from_canonical(path: PathBuf) -> io::Result<Self> {
         // Same absolute-path requirement as `resolve`: a persisted or
         // hand-authored relative grant must never be resolved against Zed's own
@@ -174,7 +182,22 @@ impl CanonicalPathBuf {
                 fd: std::sync::Arc::new(fd),
             })
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(target_os = "windows")]
+        {
+            let current = dunce::canonicalize(&path)?;
+            if current != path {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "sandbox write grant {} was redirected to {}",
+                        path.display(),
+                        current.display()
+                    ),
+                ));
+            }
+            Ok(Self { path })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         {
             Ok(Self { path })
         }
@@ -186,7 +209,6 @@ impl CanonicalPathBuf {
     }
 
     /// Consume this value, returning the canonical path.
-    #[cfg_attr(target_os = "windows", expect(dead_code))]
     pub(crate) fn into_path(self) -> PathBuf {
         self.path
     }
