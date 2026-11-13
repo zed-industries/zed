@@ -751,7 +751,18 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
-                        "refusal" => StopReason::Refusal,
+                        "refusal" => {
+                            StopReason::Refusal(Some(language_model_core::RefusalDetails {
+                                reason: "refusal".into(),
+                                categories: delta
+                                    .stop_details
+                                    .and_then(|details| details.category)
+                                    .into_iter()
+                                    .collect(),
+                                // Classifier timing does not identify which content triggered it.
+                                stage: None,
+                            }))
+                        }
                         "compaction" => StopReason::EndTurn,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
@@ -775,7 +786,9 @@ impl AnthropicEventMapper {
                         "Anthropic ended the stream without finishing its compaction summary"
                     )))];
                 }
-                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
+                vec![Ok(LanguageModelCompletionEvent::Stop(
+                    self.stop_reason.clone(),
+                ))]
             }
             Event::Error { error } => {
                 vec![Err(completion_error_from_anthropic_api(
@@ -1857,6 +1870,44 @@ mod tests {
                 CompactionUpdate::Failed
             )]
         );
+    }
+
+    #[test]
+    fn refusal_stop_carries_metadata_without_explanation_text() {
+        for category in [serde_json::json!("cyber"), serde_json::Value::Null] {
+            let mut mapper =
+                AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+            let event = serde_json::from_value(serde_json::json!({
+                "type": "message_delta",
+                "delta": {
+                    "stop_reason": "refusal",
+                    "stop_sequence": null,
+                    "stop_details": {
+                        "type": "refusal",
+                        "category": category,
+                        "explanation": "private user content"
+                    }
+                },
+                "usage": {"output_tokens": 0}
+            }))
+            .unwrap();
+            let events = mapper
+                .map_event(event)
+                .into_iter()
+                .chain(mapper.map_event(Event::MessageStop))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert!(
+                matches!(&events[1], LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details)))
+                if details.categories == category.as_str().map(str::to_owned).into_iter().collect::<Vec<_>>()
+                    && details.stage.is_none() && details.reason == "refusal")
+            );
+            assert!(
+                !serde_json::to_string(&events)
+                    .unwrap()
+                    .contains("private user content")
+            );
+        }
     }
 
     #[test]

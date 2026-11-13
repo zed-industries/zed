@@ -621,7 +621,9 @@ impl CopilotResponsesEventMapper {
                     Some(copilot_responses::IncompleteReason::MaxOutputTokens) => {
                         StopReason::MaxTokens
                     }
-                    Some(copilot_responses::IncompleteReason::ContentFilter) => StopReason::Refusal,
+                    Some(copilot_responses::IncompleteReason::ContentFilter) => {
+                        StopReason::Refusal(None)
+                    }
                     _ => self
                         .pending_stop_reason
                         .take()
@@ -1693,7 +1695,7 @@ mod tests {
         let mapped = map_events(events);
         assert!(matches!(
             mapped.last().unwrap(),
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal)
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(None))
         ));
     }
 
