@@ -10602,18 +10602,24 @@ impl Editor {
                 }
             }
             None => {
-                let selections = self
-                    .selections
-                    .all::<MultiBufferOffset>(&self.display_snapshot(cx));
+                let display_snapshot = self.display_snapshot(cx);
+                let newest_selection = self.selections.newest_display(&display_snapshot);
+                let scroll_top = self.scroll_position(cx).y.max(0.) as u32;
+                let newest_line_offset_from_top =
+                    newest_selection.head().row().0.saturating_sub(scroll_top);
+                let selections = self.selections.all::<MultiBufferOffset>(&display_snapshot);
                 let multi_buffer = self.buffer.read(cx);
                 let multi_buffer_snapshot = multi_buffer.snapshot(cx);
                 for selection in selections {
+                    let line_offset_from_top = (selection.id == newest_selection.id)
+                        .then_some(newest_line_offset_from_top);
                     for (snapshot, range, anchor) in multi_buffer_snapshot
                         .range_to_buffer_ranges_with_deleted_hunks(selection.range())
                     {
-                        if let Some((text_anchor, _)) = anchor.and_then(|anchor| {
-                            multi_buffer_snapshot.anchor_to_buffer_anchor(anchor)
-                        }) {
+                        let (buffer_handle, range) = if let Some((text_anchor, _)) = anchor
+                            .and_then(|anchor| {
+                                multi_buffer_snapshot.anchor_to_buffer_anchor(anchor)
+                            }) {
                             let Some(buffer_handle) = multi_buffer.buffer(text_anchor.buffer_id)
                             else {
                                 continue;
@@ -10622,22 +10628,20 @@ impl Editor {
                                 &text_anchor,
                                 &buffer_handle.read(cx).snapshot(),
                             );
-                            let range = BufferOffset(offset)..BufferOffset(offset);
-                            new_selections_by_buffer
-                                .entry(buffer_handle)
-                                .or_insert((Vec::new(), None))
-                                .0
-                                .push(range)
+                            (buffer_handle, BufferOffset(offset)..BufferOffset(offset))
                         } else {
                             let Some(buffer_handle) = multi_buffer.buffer(snapshot.remote_id())
                             else {
                                 continue;
                             };
-                            new_selections_by_buffer
-                                .entry(buffer_handle)
-                                .or_insert((Vec::new(), None))
-                                .0
-                                .push(range)
+                            (buffer_handle, range)
+                        };
+                        let (ranges, scroll_offset) = new_selections_by_buffer
+                            .entry(buffer_handle)
+                            .or_insert((Vec::new(), None));
+                        ranges.push(range);
+                        if line_offset_from_top.is_some() {
+                            *scroll_offset = line_offset_from_top;
                         }
                     }
                 }
