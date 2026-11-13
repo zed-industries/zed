@@ -2389,7 +2389,7 @@ fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_at_current_level(cx: &mut TestAppContext) {
+fn test_fold_at_current_indentation_level(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
@@ -2418,7 +2418,11 @@ fn test_fold_at_current_level(cx: &mut TestAppContext) {
             editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
                 selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
             });
-            editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
+            editor.fold_at_current_indentation_level(
+                &actions::FoldAtCurrentIndentationLevel,
+                window,
+                cx,
+            );
 
             assert_eq!(
                 editor.display_text(cx),
@@ -2439,7 +2443,11 @@ fn test_fold_at_current_level(cx: &mut TestAppContext) {
             editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
             });
-            editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
+            editor.fold_at_current_indentation_level(
+                &actions::FoldAtCurrentIndentationLevel,
+                window,
+                cx,
+            );
 
             assert_eq!(
                 editor.display_text(cx),
@@ -2455,7 +2463,9 @@ fn test_fold_at_current_level(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_fold_at_current_level_is_column_independent_with_injection(cx: &mut TestAppContext) {
+async fn test_fold_at_current_indentation_level_is_column_independent_with_injection(
+    cx: &mut TestAppContext,
+) {
     init_test(cx, |settings| {
         settings.languages.0.extend([
             (
@@ -2546,7 +2556,11 @@ async fn test_fold_at_current_level_is_column_independent_with_injection(cx: &mu
                 let cursor = Point::new(1, column);
                 selections.select_ranges([cursor..cursor]);
             });
-            editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
+            editor.fold_at_current_indentation_level(
+                &actions::FoldAtCurrentIndentationLevel,
+                window,
+                cx,
+            );
             assert_eq!(
                 editor.display_text(cx),
                 expected,
@@ -2557,7 +2571,7 @@ async fn test_fold_at_current_level_is_column_independent_with_injection(cx: &mu
 }
 
 #[gpui::test]
-fn test_fold_at_current_level_with_tabs(cx: &mut TestAppContext) {
+fn test_fold_at_current_indentation_level_with_tabs(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(true);
@@ -2588,16 +2602,20 @@ fn test_fold_at_current_level_with_tabs(cx: &mut TestAppContext) {
                     let cursor = Point::new(1, column);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
+                editor.fold_at_current_indentation_level(
+                    &actions::FoldAtCurrentIndentationLevel,
+                    window,
+                    cx,
+                );
                 assert_eq!(
                     editor.display_text(cx),
-                    concat!(
-                        "class Foo:\n",
-                        "    def a():⋯\n",
-                        "\n",
-                        "class Bar:\n",
-                        "    def b():⋯\n",
-                    ),
+                    "class Foo:
+                        def a():⋯
+
+                    class Bar:
+                        def b():⋯
+                    "
+                    .unindent(),
                     "cursor column {column}",
                 );
             }
@@ -2606,7 +2624,7 @@ fn test_fold_at_current_level_with_tabs(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_at_current_level_with_tabs_and_soft_tab_settings(cx: &mut TestAppContext) {
+fn test_fold_at_current_indentation_level_with_tabs_and_soft_tab_settings(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
@@ -2637,16 +2655,20 @@ fn test_fold_at_current_level_with_tabs_and_soft_tab_settings(cx: &mut TestAppCo
                     let cursor = Point::new(1, column);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
+                editor.fold_at_current_indentation_level(
+                    &actions::FoldAtCurrentIndentationLevel,
+                    window,
+                    cx,
+                );
                 assert_eq!(
                     editor.display_text(cx),
-                    concat!(
-                        "class Foo:\n",
-                        "    def a():⋯\n",
-                        "\n",
-                        "class Bar:\n",
-                        "    def b():⋯\n",
-                    ),
+                    "class Foo:
+                        def a():⋯
+
+                    class Bar:
+                        def b():⋯
+                    "
+                    .unindent(),
                     "cursor column {column}",
                 );
             }
@@ -2655,7 +2677,9 @@ fn test_fold_at_current_level_with_tabs_and_soft_tab_settings(cx: &mut TestAppCo
 }
 
 #[gpui::test]
-fn test_fold_at_current_level_with_spaces_and_hard_tab_settings(cx: &mut TestAppContext) {
+fn test_fold_at_current_indentation_level_with_spaces_and_hard_tab_settings(
+    cx: &mut TestAppContext,
+) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(true);
@@ -2686,16 +2710,20 @@ fn test_fold_at_current_level_with_spaces_and_hard_tab_settings(cx: &mut TestApp
                     let cursor = Point::new(1, column);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
+                editor.fold_at_current_indentation_level(
+                    &actions::FoldAtCurrentIndentationLevel,
+                    window,
+                    cx,
+                );
                 assert_eq!(
                     editor.display_text(cx),
-                    concat!(
-                        "class Foo:\n",
-                        "    def a():⋯\n",
-                        "\n",
-                        "class Bar:\n",
-                        "    def b():⋯\n",
-                    ),
+                    "class Foo:
+                        def a():⋯
+
+                    class Bar:
+                        def b():⋯
+                    "
+                    .unindent(),
                     "cursor column {column}",
                 );
             }
@@ -2704,7 +2732,7 @@ fn test_fold_at_current_level_with_spaces_and_hard_tab_settings(cx: &mut TestApp
 }
 
 #[gpui::test]
-fn test_fold_at_current_level_with_mixed_indentation(cx: &mut TestAppContext) {
+fn test_fold_at_current_indentation_level_with_mixed_indentation(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
@@ -2735,16 +2763,20 @@ fn test_fold_at_current_level_with_mixed_indentation(cx: &mut TestAppContext) {
                     let cursor = Point::new(1, column);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
+                editor.fold_at_current_indentation_level(
+                    &actions::FoldAtCurrentIndentationLevel,
+                    window,
+                    cx,
+                );
                 assert_eq!(
                     editor.display_text(cx),
-                    concat!(
-                        "class Foo:\n",
-                        "    def a():⋯\n",
-                        "\n",
-                        "class Bar:\n",
-                        "    def b():⋯\n",
-                    ),
+                    "class Foo:
+                        def a():⋯
+
+                    class Bar:
+                        def b():⋯
+                    "
+                    .unindent(),
                     "cursor column {column}",
                 );
             }
@@ -2753,7 +2785,7 @@ fn test_fold_at_current_level_with_mixed_indentation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_at_current_level_ignores_empty_lines(cx: &mut TestAppContext) {
+fn test_fold_at_current_indentation_level_ignores_empty_lines(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
@@ -2785,7 +2817,11 @@ fn test_fold_at_current_level_ignores_empty_lines(cx: &mut TestAppContext) {
                     let cursor = Point::new(row, 0);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
+                editor.fold_at_current_indentation_level(
+                    &actions::FoldAtCurrentIndentationLevel,
+                    window,
+                    cx,
+                );
                 assert_eq!(editor.display_text(cx), text, "cursor at ({row}, 0)",);
             }
         })
@@ -2793,7 +2829,7 @@ fn test_fold_at_current_level_ignores_empty_lines(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_at_current_level_on_space_only_lines(cx: &mut TestAppContext) {
+fn test_fold_at_current_indentation_level_on_space_only_lines(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
@@ -2830,22 +2866,21 @@ fn test_fold_at_current_level_on_space_only_lines(cx: &mut TestAppContext) {
                             selections.select_ranges([cursor..cursor]);
                         },
                     );
-                    editor.fold_at_current_level(
+                    editor.fold_at_current_indentation_level(
                         &actions::FoldAtCurrentIndentationLevel,
                         window,
                         cx,
                     );
                     assert_eq!(
                         editor.display_text(cx),
-                        concat!(
-                            "    \n",
-                            "class Foo:\n",
-                            "    def a():⋯\n",
-                            "\n",
-                            "class Bar:\n",
-                            "    def b():⋯\n",
-                            "    ",
-                        ),
+                        "\x20\x20\x20\x20
+                        class Foo:
+                            def a():⋯
+
+                        class Bar:
+                            def b():⋯
+                        \x20\x20\x20\x20"
+                            .unindent(),
                         "cursor at ({row}, {column})",
                     );
                 }
@@ -2855,7 +2890,7 @@ fn test_fold_at_current_level_on_space_only_lines(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_at_current_level_on_tab_only_lines(cx: &mut TestAppContext) {
+fn test_fold_at_current_indentation_level_on_tab_only_lines(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
@@ -2892,22 +2927,21 @@ fn test_fold_at_current_level_on_tab_only_lines(cx: &mut TestAppContext) {
                             selections.select_ranges([cursor..cursor]);
                         },
                     );
-                    editor.fold_at_current_level(
+                    editor.fold_at_current_indentation_level(
                         &actions::FoldAtCurrentIndentationLevel,
                         window,
                         cx,
                     );
                     assert_eq!(
                         editor.display_text(cx),
-                        concat!(
-                            "    \n",
-                            "class Foo:\n",
-                            "    def a():⋯\n",
-                            "\n",
-                            "class Bar:\n",
-                            "    def b():⋯\n",
-                            "    ",
-                        ),
+                        "\x20\x20\x20\x20
+                        class Foo:
+                            def a():⋯
+
+                        class Bar:
+                            def b():⋯
+                        \x20\x20\x20\x20"
+                            .unindent(),
                         "cursor at ({row}, {column})",
                     );
                 }
@@ -2917,35 +2951,53 @@ fn test_fold_at_current_level_on_tab_only_lines(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_at_current_level_with_multiple_cursors(cx: &mut TestAppContext) {
+fn test_fold_at_current_indentation_level_with_multiple_cursors(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let text = "
-        class Foo:
-            def a():
-                print(1)
-
-        class Bar:
-            def b():
-                print(2)
-        "
-    .unindent();
-
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer = MultiBuffer::build_simple(
+            &"
+            class Foo:
+                def a():
+                    print(1)
+
+            class Bar:
+                def b():
+                    print(2)
+            "
+            .unindent(),
+            cx,
+        );
         build_editor(buffer, window, cx)
     });
 
     editor
         .update(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                // Set a cursor at the beginning of the `class Foo:` and
+                // `def b()` lines to ensure that only the newest, the one on
+                // `def b()` is used.
                 selections.select_ranges([
                     Point::new(1, 0)..Point::new(1, 0),
                     Point::new(5, 0)..Point::new(5, 0),
                 ]);
             });
-            editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
-            assert_eq!(editor.display_text(cx), text);
+            editor.fold_at_current_indentation_level(
+                &actions::FoldAtCurrentIndentationLevel,
+                window,
+                cx,
+            );
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                class Foo:
+                    def a():⋯
+
+                class Bar:
+                    def b():⋯
+                "
+                .unindent()
+            );
         })
         .unwrap();
 }

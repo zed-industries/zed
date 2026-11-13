@@ -332,24 +332,20 @@ impl Editor {
     ///
     /// Empty lines are ignored while whitespace-only lines use their existing
     /// indentation and the language settings at the start of the line.
-    pub fn fold_at_current_level(
+    pub fn fold_at_current_indentation_level(
         &mut self,
         _: &actions::FoldAtCurrentIndentationLevel,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selections.count() > 1 || !self.buffer().read(cx).is_singleton() {
+        if !self.buffer().read(cx).is_singleton() {
             return;
         }
 
         let display_snapshot = self.display_snapshot(cx);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let row = MultiBufferRow(
-            self.selections
-                .newest::<Point>(&display_snapshot)
-                .head()
-                .row,
-        );
+        let row =
+            MultiBufferRow(dbg!(self.selections.newest::<Point>(&display_snapshot).head()).row);
         let max_column = buffer_snapshot.line_len(row);
 
         // An empty line provides no indentation from which to derive a level.
