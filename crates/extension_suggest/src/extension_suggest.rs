@@ -160,7 +160,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
         "python-requirements",
         &["constraints.txt", "requirements.txt"],
     ),
-    ("r", &["R", "Rmd", "qmd", "r", "rmd"]),
+    ("r", &["R", "r"]),
     ("racket", &["rkt"]),
     ("rescript", &["res", "resi"]),
     ("rst", &["rst"]),
@@ -405,6 +405,23 @@ mod tests {
                 file_name_or_extension: ".gitattributes".into()
             })
         );
+    }
+
+    #[test]
+    fn r_suggestions_match_published_extension() {
+        for suffix in ["r", "R"] {
+            assert_eq!(
+                suggest_extension(rel_path(&format!("analysis.{suffix}"))),
+                Some(SuggestedExtension {
+                    extension_id: "r".into(),
+                    file_name_or_extension: suffix.into(),
+                })
+            );
+        }
+        // RMarkdown support exists upstream but is not in the published R extension.
+        for path in ["analysis.qmd", "analysis.Rmd", "analysis.rmd"] {
+            assert_eq!(suggest_extension(rel_path(path)), None, "{path}");
+        }
     }
 
     #[test]
