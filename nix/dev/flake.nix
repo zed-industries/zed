@@ -2,6 +2,10 @@
   description = "Private inputs for development purposes. These are used by the top level flake in the `dev` partition, but do not appear in consumers' lock files.";
 
   inputs = {
+    corgi-src = {
+      url = "github:ConradIrwin/corgi/v0.1.106";
+      flake = false;
+    };
     treefmt-nix.url = "github:numtide/treefmt-nix";
     # Pinned to a nixpkgs revision that packages mdBook 0.4.40, the version the
     # docs require (see `crates/docs_preprocessor/Cargo.toml`). Newer mdBook
