@@ -774,6 +774,7 @@ pub struct ThreadView {
     pub should_be_following: bool,
     pub editing_message: Option<usize>,
     pub message_queue: MessageQueue,
+    queue_persist_task: Option<Task<()>>,
     pub turn_fields: TurnFields,
     pub discarded_partial_edits: HashSet<acp_v2::ToolCallId>,
     pub is_loading_contents: bool,
@@ -982,16 +983,9 @@ impl ThreadView {
             queued: self
                 .message_queue
                 .iter()
-                .map(|entry| {
-                    let editor = entry.editor.read(cx);
-                    QueuedMessageRecovery {
-                        content: if editor.editor().read(cx).read_only(cx) {
-                            entry.content.clone()
-                        } else {
-                            editor.draft_content_blocks_snapshot(cx)
-                        },
-                        tracked_buffers: entry.tracked_buffers.clone(),
-                    }
+                .map(|entry| QueuedMessageRecovery {
+                    content: entry.latest_content(cx),
+                    tracked_buffers: entry.tracked_buffers.clone(),
                 })
                 .collect(),
         })
@@ -1010,6 +1004,21 @@ impl ThreadView {
                 window,
                 cx,
             );
+        }
+        self.message_queue.pause();
+    }
+
+    /// Paused because the turn these messages were waiting on is gone, possibly
+    /// long ago, and sending them unprompted could start work the user no
+    /// longer wants.
+    pub(super) fn restore_persisted_queue(
+        &mut self,
+        queued: Vec<Vec<acp_v2::ContentBlock>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for content in queued {
+            self.add_to_queue(content, Vec::new(), window, cx);
         }
         self.message_queue.pause();
     }
@@ -1045,6 +1054,17 @@ impl ThreadView {
 
         subscriptions.push(cx.observe(&thread, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&conversation, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.on_app_quit(|this: &mut Self, cx| {
+            let persist = this
+                .queue_persist_task
+                .take()
+                .map(|_| this.persist_queue(cx));
+            async move {
+                if let Some(persist) = persist {
+                    persist.await.log_err();
+                }
+            }
+        }));
         subscriptions.push(cx.subscribe(&thread, |this, _, event, cx| {
             if matches!(
                 event,
@@ -1306,6 +1326,7 @@ impl ThreadView {
             should_be_following: false,
             editing_message: None,
             message_queue: MessageQueue::default(),
+            queue_persist_task: None,
             turn_fields: TurnFields::default(),
             discarded_partial_edits: HashSet::default(),
             is_loading_contents: false,
@@ -2959,6 +2980,7 @@ impl ThreadView {
             _subscription: subscription,
         });
         self.sync_queue_flag_to_native_thread(cx);
+        self.schedule_queue_persist(cx);
         cx.notify();
     }
 
@@ -3024,6 +3046,7 @@ impl ThreadView {
                     }
                     entry.content = content;
                     entry.tracked_buffers = tracked_buffers;
+                    this.schedule_queue_persist(cx);
                 }
                 cx.notify();
             })?;
@@ -3041,8 +3064,39 @@ impl ThreadView {
         let removed = self.message_queue.remove(id);
         if removed.is_some() {
             self.sync_queue_flag_to_native_thread(cx);
+            self.schedule_queue_persist(cx);
         }
         removed
+    }
+
+    fn schedule_queue_persist(&mut self, cx: &mut Context<Self>) {
+        if self.is_subagent() {
+            return;
+        }
+        self.queue_persist_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(QUEUED_MESSAGES_PERSIST_DEBOUNCE)
+                .await;
+            let Some(persist) = this.update(cx, |this, cx| this.persist_queue(cx)).log_err() else {
+                return;
+            };
+            persist.await.log_err();
+            this.update(cx, |this, _| this.queue_persist_task = None)
+                .log_err();
+        }));
+    }
+
+    fn persist_queue(&self, cx: &App) -> Task<Result<()>> {
+        let messages = self
+            .message_queue
+            .iter()
+            .map(|entry| entry.latest_content(cx))
+            .collect::<Vec<_>>();
+        if messages.is_empty() {
+            crate::draft_prompt_store::delete_queued_messages(self.root_thread_id, cx)
+        } else {
+            crate::draft_prompt_store::write_queued_messages(self.root_thread_id, &messages, cx)
+        }
     }
 
     fn toggle_queue_entry_steer(&mut self, id: QueueEntryId, cx: &mut Context<Self>) {
@@ -3134,6 +3188,7 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         self.sync_queue_flag_to_native_thread(cx);
+        self.schedule_queue_persist(cx);
 
         cx.emit(AcpThreadViewEvent::Interacted);
 
@@ -3165,6 +3220,7 @@ impl ThreadView {
                 this.update(cx, |this, cx| {
                     this.message_queue.restore_after_failed_send(entry);
                     this.sync_queue_flag_to_native_thread(cx);
+                    this.schedule_queue_persist(cx);
                     cx.notify();
                 })
                 .log_err();
@@ -4849,9 +4905,10 @@ impl ThreadView {
             .into_any_element()
     }
 
-    fn clear_queue(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn clear_queue(&mut self, cx: &mut Context<Self>) {
         self.message_queue.clear();
         self.sync_queue_flag_to_native_thread(cx);
+        self.schedule_queue_persist(cx);
         cx.notify();
     }
 
