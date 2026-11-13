@@ -87,6 +87,10 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
             .created_border
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        created_staged: colors
+            .created_staged
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         deleted: colors
             .deleted
             .as_ref()
@@ -97,6 +101,10 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
             .and_then(|color| try_parse_color(color).ok()),
         deleted_border: colors
             .deleted_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        deleted_staged: colors
+            .deleted_staged
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         error: colors
@@ -171,6 +179,10 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
             .modified_border
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        modified_staged: colors
+            .modified_staged
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         predictive: colors
             .predictive
             .as_ref()
@@ -217,6 +229,18 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
             .and_then(|color| try_parse_color(color).ok()),
         unreachable_border: colors
             .unreachable_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        untracked: colors
+            .untracked
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        untracked_background: colors
+            .untracked_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        untracked_border: colors
+            .untracked_border
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         warning: colors
@@ -913,7 +937,8 @@ fn try_parse_color(color: &str) -> anyhow::Result<Hsla> {
 
 #[cfg(test)]
 mod tests {
-    use theme::StatusColorsRefinement;
+    use refineable::Refineable as _;
+    use theme::{StatusColors, StatusColorsRefinement, apply_status_color_defaults};
 
     use super::{
         StatusColorsContent, ThemeColorsContent, status_colors_refinement, theme_colors_refinement,
@@ -1071,6 +1096,24 @@ mod tests {
             Ok(color) => color,
             Err(error) => panic!("failed to parse color {color}: {error}"),
         }
+    }
+
+    #[test]
+    fn staged_status_colors_fall_back_to_the_themes_own_status_colors() {
+        let status_content = StatusColorsContent {
+            created: Some("#00ff00ff".into()),
+            modified: Some("#ffff00ff".into()),
+            deleted_staged: Some("#ff000099".into()),
+            ..Default::default()
+        };
+        let mut refinement = status_colors_refinement(&status_content);
+        apply_status_color_defaults(&mut refinement);
+        let mut status_colors = StatusColors::dark();
+        status_colors.refine(&refinement);
+
+        assert_eq!(status_colors.created_staged, parse_color("#00ff00ff"));
+        assert_eq!(status_colors.modified_staged, parse_color("#ffff00ff"));
+        assert_eq!(status_colors.deleted_staged, parse_color("#ff000099"));
     }
 
     #[test]
