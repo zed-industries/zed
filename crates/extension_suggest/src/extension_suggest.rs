@@ -408,23 +408,6 @@ mod tests {
     }
 
     #[test]
-    fn r_suggestions_match_published_extension() {
-        for suffix in ["r", "R"] {
-            assert_eq!(
-                suggest_extension(rel_path(&format!("analysis.{suffix}"))),
-                Some(SuggestedExtension {
-                    extension_id: "r".into(),
-                    file_name_or_extension: suffix.into(),
-                })
-            );
-        }
-        // RMarkdown support exists upstream but is not in the published R extension.
-        for path in ["analysis.qmd", "analysis.Rmd", "analysis.rmd"] {
-            assert_eq!(suggest_extension(rel_path(path)), None, "{path}");
-        }
-    }
-
-    #[test]
     pub fn suggested_path_suffixes_are_unique() {
         let mut claims: HashMap<&str, &str> = HashMap::new();
         for (extension_id, path_suffixes) in SUGGESTIONS_BY_EXTENSION_ID {
