@@ -1,5 +1,5 @@
 use std::{
-    f32::consts::PI,
+    f32::consts::TAU,
     fs,
     hash::{Hash, Hasher},
     path::Path,
@@ -10,8 +10,8 @@ use std::{
 use crate::{
     App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
     Interactivity, LayoutId, Pixels, Point, Radians, SharedString, Size, SpriteAnimation,
-    StyleRefinement, Styled, TransformationMatrix, Window, ease_in_out, ease_out_quint, linear,
-    point, px, quadratic, radians, size,
+    StyleRefinement, Styled, TransformationMatrix, Window, ease_in_out, ease_out_quint, heartbeat,
+    linear, point, px, quadratic, radians, size,
 };
 use gpui_util::ResultExt;
 
@@ -348,6 +348,10 @@ pub enum Easing {
     EaseInOut,
     /// Starts quickly and decelerates to a stop.
     EaseOutQuint,
+    /// Two quick beats, a strong one then a weaker one, followed by a rest.
+    /// Unlike the other easings it ends where it started, so the value
+    /// reaches `to` at the first beat and is back at `from` by the end.
+    Heartbeat,
 }
 
 impl Easing {
@@ -357,6 +361,7 @@ impl Easing {
             Easing::Quadratic => quadratic(delta),
             Easing::EaseInOut => ease_in_out(delta),
             Easing::EaseOutQuint => ease_out_quint()(delta),
+            Easing::Heartbeat => heartbeat(delta),
         }
     }
 }
@@ -401,7 +406,7 @@ impl TimedTransformation {
     pub fn rotation(period: Duration, from: Transformation) -> Self {
         Self::new(period)
             .from(from)
-            .to(from.with_rotation(radians(from.rotate.0 + 2. * PI)))
+            .to(from.with_rotation(radians(from.rotate.0 + TAU)))
     }
 
     fn is_animated(&self) -> bool {
@@ -676,6 +681,23 @@ mod tests {
         assert!((pose.rotation_scale[0][0] - (1. + 0.5 * (1. - 0.5f32.powi(5)))).abs() < 1e-5);
         assert!((pose.alpha - 0.2).abs() < 1e-5);
         assert_eq!(renders.get(), renders_before_frames);
+    }
+
+    #[crate::test]
+    fn test_heartbeat_returns_to_its_start(cx: &mut TestAppContext) {
+        let (mut pose_after, _) = animate(
+            TimedTransformation::new(Duration::from_secs(1))
+                .to(Transformation::scale(size(1.12, 1.12)))
+                .with_scale_easing(Easing::Heartbeat),
+            cx,
+        );
+
+        assert!((pose_after(Duration::ZERO).rotation_scale[0][0] - 1.).abs() < 1e-3);
+        assert!((pose_after(Duration::from_millis(200)).rotation_scale[0][0] - 1.12).abs() < 1e-3);
+        // Each call advances the clock further, to 400ms and then 999ms.
+        let second_beat = pose_after(Duration::from_millis(200)).rotation_scale[0][0];
+        assert!(second_beat > 1.05 && second_beat < 1.09);
+        assert!((pose_after(Duration::from_millis(599)).rotation_scale[0][0] - 1.).abs() < 1e-3);
     }
 
     #[crate::test]
