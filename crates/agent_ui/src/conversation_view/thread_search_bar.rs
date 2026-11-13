@@ -43,7 +43,8 @@ actions!(
 /// subscription in `ThreadSearchBar::new`).
 pub(super) const SEARCH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(150);
 
-/// Search hits can be painted on either markdown or past-message editors.
+/// Search hits can be painted on markdown, past-message editors, or the draft
+/// message editor.
 #[derive(Clone)]
 enum MatchTarget {
     Markdown {
@@ -79,7 +80,8 @@ impl MatchTarget {
 }
 
 struct ThreadMatch {
-    entry_ix: usize,
+    /// `None` for hits in the draft message editor, which is not a thread entry.
+    entry_ix: Option<usize>,
     target: MatchTarget,
     source_range: Range<usize>,
 }
@@ -97,14 +99,14 @@ impl ThreadMatch {
 
 #[derive(PartialEq)]
 struct MatchKey {
-    entry_ix: usize,
+    entry_ix: Option<usize>,
     entity_id: EntityId,
     source_range: Range<usize>,
 }
 
 enum SearchTarget {
     Editor {
-        entry_ix: usize,
+        entry_ix: Option<usize>,
         editor: Entity<Editor>,
         snapshot: MultiBufferSnapshot,
     },
@@ -117,7 +119,7 @@ enum SearchTarget {
 
 enum ScannedTarget {
     Editor {
-        entry_ix: usize,
+        entry_ix: Option<usize>,
         editor: Entity<Editor>,
         ranges: Vec<Range<usize>>,
         anchor_ranges: Vec<Range<Anchor>>,
@@ -140,6 +142,7 @@ pub struct ThreadSearchBar {
     highlighted_editors: Vec<WeakEntity<Editor>>,
     thread: Entity<AcpThread>,
     entry_view_state: Entity<EntryViewState>,
+    draft_editor: Entity<Editor>,
     on_activate_match: Arc<dyn Fn(usize, &mut Window, &mut App)>,
     is_active: bool,
     _update_matches_task: Option<Task<()>>,
@@ -164,6 +167,7 @@ impl ThreadSearchBar {
     pub fn new(
         thread: Entity<AcpThread>,
         entry_view_state: Entity<EntryViewState>,
+        draft_editor: Entity<Editor>,
         on_activate_match: Arc<dyn Fn(usize, &mut Window, &mut App)>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -203,6 +207,15 @@ impl ThreadSearchBar {
                 }
             },
         );
+        let draft_subscription = cx.subscribe_in(
+            &draft_editor,
+            window,
+            |this, _editor, event: &EditorEvent, window, cx| {
+                if this.is_active && matches!(event, EditorEvent::BufferEdited) {
+                    this.schedule_update_matches(window, cx);
+                }
+            },
+        );
         cx.on_release(|this, cx| {
             this.clear_highlights_impl(cx);
         })
@@ -218,11 +231,12 @@ impl ThreadSearchBar {
             highlighted_editors: Vec::new(),
             thread,
             entry_view_state,
+            draft_editor,
             on_activate_match,
             is_active: false,
             _update_matches_task: None,
             _search_task: None,
-            _subscriptions: vec![editor_subscription, thread_subscription],
+            _subscriptions: vec![editor_subscription, thread_subscription, draft_subscription],
             patch_buffer_subscriptions: HashMap::default(),
         }
     }
@@ -357,7 +371,7 @@ impl ThreadSearchBar {
                     };
                     let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
                     targets.push(SearchTarget::Editor {
-                        entry_ix,
+                        entry_ix: Some(entry_ix),
                         editor,
                         snapshot,
                     });
@@ -388,7 +402,7 @@ impl ThreadSearchBar {
                                         let snapshot =
                                             editor.read(cx).buffer().read(cx).snapshot(cx);
                                         targets.push(SearchTarget::Editor {
-                                            entry_ix,
+                                            entry_ix: Some(entry_ix),
                                             editor,
                                             snapshot,
                                         });
@@ -400,6 +414,12 @@ impl ThreadSearchBar {
                 }
             }
         }
+        // The draft renders below every entry, so its hits come last.
+        targets.push(SearchTarget::Editor {
+            entry_ix: None,
+            editor: self.draft_editor.clone(),
+            snapshot: self.draft_editor.read(cx).buffer().read(cx).snapshot(cx),
+        });
 
         let mut previous_subscriptions = std::mem::take(&mut self.patch_buffer_subscriptions);
         for buffer in patch_buffers {
@@ -423,12 +443,6 @@ impl ThreadSearchBar {
                 });
         }
         drop(previous_subscriptions);
-
-        if targets.is_empty() {
-            self.clear_results(cx);
-            cx.notify();
-            return;
-        }
 
         self._search_task = Some(cx.spawn_in(window, async move |this, cx| {
             let scanned = cx
@@ -534,7 +548,7 @@ impl ThreadSearchBar {
                     let weak = markdown.downgrade();
                     for (ix, range) in ranges.iter().enumerate() {
                         self.matches.push(ThreadMatch {
-                            entry_ix,
+                            entry_ix: Some(entry_ix),
                             target: MatchTarget::Markdown {
                                 markdown: weak.clone(),
                                 markdown_match_ix: ix,
@@ -651,7 +665,7 @@ impl ThreadSearchBar {
         }
 
         self.active_match = Some(ix);
-        if scroll_to_match {
+        if scroll_to_match && let Some(entry_ix) = entry_ix {
             (self.on_activate_match)(entry_ix, window, cx);
         }
         cx.notify();
