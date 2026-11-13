@@ -2458,6 +2458,43 @@ async fn test_fold_at_current_indentation_level(cx: &mut TestAppContext) {
         "
         .unindent(),
     );
+
+    let state = &"
+        class Foo:
+            def a():
+                if x:
+                    y()
+                ˇz()
+
+            def b():
+                if w:
+                    v()
+        "
+    .unindent();
+    cx.set_state(&state);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(&state);
+    assert_eq!(
+        cx.display_text(),
+        "
+        class Foo:
+            def a():
+                if x:⋯
+                z()
+
+            def b():
+                if w:⋯
+        "
+        .unindent(),
+    )
 }
 
 #[gpui::test]

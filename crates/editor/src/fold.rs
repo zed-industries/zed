@@ -363,17 +363,24 @@ impl Editor {
             {
                 Some(crease) => {
                     let crease_range = crease.range();
-                    if row.0 >= crease_range.end.row {
-                        // The row we're looking for is the last row of the
-                        // crease or beyond, so let's jump to the end of the
-                        // crease range, while keeping the level.
+
+                    if row.0 > crease_range.end.row {
                         current_row = (current_row + 1).max(crease_range.end.row);
-                    } else {
-                        // Crease contains the row we're looking for, so let's
-                        // continue looking at these rows and increase the level
-                        // by 1.
-                        current_row = current_row + 1;
+                    } else if row.0 < crease_range.end.row {
+                        current_row += 1;
                         current_level += 1;
+                    } else {
+                        let row_indent = buffer_snapshot.line_indent_for_row(row).raw_len();
+                        let crease_indent = buffer_snapshot
+                            .line_indent_for_row(MultiBufferRow(crease_range.start.row))
+                            .raw_len();
+
+                        if row_indent > crease_indent {
+                            current_row += 1;
+                            current_level += 1;
+                        } else {
+                            current_row = (current_row + 1).max(crease_range.end.row);
+                        }
                     }
                 }
                 None => current_row += 1,
