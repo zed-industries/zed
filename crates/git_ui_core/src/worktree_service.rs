@@ -98,12 +98,11 @@ impl WorktreeCreateTarget {
 }
 
 /// Determines which "create new worktree" options to surface for the given
-/// repository state: prefer the remote default branch when it differs from the
-/// current branch, and otherwise offer the current branch.
+/// repository state: offer the remote default branch first, then the current
+/// branch. For multiple repositories or no default branch, offer only the current.
 pub fn worktree_create_targets(
     has_multiple_repositories: bool,
     default_branch: Option<RemoteBranchName>,
-    current_branch_name: Option<&str>,
 ) -> Vec<WorktreeCreateTarget> {
     if has_multiple_repositories {
         return vec![WorktreeCreateTarget::CurrentBranch];
@@ -111,13 +110,11 @@ pub fn worktree_create_targets(
     let Some(default_branch) = default_branch else {
         return vec![WorktreeCreateTarget::CurrentBranch];
     };
-    let is_different =
-        current_branch_name.is_none_or(|current| current != default_branch.branch_name);
-    let mut targets = vec![WorktreeCreateTarget::DefaultBranch(default_branch)];
-    if is_different {
-        targets.push(WorktreeCreateTarget::CurrentBranch);
-    }
-    targets
+    // Matching branch names do not imply matching local and remote commits.
+    vec![
+        WorktreeCreateTarget::DefaultBranch(default_branch),
+        WorktreeCreateTarget::CurrentBranch,
+    ]
 }
 
 /// Whether a worktree operation is creating a new one or switching to an
@@ -1835,28 +1832,22 @@ mod tests {
 
         // Multiple repositories: only the current branch, regardless of default.
         assert_eq!(
-            worktree_create_targets(true, Some(origin_main.clone()), Some("feature")),
+            worktree_create_targets(true, Some(origin_main.clone())),
             vec![WorktreeCreateTarget::CurrentBranch]
         );
 
-        // Default branch differs from current: offer both, default first.
+        // A remote default branch is always offered before the current branch.
         assert_eq!(
-            worktree_create_targets(false, Some(origin_main.clone()), Some("feature")),
+            worktree_create_targets(false, Some(origin_main.clone())),
             vec![
-                WorktreeCreateTarget::DefaultBranch(origin_main.clone()),
+                WorktreeCreateTarget::DefaultBranch(origin_main),
                 WorktreeCreateTarget::CurrentBranch,
             ]
         );
 
-        // Current branch matches the default: only the default branch entry.
-        assert_eq!(
-            worktree_create_targets(false, Some(origin_main.clone()), Some("main")),
-            vec![WorktreeCreateTarget::DefaultBranch(origin_main)]
-        );
-
         // No default branch resolved: fall back to the current branch.
         assert_eq!(
-            worktree_create_targets(false, None, Some("feature")),
+            worktree_create_targets(false, None),
             vec![WorktreeCreateTarget::CurrentBranch]
         );
     }
