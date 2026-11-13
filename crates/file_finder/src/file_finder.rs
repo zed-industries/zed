@@ -801,7 +801,6 @@ fn matching_history_items<'a>(
         );
     let mut matching_history_paths = HashMap::default();
     for (worktree, candidates) in history_items_by_worktrees {
-        let max_results = candidates.len() + 1;
         let worktree_root_name = worktree_name_by_id
             .as_ref()
             .and_then(|w| w.get(&worktree).cloned());
@@ -812,8 +811,7 @@ fn matching_history_items<'a>(
                 worktree.to_usize(),
                 worktree_root_name,
                 query.path_query(),
-                fuzzy_nucleo::Case::Ignore,
-                max_results,
+                Default::default(),
                 path_style,
             )
             .into_iter()
@@ -1358,9 +1356,11 @@ impl FileFinderDelegate {
                 candidate_sets.as_slice(),
                 query.path_query(),
                 &relative_to,
-                fuzzy_nucleo::Case::Ignore,
-                100,
-                &cancel_flag,
+                fuzzy_nucleo::PathMatchOptions {
+                    max_results: fuzzy_nucleo::MaxResults::limit::<100>(),
+                    cancel_flag: Some(&cancel_flag),
+                    ..Default::default()
+                },
                 cx.background_executor().clone(),
             )
             .await

@@ -8,7 +8,9 @@ use collections::HashMap;
 use editor::{Editor, MultiBufferOffset, ToPoint as _};
 use gpui::{App, AppContext as _, Context, Entity, Task, TaskExt, Window};
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
-use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
+use task::{
+    RevealTarget, SpawnInTerminal, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName,
+};
 use tree_sitter::{Query, StreamingIterator as _};
 use workspace::Workspace;
 
@@ -121,26 +123,30 @@ pub fn init(cx: &mut App) {
                         })
                     {
                         if action.reevaluate_context {
-                            let mut original_task = last_scheduled_task.original_task().clone();
-                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                original_task.allow_concurrent_runs = allow_concurrent_runs;
-                            }
-                            if let Some(use_new_terminal) = action.use_new_terminal {
-                                original_task.use_new_terminal = use_new_terminal;
-                            }
+                            let original_task = last_scheduled_task.original_task().clone();
+                            let action = action.clone();
                             let task_contexts = task_contexts(workspace, window, cx);
                             cx.spawn_in(window, async move |workspace, cx| {
                                 let task_contexts = task_contexts.await;
                                 let default_context = TaskContext::default();
                                 workspace
                                     .update_in(cx, |workspace, window, cx| {
+                                        if !workspace.can_schedule_tasks(cx) {
+                                            return;
+                                        }
                                         let task_context = task_contexts
                                             .context_for_task(&task_source_kind, &original_task)
                                             .unwrap_or(&default_context);
-                                        workspace.schedule_task(
-                                            task_source_kind,
-                                            &original_task,
+                                        let Some(mut resolved_task) = original_task.resolve_task(
+                                            &task_source_kind.to_id_base(),
                                             task_context,
+                                        ) else {
+                                            return;
+                                        };
+                                        apply_rerun_overrides(&action, &mut resolved_task.resolved);
+                                        workspace.schedule_resolved_task(
+                                            task_source_kind,
+                                            resolved_task,
                                             false,
                                             window,
                                             cx,
@@ -150,14 +156,7 @@ pub fn init(cx: &mut App) {
                             })
                             .detach();
                         } else {
-                            let resolved = &mut last_scheduled_task.resolved;
-
-                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                resolved.allow_concurrent_runs = allow_concurrent_runs;
-                            }
-                            if let Some(use_new_terminal) = action.use_new_terminal {
-                                resolved.use_new_terminal = use_new_terminal;
-                            }
+                            apply_rerun_overrides(action, &mut last_scheduled_task.resolved);
 
                             workspace.schedule_resolved_task(
                                 task_source_kind,
@@ -181,6 +180,15 @@ pub fn init(cx: &mut App) {
         },
     )
     .detach();
+}
+
+fn apply_rerun_overrides(action: &Rerun, resolved: &mut SpawnInTerminal) {
+    if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
+        resolved.allow_concurrent_runs = allow_concurrent_runs;
+    }
+    if let Some(use_new_terminal) = action.use_new_terminal {
+        resolved.use_new_terminal = use_new_terminal;
+    }
 }
 
 fn spawn_task_or_modal(
@@ -723,6 +731,53 @@ mod tests {
         open_external_file_in_single_file_worktree(&workspace, cx).await;
 
         assert_reevaluated_rerun_in_project_root(&workspace, cx);
+    }
+
+    #[gpui::test]
+    async fn test_reevaluated_rerun_overrides_keep_task_definition(cx: &mut TestAppContext) {
+        let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
+        assert_global_task_spawned_in_project_root(&project, &workspace, cx).await;
+        let spawned_task = last_scheduled_task(&workspace, cx);
+
+        cx.dispatch_action(Rerun {
+            reevaluate_context: true,
+            allow_concurrent_runs: Some(true),
+            use_new_terminal: Some(true),
+            ..Rerun::default()
+        });
+        cx.run_until_parked();
+        let overridden_task = last_scheduled_task(&workspace, cx);
+        assert_eq!(overridden_task.id, spawned_task.id);
+        assert_eq!(
+            overridden_task.original_task(),
+            spawned_task.original_task()
+        );
+        assert!(overridden_task.resolved.allow_concurrent_runs);
+        assert!(overridden_task.resolved.use_new_terminal);
+
+        task_inventory(&workspace, cx)
+            .update(cx, |inventory, _| {
+                inventory.update_file_based_tasks(
+                    TaskSettingsLocation::Global(Path::new(path!("/zed-config/tasks.json"))),
+                    Some(GLOBAL_TASKS_JSON),
+                )
+            })
+            .unwrap();
+        let task_after_save = last_scheduled_task(&workspace, cx);
+        assert_eq!(
+            task_after_save.id, spawned_task.id,
+            "Saving the file without changes should keep the rerun target"
+        );
+        assert!(task_after_save.resolved.use_new_terminal);
+
+        cx.dispatch_action(Rerun {
+            reevaluate_context: true,
+            ..Rerun::default()
+        });
+        cx.run_until_parked();
+        let rerun_without_overrides = last_scheduled_task(&workspace, cx);
+        assert!(!rerun_without_overrides.resolved.allow_concurrent_runs);
+        assert!(!rerun_without_overrides.resolved.use_new_terminal);
     }
 
     #[gpui::test]

@@ -1278,6 +1278,26 @@ struct GitPanelContextMenu {
     _subscription: Subscription,
 }
 
+/// The label for `repository`, disambiguated against every other repository in
+/// the project.
+fn repository_display_name(
+    repository: Option<&Entity<Repository>>,
+    project: &Entity<Project>,
+    cx: &App,
+) -> SharedString {
+    let Some(repository) = repository else {
+        return SharedString::default();
+    };
+    let id = repository.read(cx).id;
+    project
+        .read(cx)
+        .git_store()
+        .read(cx)
+        .display_names(cx)
+        .remove(&id)
+        .unwrap_or_else(|| repository.read(cx).display_name())
+}
+
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
@@ -7312,12 +7332,7 @@ impl GitPanel {
         let head_commit = active_repository.read(cx).head_commit.clone();
 
         let git_panel = cx.entity();
-        let display_name = SharedString::from(Arc::from(
-            active_repository
-                .read(cx)
-                .display_name()
-                .trim_end_matches("/"),
-        ));
+        let display_name = repository_display_name(Some(&active_repository), &self.project, cx);
         let editor_is_long = self.commit_editor.update(cx, |editor, cx| {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });

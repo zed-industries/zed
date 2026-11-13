@@ -2,9 +2,9 @@ use anyhow::{Context as _, Result};
 use fs::Fs;
 
 use gpui::{
-    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, WeakEntity, Window,
-    WindowId, actions, deferred, px,
+    AnyView, App, Context, Corners, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, WeakEntity,
+    Window, WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
@@ -28,8 +28,8 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    OpenOptions, OpenVisible, Panel, Workspace, WorkspaceId, client_side_decorations,
-    persistence::model::MultiWorkspaceState,
+    OpenOptions, OpenVisible, Panel, Workspace, WorkspaceId,
+    client_side_decorations_with_rounded_corners, persistence::model::MultiWorkspaceState,
 };
 
 actions!(
@@ -316,6 +316,7 @@ pub struct MultiWorkspace {
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     sidebar_overlay: Option<AnyView>,
+    pending_bindings_popup: Option<AnyView>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -377,6 +378,7 @@ impl MultiWorkspace {
             sidebar: None,
             sidebar_open: false,
             sidebar_overlay: None,
+            pending_bindings_popup: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
             _subscriptions: vec![release_subscription, settings_subscription],
@@ -405,6 +407,22 @@ impl MultiWorkspace {
     pub fn set_sidebar_overlay(&mut self, overlay: Option<AnyView>, cx: &mut Context<Self>) {
         self.sidebar_overlay = overlay;
         cx.notify();
+    }
+
+    /// Shows the which-key popup for the pending key sequence. It is drawn above the modal layer
+    /// instead of in it, so the chord can still complete in an open modal.
+    pub fn set_pending_bindings_popup(&mut self, popup: Option<AnyView>, cx: &mut Context<Self>) {
+        // Which-key clears the popup on every keystroke that leaves no pending input, and
+        // observers of this entity, like the agent panel's terminal notification, react to notify.
+        if popup.is_none() && self.pending_bindings_popup.is_none() {
+            return;
+        }
+        self.pending_bindings_popup = popup;
+        cx.notify();
+    }
+
+    pub fn pending_bindings_popup(&self) -> Option<&AnyView> {
+        self.pending_bindings_popup.as_ref()
     }
 
     pub fn sidebar_open(&self) -> bool {
@@ -544,11 +562,9 @@ impl MultiWorkspace {
             self.previous_focus_handle.clone()
         };
 
-        if let Some(previous_focus) = focus_handle {
-            previous_focus.focus(window, cx);
-        } else {
-            let pane = self.workspace().read(cx).active_pane().clone();
-            window.focus(&pane.read(cx).focus_handle(cx), cx);
+        match focus_handle.filter(|focus_handle| focus_handle.is_rendered(window)) {
+            Some(previous_focus) => previous_focus.focus(window, cx),
+            None => self.focus_active_workspace(window, cx),
         }
     }
 
@@ -2141,8 +2157,21 @@ impl Render for MultiWorkspace {
         let workspace = self.workspace().clone();
         let workspace_key_context = workspace.update(cx, |workspace, cx| workspace.key_context(cx));
         let root = workspace.update(cx, |workspace, cx| workspace.actions(h_flex(), window, cx));
+        let (has_title_bar, has_status_bar) = {
+            let workspace = workspace.read(cx);
+            (
+                workspace.titlebar_item().is_some(),
+                workspace.status_bar_visible(cx),
+            )
+        };
+        let rounded_corners = Corners {
+            top_left: has_title_bar || left_sidebar.is_some(),
+            top_right: has_title_bar || right_sidebar.is_some(),
+            bottom_right: has_status_bar || right_sidebar.is_some(),
+            bottom_left: has_status_bar || left_sidebar.is_some(),
+        };
 
-        client_side_decorations(
+        client_side_decorations_with_rounded_corners(
             root.key_context(workspace_key_context)
                 .relative()
                 .size_full()
@@ -2262,7 +2291,14 @@ impl Render for MultiWorkspace {
                         ),
                     ))
                     .with_priority(2)
-                })),
+                }))
+                // Above the sidebar overlay, since a chord can be pending inside it too.
+                .children(
+                    self.pending_bindings_popup
+                        .clone()
+                        .map(|popup| deferred(popup).with_priority(3)),
+                ),
+            rounded_corners,
             window,
             cx,
         )

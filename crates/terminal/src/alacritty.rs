@@ -31,7 +31,7 @@ use alacritty_terminal::{
 use anyhow::{Context as _, Result};
 use futures::channel::mpsc::UnboundedSender;
 use util::paths::PathStyle;
-use vte::ansi::Handler;
+use vte::ansi::{Handler, Processor, Rgb, StdSyncHandler};
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
@@ -242,6 +242,40 @@ pub(super) fn resize(term: &mut AlacrittyTerm, bounds: TerminalBounds) {
 
 pub(super) fn display_offset(term: &AlacrittyTerm) -> usize {
     term.grid().display_offset()
+}
+
+pub(super) fn history_size(term: &AlacrittyTerm) -> usize {
+    term.history_size()
+}
+
+pub(super) fn cursor_line(term: &AlacrittyTerm) -> i32 {
+    term.grid().cursor.point.line.0
+}
+
+pub(super) fn cursor_blinking(term: &AlacrittyTerm) -> bool {
+    term.cursor_style().blinking
+}
+
+/// A color set by the running program (OSC 4/10/11), if any.
+pub(super) fn palette_color(term: &AlacrittyTerm, index: usize) -> Option<Rgb> {
+    term.colors()[index]
+}
+
+pub(super) fn renderable_cells(term: &AlacrittyTerm) -> RenderableCells<'_> {
+    RenderableCells::new(term.renderable_content().display_iter)
+}
+
+/// Feeds output that doesn't come through the PTY event loop into a terminal.
+pub(super) struct OutputParser(Processor<StdSyncHandler>);
+
+impl OutputParser {
+    pub(super) fn new() -> Self {
+        Self(Processor::new())
+    }
+
+    pub(super) fn advance(&mut self, term: &mut AlacrittyTerm, bytes: &[u8]) {
+        self.0.advance(term, bytes);
+    }
 }
 
 pub(super) fn scroll_display(term: &mut AlacrittyTerm, scroll: Scroll) {

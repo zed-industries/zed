@@ -41,6 +41,9 @@
   (preproc_directive)
 ] @keyword.preproc @preproc
 
+(preproc_call
+  argument: (preproc_arg) @preproc)
+
 [
   "="
   "+="

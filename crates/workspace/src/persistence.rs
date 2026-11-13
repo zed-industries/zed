@@ -24,7 +24,7 @@ use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
+    trusted_worktrees::DbTrustedPaths,
 };
 
 use language::{LanguageName, Toolchain, ToolchainScope};
@@ -40,7 +40,7 @@ use sqlez::{
 };
 
 use ui::{App, SharedString, px};
-use util::{ResultExt, maybe, rel_path::RelPath};
+use util::{ResultExt, maybe, paths::PathStyle, rel_path::RelPath};
 use uuid::Uuid;
 
 use crate::{
@@ -530,6 +530,25 @@ impl sqlez::bindable::Bind for SerializedPixels {
     ) -> anyhow::Result<i32> {
         let this: i32 = u32::from(self.0) as _;
         this.bind(statement, start_index)
+    }
+}
+
+struct PathListColumns(SerializedPathList);
+
+impl StaticColumnCount for PathListColumns {
+    fn column_count() -> usize {
+        2
+    }
+}
+
+impl Column for PathListColumns {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let (paths, next_index) = String::column(statement, start_index)?;
+        let (order, next_index) = String::column(statement, next_index)?;
+        Ok((
+            PathListColumns(SerializedPathList { paths, order }),
+            next_index,
+        ))
     }
 }
 
@@ -1065,6 +1084,56 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE workspaces ADD COLUMN native_window_state BLOB;
         ),
+        sql!(
+            ALTER TABLE workspaces ADD COLUMN path_style TEXT;
+        ),
+        sql!(
+            CREATE TABLE restricted_worktrees (
+                absolute_path BLOB NOT NULL,
+                connection_kind TEXT,
+                host TEXT,
+                user TEXT,
+                port INTEGER
+            ) STRICT;
+            CREATE INDEX restricted_worktrees_absolute_path ON restricted_worktrees(absolute_path);
+        ),
+        sql!(
+            CREATE TABLE trusted_worktrees_2 (
+                trust_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                absolute_path TEXT,
+                connection_kind TEXT,
+                host TEXT,
+                user TEXT,
+                port INTEGER
+            ) STRICT;
+
+            INSERT INTO trusted_worktrees_2 (absolute_path)
+            SELECT absolute_path
+            FROM trusted_worktrees
+            WHERE user_name IS NULL AND host_name IS NULL;
+
+            INSERT INTO trusted_worktrees_2 (absolute_path, connection_kind, host, user, port)
+            SELECT DISTINCT
+                trusted.absolute_path,
+                connections.kind,
+                trusted.host_name,
+                connections.user,
+                connections.port
+            FROM trusted_worktrees AS trusted
+            JOIN remote_connections AS connections ON
+                (connections.kind = "ssh"
+                    AND connections.host = trusted.host_name
+                    AND connections.user IS trusted.user_name)
+                OR (connections.kind = "wsl"
+                    AND connections.distro = trusted.host_name
+                    AND connections.user IS trusted.user_name)
+                OR (connections.kind = "docker"
+                    AND connections.container_id = trusted.host_name
+                    AND connections.name IS trusted.user_name);
+
+            DROP TABLE trusted_worktrees;
+            ALTER TABLE trusted_worktrees_2 RENAME TO trusted_worktrees;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1086,6 +1155,10 @@ impl WorkspaceDb {
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
         self.workspace_for_roots_internal(worktree_roots, None)
+    }
+
+    pub fn has_workspace_for_roots<P: AsRef<Path>>(&self, worktree_roots: &[P]) -> bool {
+        self.workspace_for_roots(worktree_roots).is_some()
     }
 
     pub(crate) fn remote_workspace_for_roots<P: AsRef<Path>>(
@@ -1115,26 +1188,24 @@ impl WorkspaceDb {
         // and we've grabbed the most recent workspace
         let (
             workspace_id,
-            paths,
-            paths_order,
-            identity_paths,
-            identity_paths_order,
+            paths_list,
+            identity_paths_list,
             window_bounds,
             display,
             centered_layout,
             docks,
             window_id,
+            path_style,
         ): (
             WorkspaceId,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
+            PathListColumns,
+            Option<PathListColumns>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
             DockStructure,
             Option<u64>,
+            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1159,7 +1230,8 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
-                    window_id
+                    window_id,
+                    path_style
                 FROM workspaces
                 WHERE
                     paths IS ? AND
@@ -1176,16 +1248,8 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let paths = PathList::deserialize(&SerializedPathList {
-            paths,
-            order: paths_order,
-        });
-        let identity_paths = identity_paths.map(|paths| {
-            PathList::deserialize(&SerializedPathList {
-                paths,
-                order: identity_paths_order.unwrap_or_default(),
-            })
-        });
+        let paths = PathList::deserialize(&paths_list.0);
+        let identity_paths = identity_paths_list.map(|paths| PathList::deserialize(&paths.0));
 
         let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
             self.remote_connection(remote_connection_id)
@@ -1194,6 +1258,10 @@ impl WorkspaceDb {
         } else {
             None
         };
+
+        let path_style = path_style
+            .and_then(deserialize_path_style)
+            .unwrap_or(PathStyle::local());
 
         Some(SerializedWorkspace {
             id: workspace_id,
@@ -1217,6 +1285,7 @@ impl WorkspaceDb {
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
             recent_navigation_history: self.recent_navigation_history(workspace_id),
+            path_style,
         })
     }
 
@@ -1226,27 +1295,25 @@ impl WorkspaceDb {
         workspace_id: WorkspaceId,
     ) -> Option<SerializedWorkspace> {
         let (
-            paths,
-            paths_order,
-            identity_paths,
-            identity_paths_order,
+            paths_list,
+            identity_paths_list,
             window_bounds,
             display,
             centered_layout,
             docks,
             window_id,
             remote_connection_id,
+            path_style,
         ): (
-            String,
-            String,
-            Option<String>,
-            Option<String>,
+            PathListColumns,
+            Option<PathListColumns>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
             DockStructure,
             Option<u64>,
             Option<i32>,
+            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1271,7 +1338,8 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
                     window_id,
-                    remote_connection_id
+                    remote_connection_id,
+                    path_style
                 FROM workspaces
                 WHERE workspace_id = ?
             })
@@ -1280,16 +1348,8 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let paths = PathList::deserialize(&SerializedPathList {
-            paths,
-            order: paths_order,
-        });
-        let identity_paths = identity_paths.map(|paths| {
-            PathList::deserialize(&SerializedPathList {
-                paths,
-                order: identity_paths_order.unwrap_or_default(),
-            })
-        });
+        let paths = PathList::deserialize(&paths_list.0);
+        let identity_paths = identity_paths_list.map(|paths| PathList::deserialize(&paths.0));
 
         let remote_connection_id = remote_connection_id.map(|id| RemoteConnectionId(id as u64));
         let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
@@ -1299,6 +1359,10 @@ impl WorkspaceDb {
         } else {
             None
         };
+
+        let path_style = path_style
+            .and_then(deserialize_path_style)
+            .unwrap_or(PathStyle::local());
 
         Some(SerializedWorkspace {
             id: workspace_id,
@@ -1322,6 +1386,7 @@ impl WorkspaceDb {
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
             recent_navigation_history: self.recent_navigation_history(workspace_id),
+            path_style,
         })
     }
 
@@ -1497,6 +1562,7 @@ impl WorkspaceDb {
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
         let paths = workspace.paths.serialize();
         let identity_paths = workspace.identity_paths.map(|paths| paths.serialize());
+        let path_style = serialize_path_style(workspace.path_style);
         log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
@@ -1626,9 +1692,10 @@ impl WorkspaceDb {
                         bottom_dock_zoom,
                         session_id,
                         window_id,
+                        path_style,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         paths = ?2,
@@ -1647,6 +1714,7 @@ impl WorkspaceDb {
                         bottom_dock_zoom = ?15,
                         session_id = ?16,
                         window_id = ?17,
+                        path_style = ?18,
                         timestamp = CURRENT_TIMESTAMP
                 );
                 let mut prepared_query = conn.exec_bound(query)?;
@@ -1660,6 +1728,7 @@ impl WorkspaceDb {
                     workspace.docks,
                     workspace.session_id,
                     workspace.window_id,
+                    path_style
                 );
 
                 prepared_query(args).context("Updating workspace")?;
@@ -1832,6 +1901,7 @@ impl WorkspaceDb {
             Option<PathList>,
             Option<RemoteConnectionId>,
             Option<String>,
+            Option<PathStyle>,
             DateTime<Utc>,
         )>,
     > {
@@ -1841,25 +1911,20 @@ impl WorkspaceDb {
             .map(
                 |(
                     id,
-                    paths,
-                    order,
-                    identity_paths,
-                    identity_paths_order,
+                    paths_list,
+                    identity_paths_list,
                     remote_connection_id,
                     session_id,
+                    path_style,
                     timestamp,
                 )| {
                     (
                         id,
-                        PathList::deserialize(&SerializedPathList { paths, order }),
-                        identity_paths.map(|paths| {
-                            PathList::deserialize(&SerializedPathList {
-                                paths,
-                                order: identity_paths_order.unwrap_or_default(),
-                            })
-                        }),
+                        PathList::deserialize(&paths_list.0),
+                        identity_paths_list.map(|paths| PathList::deserialize(&paths.0)),
                         remote_connection_id.map(RemoteConnectionId),
                         session_id,
+                        path_style.and_then(deserialize_path_style),
                         parse_timestamp(&timestamp),
                     )
                 },
@@ -1868,8 +1933,8 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<String>, Option<String>, Option<u64>, Option<String>, String)>> {
-            SELECT workspace_id, paths, paths_order, identity_paths, identity_paths_order, remote_connection_id, session_id, timestamp
+        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, PathListColumns, Option<PathListColumns>, Option<u64>, Option<String>, Option<String>, String)>> {
+            SELECT workspace_id, paths, paths_order, identity_paths, identity_paths_order, remote_connection_id, session_id, path_style, timestamp
             FROM workspaces
             WHERE
                 paths IS NOT NULL OR
@@ -1893,10 +1958,10 @@ impl WorkspaceDb {
             .session_workspaces_query(session_id)?
             .into_iter()
             .map(
-                |(workspace_id, paths, order, window_id, remote_connection_id)| {
+                |(workspace_id, paths_list, window_id, remote_connection_id)| {
                     (
                         WorkspaceId(workspace_id),
-                        PathList::deserialize(&SerializedPathList { paths, order }),
+                        PathList::deserialize(&paths_list.0),
                         window_id,
                         remote_connection_id.map(RemoteConnectionId),
                     )
@@ -1906,7 +1971,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn session_workspaces_query(session_id: String) -> Result<Vec<(i64, String, String, Option<u64>, Option<u64>)>> {
+        fn session_workspaces_query(session_id: String) -> Result<Vec<(i64, PathListColumns, Option<u64>, Option<u64>)>> {
             SELECT workspace_id, paths, paths_order, window_id, remote_connection_id
             FROM workspaces
             WHERE session_id = ?1
@@ -2050,8 +2115,15 @@ impl WorkspaceDb {
     ) -> Result<Vec<RecentWorkspace>> {
         let remote_connections = self.remote_connections()?;
         let mut result = Vec::new();
-        for (id, paths, identity_paths_hint, remote_connection_id, _session_id, timestamp) in
-            self.recent_workspaces()?
+        for (
+            id,
+            paths,
+            identity_paths_hint,
+            remote_connection_id,
+            _session_id,
+            path_style,
+            timestamp,
+        ) in self.recent_workspaces()?
         {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
@@ -2060,6 +2132,7 @@ impl WorkspaceDb {
                         location: SerializedWorkspaceLocation::Remote(connection_options.clone()),
                         paths: paths.clone(),
                         identity_paths: identity_paths_hint.unwrap_or(paths),
+                        path_style,
                         timestamp,
                     });
                 }
@@ -2080,6 +2153,7 @@ impl WorkspaceDb {
                     location: SerializedWorkspaceLocation::Local,
                     paths,
                     identity_paths,
+                    path_style,
                     timestamp,
                 });
             }
@@ -2112,7 +2186,7 @@ impl WorkspaceDb {
         let remote_connections = self.remote_connections()?;
 
         let mut workspace_ids = Vec::new();
-        for (workspace_id, paths, identity_paths, remote_connection_id, _, _) in
+        for (workspace_id, paths, identity_paths, remote_connection_id, _, _, _) in
             self.recent_workspaces()?
         {
             let remote_connection = if let Some(id) = remote_connection_id {
@@ -2155,7 +2229,7 @@ impl WorkspaceDb {
         let remote_connections = self.remote_connections()?;
         let now = Utc::now();
         let mut workspaces_to_delete = Vec::new();
-        for (id, paths, _identity_paths_hint, remote_connection_id, session_id, timestamp) in
+        for (id, paths, _identity_paths_hint, remote_connection_id, session_id, _, timestamp) in
             self.recent_workspaces()?
         {
             if let Some(session_id) = session_id.as_deref() {
@@ -2574,7 +2648,7 @@ impl WorkspaceDb {
 
     pub(crate) async fn save_trusted_worktrees(
         &self,
-        trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
+        trusted_worktrees: DbTrustedPaths,
     ) -> anyhow::Result<()> {
         use anyhow::Context as _;
         use db::sqlez::statement::Statement;
@@ -2594,10 +2668,10 @@ impl WorkspaceDb {
             .collect::<Vec<_>>();
         let mut first_worktree;
         let mut last_worktree = 0_usize;
-        for (count, placeholders) in std::iter::once("(?, ?, ?)")
+        for (count, placeholders) in std::iter::once("(?, ?, ?, ?, ?)")
             .cycle()
             .take(trusted_worktrees.len())
-            .chunks(MAX_QUERY_PLACEHOLDERS / 3)
+            .chunks(MAX_QUERY_PLACEHOLDERS / 5)
             .into_iter()
             .map(|chunk| {
                 let mut count = 0;
@@ -2613,7 +2687,7 @@ impl WorkspaceDb {
             first_worktree = last_worktree;
             last_worktree = last_worktree + count;
             let query = format!(
-                r#"INSERT INTO trusted_worktrees(absolute_path, user_name, host_name)
+                r#"INSERT INTO trusted_worktrees(absolute_path, connection_kind, host, user, port)
 VALUES {placeholders};"#
             );
 
@@ -2627,16 +2701,8 @@ VALUES {placeholders};"#
                         &abs_path.as_ref().map(|abs_path| abs_path.as_ref()),
                         next_index,
                     )?;
-                    next_index = statement.bind(
-                        &host
-                            .as_ref()
-                            .and_then(|host| Some(host.user_name.as_ref()?.as_str())),
-                        next_index,
-                    )?;
-                    next_index = statement.bind(
-                        &host.as_ref().map(|host| host.host_identifier.as_str()),
-                        next_index,
-                    )?;
+                    next_index =
+                        statement.bind(&remote_identity_columns(host.as_ref()), next_index)?;
                 }
                 statement.exec()
             })
@@ -2650,19 +2716,9 @@ VALUES {placeholders};"#
         let trusted_worktrees = self.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
-            .filter_map(|(abs_path, user_name, host_name)| {
-                let db_host = match (user_name, host_name) {
-                    (None, Some(host_name)) => Some(RemoteHostLocation {
-                        user_name: None,
-                        host_identifier: SharedString::new(host_name),
-                    }),
-                    (Some(user_name), Some(host_name)) => Some(RemoteHostLocation {
-                        user_name: Some(SharedString::new(user_name)),
-                        host_identifier: SharedString::new(host_name),
-                    }),
-                    _ => None,
-                };
-                Some((db_host, abs_path?))
+            .filter_map(|(abs_path, kind, host, user, port)| {
+                let remote_host = remote_identity_from_columns(kind, host, user, port)?;
+                Some((remote_host, abs_path?))
             })
             .fold(HashMap::default(), |mut acc, (remote_host, abs_path)| {
                 acc.entry(remote_host)
@@ -2673,8 +2729,8 @@ VALUES {placeholders};"#
     }
 
     query! {
-        fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>)>> {
-            SELECT absolute_path, user_name, host_name
+        fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>, Option<String>, Option<u16>)>> {
+            SELECT absolute_path, connection_kind, host, user, port
             FROM trusted_worktrees
         }
     }
@@ -2684,6 +2740,146 @@ VALUES {placeholders};"#
             DELETE FROM trusted_worktrees
         }
     }
+
+    pub(crate) async fn has_undecided_restricted_worktrees(
+        &self,
+        abs_paths: Vec<Arc<Path>>,
+        connection_identity: Option<RemoteConnectionIdentity<'static>>,
+    ) -> Result<bool> {
+        self.write(move |connection| {
+            let columns = remote_identity_columns(connection_identity.as_ref());
+            for abs_path in &abs_paths {
+                if !is_worktree_kept_restricted(connection, abs_path, &columns)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+        .await
+    }
+
+    pub(crate) fn keep_worktrees_restricted(
+        &self,
+        abs_paths: Vec<Arc<Path>>,
+        connection_identity: Option<RemoteConnectionIdentity<'static>>,
+    ) {
+        // The write is queued by this call and runs even if the returned future is dropped.
+        drop(self.write(move |connection| {
+            connection
+                .with_savepoint("keep_worktrees_restricted", || {
+                    let columns = remote_identity_columns(connection_identity.as_ref());
+                    let mut insert =
+                        connection.exec_bound::<(&Path, RemoteIdentityColumns)>(sql!(
+                            INSERT INTO restricted_worktrees(absolute_path, connection_kind, host, user, port)
+                            VALUES (?, ?, ?, ?, ?)
+                        ))?;
+                    for abs_path in &abs_paths {
+                        if !is_worktree_kept_restricted(connection, abs_path, &columns)? {
+                            insert((abs_path.as_ref(), columns.clone()))?;
+                        }
+                    }
+                    Ok(())
+                })
+                .log_err();
+        }));
+    }
+
+    query! {
+        pub(crate) async fn clear_restricted_worktrees() -> Result<()> {
+            DELETE FROM restricted_worktrees
+        }
+    }
+}
+
+type RemoteIdentityColumns = (
+    Option<&'static str>,
+    Option<String>,
+    Option<String>,
+    Option<u16>,
+);
+
+fn remote_identity_columns(
+    connection_identity: Option<&RemoteConnectionIdentity<'_>>,
+) -> RemoteIdentityColumns {
+    match connection_identity {
+        None => (None, None, None, None),
+        Some(RemoteConnectionIdentity::Ssh {
+            host,
+            username,
+            port,
+        }) => (
+            Some(RemoteConnectionKind::Ssh.serialize()),
+            Some(host.to_string()),
+            username.as_ref().map(ToString::to_string),
+            *port,
+        ),
+        Some(RemoteConnectionIdentity::Wsl { distro_name, user }) => (
+            Some(RemoteConnectionKind::Wsl.serialize()),
+            Some(distro_name.to_string()),
+            user.as_ref().map(ToString::to_string),
+            None,
+        ),
+        Some(RemoteConnectionIdentity::Docker {
+            container_id,
+            remote_user,
+        }) => (
+            Some(RemoteConnectionKind::Docker.serialize()),
+            Some(container_id.to_string()),
+            Some(remote_user.to_string()),
+            None,
+        ),
+        #[cfg(any(test, feature = "test-support"))]
+        Some(RemoteConnectionIdentity::Mock { id }) => {
+            (Some("mock"), Some(id.to_string()), None, None)
+        }
+    }
+}
+
+fn remote_identity_from_columns(
+    kind: Option<String>,
+    host: Option<String>,
+    user: Option<String>,
+    port: Option<u16>,
+) -> Option<Option<RemoteConnectionIdentity<'static>>> {
+    let Some(kind) = kind else {
+        return Some(None);
+    };
+    #[cfg(any(test, feature = "test-support"))]
+    if kind == "mock" {
+        let id = host?.parse().ok()?;
+        return Some(Some(RemoteConnectionIdentity::Mock { id }));
+    }
+    let host = Cow::Owned(host?);
+    let user = user.map(Cow::Owned);
+    let identity = match RemoteConnectionKind::deserialize(&kind)? {
+        RemoteConnectionKind::Ssh => RemoteConnectionIdentity::Ssh {
+            host,
+            username: user,
+            port,
+        },
+        RemoteConnectionKind::Wsl => RemoteConnectionIdentity::Wsl {
+            distro_name: host,
+            user,
+        },
+        RemoteConnectionKind::Docker => RemoteConnectionIdentity::Docker {
+            container_id: host,
+            remote_user: user?,
+        },
+    };
+    Some(Some(identity))
+}
+
+fn is_worktree_kept_restricted(
+    connection: &Connection,
+    abs_path: &Path,
+    columns: &RemoteIdentityColumns,
+) -> Result<bool> {
+    let mut select = connection.select_row_bound::<(&Path, RemoteIdentityColumns), PathBuf>(sql!(
+        SELECT absolute_path
+        FROM restricted_worktrees
+        WHERE absolute_path = ? AND connection_kind IS ? AND host IS ? AND user IS ? AND port IS ?
+    ))?;
+    Ok(select((abs_path, columns.clone()))?.is_some())
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2692,6 +2888,7 @@ pub struct RecentWorkspace {
     pub location: SerializedWorkspaceLocation,
     pub paths: PathList,
     pub identity_paths: PathList,
+    pub path_style: Option<PathStyle>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -2702,6 +2899,16 @@ impl RecentWorkspace {
             SerializedWorkspaceLocation::Remote(options) => Some(options.clone()),
         };
         ProjectGroupKey::new(host, self.identity_paths.clone())
+    }
+
+    /// Local workspaces always use this machine's path style, so the persisted value is only
+    /// consulted for remote workspaces. Remote rows saved before `path_style` was persisted
+    /// have no value and fall back to the local style.
+    pub fn effective_path_style(&self) -> PathStyle {
+        match &self.location {
+            SerializedWorkspaceLocation::Local => PathStyle::local(),
+            SerializedWorkspaceLocation::Remote(_) => self.path_style.unwrap_or(PathStyle::local()),
+        }
     }
 }
 
@@ -2792,6 +2999,21 @@ pub fn delete_unloaded_items(
     })
 }
 
+fn serialize_path_style(path_style: PathStyle) -> String {
+    match path_style {
+        PathStyle::Windows => "windows".to_string(),
+        PathStyle::Unix => "unix".to_string(),
+    }
+}
+
+fn deserialize_path_style(path_style: String) -> Option<PathStyle> {
+    match path_style.as_str() {
+        "windows" => Some(PathStyle::Windows),
+        "unix" => Some(PathStyle::Unix),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2799,10 +3021,11 @@ mod tests {
     use crate::ProjectGroupKey;
     use crate::RemovalIntent;
     use crate::{
+        item::test::TestItem,
         multi_workspace::MultiWorkspace,
         persistence::{
             model::{
-                SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+                DockData, SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
                 SessionWorkspace,
             },
             read_multi_workspace_state,
@@ -2811,11 +3034,16 @@ mod tests {
     use gpui::TaskExt;
 
     use gpui::AppContext as _;
+    use language::Point;
     use pretty_assertions::assert_eq;
-    use project::Project;
+    use project::{
+        Project,
+        debugger::breakpoint_store::{self, BreakpointEditAction, BreakpointWithPosition},
+    };
     use remote::SshConnectionOptions;
     use serde_json::json;
-    use std::{thread, time::Duration};
+    use std::{cell::RefCell, rc::Rc, thread, time::Duration};
+    use util::path;
 
     /// Creates a unique directory in a FakeFs, returning the path.
     /// Uses a UUID suffix to avoid collisions with other tests sharing the global DB.
@@ -3003,6 +3231,7 @@ mod tests {
             window_id: None,
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3127,6 +3356,7 @@ mod tests {
             window_id: None,
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3164,6 +3394,7 @@ mod tests {
             window_id: None,
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         db.save_workspace(workspace_without_breakpoint.clone())
@@ -3227,6 +3458,276 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_restricted_worktrees_are_scoped_to_path_and_connection() {
+        let db = WorkspaceDb::open_test_db("test_restricted_worktrees").await;
+        let path = Path::new("/project");
+        let other_path = Path::new("/other");
+        let ssh =
+            |username: Option<&'static str>, port: Option<u16>| RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("host"),
+                username: username.map(Cow::Borrowed),
+                port,
+            };
+        let declined_connection = ssh(Some("user"), Some(2222));
+
+        db.keep_worktrees_restricted(
+            Vec::from([Arc::from(path), Arc::from(path), Arc::from(other_path)]),
+            Some(declined_connection.clone()),
+        );
+
+        for (paths, connection_identity, expected_undecided) in [
+            (
+                Vec::from([path, other_path]),
+                Some(declined_connection.clone()),
+                false,
+            ),
+            (
+                Vec::from([path, Path::new("/project/nested")]),
+                Some(declined_connection.clone()),
+                true,
+            ),
+            (Vec::from([path]), None, true),
+            (Vec::from([path]), Some(ssh(None, Some(2222))), true),
+            (Vec::from([path]), Some(ssh(Some("user"), Some(2223))), true),
+            (Vec::from([path]), Some(ssh(Some("user"), None)), true),
+            (
+                Vec::from([path]),
+                Some(RemoteConnectionIdentity::Wsl {
+                    distro_name: Cow::Borrowed("host"),
+                    user: Some(Cow::Borrowed("user")),
+                }),
+                true,
+            ),
+        ] {
+            assert_eq!(
+                db.has_undecided_restricted_worktrees(
+                    paths.iter().copied().map(Arc::from).collect::<Vec<_>>(),
+                    connection_identity.clone(),
+                )
+                .await
+                .unwrap(),
+                expected_undecided,
+                "{paths:?} on {connection_identity:?}"
+            );
+        }
+
+        db.keep_worktrees_restricted(Vec::from([Arc::from(Path::new("/late"))]), None);
+        db.keep_worktrees_restricted(Vec::from([Arc::from(Path::new("/late"))]), None);
+        assert_eq!(
+            db.select_row::<i64>(sql!(SELECT COUNT(*) FROM restricted_worktrees))
+                .unwrap()()
+            .unwrap(),
+            Some(3)
+        );
+
+        db.clear_restricted_worktrees().await.unwrap();
+        assert_eq!(
+            db.select_row::<i64>(sql!(SELECT COUNT(*) FROM restricted_worktrees))
+                .unwrap()()
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_trusted_worktrees_migration_splits_hosts_by_known_connections() {
+        let connection = Connection::open_memory(Some(
+            "test_trusted_worktrees_migration_splits_hosts_by_known_connections",
+        ));
+        let trusted_worktrees_migration = WorkspaceDb::MIGRATIONS
+            .iter()
+            .position(|migration| migration.contains("CREATE TABLE trusted_worktrees_2"))
+            .expect("trusted worktrees migration should exist");
+        let old_migrations = &WorkspaceDb::MIGRATIONS[..trusted_worktrees_migration];
+        connection
+            .migrate(WorkspaceDb::NAME, old_migrations, &mut |_, _, _| false)
+            .unwrap();
+        connection
+            .exec(
+                "
+                INSERT INTO remote_connections (kind, host, port, user, distro, name, container_id)
+                VALUES
+                    ('ssh', 'server', 2222, 'user', NULL, NULL, NULL),
+                    ('ssh', 'server', 2223, 'user', NULL, NULL, NULL),
+                    ('ssh', 'server', 2224, 'other', NULL, NULL, NULL),
+                    ('ssh', 'no-user', NULL, NULL, NULL, NULL, NULL),
+                    ('wsl', NULL, NULL, 'user', 'Ubuntu', NULL, NULL),
+                    ('docker', NULL, NULL, 'vscode', NULL, 'dev', 'container');
+                INSERT INTO trusted_worktrees (absolute_path, user_name, host_name)
+                VALUES
+                    ('/local', NULL, NULL),
+                    ('/ssh', 'user', 'server'),
+                    ('/ssh_no_user', NULL, 'no-user'),
+                    ('/wsl', 'user', 'Ubuntu'),
+                    ('/docker', 'dev', 'container'),
+                    ('/unknown_connection', 'user', 'forgotten'),
+                    ('/unknown_shape', 'user', NULL);",
+            )
+            .unwrap()()
+        .unwrap();
+
+        connection
+            .migrate(
+                WorkspaceDb::NAME,
+                WorkspaceDb::MIGRATIONS,
+                &mut |_, _, _| false,
+            )
+            .unwrap();
+
+        let migrated_rows = connection
+            .select::<(
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<u16>,
+            )>(
+                "SELECT absolute_path, connection_kind, host, user, port
+                FROM trusted_worktrees
+                ORDER BY absolute_path, port",
+            )
+            .unwrap()()
+        .unwrap();
+        let row = |path: &str, kind: Option<&str>, host: Option<&str>, user: Option<&str>, port| {
+            (
+                path.to_string(),
+                kind.map(String::from),
+                host.map(String::from),
+                user.map(String::from),
+                port,
+            )
+        };
+        assert_eq!(
+            migrated_rows,
+            Vec::from([
+                row(
+                    "/docker",
+                    Some("docker"),
+                    Some("container"),
+                    Some("vscode"),
+                    None
+                ),
+                row("/local", None, None, None, None),
+                row(
+                    "/ssh",
+                    Some("ssh"),
+                    Some("server"),
+                    Some("user"),
+                    Some(2222)
+                ),
+                row(
+                    "/ssh",
+                    Some("ssh"),
+                    Some("server"),
+                    Some("user"),
+                    Some(2223)
+                ),
+                row("/ssh_no_user", Some("ssh"), Some("no-user"), None, None),
+                row("/wsl", Some("wsl"), Some("Ubuntu"), Some("user"), None),
+            ])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_trusted_worktrees_round_trip_all_connection_kinds() {
+        let db = WorkspaceDb::open_test_db("test_trusted_worktrees_round_trip").await;
+        let connections = [
+            None,
+            Some(RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("server"),
+                username: Some(Cow::Borrowed("user")),
+                port: Some(2222),
+            }),
+            Some(RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("server"),
+                username: Some(Cow::Borrowed("user")),
+                port: Some(2223),
+            }),
+            Some(RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("server"),
+                username: None,
+                port: None,
+            }),
+            Some(RemoteConnectionIdentity::Wsl {
+                distro_name: Cow::Borrowed("server"),
+                user: Some(Cow::Borrowed("user")),
+            }),
+            Some(RemoteConnectionIdentity::Docker {
+                container_id: Cow::Borrowed("server"),
+                remote_user: Cow::Borrowed("user"),
+            }),
+            Some(RemoteConnectionIdentity::Mock { id: 7 }),
+        ];
+        let trusted_paths = connections
+            .into_iter()
+            .map(|connection_identity| {
+                (
+                    connection_identity,
+                    HashSet::from_iter([PathBuf::from("/project")]),
+                )
+            })
+            .collect::<DbTrustedPaths>();
+
+        db.save_trusted_worktrees(trusted_paths.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(db.fetch_trusted_worktrees().unwrap(), trusted_paths);
+    }
+
+    #[test]
+    fn test_restricted_worktree_lookup_waits_for_pending_saves() {
+        futures::executor::block_on(async {
+            let db = WorkspaceDb(
+                ThreadSafeConnection::builder::<WorkspaceDb>(
+                    "test_restricted_worktree_lookup",
+                    false,
+                )
+                .build()
+                .await
+                .unwrap(),
+            );
+            let path = Arc::<Path>::from(Path::new("/project"));
+            let (release_writer, writer_released) = std::sync::mpsc::channel::<()>();
+            drop(db.write(move |_| {
+                writer_released.recv().ok();
+            }));
+
+            db.keep_worktrees_restricted(Vec::from([path.clone()]), None);
+            let (has_undecided_worktrees, ()) = futures::join!(
+                db.has_undecided_restricted_worktrees(Vec::from([path]), None),
+                async {
+                    release_writer.send(()).unwrap();
+                }
+            );
+
+            assert_eq!(has_undecided_worktrees.unwrap(), false);
+        });
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_restricted_worktrees_keep_non_utf8_paths_distinct() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
+
+        let db = WorkspaceDb::open_test_db("test_restricted_worktrees_non_utf8").await;
+        let declined_path = Path::new(OsStr::from_bytes(b"/tmp/\xff/project"));
+        let other_path = Path::new(OsStr::from_bytes(b"/tmp/\xfe/project"));
+
+        db.keep_worktrees_restricted(Vec::from([Arc::from(declined_path)]), None);
+
+        for (path, expected_undecided) in [(declined_path, false), (other_path, true)] {
+            assert_eq!(
+                db.has_undecided_restricted_worktrees(Vec::from([Arc::from(path)]), None)
+                    .await
+                    .unwrap(),
+                expected_undecided,
+                "{path:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn test_native_window_state_round_trip() {
         zlog::init_test();
 
@@ -3255,6 +3756,7 @@ mod tests {
             window_id: None,
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         })
         .await;
         assert_eq!(db.native_window_state(id).unwrap(), Some((None, None)));
@@ -3337,6 +3839,7 @@ mod tests {
             window_id: None,
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -3355,6 +3858,7 @@ mod tests {
             window_id: None,
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3467,6 +3971,7 @@ mod tests {
             recent_navigation_history: (0..20)
                 .map(|index| PathBuf::from(format!("/tmp2/src/{index}.rs")))
                 .collect(),
+            path_style: non_local_path_style(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3483,6 +3988,142 @@ mod tests {
 
         assert!(db.delete_workspace_by_id(workspace.id).await.is_ok());
         assert!(db.recent_navigation_history(workspace.id).is_empty());
+    }
+
+    fn non_local_path_style() -> PathStyle {
+        match PathStyle::local() {
+            PathStyle::Unix => PathStyle::Windows,
+            PathStyle::Windows => PathStyle::Unix,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_path_style_round_trip(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_path_style_round_trip").await;
+
+        // The recent-workspaces list only includes local workspaces whose paths exist.
+        fs.insert_tree("/path-style/local", json!({})).await;
+        fs.insert_tree("/path-style/remote", json!({})).await;
+
+        let local_paths = [Path::new("/path-style/local")];
+        let remote_paths = [Path::new("/path-style/remote")];
+
+        let mut local_workspace = workspace_with(1, &local_paths, empty_pane_group(), None);
+        local_workspace.path_style = non_local_path_style();
+        db.save_workspace(local_workspace.clone()).await;
+
+        let remote_connection_id = db
+            .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "path-style-host".into(),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let mut remote_workspace = remote_workspace_with(2, "path-style-host", &remote_paths);
+        remote_workspace.path_style = non_local_path_style();
+        db.save_workspace(remote_workspace).await;
+
+        assert_eq!(
+            db.workspace_for_id(WorkspaceId(1)).unwrap().path_style,
+            local_workspace.path_style
+        );
+        assert_eq!(
+            db.workspace_for_roots(&local_paths).unwrap().path_style,
+            local_workspace.path_style
+        );
+        assert_eq!(
+            db.remote_workspace_for_roots(&remote_paths, remote_connection_id)
+                .unwrap()
+                .path_style,
+            non_local_path_style()
+        );
+
+        let recent_workspaces = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recent_local_workspace = recent_workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == WorkspaceId(1))
+            .expect("local workspace should be listed as a recent workspace");
+        assert_eq!(
+            recent_local_workspace.path_style,
+            Some(non_local_path_style())
+        );
+
+        let mut updated_workspace = local_workspace;
+        updated_workspace.path_style = PathStyle::local();
+        db.save_workspace(updated_workspace).await;
+        assert_eq!(
+            db.workspace_for_id(WorkspaceId(1)).unwrap().path_style,
+            PathStyle::local()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_missing_or_unknown_path_style(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_missing_or_unknown_path_style").await;
+        let workspace_id = WorkspaceId(1);
+
+        // The recent-workspaces list only includes local workspaces whose paths exist.
+        fs.insert_tree("/legacy/path-style", json!({})).await;
+
+        let mut workspace = workspace_with(
+            1,
+            &[Path::new("/legacy/path-style")],
+            empty_pane_group(),
+            None,
+        );
+        workspace.path_style = non_local_path_style();
+        db.save_workspace(workspace).await;
+
+        // The NULL case
+        db.write(move |conn| {
+            conn.exec_bound(sql!(
+                UPDATE workspaces SET path_style = NULL WHERE workspace_id = ?1
+            ))?(workspace_id)
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.workspace_for_id(workspace_id).unwrap().path_style,
+            PathStyle::local()
+        );
+        assert_eq!(
+            recent_workspace_path_style(&db, fs.as_ref(), workspace_id).await,
+            None
+        );
+
+        // The invalid case
+        db.write(move |conn| {
+            conn.exec_bound(sql!(
+                UPDATE workspaces SET path_style = ?2 WHERE workspace_id = ?1
+            ))?((workspace_id, "plan9"))
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            db.workspace_for_id(workspace_id).unwrap().path_style,
+            PathStyle::local()
+        );
+        assert_eq!(
+            recent_workspace_path_style(&db, fs.as_ref(), workspace_id).await,
+            None
+        );
+    }
+
+    async fn recent_workspace_path_style(
+        db: &WorkspaceDb,
+        fs: &dyn Fs,
+        workspace_id: WorkspaceId,
+    ) -> Option<PathStyle> {
+        db.recent_project_workspaces(fs)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|workspace| workspace.workspace_id == workspace_id)
+            .expect("workspace should be listed as a recent workspace")
+            .path_style
     }
 
     #[gpui::test]
@@ -3507,6 +4148,7 @@ mod tests {
             window_id: Some(1),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -3525,6 +4167,7 @@ mod tests {
             window_id: Some(2),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3570,6 +4213,7 @@ mod tests {
             window_id: Some(3),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -3611,6 +4255,7 @@ mod tests {
             window_id: Some(10),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -3629,6 +4274,7 @@ mod tests {
             window_id: Some(20),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         let workspace_3 = SerializedWorkspace {
@@ -3647,6 +4293,7 @@ mod tests {
             window_id: Some(30),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         let workspace_4 = SerializedWorkspace {
@@ -3665,6 +4312,7 @@ mod tests {
             window_id: None,
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         let connection_id = db
@@ -3694,6 +4342,7 @@ mod tests {
             window_id: Some(50),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         let workspace_6 = SerializedWorkspace {
@@ -3712,6 +4361,7 @@ mod tests {
             window_id: Some(60),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3772,6 +4422,7 @@ mod tests {
             window_id: None,
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         }
     }
 
@@ -3816,6 +4467,7 @@ mod tests {
             window_id: Some(window_id),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         })
         .collect::<Vec<_>>();
 
@@ -3916,6 +4568,7 @@ mod tests {
             window_id: Some(id),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         }
     }
 
@@ -3941,6 +4594,7 @@ mod tests {
             window_id: Some(id),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         }
     }
 
@@ -3958,6 +4612,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             paths,
             identity_paths,
+            path_style: Some(PathStyle::local()),
             timestamp,
         }
     }
@@ -4200,6 +4855,7 @@ mod tests {
             window_id: Some(window_id),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         })
         .collect::<Vec<_>>();
 
@@ -4564,6 +5220,7 @@ mod tests {
             window_id: None,
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         };
 
         // Save the workspace (this creates the record with empty paths)
@@ -4643,6 +5300,7 @@ mod tests {
                 window_id: Some(*window_id),
                 user_toolchains: Default::default(),
                 recent_navigation_history: Default::default(),
+                path_style: PathStyle::local(),
             })
             .await;
         }
@@ -4829,6 +5487,374 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_restoring_workspace_saves_what_it_restores_and_what_was_added(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+        cx.update(crate::register_serializable_item::<TestItem>);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({ "saved.rs": "one\ntwo\n", "added.rs": "one\ntwo\n" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
+
+        let added_item = cx.new(TestItem::new);
+        let added_item_id = added_item.entity_id().as_u64();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(added_item.clone()), None, true, window, cx);
+        });
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/added.rs"), cx)
+            })
+            .await
+            .unwrap();
+        project.update(cx, |project, cx| {
+            let position = buffer.read(cx).anchor_before(Point::new(1, 0));
+            project.bookmark_store().update(cx, |bookmark_store, cx| {
+                bookmark_store.toggle_bookmark(buffer.clone(), position, String::new(), cx);
+            });
+            project
+                .breakpoint_store()
+                .update(cx, |breakpoint_store, cx| {
+                    breakpoint_store.toggle_breakpoint(
+                        buffer.clone(),
+                        BreakpointWithPosition {
+                            position,
+                            bp: breakpoint_store::Breakpoint::new_standard(),
+                        },
+                        BreakpointEditAction::Toggle,
+                        cx,
+                    );
+                });
+        });
+
+        let saved_path = Arc::<Path>::from(Path::new(path!("/project/saved.rs")));
+        let added_path = Arc::<Path>::from(Path::new(path!("/project/added.rs")));
+        let bookmark = |row| SerializedBookmark {
+            row,
+            label: String::new(),
+        };
+        let breakpoint = |row, path: &Arc<Path>| SourceBreakpoint {
+            row,
+            path: path.clone(),
+            message: None,
+            condition: None,
+            hit_condition: None,
+            state: BreakpointState::Enabled,
+        };
+        let saved_docks = DockStructure {
+            left: DockData {
+                visible: true,
+                active_panel: Some("SavedPanel".to_owned()),
+                zoom: false,
+            },
+            ..Default::default()
+        };
+        let restoring_from = SerializedWorkspace {
+            id: workspace_id,
+            paths: PathList::new(&[path!("/project")]),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: SerializedPaneGroup::Pane(SerializedPane::new(
+                vec![
+                    SerializedItem::new("Terminal", added_item_id, true, false),
+                    SerializedItem::new("TestItem", added_item_id + 1, false, false),
+                ],
+                true,
+                1,
+            )),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: saved_docks.clone(),
+            centered_layout: false,
+            bookmarks: BTreeMap::from_iter([(saved_path.clone(), vec![bookmark(0)])]),
+            breakpoints: BTreeMap::from_iter([(
+                saved_path.clone(),
+                vec![breakpoint(0, &saved_path)],
+            )]),
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
+        };
+        workspace.update(cx, |workspace, _| {
+            workspace.restoring_workspace.set(true);
+            workspace.restoring_from.replace(Some(restoring_from));
+        });
+        multi_workspace
+            .update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .await;
+
+        let both_breakpoints = BTreeMap::from_iter([
+            (added_path.clone(), vec![breakpoint(1, &added_path)]),
+            (saved_path.clone(), vec![breakpoint(0, &saved_path)]),
+        ]);
+        let saved = db.workspace_for_id(workspace_id).unwrap();
+        assert_eq!(
+            (
+                saved.center_group,
+                saved.docks,
+                saved.bookmarks,
+                saved.breakpoints
+            ),
+            (
+                SerializedPaneGroup::Group {
+                    axis: SerializedAxis(Axis::Horizontal),
+                    children: vec![
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![SerializedItem::new(
+                                "TestItem",
+                                added_item_id + 1,
+                                false,
+                                false
+                            )],
+                            false,
+                            0,
+                        )),
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![SerializedItem::new("TestItem", added_item_id, true, false)],
+                            true,
+                            0,
+                        )),
+                    ],
+                    flexes: None,
+                },
+                saved_docks,
+                BTreeMap::from_iter([
+                    (added_path.clone(), vec![bookmark(1)]),
+                    (saved_path.clone(), vec![bookmark(0)]),
+                ]),
+                both_breakpoints.clone(),
+            )
+        );
+
+        workspace.update(cx, |workspace, _| workspace.restoring_workspace.set(false));
+        multi_workspace
+            .update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .await;
+
+        let saved = db.workspace_for_id(workspace_id).unwrap();
+        assert_eq!(
+            (
+                saved.center_group,
+                saved.docks,
+                saved.bookmarks,
+                saved.breakpoints
+            ),
+            (
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![SerializedItem::new("TestItem", added_item_id, true, false)],
+                    true,
+                    0,
+                )),
+                DockStructure::default(),
+                BTreeMap::from_iter([(added_path.clone(), vec![bookmark(1)])]),
+                both_breakpoints,
+            )
+        );
+    }
+
+    #[test]
+    fn test_saved_layout_is_unchanged_when_nothing_was_opened_while_restoring() {
+        let saved = SerializedPaneGroup::Pane(SerializedPane::new(
+            vec![SerializedItem::new("Terminal", 5, true, false)],
+            true,
+            1,
+        ));
+        let nothing_opened = SerializedPaneGroup::Pane(SerializedPane::new(Vec::new(), true, 0));
+
+        assert_eq!(
+            saved
+                .clone()
+                .with_panes_opened_while_restoring(nothing_opened),
+            saved
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restoring_workspace_keeps_its_saved_breakpoints_until_they_are_loaded(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "saved.rs": "one\ntwo\n" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
+
+        let saved_path = Arc::<Path>::from(Path::new(path!("/project/saved.rs")));
+        let saved_breakpoints = BTreeMap::from_iter([(
+            saved_path.clone(),
+            vec![SourceBreakpoint {
+                row: 1,
+                path: saved_path.clone(),
+                message: None,
+                condition: None,
+                hit_condition: None,
+                state: BreakpointState::Enabled,
+            }],
+        )]);
+        let restoring_from = SerializedWorkspace {
+            id: workspace_id,
+            paths: PathList::new(&[path!("/project")]),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            bookmarks: Default::default(),
+            breakpoints: saved_breakpoints.clone(),
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
+        };
+
+        let breakpoints_when_the_tabs_were_in_place = Rc::new(RefCell::new(None));
+        let _tabs_in_place = cx.update(|_, cx| {
+            cx.observe(&workspace, {
+                let breakpoints_when_the_tabs_were_in_place =
+                    breakpoints_when_the_tabs_were_in_place.clone();
+                move |workspace, cx| {
+                    let workspace = workspace.read(cx);
+                    if !workspace.is_restoring()
+                        && breakpoints_when_the_tabs_were_in_place.borrow().is_none()
+                    {
+                        let restoring_from = workspace.restoring_from.borrow();
+                        breakpoints_when_the_tabs_were_in_place.replace(Some(
+                            restoring_from
+                                .as_ref()
+                                .map(|restoring_from| restoring_from.breakpoints.clone()),
+                        ));
+                    }
+                }
+            })
+        });
+        workspace.update(cx, |workspace, _| {
+            workspace.restoring_workspace.set(true);
+            workspace
+                .restoring_from
+                .replace(Some(restoring_from.clone()));
+        });
+        workspace
+            .update_in(cx, |_, window, cx| {
+                crate::Workspace::load_workspace(restoring_from, Vec::new(), window, cx)
+            })
+            .await
+            .unwrap();
+
+        let loaded_breakpoints = project.read_with(cx, |project, cx| {
+            project
+                .breakpoint_store()
+                .read(cx)
+                .all_source_breakpoints(cx)
+        });
+        let still_restoring_from = workspace.read_with(cx, |workspace, _| {
+            workspace.restoring_from.borrow().is_some()
+        });
+        assert_eq!(
+            (
+                breakpoints_when_the_tabs_were_in_place.take(),
+                loaded_breakpoints,
+                still_restoring_from,
+            ),
+            (
+                Some(Some(saved_breakpoints.clone())),
+                saved_breakpoints,
+                false
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_workspace_whose_restore_is_cancelled_is_no_longer_restoring(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        workspace.update(cx, |workspace, _| {
+            workspace.set_database_id(workspace_id);
+            workspace.keeps_saved_state_while_restoring = true;
+        });
+
+        let restoring_from = SerializedWorkspace {
+            id: workspace_id,
+            paths: PathList::default(),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
+        };
+        let restoring_state = |cx: &mut gpui::VisualTestContext| {
+            workspace.read_with(cx, |workspace, _| {
+                (
+                    workspace.is_restoring(),
+                    workspace.restoring_from.borrow().is_some(),
+                )
+            })
+        };
+        let restore = workspace.update_in(cx, |workspace, window, cx| {
+            crate::open_items(workspace, Some(restoring_from), Vec::new(), window, cx)
+        });
+        let while_restoring = restoring_state(cx);
+        drop(restore);
+        cx.run_until_parked();
+
+        assert_eq!(
+            (while_restoring, restoring_state(cx)),
+            ((true, true), (false, false))
+        );
+    }
+
+    #[gpui::test]
     async fn test_pending_serialization_flushed_on_shutdown(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
@@ -4982,6 +6008,7 @@ mod tests {
             window_id: Some(99),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         })
         .await;
 
@@ -5080,6 +6107,7 @@ mod tests {
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         })
         .await;
 
@@ -5099,6 +6127,7 @@ mod tests {
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         })
         .await;
 
@@ -5180,6 +6209,7 @@ mod tests {
             window_id: Some(88),
             user_toolchains: Default::default(),
             recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
         })
         .await;
         cx.run_until_parked();

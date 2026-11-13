@@ -425,6 +425,7 @@ impl Render for SystemWindowTabs {
         }
 
         h_flex()
+            .debug_selector(|| "system-window-tabs".into())
             .w_full()
             .h(Tab::container_height(cx))
             .bg(inactive_background_color)
