@@ -7,10 +7,10 @@ use crate::{
 };
 use gpui::{App, Bounds, Context, Pixels, Window};
 use language::Point;
-use multi_buffer::Anchor;
+use multi_buffer::{Anchor, ToPoint as _};
 use settings::Settings;
 use std::cmp;
-use text::Bias;
+use text::{Bias, ToPoint as _};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
@@ -332,23 +332,33 @@ impl Editor {
             return 0;
         }
 
-        let Some(buffer_snapshot) = display_map.buffer_snapshot().as_singleton() else {
+        let multibuffer = display_map.buffer_snapshot();
+        let Some(buffer_snapshot) = multibuffer.as_singleton() else {
             return 0;
         };
 
-        let point = target_point.to_point(display_map);
+        // Expanded deleted hunks add coordinates that do not exist in the working buffer.
+        let target_anchor = multibuffer.anchor_before(target_point.to_point(display_map));
+        let Some((buffer_anchor, _)) = multibuffer.anchor_to_buffer_anchor(target_anchor) else {
+            return 0;
+        };
+        let point = buffer_anchor.to_point(buffer_snapshot);
         let mut item_ranges = buffer_snapshot
             .outline_ranges_containing(point..point)
+            .filter_map(|range| {
+                multibuffer.buffer_anchor_range_to_anchor_range(
+                    buffer_snapshot.anchor_before(range.start)
+                        ..buffer_snapshot.anchor_after(range.end),
+                )
+            })
             .collect::<Vec<_>>();
-        item_ranges.sort_by_key(|item_range| item_range.start);
+        item_ranges.sort_by_key(|item_range| item_range.start.to_point(multibuffer));
 
         let mut previous_sticky_row = None;
         let mut num_visible_sticky_headers = 0;
 
         for item_range in item_ranges {
-            let sticky_row = display_map
-                .point_to_display_point(item_range.start, Bias::Left)
-                .row();
+            let sticky_row = item_range.start.to_display_point(display_map).row();
             if sticky_row >= target_point.row() {
                 break;
             }
@@ -356,9 +366,7 @@ impl Editor {
                 continue;
             }
 
-            let end_row = display_map
-                .point_to_display_point(item_range.end, Bias::Left)
-                .row();
+            let end_row = item_range.end.to_display_point(display_map).row();
             if end_row <= target_point.row() {
                 continue;
             }

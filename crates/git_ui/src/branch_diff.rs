@@ -58,6 +58,13 @@ struct BranchDiffAddon {
 }
 
 impl Addon for BranchDiffAddon {
+    fn git_diff_base_for_open_excerpts(
+        &self,
+        _: &App,
+    ) -> Option<Entity<diff_buffer_list::DiffBufferList>> {
+        Some(self.branch_diff.clone())
+    }
+
     fn to_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -907,8 +914,8 @@ mod tests {
     use collections::HashMap;
     use editor::test::editor_test_context::assert_state_with_diff;
     use git::status::{FileStatus, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
-    use gpui::TestAppContext;
-    use project::FakeFs;
+    use gpui::{TestAppContext, VisualTestContext};
+    use project::{FakeFs, project_settings::ProjectSettings};
     use serde_json::json;
     use settings::{DiffViewStyle, SettingsStore};
     use std::path::Path;
@@ -1187,6 +1194,702 @@ mod tests {
                 )
             ])
         );
+    }
+
+    const BRANCH_HEAD: &str = "one\ncommitted\nlast";
+    const BRANCH_BASE: &str = "one\nbase\nlast";
+
+    struct BranchComparisonFixture {
+        fs: Arc<FakeFs>,
+        project: Entity<Project>,
+        workspace: Entity<Workspace>,
+        branch: Entity<BranchDiff>,
+        file_editor: Entity<Editor>,
+        source_editor: Entity<Editor>,
+    }
+
+    async fn branch_comparison_fixture<'a>(
+        cx: &'a mut TestAppContext,
+        style: DiffViewStyle,
+        working: &str,
+    ) -> (BranchComparisonFixture, &'a mut VisualTestContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(style);
+                    settings.git.get_or_insert_default().diff_base =
+                        Some(settings::GitDiffBaseSetting::DefaultBranch);
+                });
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({".git": {}, "a.txt": working}))
+            .await;
+        let dot_git = Path::new(path!("/project/.git"));
+        fs.set_head_and_index_for_repo(dot_git, &[("a.txt", BRANCH_HEAD.into())]);
+        fs.set_merge_base_content_for_repo(dot_git, &[("a.txt", BRANCH_BASE.into())]);
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let file_editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.txt")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let repository = project
+            .read_with(cx, |project, cx| project.active_repository(cx))
+            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            BranchDiff::deploy_branch_diff_with_base_ref(
+                workspace,
+                project.clone(),
+                repository,
+                "review-base".into(),
+                None,
+                None,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let branch = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_item_as::<BranchDiff>(cx)
+            })
+            .unwrap();
+        let source_editor = branch.read_with(cx, |branch, cx| {
+            branch.editor(cx).read(cx).rhs_editor().clone()
+        });
+        cx.update(|window, cx| {
+            source_editor.update(cx, |editor, cx| {
+                editor.change_selections(
+                    editor::SelectionEffects::no_scroll(),
+                    window,
+                    cx,
+                    |selections| {
+                        selections
+                            .select_ranges([language::Point::zero()..language::Point::zero()]);
+                    },
+                );
+                editor.focus_handle(cx).focus(window, cx);
+            });
+        });
+        (
+            BranchComparisonFixture {
+                fs,
+                project,
+                workspace,
+                branch,
+                file_editor,
+                source_editor,
+            },
+            cx,
+        )
+    }
+
+    fn editor_diff_base_text(editor: &Editor, cx: &App) -> Option<String> {
+        let multibuffer = editor.buffer().read(cx);
+        let buffer = multibuffer.as_singleton()?;
+        let diff = multibuffer.diff_for(buffer.read(cx).remote_id())?;
+        diff.read(cx).snapshot(cx).base_text_string()
+    }
+
+    #[gpui::test]
+    async fn test_open_branch_excerpt_keeps_comparison(cx: &mut TestAppContext) {
+        let (fixture, cx) =
+            branch_comparison_fixture(cx, DiffViewStyle::Unified, BRANCH_HEAD).await;
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        let opened = fixture
+            .workspace
+            .read_with(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .unwrap();
+        assert_eq!(opened, fixture.file_editor);
+        opened.read_with(cx, |editor, cx| {
+            assert!(!editor.read_only(cx));
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_BASE)
+            );
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            assert_eq!(buffer.read(cx).text(), BRANCH_HEAD);
+            assert!(project::File::from_dyn(buffer.read(cx).file()).is_some());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_branch_excerpt_from_split_keeps_comparison(cx: &mut TestAppContext) {
+        let (fixture, cx) = branch_comparison_fixture(cx, DiffViewStyle::Split, BRANCH_HEAD).await;
+        let source = fixture.branch.read_with(cx, |branch, cx| {
+            branch.editor(cx).read(cx).lhs_editor().unwrap().clone()
+        });
+        cx.update(|window, cx| source.read(cx).focus_handle(cx).focus(window, cx));
+        cx.dispatch_action(editor::actions::OpenExcerptsSplit);
+        cx.run_until_parked();
+        let opened = fixture
+            .workspace
+            .read_with(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .unwrap();
+        opened.read_with(cx, |editor, cx| {
+            assert!(!editor.read_only(cx));
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_BASE)
+            );
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            let working_buffer = fixture
+                .file_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+            assert_eq!(buffer, working_buffer);
+            assert_eq!(buffer.read(cx).text(), BRANCH_HEAD);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_historical_branch_excerpt_opens_worktree(cx: &mut TestAppContext) {
+        let working = "local prefix\none\nlocal edit\nlast";
+        let (fixture, cx) = branch_comparison_fixture(cx, DiffViewStyle::Unified, working).await;
+        let working_buffer = fixture.file_editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).as_singleton().unwrap()
+        });
+        let git_store = fixture
+            .project
+            .read_with(cx, |project, _| project.git_store().clone());
+        let (_, index) = git_store
+            .update(cx, |store, cx| {
+                store.open_staged_diff(working_buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        let split_editor = fixture.branch.read_with(cx, |branch, cx| branch.editor(cx));
+        let path = fixture.source_editor.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .buffers_with_paths()
+                .next()
+                .unwrap()
+                .1
+                .clone()
+        });
+        split_editor.update(cx, |editor, cx| {
+            editor.remove_excerpts_for_path(path.clone(), cx)
+        });
+        cx.run_until_parked();
+        let snapshot = index.read_with(cx, |buffer, _| buffer.snapshot());
+        let diff = cx.new(|cx| buffer_diff::BufferDiff::new(&snapshot, None, None, cx));
+        diff.update(cx, |diff, cx| {
+            diff.set_base_text(Some(BRANCH_BASE.into()), snapshot.text, cx)
+        })
+        .await;
+        split_editor.update(cx, |editor, cx| {
+            let end = index.read(cx).max_point();
+            editor.update_excerpts_for_path(
+                path,
+                index.clone(),
+                vec![language::Point::zero()..end],
+                3,
+                diff,
+                cx,
+            );
+            editor
+                .rhs_editor()
+                .update(cx, |editor, _| editor.set_read_only(true));
+        });
+        fixture
+            .branch
+            .update(cx, |branch, cx| branch.diff.update(cx, |_, cx| cx.notify()));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            fixture.source_editor.update(cx, |editor, cx| {
+                editor.change_selections(
+                    editor::SelectionEffects::no_scroll(),
+                    window,
+                    cx,
+                    |selections| {
+                        selections
+                            .select_ranges([language::Point::zero()..language::Point::zero()]);
+                    },
+                );
+                editor.focus_handle(cx).focus(window, cx);
+            });
+        });
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        let opened = fixture
+            .workspace
+            .read_with(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .unwrap();
+        opened.read_with(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            assert_eq!(buffer, working_buffer);
+            assert_ne!(buffer, index);
+            assert!(!editor.read_only(cx));
+            assert_eq!(buffer.read(cx).text(), working);
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_BASE)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_branch_comparison_toggle_refreshes_gutters(cx: &mut TestAppContext) {
+        let (fixture, cx) =
+            branch_comparison_fixture(cx, DiffViewStyle::Unified, BRANCH_HEAD).await;
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        let editor = &fixture.file_editor;
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor
+                    .display_snapshot(cx)
+                    .buffer_snapshot()
+                    .diff_hunks()
+                    .count(),
+                1
+            );
+        });
+        let observed_base = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let _subscription = cx.update(|_, cx| {
+            let buffer = editor.read(cx).buffer().clone();
+            cx.observe(&buffer, {
+                let editor = editor.clone();
+                let observed_base = observed_base.clone();
+                move |_, cx| {
+                    *observed_base.borrow_mut() = editor_diff_base_text(editor.read(cx), cx);
+                }
+            })
+        });
+        editor.update(cx, |editor, cx| {
+            editor.set_branch_comparison_enabled(false, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(observed_base.borrow().as_deref(), Some(BRANCH_HEAD));
+        editor.update(cx, |editor, cx| {
+            assert!(editor.git_diff_base_name(cx).is_none());
+            assert_eq!(
+                editor.git_diff_comparison_branch_name(cx).as_deref(),
+                Some("review-base")
+            );
+            assert_eq!(
+                editor
+                    .display_snapshot(cx)
+                    .buffer_snapshot()
+                    .diff_hunks()
+                    .count(),
+                0
+            );
+        });
+        editor.update(cx, |editor, cx| {
+            editor.set_branch_comparison_enabled(true, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(observed_base.borrow().as_deref(), Some(BRANCH_BASE));
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+            assert_eq!(
+                editor
+                    .display_snapshot(cx)
+                    .buffer_snapshot()
+                    .diff_hunks()
+                    .count(),
+                1
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_branch_comparison_ignores_outdated_diff_loads(cx: &mut TestAppContext) {
+        let (fixture, cx) =
+            branch_comparison_fixture(cx, DiffViewStyle::Unified, BRANCH_HEAD).await;
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        fixture.file_editor.update(cx, |editor, cx| {
+            editor.set_branch_comparison_enabled(false, cx);
+            editor.set_branch_comparison_enabled(true, cx);
+            editor.set_branch_comparison_enabled(false, cx);
+        });
+        cx.run_until_parked();
+        fixture.file_editor.update(cx, |editor, cx| {
+            assert!(editor.git_diff_base_name(cx).is_none());
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_HEAD)
+            );
+            assert_eq!(
+                editor
+                    .display_snapshot(cx)
+                    .buffer_snapshot()
+                    .diff_hunks()
+                    .count(),
+                0
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_branch_comparison_preserves_edits_and_git_state(cx: &mut TestAppContext) {
+        let (fixture, cx) =
+            branch_comparison_fixture(cx, DiffViewStyle::Unified, BRANCH_HEAD).await;
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        let editor = &fixture.file_editor;
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.handle_input("local edit ", window, cx);
+            })
+        });
+        cx.run_until_parked();
+        let edited_text = editor.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap()
+                .read(cx)
+                .text()
+        });
+        assert!(edited_text.contains("local edit "));
+        editor.update(cx, |editor, cx| {
+            editor.set_branch_comparison_enabled(false, cx)
+        });
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_HEAD)
+            );
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            assert!(buffer.read(cx).is_dirty());
+            assert_eq!(buffer.read(cx).text(), edited_text);
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.undo(&editor::actions::Undo, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert!(editor.git_diff_base_name(cx).is_none());
+            assert_eq!(
+                editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .read(cx)
+                    .text(),
+                BRANCH_HEAD
+            );
+            assert_eq!(
+                editor
+                    .display_snapshot(cx)
+                    .buffer_snapshot()
+                    .diff_hunks()
+                    .count(),
+                0
+            );
+        });
+        fixture
+            .fs
+            .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+                assert_eq!(
+                    state.index_contents.values().next().unwrap().as_slice(),
+                    BRANCH_HEAD.as_bytes()
+                );
+            })
+            .unwrap();
+        cx.read(|cx| {
+            assert_eq!(
+                ProjectSettings::get_global(cx).git.diff_base,
+                GitDiffBaseSetting::DefaultBranch
+            )
+        });
+    }
+
+    #[gpui::test]
+    async fn test_branch_comparison_is_independent_between_editors(cx: &mut TestAppContext) {
+        let (fixture, cx) =
+            branch_comparison_fixture(cx, DiffViewStyle::Unified, BRANCH_HEAD).await;
+        let ordinary = cx.update(|window, cx| {
+            fixture
+                .file_editor
+                .update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)))
+        });
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        let inherited = cx.update(|window, cx| {
+            fixture
+                .file_editor
+                .update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)))
+        });
+        fixture.file_editor.update(cx, |editor, cx| {
+            editor.set_branch_comparison_enabled(false, cx)
+        });
+        cx.run_until_parked();
+        inherited.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_BASE)
+            );
+        });
+        let uncommitted = cx.update(|window, cx| {
+            fixture
+                .file_editor
+                .update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)))
+        });
+        cx.run_until_parked();
+        uncommitted.read_with(cx, |editor, cx| {
+            assert!(editor.git_diff_base_name(cx).is_none());
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_HEAD)
+            );
+        });
+        uncommitted.update(cx, |editor, cx| {
+            editor.set_branch_comparison_enabled(true, cx)
+        });
+        cx.run_until_parked();
+        uncommitted.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_BASE)
+            );
+        });
+        fixture.file_editor.read_with(cx, |editor, cx| {
+            assert!(editor.git_diff_base_name(cx).is_none());
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_HEAD)
+            );
+        });
+        ordinary.read_with(cx, |editor, cx| {
+            assert!(editor.git_diff_comparison_branch_name(cx).is_none());
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_BASE)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_branch_comparison_follows_source_base_changes(cx: &mut TestAppContext) {
+        let (fixture, cx) =
+            branch_comparison_fixture(cx, DiffViewStyle::Unified, BRANCH_HEAD).await;
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        let uncommitted = cx.update(|window, cx| {
+            fixture
+                .file_editor
+                .update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)))
+        });
+        uncommitted.update(cx, |editor, cx| {
+            editor.set_branch_comparison_enabled(false, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            fixture.file_editor.update(cx, |editor, cx| {
+                editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+                editor.change_selections(
+                    editor::SelectionEffects::no_scroll(),
+                    window,
+                    cx,
+                    |selections| {
+                        let point = language::Point::new(1, 0);
+                        selections.select_ranges([point..point]);
+                    },
+                );
+            });
+        });
+        cx.run_until_parked();
+        fixture
+            .fs
+            .with_git_state(Path::new(path!("/project/.git")), true, |state| {
+                let oid = git::Oid::from_bytes(&[42; 20]).unwrap();
+                state
+                    .merge_base_contents
+                    .insert(git::repository::RepoPath::new("a.txt").unwrap(), oid);
+                state.oids.insert(oid, b"one\nother base\nlast".to_vec());
+            })
+            .unwrap();
+        fixture.branch.update(cx, |branch, cx| {
+            branch.set_merge_base("other-base".into(), cx)
+        });
+        cx.run_until_parked();
+        fixture.file_editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.git_diff_base_name(cx).as_deref(), Some("other-base"));
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some("one\nother base\nlast")
+            );
+        });
+        uncommitted.read_with(cx, |editor, cx| {
+            assert!(editor.git_diff_base_name(cx).is_none());
+            assert_eq!(
+                editor.git_diff_comparison_branch_name(cx).as_deref(),
+                Some("other-base")
+            );
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_HEAD)
+            );
+        });
+        uncommitted.update(cx, |editor, cx| {
+            editor.set_branch_comparison_enabled(true, cx)
+        });
+        cx.run_until_parked();
+        uncommitted.read_with(cx, |editor, cx| {
+            assert_eq!(editor.git_diff_base_name(cx).as_deref(), Some("other-base"));
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some("one\nother base\nlast")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_branch_comparison_hunks_cannot_be_restored(cx: &mut TestAppContext) {
+        let (fixture, cx) =
+            branch_comparison_fixture(cx, DiffViewStyle::Unified, BRANCH_HEAD).await;
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        fixture.file_editor.read_with(cx, |editor, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let buffer = multibuffer.as_singleton().unwrap();
+            assert!(
+                multibuffer
+                    .diff_for(buffer.read(cx).remote_id())
+                    .unwrap()
+                    .read(cx)
+                    .operations()
+                    .is_none()
+            );
+        });
+        cx.update(|window, cx| {
+            fixture.file_editor.update(cx, |editor, cx| {
+                editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        fixture.file_editor.read_with(cx, |editor, cx| {
+            assert!(editor.buffer().read(cx).has_expanded_diff_hunks_in_ranges(
+                &[multi_buffer::Anchor::Min..multi_buffer::Anchor::Max],
+                cx,
+            ));
+        });
+        cx.update(|window, cx| {
+            fixture.file_editor.update(cx, |editor, cx| {
+                editor.restore_diff_hunks_in_ranges(
+                    vec![multi_buffer::Anchor::Min..multi_buffer::Anchor::Max],
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.run_until_parked();
+        fixture.file_editor.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .read(cx)
+                    .text(),
+                BRANCH_HEAD
+            );
+        });
+        fixture
+            .fs
+            .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+                assert_eq!(
+                    state.index_contents.values().next().unwrap().as_slice(),
+                    BRANCH_HEAD.as_bytes()
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_branch_excerpt_reenables_comparison(cx: &mut TestAppContext) {
+        let (fixture, cx) =
+            branch_comparison_fixture(cx, DiffViewStyle::Unified, BRANCH_HEAD).await;
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        fixture.file_editor.update(cx, |editor, cx| {
+            editor.set_branch_comparison_enabled(false, cx)
+        });
+        cx.run_until_parked();
+        fixture.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&fixture.branch, true, true, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            fixture
+                .source_editor
+                .read(cx)
+                .focus_handle(cx)
+                .focus(window, cx)
+        });
+        cx.dispatch_action(editor::actions::OpenExcerpts);
+        cx.run_until_parked();
+        let reopened = fixture
+            .workspace
+            .read_with(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .unwrap();
+        assert_eq!(reopened, fixture.file_editor);
+        reopened.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some(BRANCH_BASE)
+            );
+        });
     }
 
     #[gpui::test]

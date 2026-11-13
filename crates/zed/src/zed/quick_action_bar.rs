@@ -25,6 +25,7 @@ use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
+use util::ResultExt as _;
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::item::ItemBufferKind;
 use workspace::{
@@ -117,6 +118,18 @@ impl Render for QuickActionBar {
             editor.update(cx, |editor, cx| editor.supports_semantic_tokens(cx));
         let supports_code_lens = editor.update(cx, |editor, cx| editor.supports_code_lens(cx));
         let editor_value = editor.read(cx);
+        let git_diff_base = editor_value.git_diff_base_name(cx);
+        let comparison_branch = editor_value.git_diff_comparison_branch_name(cx);
+        let branch_comparison_enabled = git_diff_base.is_some();
+        let git_diff_base_label = git_diff_base.as_ref().map(|base_ref| {
+            div()
+                .id("file-git-diff-base")
+                .px_1()
+                .child(Label::new(format!("Base: {base_ref}")).size(LabelSize::Small))
+                .tooltip(Tooltip::text(format!(
+                    "Changes against {base_ref}, including uncommitted changes. Change the comparison in Editor Controls."
+                )))
+        });
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
@@ -643,7 +656,43 @@ impl Render for QuickActionBar {
                                 },
                             );
 
-                            if let Some(fs) = fs.clone() {
+                            if let Some(base_ref) = comparison_branch.clone() {
+                                menu = menu.toggleable_entry(
+                                    format!("Diff Against {base_ref}"),
+                                    branch_comparison_enabled,
+                                    IconPosition::Start,
+                                    None,
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            let loading = editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.set_branch_comparison_enabled(
+                                                        !branch_comparison_enabled,
+                                                        cx,
+                                                    );
+                                                    editor.wait_for_diff_to_load()
+                                                })
+                                                .log_err()
+                                                .flatten();
+                                            if let Some(loading) = loading {
+                                                let editor = editor.clone();
+                                                window
+                                                    .spawn(cx, async move |cx| {
+                                                        loading.await;
+                                                        editor
+                                                            .update_in(cx, |editor, window, cx| {
+                                                                editor.focus_handle(cx).focus(window, cx);
+                                                                window.refresh();
+                                                            })
+                                                            .log_err();
+                                                    })
+                                                    .detach();
+                                            }
+                                        }
+                                    },
+                                );
+                            } else if let Some(fs) = fs.clone() {
                                 menu = menu.toggleable_entry(
                                     "Diff Against Default Branch",
                                     diff_against_default_branch,
@@ -715,6 +764,7 @@ impl Render for QuickActionBar {
             )
             .children(code_actions_dropdown)
             .children(editor_selections_dropdown)
+            .children(git_diff_base_label)
             .child(editor_settings_dropdown)
     }
 }
@@ -786,11 +836,16 @@ impl ToolbarItemView for QuickActionBar {
                     mut inlay_hints_enabled,
                     mut supports_inlay_hints,
                     mut supports_semantic_tokens,
+                    mut git_diff_base,
                 ) = editor.update(cx, |editor, cx| {
                     (
                         editor.inlay_hints_enabled(),
                         editor.supports_inlay_hints(cx),
                         editor.supports_semantic_tokens(cx),
+                        (
+                            editor.git_diff_base_name(cx),
+                            editor.git_diff_comparison_branch_name(cx),
+                        ),
                     )
                 });
                 self._inlay_hints_enabled_subscription =
@@ -799,19 +854,26 @@ impl ToolbarItemView for QuickActionBar {
                             new_inlay_hints_enabled,
                             new_supports_inlay_hints,
                             new_supports_semantic_tokens,
+                            new_git_diff_base,
                         ) = editor.update(cx, |editor, cx| {
                             (
                                 editor.inlay_hints_enabled(),
                                 editor.supports_inlay_hints(cx),
                                 editor.supports_semantic_tokens(cx),
+                                (
+                                    editor.git_diff_base_name(cx),
+                                    editor.git_diff_comparison_branch_name(cx),
+                                ),
                             )
                         });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
                             || supports_inlay_hints != new_supports_inlay_hints
-                            || supports_semantic_tokens != new_supports_semantic_tokens;
+                            || supports_semantic_tokens != new_supports_semantic_tokens
+                            || git_diff_base != new_git_diff_base;
                         inlay_hints_enabled = new_inlay_hints_enabled;
                         supports_inlay_hints = new_supports_inlay_hints;
                         supports_semantic_tokens = new_supports_semantic_tokens;
+                        git_diff_base = new_git_diff_base;
                         if should_notify {
                             cx.notify()
                         }

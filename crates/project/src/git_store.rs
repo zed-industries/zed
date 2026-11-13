@@ -1814,6 +1814,23 @@ impl GitStore {
         }
     }
 
+    pub fn open_diff_against_branch(
+        &mut self,
+        buffer: Entity<Buffer>,
+        branch_diff: &Entity<diff_buffer_list::DiffBufferList>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        let branch_diff = branch_diff.read(cx);
+        let branch_base = self
+            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+            .filter(|(repo, _)| branch_diff.repo() == Some(repo))
+            .and_then(|(repo, path)| branch_diff.base_oid_for_path(&path).map(|oid| (repo, oid)));
+        match branch_base {
+            Some((repo, oid)) => self.open_diff_since(oid, buffer, repo, cx),
+            None => self.open_uncommitted_diff(buffer, cx),
+        }
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,

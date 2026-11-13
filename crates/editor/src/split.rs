@@ -803,7 +803,12 @@ impl SplittableEditor {
                             let workspace = this.workspace.clone();
                             let split = *split;
                             Editor::open_buffers_in_workspace(
-                                workspace, translated, split, window, cx,
+                                workspace,
+                                translated,
+                                split,
+                                this.rhs_editor.read(cx).git_diff_base_for_open_excerpts(cx),
+                                window,
+                                cx,
                             );
                         }
                     }
