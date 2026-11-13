@@ -311,18 +311,21 @@ impl GoogleEventMapper {
         if let Some(prompt_feedback) = event.prompt_feedback
             && let Some(block_reason) = prompt_feedback.block_reason.as_deref()
         {
-            let stop_reason = match block_reason {
-                "SAFETY" | "OTHER" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "IMAGE_SAFETY" => {
-                    StopReason::Refusal
-                }
-                _ => {
-                    log::error!("Unexpected Google block_reason: {block_reason}");
-                    StopReason::Refusal
-                }
-            };
+            if !matches!(
+                block_reason,
+                "SAFETY" | "OTHER" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "IMAGE_SAFETY"
+            ) {
+                log::error!("Unexpected Google block_reason: {block_reason}");
+            }
             if !self.stop_emitted {
                 self.stop_emitted = true;
-                events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal(
+                    Some(refusal_details(
+                        block_reason,
+                        prompt_feedback.safety_ratings.as_deref(),
+                        language_model_core::RefusalStage::Input,
+                    )),
+                ))));
             }
 
             return events;
@@ -350,7 +353,11 @@ impl GoogleEventMapper {
                         | "UNEXPECTED_TOOL_CALL"
                         | "TOO_MANY_TOOL_CALLS"
                         | "MISSING_THOUGHT_SIGNATURE"
-                        | "MALFORMED_RESPONSE" => StopReason::Refusal,
+                        | "MALFORMED_RESPONSE" => StopReason::Refusal(Some(refusal_details(
+                            finish_reason,
+                            candidate.safety_ratings.as_deref(),
+                            language_model_core::RefusalStage::Output,
+                        ))),
                         _ => {
                             log::error!("Unexpected google finish_reason: {finish_reason}");
                             StopReason::EndTurn
@@ -437,6 +444,23 @@ impl GoogleEventMapper {
     }
 }
 
+fn refusal_details(
+    reason: &str,
+    ratings: Option<&[crate::SafetyRating]>,
+    stage: language_model_core::RefusalStage,
+) -> language_model_core::RefusalDetails {
+    language_model_core::RefusalDetails {
+        reason: reason.into(),
+        categories: ratings
+            .unwrap_or_default()
+            .iter()
+            .filter(|rating| rating.blocked == Some(true))
+            .map(|rating| rating.category.clone())
+            .collect(),
+        stage: Some(stage),
+    }
+}
+
 fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
     if let Some(prompt_token_count) = new.prompt_token_count {
         usage.prompt_token_count = Some(prompt_token_count);
@@ -506,7 +530,11 @@ mod tests {
             ),
             (
                 json!({"promptFeedback": {"blockReason": "SAFETY"}}),
-                StopReason::Refusal,
+                StopReason::Refusal(Some(language_model_core::RefusalDetails {
+                    reason: "SAFETY".into(),
+                    categories: Vec::new(),
+                    stage: Some(language_model_core::RefusalStage::Input),
+                })),
             ),
         ] {
             let responses = vec![
@@ -897,26 +925,40 @@ mod tests {
     #[test]
     fn safety_finish_reason_is_refusal() {
         let mut mapper = GoogleEventMapper::new();
-        let response = GenerateContentResponse {
-            candidates: Some(vec![GenerateContentCandidate {
-                index: Some(0),
-                content: Content {
-                    parts: Vec::new(),
-                    role: GoogleRole::Model,
-                },
-                finish_reason: Some("SAFETY".to_string()),
-                finish_message: None,
-                safety_ratings: None,
-                citation_metadata: None,
-            }]),
-            prompt_feedback: None,
-            usage_metadata: None,
-        };
+        let response = serde_json::from_value(serde_json::json!({
+            "candidates": [{"index":0, "finishReason":"SAFETY"}]
+        }))
+        .unwrap();
 
         assert!(matches!(
             mapper.map_event(response).as_slice(),
-            [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal))]
+            [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details))))]
+                if details.reason == "SAFETY" && details.categories.is_empty()
+                    && details.stage == Some(language_model_core::RefusalStage::Output)
         ));
+    }
+
+    #[test]
+    fn prompt_refusal_reports_only_explicitly_blocking_categories() {
+        let response = serde_json::from_value(serde_json::json!({
+            "promptFeedback": {
+                "blockReason": "SAFETY",
+                "blockReasonMessage": "private user content",
+                "safetyRatings": [
+                    {"category":"HARM_CATEGORY_HARASSMENT","probability":"HIGH","blocked":true},
+                    {"category":"HARM_CATEGORY_HATE_SPEECH","probability":"HIGH","blocked":false},
+                    {"category":"HARM_CATEGORY_DANGEROUS_CONTENT","probability":"HIGH"},
+                    {"category":"FUTURE_CATEGORY","probability":"HIGH","blocked":true}
+                ]
+            }
+        }))
+        .unwrap();
+        let events = GoogleEventMapper::new().map_event(response);
+        assert!(matches!(events.as_slice(),
+            [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details))))]
+                if details.reason == "SAFETY"
+                    && details.categories == ["HARM_CATEGORY_HARASSMENT", "FUTURE_CATEGORY"]
+                    && details.stage == Some(language_model_core::RefusalStage::Input)));
     }
 
     #[test]

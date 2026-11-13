@@ -1244,7 +1244,7 @@ enum CompletionError {
     #[error("max tokens")]
     MaxTokens,
     #[error("refusal")]
-    Refusal,
+    Refusal(Option<language_model::RefusalDetails>),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -2916,7 +2916,7 @@ impl Thread {
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
                         match error.downcast::<CompletionError>() {
-                            Ok(CompletionError::Refusal) => {
+                            Ok(CompletionError::Refusal(_)) => {
                                 event_stream.send_stop(acp_v2::StopReason::Refusal);
                                 _ = this
                                     .update(cx, |this, _| this.remove_messages_from(message_ix));
@@ -3088,7 +3088,7 @@ impl Thread {
                 FuturesUnordered::new();
             let mut early_tool_results: Vec<(usize, LanguageModelToolResult)> = Vec::new();
             let mut cancelled = false;
-            let mut had_refusal = false;
+            let mut refusal_error = None;
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select_biased! {
@@ -3173,10 +3173,10 @@ impl Thread {
                 if let Some(err) = batch_result.1 {
                     let is_refusal = err
                         .downcast_ref::<CompletionError>()
-                        .is_some_and(|e| matches!(e, CompletionError::Refusal));
+                        .is_some_and(|e| matches!(e, CompletionError::Refusal(_)));
                     if is_refusal {
                         log::info!("Model refused request; checking for fallback model");
-                        had_refusal = true;
+                        refusal_error = Some(err);
                         break;
                     }
                     error = Some(err.downcast()?);
@@ -3207,7 +3207,7 @@ impl Thread {
                 }
             })?;
 
-            if had_refusal {
+            if let Some(refusal_error) = refusal_error {
                 let maybe_fallback = this.update(cx, |this, cx| -> Option<LanguageModel> {
                     let current_model = refusal_fallback_model
                         .as_ref()
@@ -3259,7 +3259,7 @@ impl Thread {
                     continue;
                 }
                 log::info!("Request refused with no fallback model available");
-                return Err(CompletionError::Refusal.into());
+                return Err(refusal_error);
             }
 
             let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
@@ -3734,7 +3734,9 @@ impl Thread {
                 }
                 self.update_token_usage(usage, cx);
             }
-            Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
+            Stop(StopReason::Refusal(details)) => {
+                return Err(CompletionError::Refusal(details).into());
+            }
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
             Started | Queued { .. } | Compaction(_) | InputTransformations(_) => {}
@@ -9305,7 +9307,7 @@ mod tests {
 
         fake.send_last_event(
             &model,
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
         );
         fake.end_last(&model);
         cx.run_until_parked();
