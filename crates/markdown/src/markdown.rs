@@ -4647,6 +4647,25 @@ impl RenderedLine {
             }
 
             let wrapped_line = &wrapped_line_segment.layout;
+            if !wrapped_line.bidi_rows.is_empty() {
+                let selection = rendered_start.saturating_sub(wrapped_line_segment.start)
+                    ..rendered_end.saturating_sub(wrapped_line_segment.start);
+                for (row_index, row) in wrapped_line.bidi_rows.iter().enumerate() {
+                    let alignment = self.alignment_offset_for_segment(
+                        line_bounds.size.width,
+                        Pixels::ZERO,
+                        row.layout.width,
+                    );
+                    let top = wrapped_line_segment.row_top + line_height * row_index;
+                    for span in row.selection_spans(selection.clone()) {
+                        f(Bounds::from_corners(
+                            point(line_bounds.left() + alignment + span.start, top),
+                            point(line_bounds.left() + alignment + span.end, top + line_height),
+                        ));
+                    }
+                }
+                continue;
+            }
             let unwrapped_layout = &wrapped_line.unwrapped_layout;
             let wrapped_line_start = wrapped_line_segment.start;
             let wrapped_line_end = wrapped_line_segment.end;
@@ -4786,6 +4805,14 @@ impl RenderedLine {
             let line_height = self.layout.line_height();
             let relative_y = (position.y - bounds.top()).max(px(0.));
             let wrapped_row_ix = (relative_y / line_height) as usize;
+            if let Some(row) = wrapped_line.bidi_rows.get(wrapped_row_ix) {
+                let alignment_offset = self.alignment_offset_for_segment(
+                    bounds.size.width,
+                    Pixels::ZERO,
+                    row.layout.width,
+                );
+                return Some(point(position.x - alignment_offset, position.y));
+            }
             let boundaries = wrapped_line.wrap_boundaries();
 
             let segment_start_x = if wrapped_row_ix == 0 {
@@ -7763,7 +7790,7 @@ mod tests {
         let line_bounds = line.layout.bounds();
         let line_height = line.layout.line_height();
         let wrapped_line = line.layout.line_layout_for_index(0).unwrap();
-        let visual_row_count = wrapped_line.wrap_boundaries().len() + 1;
+        let visual_row_count = wrapped_line.row_count();
 
         let highlight_bounds = rendered.bounds_for_source_range(0..source.len());
         assert_eq!(highlight_bounds.len(), visual_row_count);

@@ -380,6 +380,7 @@ mod tests {
             })
             .collect();
         LineLayout {
+            bidi_carets: None,
             runs,
             width: px(index as f32 * 10.0),
             font_size: px(14.0),

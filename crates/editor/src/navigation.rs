@@ -2,12 +2,22 @@ use super::*;
 
 impl Editor {
     pub fn move_left(&mut self, _: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
+        let details = self.text_layout_details(window, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 let cursor = if selection.is_empty() {
-                    movement::left(map, selection.start)
+                    movement::visual_horizontal(map, selection.start, false, &details)
                 } else {
-                    selection.start
+                    let start = selection.start;
+                    let end = selection.end;
+                    if start.row() == end.row()
+                        && map.x_for_display_point(start, &details)
+                            > map.x_for_display_point(end, &details)
+                    {
+                        end
+                    } else {
+                        start
+                    }
                 };
                 selection.collapse_to(cursor, SelectionGoal::None);
             });
@@ -15,18 +25,34 @@ impl Editor {
     }
 
     pub fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
+        let details = self.text_layout_details(window, cx);
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, _| (movement::left(map, head), SelectionGoal::None));
+            s.move_heads_with(&mut |map, head, _| {
+                (
+                    movement::visual_horizontal(map, head, false, &details),
+                    SelectionGoal::None,
+                )
+            });
         })
     }
 
     pub fn move_right(&mut self, _: &MoveRight, window: &mut Window, cx: &mut Context<Self>) {
+        let details = self.text_layout_details(window, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 let cursor = if selection.is_empty() {
-                    movement::right(map, selection.end)
+                    movement::visual_horizontal(map, selection.end, true, &details)
                 } else {
-                    selection.end
+                    let start = selection.start;
+                    let end = selection.end;
+                    if start.row() == end.row()
+                        && map.x_for_display_point(start, &details)
+                            > map.x_for_display_point(end, &details)
+                    {
+                        start
+                    } else {
+                        end
+                    }
                 };
                 selection.collapse_to(cursor, SelectionGoal::None)
             });
@@ -34,9 +60,13 @@ impl Editor {
     }
 
     pub fn select_right(&mut self, _: &SelectRight, window: &mut Window, cx: &mut Context<Self>) {
+        let details = self.text_layout_details(window, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
-                (movement::right(map, head), SelectionGoal::None)
+                (
+                    movement::visual_horizontal(map, head, true, &details),
+                    SelectionGoal::None,
+                )
             });
         });
     }

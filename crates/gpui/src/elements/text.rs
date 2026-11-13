@@ -963,11 +963,7 @@ impl TextLayout {
 
         for wrapped in self.0.borrow().as_ref().unwrap().lines.iter() {
             let mut seen = 0;
-            for boundary in wrapped.layout.wrap_boundaries.iter() {
-                let index = wrapped.layout.unwrapped_layout.runs[boundary.run_ix].glyphs
-                    [boundary.glyph_ix]
-                    .index;
-
+            for index in wrapped.layout.wrap_indices() {
                 accumulator.push_str(&wrapped.text[seen..index]);
                 accumulator.push('\n');
                 seen = index;

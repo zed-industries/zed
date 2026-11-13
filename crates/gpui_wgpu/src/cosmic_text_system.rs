@@ -766,6 +766,7 @@ impl CosmicTextSystemState {
 
         let Some(layout) = layout_lines.first() else {
             return LineLayout {
+                bidi_carets: None,
                 font_size,
                 width: Pixels::ZERO,
                 ascent: Pixels::ZERO,
@@ -841,6 +842,7 @@ impl CosmicTextSystemState {
         }
 
         LineLayout {
+            bidi_carets: None,
             font_size,
             width: layout.w.into(),
             ascent: layout.max_ascent.into(),
@@ -1271,6 +1273,304 @@ mod tests {
         let text_system = CosmicTextSystem::new_without_system_fonts("IBM Plex Sans");
         text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
         Ok(text_system)
+    }
+
+    #[test]
+    #[ignore = "writes a raster preview; set ZED_ARABIC_TEST_IMAGE and run manually"]
+    fn arabic_wrap_raster_preview() -> Result<()> {
+        let output = std::env::var_os("ZED_ARABIC_TEST_IMAGE")
+            .context("set ZED_ARABIC_TEST_IMAGE to the preview output path")?;
+        let platform = Arc::new(text_system()?);
+        platform.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../test_data/arabic/NotoSansArabic.ttf"
+        ))])?;
+        let text_system =
+            gpui::WindowTextSystem::new(Arc::new(gpui::TextSystem::new(platform.clone())));
+        let text = "هذا اختبار لالتفاف النص العربي داخل محادثة الوكيل. يجب أن تظهر الكلمات كاملة داخل حدود النافذة، مع إمكانية تحديد النص ونسخه. إعداد soft_wrap لا يكفي وحده. يمكن قراءة الرابط https://github.com/zed-industries/zed/issues/63127 مع النص العربي والأرقام 12345 دون خروج السطر عن المساحة المتاحة.";
+        let runs = [gpui::TextRun {
+            len: text.len(),
+            font: gpui::font("Noto Sans Arabic"),
+            ..Default::default()
+        }];
+        let lines = text_system.shape_text(
+            text.into(),
+            gpui::px(22.),
+            &runs,
+            Some(gpui::px(500.)),
+            None,
+        )?;
+        let line = &lines[0];
+        let mut image = image::RgbaImage::from_pixel(
+            540,
+            (line.row_count() * 42 + 40) as u32,
+            image::Rgba([46, 52, 64, 255]),
+        );
+        let start = text.find("تحديد النص").expect("selection fixture exists");
+        let selection = start..start + "تحديد النص ونسخه".len();
+        for (row_index, row) in line.bidi_rows.iter().enumerate() {
+            for span in row.selection_spans(selection.clone()) {
+                for y in (20 + row_index * 42)..(20 + (row_index + 1) * 42) {
+                    for x in (20 + f32::from(span.start).floor() as usize)
+                        ..(20 + f32::from(span.end).ceil() as usize)
+                    {
+                        if let Some(pixel) = image.get_pixel_mut_checked(x as u32, y as u32) {
+                            *pixel = image::Rgba([65, 95, 145, 255]);
+                        }
+                    }
+                }
+            }
+            let baseline = 20.
+                + row_index as f32 * 42.
+                + (42. - f32::from(row.layout.ascent + row.layout.descent)) / 2.
+                + f32::from(row.layout.ascent);
+            for run in &row.layout.runs {
+                for glyph in &run.glyphs {
+                    let params = RenderGlyphParams {
+                        font_id: run.font_id,
+                        glyph_id: glyph.id,
+                        font_size: row.layout.font_size,
+                        subpixel_variant: point(0, 0),
+                        scale_factor: 1.,
+                        is_emoji: false,
+                        subpixel_rendering: false,
+                        dilation: 0,
+                    };
+                    let bounds = platform.glyph_raster_bounds(&params)?;
+                    if bounds.size.width.0 == 0 || bounds.size.height.0 == 0 {
+                        continue;
+                    }
+                    let (size, mask) = platform.rasterize_glyph(&params, bounds)?;
+                    let left = 20 + f32::from(glyph.position.x).round() as i32 + bounds.origin.x.0;
+                    let top = baseline.round() as i32
+                        + bounds.origin.y.0
+                        + f32::from(glyph.position.y).round() as i32;
+                    for y in 0..size.height.0 {
+                        for x in 0..size.width.0 {
+                            let alpha = mask[(y * size.width.0 + x) as usize] as u32;
+                            if alpha == 0 {
+                                continue;
+                            }
+                            let target_x = left + x;
+                            let target_y = top + y;
+                            assert!(target_x >= 0 && target_y >= 0);
+                            let pixel = image
+                                .get_pixel_mut_checked(target_x as u32, target_y as u32)
+                                .expect("all rasterized text remains inside the image");
+                            for component in &mut pixel.0[..3] {
+                                *component = ((u32::from(*component) * (255 - alpha) + 230 * alpha)
+                                    / 255) as u8;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        image.save(output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn arabic_editing_carets_follow_shaped_letters() -> Result<()> {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        let platform = text_system()?;
+        platform.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../test_data/arabic/NotoSansArabic.ttf"
+        ))])?;
+        let text_system =
+            gpui::WindowTextSystem::new(Arc::new(gpui::TextSystem::new(Arc::new(platform))));
+        for text in ["العربية", "سلام", "نَصٌّ عَرَبِيٌّ"] {
+            let line = text_system.shape_line(
+                text.into(),
+                gpui::px(24.),
+                &[gpui::TextRun {
+                    len: text.len(),
+                    font: gpui::font("Noto Sans Arabic"),
+                    ..Default::default()
+                }],
+                None,
+            );
+            let boundaries: Vec<_> = text
+                .grapheme_indices(true)
+                .map(|(index, _)| index)
+                .chain([text.len()])
+                .collect();
+            for pair in boundaries.windows(2) {
+                let before = line.x_for_index(pair[0]);
+                let after = line.x_for_index(pair[1]);
+                assert!(before > after, "{text}: {pair:?}: {before:?} <= {after:?}");
+            }
+            for index in boundaries {
+                assert_eq!(
+                    line.closest_index_for_x(line.x_for_index(index)),
+                    index,
+                    "{text}"
+                );
+            }
+            let carets = line.bidi_carets.as_ref().unwrap();
+            let mut index = 0;
+            for (expected, _) in text.grapheme_indices(true).skip(1) {
+                index = carets.visual_neighbor(index, false).unwrap();
+                assert_eq!(index, expected);
+            }
+            assert_eq!(carets.visual_neighbor(index, false), Some(text.len()));
+            assert_eq!(carets.visual_neighbor(text.len(), false), None);
+            for (split, _) in text.grapheme_indices(true) {
+                let (left, right) = line.split_at(split);
+                assert_eq!(left.text.to_string() + &right.text, text);
+                assert!(left.width >= gpui::px(0.));
+                assert!(right.width >= gpui::px(0.));
+                for piece in [left, right] {
+                    for glyph in piece.runs.iter().flat_map(|run| &run.glyphs) {
+                        assert!(glyph.index < piece.len);
+                        assert!(glyph.position.x >= gpui::px(-0.01));
+                    }
+                }
+            }
+            let mut cursor = line.cursor();
+            for end in text
+                .grapheme_indices(true)
+                .map(|(index, _)| index)
+                .skip(1)
+                .chain([text.len()])
+            {
+                let piece = cursor.take_until(end);
+                assert!(piece.width >= gpui::px(0.));
+                assert_eq!(piece.len(), piece.text.len());
+            }
+            assert_eq!(line.closest_index_for_x(gpui::px(-10.)), text.len());
+            assert_eq!(line.closest_index_for_x(line.width + gpui::px(10.)), 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn arabic_mixed_text_visual_navigation() -> Result<()> {
+        use unicode_segmentation::UnicodeSegmentation;
+        let platform = text_system()?;
+        platform.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../test_data/arabic/NotoSansArabic.ttf"
+        ))])?;
+        let system =
+            gpui::WindowTextSystem::new(Arc::new(gpui::TextSystem::new(Arc::new(platform))));
+        for text in [
+            "مرحبا English بالعالم 123",
+            "code العربية end",
+            "نَصٌّ https://zed.dev سلام",
+        ] {
+            let line = system.shape_line(
+                text.into(),
+                gpui::px(24.),
+                &[gpui::TextRun {
+                    len: text.len(),
+                    font: gpui::font("Noto Sans Arabic"),
+                    ..Default::default()
+                }],
+                None,
+            );
+            let carets = line.bidi_carets.as_ref().unwrap();
+            let boundaries: Vec<_> = text
+                .grapheme_indices(true)
+                .map(|(index, _)| index)
+                .chain([text.len()])
+                .collect();
+            let mut current = 0;
+            for _ in 0..boundaries.len() {
+                if let Some(previous) = carets.visual_neighbor(current, false) {
+                    current = previous;
+                } else {
+                    break;
+                }
+            }
+            let mut visited = vec![current];
+            while let Some(next) = carets.visual_neighbor(current, true) {
+                assert!(line.x_for_index(next) >= line.x_for_index(current) - gpui::px(0.01));
+                assert!(!visited.contains(&next));
+                assert_eq!(carets.visual_neighbor(next, false), Some(current));
+                visited.push(next);
+                current = next;
+            }
+            visited.sort_unstable();
+            assert_eq!(visited, boundaries);
+            for pair in boundaries.windows(2) {
+                let spans = carets.selection_spans(pair[0]..pair[1]);
+                assert!(!spans.is_empty());
+                assert!(spans.iter().all(|span| span.start < span.end));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn arabic_wrap_preserves_logical_text_and_selection() -> Result<()> {
+        let platform = text_system()?;
+        platform.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../test_data/arabic/NotoSansArabic.ttf"
+        ))])?;
+        let text_system = Arc::new(gpui::TextSystem::new(Arc::new(platform)));
+        let text_system = gpui::WindowTextSystem::new(text_system);
+        for text in [
+            "اتضح أن المشكلة في عرض العربية وتحديدها داخل محادثة الوكيل. إعداد soft_wrap يخص ملفات المحرر ولا يعالج المحادثة.",
+            "وجدت بلاغًا مطابقًا للمشكلة https://github.com/zed-industries/zed/issues/63127 والإصلاح المقترح ما زال غير مدمج.",
+            "هذا نَصٌّ عَرَبِيٌّ لاختبار التفاف الأسطر مع التشكيل والأرقام 12345 واللغة English.",
+            "العربيةالعربيةالعربيةالعربيةالعربيةالعربيةالعربيةالعربية",
+        ] {
+            for width in [120., 280., 1000.] {
+                let runs = [gpui::TextRun {
+                    len: text.len(),
+                    font: gpui::font("Noto Sans Arabic"),
+                    ..Default::default()
+                }];
+                let lines = text_system.shape_text(
+                    text.into(),
+                    gpui::px(16.),
+                    &runs,
+                    Some(gpui::px(width)),
+                    None,
+                )?;
+                let line = &lines[0];
+                assert!(!line.bidi_rows.is_empty());
+                assert_eq!(
+                    line.bidi_rows
+                        .iter()
+                        .map(|row| &text[row.range.clone()])
+                        .collect::<String>(),
+                    text
+                );
+                assert_eq!(
+                    line.size(gpui::px(24.)).height,
+                    gpui::px(24.) * line.bidi_rows.len()
+                );
+                assert!(line.width() <= gpui::px(width + 0.01));
+                for (row_index, row) in line.bidi_rows.iter().enumerate() {
+                    assert!(text.is_char_boundary(row.range.start));
+                    assert!(text.is_char_boundary(row.range.end));
+                    assert!(row.layout.width <= gpui::px(width + 0.01));
+                    for glyph in row.layout.runs.iter().flat_map(|run| &run.glyphs) {
+                        assert!(glyph.position.x >= gpui::px(-0.01));
+                        assert!(glyph.position.x <= row.layout.width + gpui::px(0.01));
+                        assert!(text.is_char_boundary(row.range.start + glyph.index));
+                    }
+                    let spans = row.selection_spans(row.range.clone());
+                    assert!(!spans.is_empty());
+                    for span in spans {
+                        assert!(span.start >= gpui::px(-0.01));
+                        assert!(span.end <= row.layout.width + gpui::px(0.01));
+                        assert!(span.end >= span.start);
+                        let position = gpui::point(
+                            (span.start + span.end) / 2.,
+                            gpui::px(24.) * row_index + gpui::px(12.),
+                        );
+                        let index = line
+                            .closest_index_for_position(position, gpui::px(24.))
+                            .unwrap_or_else(|index| index);
+                        assert!(row.range.start <= index && index <= row.range.end);
+                        assert!(text.is_char_boundary(index));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

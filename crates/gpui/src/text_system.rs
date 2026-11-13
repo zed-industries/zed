@@ -1,9 +1,11 @@
+mod bidi;
 mod font_fallbacks;
 mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
 
+pub use bidi::*;
 pub use font_fallbacks::*;
 pub use font_features::*;
 pub use line::*;
@@ -788,7 +790,7 @@ impl WindowTextSystem {
                 wrap_width,
                 max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
             );
-            wrapped_lines += layout.wrap_boundaries.len();
+            wrapped_lines += layout.row_count().saturating_sub(1);
 
             lines.push(WrappedLine {
                 layout,

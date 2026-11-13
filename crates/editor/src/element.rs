@@ -1217,7 +1217,7 @@ impl EditorElement {
                     let cursor_next_x = cursor_row_layout.x_for_index(cursor_column + 1)
                         + cursor_row_layout
                             .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
-                    let mut cell_width = cursor_next_x - cursor_character_x;
+                    let mut cell_width = (cursor_next_x - cursor_character_x).abs();
                     if cell_width == Pixels::ZERO {
                         cell_width = em_advance;
                     }
@@ -6603,6 +6603,49 @@ impl EditorElement {
                     ..cmp::min(range.end.row().next_row(), end_row)
             };
 
+            if row_range.iter_rows().any(|row| {
+                layout.position_map.line_layouts[row.minus(start_row) as usize].has_bidi_text()
+            }) {
+                for row in row_range.iter_rows() {
+                    let line = &layout.position_map.line_layouts[row.minus(start_row) as usize];
+                    let start = if row == range.start.row() {
+                        range.start.column() as usize
+                    } else {
+                        0
+                    };
+                    let end = if row == range.end.row() {
+                        range.end.column() as usize
+                    } else {
+                        line.len
+                    };
+                    let origin = layout.content_origin.x
+                        + line.alignment_offset(layout.text_align, layout.content_width)
+                        - Pixels::from(layout.position_map.scroll_pixel_position.x);
+                    for span in line.selection_spans(start..end) {
+                        HighlightedRange {
+                            color,
+                            line_height: layout.position_map.line_height,
+                            corner_radius,
+                            start_y: layout.content_origin.y
+                                + Pixels::from(
+                                    (row.as_f64() - layout.position_map.scroll_position.y)
+                                        * ScrollOffset::from(layout.position_map.line_height),
+                                ),
+                            lines: vec![HighlightedRangeLine {
+                                start_x: origin + span.start,
+                                end_x: origin + span.end,
+                            }],
+                        }
+                        .paint(
+                            fill,
+                            layout.position_map.text_hitbox.bounds,
+                            window,
+                        );
+                    }
+                }
+                return;
+            }
+
             let highlighted_range = HighlightedRange {
                 color,
                 line_height: layout.position_map.line_height,
@@ -8256,6 +8299,49 @@ impl LineWithInvisibles {
         }
     }
 
+    fn has_bidi_text(&self) -> bool {
+        self.fragments.iter().any(
+            |fragment| matches!(fragment, LineFragment::Text(line) if line.bidi_carets.is_some()),
+        )
+    }
+
+    fn selection_spans(&self, range: Range<usize>) -> Vec<Range<Pixels>> {
+        let mut spans = Vec::new();
+        let mut offset = 0;
+        let mut origin = px(0.);
+        for fragment in &self.fragments {
+            let (len, width) = match fragment {
+                LineFragment::Text(line) => (line.len, line.width),
+                LineFragment::Element { len, size, .. } => (*len, size.width),
+            };
+            let start = range.start.max(offset);
+            let end = range.end.min(offset + len);
+            if start < end {
+                match fragment {
+                    LineFragment::Text(line) => {
+                        if let Some(carets) = &line.bidi_carets {
+                            spans.extend(
+                                carets
+                                    .selection_spans(start - offset..end - offset)
+                                    .into_iter()
+                                    .map(|span| origin + span.start..origin + span.end),
+                            );
+                        } else {
+                            spans.push(
+                                origin + line.x_for_index(start - offset)
+                                    ..origin + line.x_for_index(end - offset),
+                            );
+                        }
+                    }
+                    LineFragment::Element { .. } => spans.push(origin..origin + width),
+                }
+            }
+            offset += len;
+            origin += width;
+        }
+        spans
+    }
+
     pub fn x_for_index(&self, index: usize) -> Pixels {
         let mut fragment_start_x = Pixels::ZERO;
         let mut fragment_start_index = 0;
@@ -8264,7 +8350,9 @@ impl LineWithInvisibles {
             match fragment {
                 LineFragment::Text(shaped_line) => {
                     let fragment_end_index = fragment_start_index + shaped_line.len;
-                    if index < fragment_end_index {
+                    if index < fragment_end_index
+                        || index == self.len && fragment_end_index == self.len
+                    {
                         return fragment_start_x
                             + shaped_line.x_for_index(index - fragment_start_index);
                     }
@@ -8293,7 +8381,10 @@ impl LineWithInvisibles {
             match fragment {
                 LineFragment::Text(shaped_line) => {
                     let fragment_end_x = fragment_start_x + shaped_line.width;
-                    if x < fragment_end_x {
+                    if x < fragment_end_x
+                        || shaped_line.bidi_carets.is_some()
+                            && fragment_start_index + shaped_line.len == self.len
+                    {
                         return Some(
                             fragment_start_index + shaped_line.index_for_x(x - fragment_start_x)?,
                         );

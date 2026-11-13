@@ -111,6 +111,7 @@ zed_actions.workspace = true
 assets.workspace = true
 ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+gpui_wgpu = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 languages = {workspace = true, features = ["test-support"] }

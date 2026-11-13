@@ -57,12 +57,13 @@ impl ShapedLine {
             self.text.len(),
             "cannot split a shaped line with an adjusted length"
         );
-        let byte_ordered = self
-            .layout
-            .runs
-            .iter()
-            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
-            .is_sorted();
+        let byte_ordered = self.layout.bidi_carets.is_none()
+            && self
+                .layout
+                .runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
+                .is_sorted();
         ShapedLineCursor {
             line: self,
             unordered_remainder: (!byte_ordered).then(|| self.clone()),
@@ -94,6 +95,9 @@ impl ShapedLine {
     pub fn with_len(mut self, len: usize) -> Self {
         let layout = self.layout.as_ref();
         self.layout = Arc::new(LineLayout {
+            bidi_carets: (len == layout.len)
+                .then(|| layout.bidi_carets.clone())
+                .flatten(),
             font_size: layout.font_size,
             width: layout.width,
             ascent: layout.ascent,
@@ -364,6 +368,7 @@ impl<'a> ShapedLineCursor<'a> {
         self.x_offset = next_x;
         ShapedLine {
             layout: Arc::new(LineLayout {
+                bidi_carets: None,
                 font_size: self.line.layout.font_size,
                 width: next_x - previous_x,
                 ascent: self.line.layout.ascent,
@@ -477,6 +482,27 @@ impl WrappedLine {
             None => self.layout.wrap_width,
         };
 
+        if !self.layout.bidi_rows.is_empty() {
+            for (row_index, row) in self.layout.bidi_rows.iter().enumerate() {
+                let (layout, decorations) = row.paint_layout(&self.decoration_runs);
+                paint_line(
+                    origin + point(px(0.), line_height * row_index),
+                    &layout,
+                    line_height,
+                    align,
+                    align_width,
+                    &decorations,
+                    &[],
+                    window,
+                    cx,
+                    &mut |_, origin, width, style, window| {
+                        window.paint_underline(origin, width, style)
+                    },
+                )?;
+            }
+            return Ok(());
+        }
+
         paint_line(
             origin,
             &self.layout.unwrapped_layout,
@@ -511,6 +537,25 @@ impl WrappedLine {
         if !has_background(&self.decoration_runs) {
             return Ok(());
         }
+
+        if !self.layout.bidi_rows.is_empty() {
+            for (row_index, row) in self.layout.bidi_rows.iter().enumerate() {
+                let (layout, decorations) = row.paint_layout(&self.decoration_runs);
+                paint_line_background(
+                    origin + point(px(0.), line_height * row_index),
+                    &layout,
+                    line_height,
+                    align,
+                    align_width,
+                    &decorations,
+                    &[],
+                    window,
+                    cx,
+                )?;
+            }
+            return Ok(());
+        }
+
         paint_line_background(
             origin,
             &self.layout.unwrapped_layout,
@@ -545,6 +590,43 @@ fn paint_line(
         &mut Window,
     ),
 ) -> Result<()> {
+    if layout.bidi_carets.is_some() && wrap_boundaries.is_empty() {
+        let (visual_layout, visual_decorations) =
+            super::bidi::paint_bidi_layout(layout, 0, decoration_runs);
+        let mut source_glyphs: Vec<_> = layout.runs.iter().flat_map(|run| &run.glyphs).collect();
+        source_glyphs.sort_by(|left, right| {
+            f32::from(left.position.x).total_cmp(&f32::from(right.position.x))
+        });
+        let mut source_indices: Vec<_> = source_glyphs.iter().map(|glyph| glyph.index).collect();
+        source_indices.push(layout.len);
+        source_indices.sort_unstable();
+        source_indices.dedup();
+        return paint_line(
+            origin,
+            &visual_layout,
+            line_height,
+            align,
+            align_width,
+            &visual_decorations,
+            &[],
+            window,
+            cx,
+            &mut |range, origin, width, style, window| {
+                let glyphs = source_glyphs.get(range).unwrap_or(&[]);
+                let start = glyphs.iter().map(|glyph| glyph.index).min().unwrap_or(0);
+                let last = glyphs
+                    .iter()
+                    .map(|glyph| glyph.index)
+                    .max()
+                    .unwrap_or(start);
+                let end = source_indices
+                    .get(source_indices.partition_point(|index| *index <= last))
+                    .copied()
+                    .unwrap_or(layout.len);
+                paint_underline(start..end, origin, width, style, window);
+            },
+        );
+    }
     window.paint_layer(|window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
@@ -808,6 +890,21 @@ fn paint_line_background(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
+    if layout.bidi_carets.is_some() && wrap_boundaries.is_empty() {
+        let (visual_layout, visual_decorations) =
+            super::bidi::paint_bidi_layout(layout, 0, decoration_runs);
+        return paint_line_background(
+            origin,
+            &visual_layout,
+            line_height,
+            align,
+            align_width,
+            &visual_decorations,
+            &[],
+            window,
+            cx,
+        );
+    }
     window.paint_layer(|window| {
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
@@ -991,6 +1088,7 @@ mod tests {
 
         ShapedLine {
             layout: Arc::new(LineLayout {
+                bidi_carets: None,
                 font_size: px(16.0),
                 width: px(width),
                 ascent: px(12.0),
@@ -1265,6 +1363,7 @@ mod tests {
                 let y = origin.y + underline_y_offset(line_height, line.ascent, line.descent);
                 let wrapped = WrappedLine {
                     layout: Arc::new(WrappedLineLayout {
+                        bidi_rows: Vec::new(),
                         unwrapped_layout: line.layout,
                         wrap_boundaries: SmallVec::from_buf([WrapBoundary {
                             run_ix: 0,
@@ -1375,6 +1474,7 @@ mod tests {
         // Successive splits simulate the incremental splitting done during wrap.
         let line = ShapedLine {
             layout: Arc::new(LineLayout {
+                bidi_carets: None,
                 font_size: px(16.0),
                 width: px(60.0),
                 ascent: px(12.0),
@@ -1594,6 +1694,7 @@ mod tests {
             width += advance;
         }
         line.layout = Arc::new(LineLayout {
+            bidi_carets: None,
             font_size: layout.font_size,
             width,
             ascent: layout.ascent,
@@ -1621,6 +1722,7 @@ mod tests {
     fn test_cursor_preserves_shaping_metadata_across_runs() {
         let line = ShapedLine {
             layout: Arc::new(LineLayout {
+                bidi_carets: None,
                 font_size: px(16.0),
                 width: px(50.0),
                 ascent: px(12.0),

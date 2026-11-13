@@ -633,6 +633,7 @@ impl AppleTextSystemState {
         }
         let typographic_bounds = line.get_typographic_bounds();
         LineLayout {
+            bidi_carets: None,
             runs,
             font_size,
             width: typographic_bounds.width.into(),

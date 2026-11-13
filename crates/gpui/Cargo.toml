@@ -115,6 +115,7 @@ taffy = { workspace = true, features = [
     "content_size",
 ] }
 thiserror.workspace = true
+unicode-bidi.workspace = true
 unicode-segmentation.workspace = true
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }

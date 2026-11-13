@@ -1737,6 +1737,7 @@ impl PlatformTextSystem for NoopTextSystem {
         }
 
         LineLayout {
+            bidi_carets: None,
             font_size,
             width: position,
             ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),

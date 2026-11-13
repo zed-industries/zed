@@ -2389,6 +2389,99 @@ fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
         .unwrap();
 }
 
+#[test]
+fn test_arabic_editing_visual_cursor_and_insertion() {
+    use gpui::PlatformTextSystem;
+    let platform = gpui_wgpu::CosmicTextSystem::new_without_system_fonts("Noto Sans Arabic");
+    platform
+        .add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../../gpui_wgpu/test_data/arabic/NotoSansArabic.ttf"
+        ))])
+        .unwrap();
+    let cx = &mut TestAppContext::build_with_text_system(
+        gpui::TestDispatcher::new(0),
+        None,
+        Arc::new(platform),
+    );
+    init_test(cx, |_| {});
+    let text = "العربية";
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(text, cx);
+        Editor::new(
+            EditorMode::AutoHeight {
+                min_lines: 1,
+                max_lines: Some(8),
+            },
+            buffer,
+            None,
+            window,
+            cx,
+        )
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            let head = |editor: &Editor, cx: &mut Context<Editor>| {
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head()
+                    .column
+            };
+            assert_eq!(head(editor, cx), 0);
+            editor.move_left(&MoveLeft, window, cx);
+            assert_eq!(head(editor, cx), 2);
+            editor.move_right(&MoveRight, window, cx);
+            assert_eq!(head(editor, cx), 0);
+            for _ in 0..3 {
+                editor.move_left(&MoveLeft, window, cx);
+            }
+            assert_eq!(head(editor, cx), 6);
+            editor.insert("و", window, cx);
+            assert_eq!(editor.text(cx), format!("{}و{}", &text[..6], &text[6..]));
+            assert_eq!(head(editor, cx), 8);
+            editor.backspace(&Backspace, window, cx);
+            assert_eq!(editor.text(cx), text);
+            assert_eq!(head(editor, cx), 6);
+            editor.select_left(&SelectLeft, window, cx);
+            assert_eq!(head(editor, cx), 8);
+            editor.insert("ز", window, cx);
+            assert_eq!(editor.text(cx), format!("{}ز{}", &text[..6], &text[8..]));
+            editor.move_to_end(&MoveToEnd, window, cx);
+            let snapshot = editor.display_snapshot(cx);
+            let details = editor.text_layout_details(window, cx);
+            let layout = snapshot.layout_row(DisplayRow(0), &details);
+            assert!(layout.x_for_index(text.len()) < px(0.01));
+            editor.move_right(&MoveRight, window, cx);
+            assert_eq!(head(editor, cx), 12);
+        })
+        .unwrap();
+    let window: gpui::AnyWindowHandle = editor.into();
+    window
+        .update(cx, |_, window, cx| {
+            window.refresh();
+            let _arena_clear_needed = window.draw(cx);
+        })
+        .unwrap();
+    editor
+        .update(cx, |editor, _, _| {
+            let map = editor.last_position_map.as_ref().unwrap();
+            let line = &map.line_layouts[0];
+            for index in (0..=text.len()).step_by(2) {
+                let x = line.x_for_index(index);
+                assert_eq!(line.index_for_x(x), Some(index));
+                let point = map.point_for_position(
+                    map.text_hitbox.bounds.origin
+                        + gpui::point(
+                            x - map.scroll_position.x as f32 * map.em_layout_width,
+                            map.line_height / 2.,
+                        ),
+                );
+                assert_eq!(point.nearest_valid.column() as usize, index);
+            }
+        })
+        .unwrap();
+}
+
 #[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

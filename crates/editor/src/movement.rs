@@ -3,11 +3,11 @@
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{
-    DisplayRow, EditorStyle, ToOffset, ToPoint,
+    DisplayRow, EditorStyle, RowExt, ToOffset, ToPoint,
     scroll::{ScrollOffset, SharedScrollAnchor},
 };
 use gpui::{Pixels, WindowTextSystem};
-use language::{CharClassifier, Point};
+use language::{CharClassifier, LanguageAwareStyling, Point};
 use multi_buffer::{MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 use workspace::searchable::Direction;
@@ -44,6 +44,56 @@ pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
         *point.column_mut() = map.line_len(point.row());
     }
     map.clip_point(point, Bias::Left)
+}
+
+/// Moves a caret in visual order without changing logical editing operations.
+pub fn visual_horizontal(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    toward_right: bool,
+    details: &TextLayoutDetails,
+) -> DisplayPoint {
+    // ASCII rows cannot contain bidi text; avoid shaping them on every arrow key.
+    let is_ascii = map
+        .chunks(
+            point.row()..point.row().next_row(),
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+            Default::default(),
+        )
+        .all(|chunk| chunk.text.is_ascii());
+    if is_ascii {
+        return if toward_right {
+            right(map, point)
+        } else {
+            left(map, point)
+        };
+    }
+    let line = map.layout_row(point.row(), details);
+    if let Some(carets) = &line.bidi_carets {
+        if let Some(column) = carets.visual_neighbor(point.column() as usize, toward_right) {
+            return map.clip_point(DisplayPoint::new(point.row(), column as u32), Bias::Left);
+        }
+        let logically_forward = toward_right != carets.paragraph_is_rtl;
+        if logically_forward && point.row() < map.max_point().row() {
+            return map.clip_point(DisplayPoint::new(point.row().next_row(), 0), Bias::Right);
+        }
+        if !logically_forward && point.row().0 > 0 {
+            let previous_row = DisplayRow(point.row().0 - 1);
+            return map.clip_point(
+                DisplayPoint::new(previous_row, map.line_len(previous_row)),
+                Bias::Left,
+            );
+        }
+        return point;
+    }
+    if toward_right {
+        right(map, point)
+    } else {
+        left(map, point)
+    }
 }
 
 /// Returns a column to the left of the current point, doing nothing if

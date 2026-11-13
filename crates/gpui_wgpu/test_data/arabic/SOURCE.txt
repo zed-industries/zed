@@ -1,0 +1,12 @@
+Noto Sans Arabic, version 2.013 (unmodified test fixture)
+
+Typeface project: https://github.com/notofonts/arabic
+License source: https://raw.githubusercontent.com/notofonts/arabic/main/OFL.txt
+
+Embedded copyright notice:
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/arabic)
+
+Embedded license: SIL Open Font License, Version 1.1 (see LICENSE).
+SHA-256: 3fae4d7239d1faa55b234bda8091019a5251ff79df40d5e29367d84bed2a8138
+
+The fixture is included by text-layout tests, not by the application bundle.

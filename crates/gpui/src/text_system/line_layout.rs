@@ -13,7 +13,10 @@ use std::{
     },
 };
 
-use super::LineWrapper;
+use super::{
+    BidiCaretMap, BidiRow, LineWrapper,
+    bidi::{contains_rtl, layout_bidi_rows},
+};
 
 /// A laid out and styled line of text
 #[derive(Default, Debug)]
@@ -30,6 +33,8 @@ pub struct LineLayout {
     pub runs: Vec<ShapedRun>,
     /// The length of the line in utf-8 bytes
     pub len: usize,
+    /// Visual caret positions for bidirectional text; absent on the LTR fast path.
+    pub bidi_carets: Option<Arc<BidiCaretMap>>,
 }
 
 /// A run of text that has been shaped .
@@ -60,6 +65,9 @@ pub struct ShapedGlyph {
 impl LineLayout {
     /// The index for the character at the given x coordinate
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
+        if let Some(carets) = &self.bidi_carets {
+            return Some(carets.index_for_x(x, true).unwrap_or_else(|index| index));
+        }
         if x >= self.width {
             None
         } else {
@@ -77,6 +85,9 @@ impl LineLayout {
     /// closest_index_for_x returns the character boundary closest to the given x coordinate
     /// (e.g. to handle aligning up/down arrow keys)
     pub fn closest_index_for_x(&self, x: Pixels) -> usize {
+        if let Some(carets) = &self.bidi_carets {
+            return carets.index_for_x(x, true).unwrap_or_else(|index| index);
+        }
         let mut prev_index = 0;
         let mut prev_x = px(0.);
 
@@ -107,6 +118,9 @@ impl LineLayout {
 
     /// The x position of the character at the given index
     pub fn x_for_index(&self, index: usize) -> Pixels {
+        if let Some(carets) = &self.bidi_carets {
+            return carets.x_for_index(index);
+        }
         for run in &self.runs {
             for glyph in &run.glyphs {
                 if glyph.index >= index {
@@ -137,6 +151,42 @@ impl LineLayout {
     ///   shifted left so the first glyph starts at x=0, and byte indices rebased to 0.
     /// - `font_size`, `ascent`, and `descent` are copied to both halves.
     pub fn split_at(&self, byte_index: usize) -> (LineLayout, LineLayout) {
+        if let Some(carets) = &self.bidi_carets {
+            let slice = |range: Range<usize>| {
+                let (carets, origin) = carets.slice(range.clone());
+                let runs = self
+                    .runs
+                    .iter()
+                    .filter_map(|run| {
+                        let glyphs: Vec<_> = run
+                            .glyphs
+                            .iter()
+                            .filter(|glyph| range.contains(&glyph.index))
+                            .map(|glyph| {
+                                let mut glyph = glyph.clone();
+                                glyph.index -= range.start;
+                                glyph.position.x -= origin;
+                                glyph
+                            })
+                            .collect();
+                        (!glyphs.is_empty()).then_some(ShapedRun {
+                            font_id: run.font_id,
+                            glyphs,
+                        })
+                    })
+                    .collect();
+                LineLayout {
+                    font_size: self.font_size,
+                    width: carets.width(),
+                    ascent: self.ascent,
+                    descent: self.descent,
+                    runs,
+                    len: range.len(),
+                    bidi_carets: Some(Arc::new(carets)),
+                }
+            };
+            return (slice(0..byte_index), slice(byte_index..self.len));
+        }
         let x_offset = self.x_for_index(byte_index);
 
         // Partition glyph runs. A single run may contribute glyphs to both halves.
@@ -171,6 +221,7 @@ impl LineLayout {
         }
 
         let left = LineLayout {
+            bidi_carets: None,
             font_size: self.font_size,
             width: x_offset,
             ascent: self.ascent,
@@ -180,6 +231,7 @@ impl LineLayout {
         };
 
         let right = LineLayout {
+            bidi_carets: None,
             font_size: self.font_size,
             width: self.width - x_offset,
             ascent: self.ascent,
@@ -295,6 +347,8 @@ impl LineLayout {
 /// A line of text that has been wrapped to fit a given width
 #[derive(Default, Debug)]
 pub struct WrappedLineLayout {
+    /// Rows shaped after logical wrapping for bidirectional text.
+    pub bidi_rows: Vec<BidiRow>,
     /// The line layout, pre-wrapping.
     pub unwrapped_layout: Arc<LineLayout>,
 
@@ -323,6 +377,13 @@ impl WrappedLineLayout {
 
     /// The width of this line, in pixels, whether or not it was wrapped.
     pub fn width(&self) -> Pixels {
+        if !self.bidi_rows.is_empty() {
+            return self
+                .bidi_rows
+                .iter()
+                .map(|row| row.layout.width)
+                .fold(Pixels::ZERO, Pixels::max);
+        }
         self.wrap_width
             .unwrap_or(Pixels::MAX)
             .min(self.unwrapped_layout.width)
@@ -333,7 +394,7 @@ impl WrappedLineLayout {
     pub fn size(&self, line_height: Pixels) -> Size<Pixels> {
         Size {
             width: self.width(),
-            height: line_height * (self.wrap_boundaries.len() + 1),
+            height: line_height * self.row_count(),
         }
     }
 
@@ -350,6 +411,33 @@ impl WrappedLineLayout {
     /// The wrap boundaries in this layout
     pub fn wrap_boundaries(&self) -> &[WrapBoundary] {
         &self.wrap_boundaries
+    }
+
+    /// Number of visual rows in this layout.
+    pub fn row_count(&self) -> usize {
+        if self.bidi_rows.is_empty() {
+            self.wrap_boundaries.len() + 1
+        } else {
+            self.bidi_rows.len()
+        }
+    }
+
+    /// Logical UTF-8 offsets at which new visual rows start.
+    pub fn wrap_indices(&self) -> Vec<usize> {
+        if !self.bidi_rows.is_empty() {
+            return self
+                .bidi_rows
+                .iter()
+                .skip(1)
+                .map(|row| row.range.start)
+                .collect();
+        }
+        self.wrap_boundaries
+            .iter()
+            .map(|boundary| {
+                self.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index
+            })
+            .collect()
     }
 
     /// The font size of this layout
@@ -393,6 +481,14 @@ impl WrappedLineLayout {
         closest: bool,
     ) -> Result<usize, usize> {
         let wrapped_line_ix = (position.y / line_height) as usize;
+
+        if !self.bidi_rows.is_empty() {
+            return self
+                .bidi_rows
+                .get(wrapped_line_ix)
+                .map(|row| row.index_for_x(position.x, closest))
+                .unwrap_or(Err(self.len()));
+        }
 
         let wrapped_line_start_index;
         let wrapped_line_start_x;
@@ -446,6 +542,16 @@ impl WrappedLineLayout {
 
     /// Returns the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
+        if !self.bidi_rows.is_empty() {
+            return self
+                .bidi_rows
+                .iter()
+                .enumerate()
+                .find(|(_, row)| {
+                    row.range.contains(&index) || index == self.len() && row.range.end == index
+                })
+                .map(|(row_index, row)| point(row.x_for_index(index), line_height * row_index));
+        }
         let mut line_start_ix = 0;
         let line_end_indices = self
             .wrap_boundaries
@@ -634,17 +740,26 @@ impl LineLayoutCache {
             drop(state);
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
-            let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(
-                    text.as_ref(),
-                    wrap_width,
-                    max_lines,
-                    &mut self.wrap_scratch.borrow_mut(),
-                )
+            let bidi_rows = if contains_rtl(&text) {
+                layout_bidi_rows(&text, runs, wrap_width, max_lines, |text, runs| {
+                    Arc::new(self.platform_text_system.layout_line(text, font_size, runs))
+                })
             } else {
-                SmallVec::new()
+                Vec::new()
             };
+            let wrap_boundaries =
+                if let Some(wrap_width) = wrap_width.filter(|_| bidi_rows.is_empty()) {
+                    unwrapped_layout.compute_wrap_boundaries(
+                        text.as_ref(),
+                        wrap_width,
+                        max_lines,
+                        &mut self.wrap_scratch.borrow_mut(),
+                    )
+                } else {
+                    SmallVec::new()
+                };
             let layout = Arc::new(WrappedLineLayout {
+                bidi_rows,
                 unwrapped_layout,
                 wrap_boundaries,
                 wrap_width,
@@ -713,6 +828,9 @@ impl LineLayoutCache {
                 apply_force_width_to_layout(&mut layout, force_width);
             }
 
+            if contains_rtl(&text) {
+                layout.bidi_carets = Some(Arc::new(BidiCaretMap::new(&text, &layout, None)));
+            }
             let key = Arc::new(CacheKey {
                 text,
                 font_size,
@@ -889,6 +1007,7 @@ mod tests {
 
     fn make_layout(glyphs: Vec<ShapedGlyph>) -> LineLayout {
         LineLayout {
+            bidi_carets: None,
             font_size: px(16.),
             width: px(100.),
             ascent: px(12.),

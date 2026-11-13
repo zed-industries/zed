@@ -590,6 +590,7 @@ impl DirectWriteState {
             let width = px(renderer_context.width);
 
             Ok(LineLayout {
+                bidi_carets: None,
                 font_size,
                 width,
                 ascent,
