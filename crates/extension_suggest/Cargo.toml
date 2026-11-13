@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 path.workspace = true
+phf.workspace = true
 
 [dev-dependencies]
 path = { workspace = true, features = ["test-support"] }
