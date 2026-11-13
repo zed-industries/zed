@@ -38,6 +38,17 @@ parts:
       - libxcb1
       - libxkbcommon-x11-0
       - libxkbcommon0
+      # Mesa's RADV so real AMD GPUs work even when the host drivers were
+      # built against a glibc newer than the base. Lavapipe is excluded from
+      # this package (see the lavapipe-noble part below).
+      - mesa-vulkan-drivers
+
+    # Exclude core26's lavapipe: it segfaults during vkCreateDevice in the
+    # classic snap environment (dl_iterate_phdr callback crash), while the
+    # noble build works. libLLVM-21 stays: Ubuntu's RADV links against it.
+    stage:
+      - -usr/lib/x86_64-linux-gnu/libvulkan_lvp.so*
+      - -usr/share/vulkan/icd.d/lvp_icd.json
 
     build-attributes:
       - enable-patchelf
@@ -54,6 +65,32 @@ parts:
       - -usr/share/lintian
       - -usr/share/man
 
+  # Lavapipe from noble as the software rasterizer fallback (containers,
+  # machines without a supported GPU). Noble's build links against older
+  # glibc, so it loads in the core26 runtime and on any newer host. Only
+  # the driver itself, its LLVM and its ICD manifest are primed; the rest
+  # of the package would clash with the core26 Mesa files.
+  lavapipe-noble:
+    plugin: nil
+    override-pull: |
+      arch="$(dpkg --print-architecture)"
+      curl -fsSL -o lvp.deb "https://archive.ubuntu.com/ubuntu/pool/main/m/mesa/mesa-vulkan-drivers_25.2.8-0ubuntu0.24.04.4_${arch}.deb"
+      curl -fsSL -o llvm20.deb "https://archive.ubuntu.com/ubuntu/pool/main/l/llvm-toolchain-20/libllvm20_20.1.2-0ubuntu1~24.04.3_${arch}.deb"
+    override-build: |
+      dpkg -x lvp.deb "$SNAPCRAFT_PART_INSTALL"
+      dpkg -x llvm20.deb "$SNAPCRAFT_PART_INSTALL"
+
+    # Only the software rasterizer, its LLVM and its ICD manifest; the rest
+    # of the package would clash with the core26 Mesa files.
+    stage:
+      - usr/lib/x86_64-linux-gnu/libvulkan_lvp.so
+      - usr/lib/x86_64-linux-gnu/libLLVM.so.20.1
+      - usr/share/vulkan/icd.d/lvp_icd.json
+    prime:
+      - usr/lib/x86_64-linux-gnu/libvulkan_lvp.so
+      - usr/lib/x86_64-linux-gnu/libLLVM.so.20.1
+      - usr/share/vulkan/icd.d/lvp_icd.json
+
 apps:
   zed:
     command: usr/bin/zed
@@ -62,6 +99,7 @@ apps:
       ZED_BUNDLE_TYPE: snap
       # snapcraft sets DF_1_NODEFLIB on all ELFs of classic snaps, which makes
       # the dynamic linker refuse to resolve bare sonames via /etc/ld.so.cache.
-      # The Vulkan loader dlopens ICDs (e.g. Mesa's llvmpipe) by bare soname,
-      # so without this Zed fails with "Failed to create surface".
-      LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu
+      # The Vulkan loader dlopens ICDs by bare soname, so the bundled Mesa
+      # drivers must come first here; the host directories afterwards provide
+      # anything not bundled (e.g. the NVIDIA ICD).
+      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu
