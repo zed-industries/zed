@@ -1,6 +1,6 @@
 name: zed
 title: Zed
-base: core24
+base: core26
 version: "$RELEASE_VERSION"
 summary: The editor for what's next
 description: |
