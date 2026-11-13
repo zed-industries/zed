@@ -209,6 +209,37 @@ pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> boo
             .allow_unsandboxed
 }
 
+pub(crate) fn terminal_shell(project: &Project, cx: &App) -> String {
+    #[cfg(target_os = "windows")]
+    if sandboxing_enabled_for_project(project, cx) {
+
+        /// Git Bash is not yet compatible with the native Windows sandbox.
+        /// Furthermore, packaged (MSIX) applications are not yet compatible either.
+        /// So, we avoid selecting Git Bash or MSIX versions of PowerShell when the
+        /// native Windows sandbox is enabled.
+        let shell = util::get_windows_system_shell();
+        let is_packaged = shell.to_ascii_lowercase().contains(r"\windowsapps\");
+        if !is_packaged || sandbox::can_launch_packaged_apps() {
+            return shell;
+        }
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        return format!(r"{system_root}\System32\WindowsPowerShell\v1.0\powershell.exe");
+    }
+    project
+        .remote_client()
+        .and_then(|remote| remote.read(cx).default_system_shell())
+        .unwrap_or_else(util::get_default_system_shell_preferring_bash)
+}
+
+/// The name of the shell [`terminal_shell`] picks, for the system prompt.
+pub(crate) fn terminal_shell_name(project: &Project, cx: &App) -> String {
+    util::shell::ShellKind::new(
+        &terminal_shell(project, cx),
+        project.path_style(cx).is_windows(),
+    )
+    .to_string()
+}
+
 /// Whether agent-run terminal commands should be wrapped in an OS-level
 /// sandbox for this process. See module docs for the policy.
 pub(crate) fn sandboxing_enabled(cx: &App) -> bool {

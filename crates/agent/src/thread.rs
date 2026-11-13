@@ -4635,6 +4635,7 @@ impl Thread {
             ),
             is_linux: cfg!(target_os = "linux"),
             is_windows: cfg!(target_os = "windows"),
+            shell: crate::sandboxing::terminal_shell_name(self.project.read(cx), cx),
         }
         .render(&self.templates)
         .context("failed to build system prompt")

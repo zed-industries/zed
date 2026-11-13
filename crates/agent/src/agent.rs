@@ -3854,6 +3854,12 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 Err(error) => return Task::ready(Err(error)),
             };
         }
+        let shell = match self.thread.read_with(cx, |thread, cx| {
+            crate::sandboxing::terminal_shell(thread.project().read(cx), cx)
+        }) {
+            Ok(shell) => shell,
+            Err(error) => return Task::ready(Err(error)),
+        };
         let task = self.acp_thread.update(cx, |thread, cx| {
             thread.create_terminal(
                 command,
@@ -3862,6 +3868,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 cwd,
                 output_byte_limit,
                 sandbox_wrap,
+                shell,
                 cx,
             )
         });

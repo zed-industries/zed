@@ -160,28 +160,14 @@ The current project contains the following root directories:
 The `terminal` tool runs commands inside a sandbox with these permissions:
 
 - Reads: any path on the filesystem is readable, including Git metadata.
-{{#if is_linux}}
-- Writes: `/tmp` is writable but is cleared between `terminal` calls{{#if worktrees}}. These project directories are also writable and persist across calls:
-{{#each worktrees}}
-  - `{{abs_path}}`
-{{/each}}
-  `.git` directories remain protected. Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
-{{else}}
 {{#if is_windows}}
-- Execution: commands run inside WSL under Bubblewrap. Native Windows project paths are routed through WSL's `/mnt/<drive>/...` filesystem view.
-- Writes: `/tmp` inside WSL is writable but is cleared between `terminal` calls{{#if worktrees}}. These project directories are also writable and persist across calls:
-{{#each worktrees}}
-  - `{{abs_path}}`
-{{/each}}
-  Protected Git metadata remains read-only. Writes anywhere else on the WSL filesystem and mounted Windows drives are blocked.{{else}}. No project directories are currently writable.{{/if}}
-{{else}}
-- Writes: a per-thread temporary directory exposed via `$TMPDIR`, `$TMP`, and `$TEMP` is writable and persists across `terminal` calls in this thread{{#if worktrees}}, along with these project directories:
+- Execution: commands run inside a Windows AppContainer sandbox. Programs from MSYS2 or Cygwin (including Git Bash's suite of Unix tools) and apps from the Microsoft store may not work inside it. If one fails to start, rerun the command unsandboxed.
+{{/if}}
+- Writes: {{#if is_linux}}`/tmp` is writable but is cleared between `terminal` calls{{else}}{{#if is_windows}}a per-command temporary directory exposed via `%TEMP%` and `%TMP%` is writable but is removed after each `terminal` call{{else}}a per-thread temporary directory exposed via `$TMPDIR`, `$TMP`, and `$TEMP` is writable and persists across `terminal` calls in this thread{{/if}}{{/if}}{{#if worktrees}}. These project directories are also writable and persist across calls:
 {{#each worktrees}}
   - `{{abs_path}}`
 {{/each}}
   `.git` directories remain protected. Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
-{{/if}}
-{{/if}}
 - Network: outbound network access is blocked.
 
 {{#if is_windows}}

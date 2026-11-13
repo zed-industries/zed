@@ -56,7 +56,7 @@ use text::Bias;
 use ui::App;
 use util::markdown::{MarkdownCodeBlock, MarkdownEscaped};
 use util::path_list::PathList;
-use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
+use util::{ResultExt, paths::PathStyle};
 use uuid::Uuid;
 
 pub(crate) enum MetadataUpdate {
@@ -8307,6 +8307,7 @@ impl AcpThread {
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<SandboxWrap>,
+        shell: String,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
@@ -8341,13 +8342,6 @@ impl AcpThread {
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let env = env.await;
-                let shell = project
-                    .update(cx, |project, cx| {
-                        project
-                            .remote_client()
-                            .and_then(|r| r.read(cx).default_system_shell())
-                    })
-                    .unwrap_or_else(|| get_default_system_shell_preferring_bash());
 
                 // The sandbox owns the network proxy (for restricted-network
                 // policies) and injects the child's proxy env vars, returning
@@ -8356,13 +8350,11 @@ impl AcpThread {
                 #[cfg(target_os = "windows")]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) =
                     if sandbox_wrap.is_some() {
-                        let (task_command, task_args) = task::ShellBuilder::new(
-                            &Shell::Program("/bin/sh".to_string()),
-                            false,
-                        )
-                        .non_interactive()
-                        .redirect_stdin_to_dev_null()
-                        .build(Some(command.clone()), &args);
+                        let (task_command, task_args) =
+                            task::ShellBuilder::new(&Shell::Program(shell), is_windows)
+                                .non_interactive()
+                                .redirect_stdin_to_dev_null()
+                                .build(Some(command.clone()), &args);
                         let wrap = cx.background_spawn(prepare_sandbox_wrap(
                             task_command,
                             task_args,
@@ -8380,12 +8372,8 @@ impl AcpThread {
                                 )),
                             )),
                         };
-                        (task_command, task_args, task_env, sandbox, None)
+                        (task_command, task_args, task_env, sandbox, cwd.clone())
                     } else {
-                        // No sandbox wrap means we're running unsandboxed, and
-                        // on Windows that deliberately changes the shell: the
-                        // sandboxed path runs under WSL's Linux bash, but this
-                        // fallback uses the host's `shell` against the native cwd.
                         let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
                         if headless {
                             builder = builder.non_interactive();
@@ -16911,6 +16899,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    util::get_default_system_shell_preferring_bash(),
                     cx,
                 )
             })
@@ -16940,6 +16929,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    util::get_default_system_shell_preferring_bash(),
                     cx,
                 )
             })

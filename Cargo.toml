@@ -633,6 +633,7 @@ env_logger = "0.11"
 etagere = "0.2"
 exec = "0.3.1"
 fancy-regex = "0.19"
+flatbuffers = "25.12"
 flume = { version = "0.12", default-features = false, features = ["async"] }
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed", default-features = false }
 foreign-types = "0.5"

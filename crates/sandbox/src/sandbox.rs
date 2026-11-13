@@ -24,6 +24,8 @@ mod linux_bubblewrap;
 mod macos_seatbelt;
 
 #[cfg(target_os = "windows")]
+mod windows_psec;
+#[cfg(target_os = "windows")]
 mod windows_wsl;
 
 mod util;
@@ -36,6 +38,8 @@ pub use util::{
     HostFilesystemLocation, HostFilesystemLocationDisplay, normalize_host_filesystem_locations,
     resolve_canonical,
 };
+#[cfg(target_os = "windows")]
+pub use windows_psec::can_launch_packaged_apps;
 #[cfg(target_os = "windows")]
 pub use windows_wsl::{ResolvedGrant, resolve_canonical_for_grant};
 
@@ -723,7 +727,7 @@ impl Sandbox {
             if matches!(policy.network, SandboxNetPolicy::Restricted { .. }) {
                 return Err(unsupported_restricted_network_on_windows());
             }
-            Ok(())
+            windows_psec::check_available().map_err(map_anyhow_error)
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
@@ -746,7 +750,7 @@ impl Sandbox {
         }
         #[cfg(target_os = "windows")]
         {
-            self.wrap_windows(command).await
+            self.wrap_windows_psec(command)
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
@@ -999,6 +1003,44 @@ impl Sandbox {
     }
 
     #[cfg(target_os = "windows")]
+    fn wrap_windows_psec(
+        &mut self,
+        command: &CommandAndArgs,
+    ) -> Result<WrappedCommand, SandboxError> {
+        let writable_paths: Vec<&Path> = self
+            .fs
+            .writable_paths
+            .iter()
+            .map(HostFilesystemLocation::windows_canonical_path)
+            .collect();
+        let protected_paths: Vec<&Path> = self
+            .fs
+            .protected_paths
+            .iter()
+            .map(HostFilesystemLocation::windows_requested_path)
+            .collect();
+
+        let spec = windows_psec::build_spec(
+            self.fs.allow_fs_write,
+            &writable_paths,
+            &protected_paths,
+            matches!(self.network, NetSetup::Unrestricted),
+        )
+        .map_err(map_anyhow_error)?;
+
+        let (program, args) =
+            windows_psec::wrap_invocation(&spec, command.program.clone(), command.args.clone())
+                .map_err(map_anyhow_error)?;
+
+        Ok(WrappedCommand {
+            program,
+            args,
+            env: command.env.clone(),
+            cwd: command.cwd.clone(),
+        })
+    }
+
+    #[cfg(target_os = "windows")]
     async fn wrap_windows(
         &mut self,
         command: &CommandAndArgs,
@@ -1085,6 +1127,8 @@ pub fn run_sandbox_launcher_if_invoked() {
         linux_bubblewrap::run_launcher_if_invoked();
         linux_bubblewrap::run_wsl_helper_if_invoked();
     }
+    #[cfg(target_os = "windows")]
+    windows_psec::run_launcher_if_invoked();
 }
 
 // The createability probe only needs to know whether a sandbox *can* be built
