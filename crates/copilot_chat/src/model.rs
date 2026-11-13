@@ -69,10 +69,15 @@ pub fn language_model(model: &CopilotChatModel) -> LanguageModel {
             any: supports_tools,
             none: supports_tools,
         },
-        cost_info: LanguageModelCostInfo::RequestCost {
-            cost_per_request: model.multiplier(),
-        }
-        .into(),
+        cost_info: match model.token_cost() {
+            Some(cost) => Some(LanguageModelCostInfo::TokenCost {
+                input_token_cost_per_1m: cost.input_dollars_per_1m,
+                output_token_cost_per_1m: cost.output_dollars_per_1m,
+            }),
+            None => model
+                .multiplier()
+                .map(|cost_per_request| LanguageModelCostInfo::RequestCost { cost_per_request }),
+        },
         max_input_tokens: model.max_prompt_tokens().unwrap_or(model.max_token_count()),
         max_output_tokens: model.max_output_tokens(),
         ..LanguageModel::new(
