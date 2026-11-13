@@ -7,12 +7,12 @@ use file_icons::FileIcons;
 use git::status::FileStatus;
 use gpui::{
     Action, AnyElement, App, AvailableSpace, Bounds, ClickEvent, ClipboardItem, ContentMask,
-    CursorStyle, DefiniteLength, Entity, Focusable as _, Hitbox, HitboxBehavior, Hsla, IntoElement,
+    CursorStyle, DefiniteLength, Entity, Focusable as _, HighlightStyle, Hitbox, HitboxBehavior, Hsla, IntoElement,
     Length, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
-    ShapedLine, SharedString, Styled, TextAlign, Window, WindowBackgroundAppearance, div, fill,
-    linear_color_stop, linear_gradient, point, px, size,
+    ShapedLine, SharedString, Styled, StyledText, TextAlign, Window, WindowBackgroundAppearance,
+    div, fill, linear_color_stop, linear_gradient, point, px, size,
 };
-use language::language_settings::ShowWhitespaceSetting;
+use language::{HighlightedText, language_settings::ShowWhitespaceSetting};
 use multi_buffer::{Anchor, ExcerptBoundaryInfo, MultiBuffer};
 use project::Entry;
 use settings::{RelativeLineNumbers, Settings};
@@ -32,9 +32,10 @@ use super::{
     render_breadcrumb_text,
 };
 use crate::{
-    BUFFER_HEADER_PADDING, DisplayRow, Editor, EditorSettings, EditorSnapshot, FILE_HEADER_HEIGHT,
-    GutterDimensions, JumpData, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, Point, RowExt,
-    SelectionEffects, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    BUFFER_HEADER_PADDING, DisplayRow, Editor, EditorSettings, EditorSnapshot,
+    FILE_HEADER_HEIGHT, GutterDimensions, JumpData, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    OpenExcerpts, Point, RowExt, SelectionEffects, StickyHeaderExcerpt, ToPoint, ToggleFold,
+    ToggleFoldAll,
     display_map::ToDisplayPoint,
     scroll::{Autoscroll, ScrollOffset, ScrollPixelOffset},
 };
@@ -280,7 +281,15 @@ impl EditorElement {
                 let number = relative_number
                     .filter(|&delta| delta != 0)
                     .map(|delta| delta.unsigned_abs() as u32)
-                    .unwrap_or(start_point.row + 1);
+                    .unwrap_or_else(|| {
+                        // `start_point` is in multibuffer rows, which include expanded
+                        // deleted hunks, so map it back to the file row like the gutter.
+                        let buffer_row = snapshot
+                            .buffer_snapshot()
+                            .point_to_buffer_point(start_point)
+                            .map_or(start_point.row, |(_, point)| point.row);
+                        buffer_row + 1
+                    });
                 let color = cx.theme().colors().editor_line_number;
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
@@ -619,6 +628,54 @@ pub(crate) fn header_jump_data(
     }
 }
 
+/// Renders the symbols enclosing an excerpt as a single line that, when it does not fit,
+/// is truncated from the start to keep the innermost symbol visible.
+pub(crate) fn render_excerpt_context(
+    context: &[HighlightedText],
+    window: &mut Window,
+    cx: &App,
+) -> AnyElement {
+    let font = theme_settings::ThemeSettings::get_global(cx)
+        .buffer_font
+        .clone();
+    let mut text_style = window.text_style();
+    text_style.font_family = font.family;
+    text_style.font_features = font.features;
+    text_style.font_style = font.style;
+    text_style.font_weight = font.weight;
+    text_style.color = Color::Muted.color(cx);
+
+    // One text run, as truncation applies to a single text element.
+    let separator_style = HighlightStyle::color(Color::Placeholder.color(cx));
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+    for (index, symbol) in context.iter().enumerate() {
+        if index > 0 {
+            let start = text.len();
+            text.push_str(" › ");
+            highlights.push((start..text.len(), separator_style));
+        }
+        let offset = text.len();
+        // Replacing a newline keeps byte offsets, so the highlight ranges stay valid.
+        text.push_str(&symbol.text.replace('\n', " "));
+        highlights.extend(
+            symbol
+                .highlights
+                .iter()
+                .map(|(range, style)| (range.start + offset..range.end + offset, *style)),
+        );
+    }
+
+    div()
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis_start()
+        .text_ui(cx)
+        .child(StyledText::new(text).with_default_highlights(&text_style, highlights))
+        .into_any_element()
+}
+
 pub(crate) fn render_buffer_header(
     editor: &Entity<Editor>,
     for_excerpt: &ExcerptBoundaryInfo,
@@ -643,7 +700,12 @@ pub(crate) fn render_buffer_header(
     let multibuffer_snapshot = multi_buffer.snapshot(cx);
     let buffer = for_excerpt.buffer(&multibuffer_snapshot);
 
-    let breadcrumbs = if is_selected {
+    let sticky_header_context = is_sticky
+        .then(|| editor_read.sticky_header_context(buffer_id))
+        .flatten();
+    let breadcrumbs = if let Some(context) = sticky_header_context {
+        (!context.is_empty()).then(|| context.clone())
+    } else if is_selected {
         editor_read.breadcrumbs_inner(cx)
     } else {
         None

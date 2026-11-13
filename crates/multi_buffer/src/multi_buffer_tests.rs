@@ -4832,8 +4832,58 @@ async fn test_word_diff_modified_lines_with_deletion_between(cx: &mut TestAppCon
 
     assert_eq!(
         word_diffs,
+        vec!["bbb", "ddd", "BBB", "DDD"],
+        "modified lines with a deleted line between should still produce word diffs"
+    );
+}
+
+#[gpui::test]
+async fn test_word_diff_modified_line_shifted_by_insertions(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "const message = \"hello world from zed\";\n";
+    let modified_text = "\n\nlet added = 1;\nconst message = \"hello brave new world from zed\";\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(
+        word_diffs,
+        vec!["brave new "],
+        "only the paired line should get word diffs, inserted lines keep whole-line highlights"
+    );
+}
+
+#[gpui::test]
+async fn test_word_diff_unequal_hunk_after_unchanged_lines(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "fn main() {\n    let value = 1;\n}\n";
+    let modified_text = "fn main() {\n    setup();\n    let value = 2;\n}\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(word_diffs, vec!["1", "2"]);
+}
+
+#[gpui::test]
+async fn test_word_diff_line_count_limit(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "aaa bbb\n";
+    let within_limit = format!("{}aaa BBB\n", "inserted();\n".repeat(4));
+    let over_limit = format!("{}aaa BBB\n", "inserted();\n".repeat(5));
+
+    assert_eq!(
+        collect_word_diffs(base_text, &within_limit, cx),
+        vec!["bbb", "BBB"]
+    );
+    assert_eq!(
+        collect_word_diffs(base_text, &over_limit, cx),
         Vec::<String>::new(),
-        "modified lines with a deleted line between should not produce word diffs"
+        "hunks over the line count limit should not produce word diffs"
     );
 }
 

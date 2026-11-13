@@ -1229,6 +1229,17 @@ pub struct Editor {
     outline_symbols_at_cursor: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
     sticky_headers_task: Task<()>,
     sticky_headers: Option<Vec<OutlineItem<Anchor>>>,
+    /// Whether a headerless multibuffer with a single excerpt gets sticky headers.
+    single_excerpt_sticky_headers: bool,
+    /// Whether excerpt boundaries show the symbols enclosing the excerpt, as in diff views.
+    show_excerpt_contexts: bool,
+    /// The symbols, outermost first, enclosing the first change of each excerpt, keyed by
+    /// excerpt start.
+    excerpt_contexts: HashMap<text::Anchor, Vec<HighlightedText>>,
+    excerpt_context_tasks: HashMap<BufferId, Task<()>>,
+    /// The symbols enclosing the first row below the sticky buffer header.
+    sticky_header_context: Option<(BufferId, Vec<HighlightedText>)>,
+    sticky_header_context_task: Task<()>,
     pub(crate) colorize_brackets_task: Task<()>,
 }
 
@@ -1944,6 +1955,168 @@ impl Editor {
         Editor::new_internal(mode, buffer, project, None, window, cx)
     }
 
+    /// Returns the buffer to take sticky headers from: a singleton buffer, or, when
+    /// enabled, the only buffer of a headerless multibuffer with a single excerpt,
+    /// such as the full-file diff view.
+    pub(crate) fn sticky_header_buffer<'a>(
+        &self,
+        multi_buffer: &'a MultiBufferSnapshot,
+    ) -> Option<&'a BufferSnapshot> {
+        if let Some(buffer) = multi_buffer.as_singleton() {
+            return Some(buffer);
+        }
+        let mut excerpts = multi_buffer.excerpts();
+        if !self.single_excerpt_sticky_headers
+            || multi_buffer.show_headers()
+            || excerpts.next().is_none()
+            || excerpts.next().is_some()
+        {
+            return None;
+        }
+        multi_buffer
+            .anchor_to_buffer_anchor(Anchor::Min)
+            .map(|(_, buffer)| buffer)
+    }
+
+    pub(crate) fn excerpt_context(
+        &self,
+        excerpt_start: &text::Anchor,
+    ) -> Option<&Vec<HighlightedText>> {
+        self.excerpt_contexts.get(excerpt_start)
+    }
+
+    /// Returns the symbols enclosing the first row below the sticky header of the buffer, set
+    /// only when the cursor is not visible.
+    pub(crate) fn sticky_header_context(
+        &self,
+        buffer_id: BufferId,
+    ) -> Option<&Vec<HighlightedText>> {
+        self.sticky_header_context
+            .as_ref()
+            .filter(|(context_buffer_id, _)| *context_buffer_id == buffer_id)
+            .map(|(_, context)| context)
+    }
+
+    /// Recomputes, in the background, the symbols enclosing the first row below the sticky
+    /// buffer header. Breadcrumbs follow the cursor, which is misleading in a diff view when
+    /// the cursor is scrolled out of view.
+    fn refresh_sticky_header_context(
+        &mut self,
+        display_snapshot: &DisplaySnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.show_excerpt_contexts {
+            return;
+        }
+        let Some(visible_line_count) = self.visible_line_count() else {
+            return;
+        };
+        let scroll_top = self.scroll_manager.scroll_position(display_snapshot, cx).y;
+        let first_row = scroll_top + FILE_HEADER_HEIGHT as f64;
+        let first_line = display_snapshot.display_point_to_anchor(
+            DisplayPoint::new(DisplayRow(first_row as u32), 0),
+            Bias::Right,
+        );
+        let multi_buffer = display_snapshot.buffer_snapshot().clone();
+        let buffer_id = |anchor| {
+            multi_buffer
+                .anchor_to_buffer_anchor(anchor)
+                .map(|(anchor, _)| anchor.buffer_id)
+        };
+        let cursor = self.selections.newest_anchor().head();
+        let cursor_row = cursor.to_display_point(display_snapshot).row().as_f64();
+        if (first_row..scroll_top + visible_line_count).contains(&cursor_row)
+            && buffer_id(cursor) == buffer_id(first_line)
+        {
+            self.sticky_header_context_task = Task::ready(());
+            if self.sticky_header_context.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
+
+        let syntax = self.style(cx).syntax.clone();
+        let background_task = cx.background_spawn(async move {
+            let (buffer_id, symbols) =
+                multi_buffer.symbols_containing(first_line, Some(&syntax))?;
+            let symbols = symbols
+                .into_iter()
+                .map(|symbol| HighlightedText {
+                    text: symbol.text,
+                    highlights: symbol.highlight_ranges,
+                })
+                .collect::<Vec<_>>();
+            Some((buffer_id, symbols))
+        });
+        self.sticky_header_context_task = cx.spawn(async move |this, cx| {
+            let context = background_task.await;
+            this.update(cx, |this, cx| {
+                this.sticky_header_context = context;
+                cx.notify();
+            })
+            .ok();
+        });
+    }
+
+    /// Recomputes, in the background, the symbols enclosing each excerpt of the buffer.
+    fn refresh_excerpt_contexts(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        if !self.show_excerpt_contexts {
+            return;
+        }
+        let multi_buffer = self.buffer.read(cx).snapshot(cx);
+        let syntax = self.style(cx).syntax.clone();
+        let contexts = cx.background_spawn(async move {
+            let Some(buffer) = multi_buffer.buffer_for_id(buffer_id) else {
+                return Vec::new();
+            };
+            multi_buffer
+                .excerpts()
+                .filter(|excerpt| excerpt.context.start.buffer_id == buffer_id)
+                .filter_map(|excerpt| {
+                    // Diff views put the first hunk in the primary range. The context lines
+                    // before it can still belong to the previous symbol, e.g. its closing brace.
+                    let row = excerpt.primary.start.to_point(buffer).row;
+                    let start_row = excerpt.context.start.to_point(buffer).row;
+                    let line = Point::new(row, 0)..Point::new(row, buffer.line_len(row));
+                    let symbols = buffer
+                        .outline_items_containing(line, true, Some(&syntax))
+                        .into_iter()
+                        // Symbols starting inside the excerpt are visible already.
+                        .filter(|item| item.range.start.to_point(buffer).row < start_row)
+                        .map(|item| HighlightedText {
+                            text: item.text,
+                            highlights: item.highlight_ranges,
+                        })
+                        .collect::<Vec<_>>();
+                    (!symbols.is_empty()).then_some((excerpt.context.start, symbols))
+                })
+                .collect::<Vec<_>>()
+        });
+        let task = cx.spawn(async move |this, cx| {
+            let contexts = contexts.await;
+            this.update(cx, |this, cx| {
+                this.excerpt_contexts
+                    .retain(|start, _| start.buffer_id != buffer_id);
+                this.excerpt_contexts.extend(contexts);
+                cx.notify();
+            })
+            .ok();
+        });
+        self.excerpt_context_tasks.insert(buffer_id, task);
+    }
+
+    fn refresh_all_excerpt_contexts(&mut self, cx: &mut Context<Self>) {
+        let buffer_ids = self
+            .buffer
+            .read(cx)
+            .snapshot(cx)
+            .all_buffer_ids()
+            .collect::<Vec<_>>();
+        for buffer_id in buffer_ids {
+            self.refresh_excerpt_contexts(buffer_id, cx);
+        }
+    }
+
     pub fn refresh_sticky_headers(
         &mut self,
         display_snapshot: &DisplaySnapshot,
@@ -1952,12 +2125,17 @@ impl Editor {
         if !self.mode.is_full() {
             return;
         }
+        self.refresh_sticky_header_context(display_snapshot, cx);
         let multi_buffer = display_snapshot.buffer_snapshot().clone();
         let scroll_anchor = self
             .scroll_manager
             .native_anchor(display_snapshot, cx)
             .anchor;
-        let Some(buffer_snapshot) = multi_buffer.as_singleton() else {
+        let Some(buffer_snapshot) = self.sticky_header_buffer(&multi_buffer) else {
+            // A multibuffer can stop being eligible, e.g. when a diff view
+            // switches from the full file to hunks only.
+            self.sticky_headers = None;
+            self.sticky_headers_task = Task::ready(());
             return;
         };
 
@@ -2615,6 +2793,12 @@ impl Editor {
             outline_symbols_at_cursor: None,
             sticky_headers_task: Task::ready(()),
             sticky_headers: None,
+            single_excerpt_sticky_headers: false,
+            show_excerpt_contexts: false,
+            excerpt_contexts: HashMap::default(),
+            excerpt_context_tasks: HashMap::default(),
+            sticky_header_context: None,
+            sticky_header_context_task: Task::ready(()),
             colorize_brackets_task: Task::ready(()),
         };
 
@@ -10166,6 +10350,7 @@ impl Editor {
                 }
                 self.refresh_document_highlights(cx);
                 let buffer_id = buffer.read(cx).remote_id();
+                self.refresh_excerpt_contexts(buffer_id, cx);
                 self.remove_invalid_lsp_data(&[buffer_id], false, cx);
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()
                     && let Some(project) = self.project.clone()
@@ -10199,6 +10384,9 @@ impl Editor {
                     cx,
                 );
                 for buffer_id in removed_buffer_ids {
+                    self.excerpt_context_tasks.remove(buffer_id);
+                    self.excerpt_contexts
+                        .retain(|start, _| start.buffer_id != *buffer_id);
                     self.registered_buffers.remove(buffer_id);
                     self.clear_runnables(Some(*buffer_id));
                     self.semantic_token_state.invalidate_buffer(buffer_id);
@@ -10230,6 +10418,8 @@ impl Editor {
                 });
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
+                self.refresh_excerpt_contexts(*buffer_id, cx);
+                self.refresh_sticky_header_context(&self.display_snapshot(cx), cx);
                 self.refresh_runnables(Some(*buffer_id), window, cx);
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 self.colorize_brackets(true, cx);
@@ -10523,6 +10713,9 @@ impl Editor {
         self.invalidate_semantic_tokens(None);
         self.refresh_semantic_tokens(None, false, cx);
         self.refresh_outline_symbols_at_cursor(cx);
+        // Cached contexts hold highlight colors resolved from the previous theme.
+        self.refresh_all_excerpt_contexts(cx);
+        self.refresh_sticky_header_context(&self.display_snapshot(cx), cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -11723,6 +11916,15 @@ impl Editor {
 
     fn disable_runnables(&mut self) {
         self.enable_runnables = false;
+    }
+
+    pub(crate) fn enable_single_excerpt_sticky_headers(&mut self) {
+        self.single_excerpt_sticky_headers = true;
+    }
+
+    pub(crate) fn enable_excerpt_contexts(&mut self, cx: &mut Context<Self>) {
+        self.show_excerpt_contexts = true;
+        self.refresh_all_excerpt_contexts(cx);
     }
 
     pub fn disable_code_lens(&mut self, cx: &mut Context<Self>) {
