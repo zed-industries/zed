@@ -15,8 +15,9 @@ corgi_version = "0.1.43"
 # build path into the binary.
 
 # sha256-pinned tools, fetched into the corgi store and exposed to the named
-# packages' build scripts via the given environment variable. URLs and hashes
-# are for the macOS arm64 build host.
+# packages' build scripts via the given environment variable. Each download is
+# built for one platform, so `targets` limits a tool to builds for that
+# platform.
 #
 # Note: no protoc tool is needed. `proto` and `livekit_api` compile their
 # protobufs with `protox` (a pure-Rust protoc) and `prost_build::compile_fds`,
@@ -29,6 +30,17 @@ sha256 = "3be85f5b999e327b1ac7d804cbc9acd767059e9f603c42ec2765f6ab68fbd367"
 bin = "cmake-4.1.2-macos-universal/CMake.app/Contents/bin/cmake"
 env = "CMAKE"
 packages = ["webrtc-sys", "wasmtime-c-api-impl"]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+
+[tools.cmake-linux-x86_64]
+version = "4.1.2"
+url = "https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-linux-x86_64.tar.gz"
+sha256 = "773cc679c3a7395413bd096523f8e5d6c39f8718af4e12eb4e4195f72f35e4ab"
+bin = "cmake-4.1.2-linux-x86_64/bin/cmake"
+command = "cmake"
+env = "CMAKE"
+packages = ["webrtc-sys", "wasmtime-c-api-impl"]
+targets = ["x86_64-unknown-linux-gnu"]
 
 # Prebuilt libwebrtc, so webrtc-sys-build does not have to download it over the
 # network (which the sandbox forbids). The tag must match WEBRTC_TAG in the
@@ -41,6 +53,16 @@ sha256 = "09ba71bfbc15c6aacced7fe20451a9648dfe648c24295f28d75fc386dbd7281a"
 path = "mac-arm64-release"
 env = "LK_CUSTOM_WEBRTC"
 packages = ["webrtc-sys"]
+targets = ["aarch64-apple-darwin"]
+
+[tools.webrtc-prebuilt-linux-x86_64]
+version = "0001d84-4"
+url = "https://github.com/zed-industries/livekit-rust-sdks/releases/download/webrtc-0001d84-4/webrtc-linux-x64-release.zip"
+sha256 = "23dd88d485b85e709b3fa37d7afed5ca7a3dd05febd3d9383ebeb793bcd1039e"
+path = "linux-x64-release"
+env = "LK_CUSTOM_WEBRTC"
+packages = ["webrtc-sys"]
+targets = ["x86_64-unknown-linux-gnu"]
 
 # Plan-time probe: the git SHA is read here (outside the sandbox) and frozen
 # into the keyed value. zed/build.rs prefers $ZED_COMMIT_SHA over running git,
@@ -51,6 +73,39 @@ packages = ["webrtc-sys"]
 command = "git rev-parse HEAD"
 packages = ["zed"]
 profiles = ["release"]
+
+# Forwarded from the invoking environment when set. A Nix dev shell supplies
+# pkg-config and the libraries it finds this way, since the sandbox passes no
+# ambient environment to build scripts.
+[env.PKG_CONFIG]
+inherit = true
+packages = [
+    "alsa-sys",
+    "gio-sys",
+    "glib-sys",
+    "gobject-sys",
+    "webrtc-sys",
+    "x11",
+    "yeslogic-fontconfig-sys",
+]
+
+[env.PKG_CONFIG_PATH]
+inherit = true
+packages = [
+    "alsa-sys",
+    "gio-sys",
+    "glib-sys",
+    "gobject-sys",
+    "webrtc-sys",
+    "x11",
+    "yeslogic-fontconfig-sys",
+]
+
+# Lets a Nix dev shell supply its own cmake: the downloaded Linux cmake expects
+# a standard dynamic loader, which NixOS does not have.
+[env.CMAKE]
+inherit = true
+packages = ["webrtc-sys", "wasmtime-c-api-impl"]
 
 # Reads a package's actions perform that corgi's sandbox does not grant by
 # default. By default only a package's own `.rs` files (plus its manifest) are
