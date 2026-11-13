@@ -66,6 +66,11 @@ struct ImeState {
     marked_text: String,
 }
 
+/// Marker type for the toast emitted when a `NewTerminal` action references
+/// a profile name that does not exist in `terminal.profiles`.
+#[derive(Debug)]
+pub struct TerminalProfileWarning;
+
 fn viewport_line_for_point(point: Point, display_offset: usize) -> Option<usize> {
     let display_offset = i32::try_from(display_offset).unwrap_or(i32::MAX);
     let line = point.line.saturating_add(display_offset);
@@ -104,6 +109,22 @@ actions!(
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = terminal)]
 pub struct RenameTerminal;
+
+/// Spawn a terminal running a detected (non-profile) shell program from
+/// the "+" menu. The label becomes the tab title; detected shells are not
+/// persisted because the detected set is machine-specific.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal)]
+pub struct SpawnDetectedShell {
+    pub program: String,
+    /// e.g. `["-d", "Ubuntu"]` for WSL distros.
+    pub args: Vec<String>,
+    pub label: String,
+    /// Spawn a local terminal even in remote projects (the menu sets this
+    /// so detected local executables are actually used).
+    #[serde(default)]
+    pub local: bool,
+}
 
 pub fn init(cx: &mut App) {
     terminal_panel::init(cx);
@@ -154,6 +175,9 @@ pub struct TerminalView {
     blinking_terminal_enabled: bool,
     needs_serialize: bool,
     custom_title: Option<String>,
+    /// The `terminal.profiles` entry this view was spawned from, persisted
+    /// so workspace reload respawns the same profile.
+    pub(crate) profile_name: Option<String>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
@@ -230,13 +254,19 @@ impl TerminalView {
     ) {
         let local = action.local;
         let working_directory = default_working_directory(workspace, cx);
-        TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
-            if local {
-                project.create_local_terminal(cx)
-            } else {
-                project.create_terminal_shell(working_directory, cx)
-            }
-        })
+        TerminalPanel::add_center_terminal(
+            workspace,
+            window,
+            cx,
+            move |project, cx| {
+                if local {
+                    project.create_local_terminal(cx)
+                } else {
+                    project.create_terminal_shell(working_directory, cx)
+                }
+            },
+            None,
+        )
         .detach_and_log_err(cx);
     }
 
@@ -311,6 +341,7 @@ impl TerminalView {
             scroll_handle,
             needs_serialize: false,
             custom_title: None,
+            profile_name: None,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
             rename_editor: None,
@@ -2031,6 +2062,7 @@ impl SerializableItem for TerminalView {
         let workspace_id = self.workspace_id?;
         let cwd = terminal.working_directory();
         let custom_title = self.custom_title.clone();
+        let profile_name = self.profile_name.clone();
         self.needs_serialize = false;
 
         let db = TerminalDb::global(cx);
@@ -2040,6 +2072,8 @@ impl SerializableItem for TerminalView {
                     .await?;
             }
             db.save_custom_title(item_id, workspace_id, custom_title)
+                .await?;
+            db.save_profile_name(item_id, workspace_id, profile_name)
                 .await?;
             Ok(())
         }))
@@ -2058,7 +2092,7 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
+            let (cwd, custom_title, profile_name) = cx
                 .update(|_window, cx| {
                     let db = TerminalDb::global(cx);
                     let from_db = db
@@ -2080,13 +2114,55 @@ impl SerializableItem for TerminalView {
                         .log_err()
                         .flatten()
                         .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
+                    let profile_name = db
+                        .get_profile_name(item_id, workspace_id)
+                        .log_err()
+                        .flatten()
+                        .filter(|name| !name.trim().is_empty());
+                    (cwd, custom_title, profile_name)
                 })
                 .ok()
+                .unwrap_or((None, None, None));
+
+            let (shell_override, restored_profile_name) = cx
+                .update(|_window, cx| {
+                    let settings = terminal_panel::terminal_settings_for_cwd(
+                        workspace.upgrade().as_ref().map(|w| w.read(cx)),
+                        cwd.as_deref(),
+                        cx,
+                    );
+                    match profile_name
+                        .as_deref()
+                        .and_then(|name| settings.profiles.get(name).map(|profile| (name, profile)))
+                    {
+                        Some((name, profile)) => (
+                            Some(terminal::terminal_settings::profile_to_task_shell(
+                                name, profile,
+                            )),
+                            Some(name.to_string()),
+                        ),
+                        None => {
+                            if let Some(name) = &profile_name {
+                                log::warn!(
+                                    "Persisted terminal profile '{name}' is no longer defined; \
+                                     falling back to the default shell"
+                                );
+                            }
+                            (None, None)
+                        }
+                    }
+                })
                 .unwrap_or((None, None));
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                .update(cx, |project, cx| {
+                    let is_remote = project.is_via_remote_server();
+                    if is_remote && shell_override.is_some() {
+                        project.create_local_terminal_with(shell_override, cx)
+                    } else {
+                        project.create_terminal_shell_with(cwd, shell_override, cx)
+                    }
+                })
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
@@ -2101,6 +2177,7 @@ impl SerializableItem for TerminalView {
                     if custom_title.is_some() {
                         view.custom_title = custom_title;
                     }
+                    view.profile_name = restored_profile_name;
                     view
                 })
             })
@@ -2887,6 +2964,95 @@ mod tests {
         });
     }
 
+    /// Regression: a remote project + `workspace::NewTerminal { profile }`
+    /// without `local` drops the override at spawn time (the terminal runs
+    /// the remote shell). The view must NOT be tagged with the profile
+    /// name, or restore after reload would spawn a local terminal where
+    /// the user had a remote one.
+    #[gpui::test]
+    async fn remote_profile_spawn_without_local_does_not_tag_view(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        // The mock remote connection wraps terminal spawn commands in a
+        // program literally named `mock`, which doesn't exist on the test
+        // host. Provide a stand-in in a temp dir and expose it to the
+        // spawned PTY via `terminal.env.PATH` so no process-wide state is
+        // touched (the PTY child inherits this environment).
+        let mock_bin_dir = tempfile::TempDir::new().unwrap();
+        let mock_binary = mock_bin_dir.path().join("mock");
+        std::fs::write(&mock_binary, "#!/bin/sh\nexec sleep 3000\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&mock_binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let (_project, _workspace, window_handle) =
+            init_remote_test_with_panel(cx, server_cx).await;
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    let mut env = collections::HashMap::default();
+                    env.insert(
+                        "PATH".to_string(),
+                        std::env::join_paths(
+                            std::iter::once(mock_bin_dir.path().to_path_buf()).chain(
+                                std::env::split_paths(&std::env::var("PATH").unwrap_or_default()),
+                            ),
+                        )
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    );
+                    terminal.project.env = Some(env);
+                    let mut profiles = collections::IndexMap::default();
+                    profiles.insert(
+                        "Remote Profile".to_string(),
+                        settings::settings_content::TerminalProfile {
+                            program: "/bin/bash".to_string(),
+                            args: None,
+                            title_override: None,
+                        },
+                    );
+                    terminal.project.profiles = Some(profiles);
+                });
+            });
+        });
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let action = workspace::NewTerminal {
+                    local: false,
+                    profile: Some("Remote Profile".to_string()),
+                };
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(workspace, &action, window, cx);
+                });
+            })
+            .expect("failed to dispatch NewTerminal");
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        let terminal_view: Entity<TerminalView> = window_handle
+            .update(cx, |mw, _window, cx| {
+                let panel = mw
+                    .workspace()
+                    .read_with(cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
+                    .unwrap();
+                let item = panel.read(cx).active_pane.read(cx).active_item();
+                item.and_then(|item| item.act_as::<TerminalView>(cx))
+                    .expect("remote profile spawn should produce a terminal")
+            })
+            .unwrap();
+
+        terminal_view.update(cx, |view, _cx| {
+            assert!(view.profile_name.is_none());
+        });
+    }
+
     // No active entry, but a worktree, worktree is a file -> parent directory
     #[gpui::test]
     async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
@@ -3168,6 +3334,276 @@ mod tests {
             .unwrap();
 
         (project, workspace)
+    }
+
+    /// Like [`init_remote_test`] but also attaches a `TerminalPanel` and
+    /// registers its action handlers.
+    async fn init_remote_test_with_panel(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> (
+        Entity<Project>,
+        Entity<Workspace>,
+        gpui::WindowHandle<MultiWorkspace>,
+    ) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let params = cx.update(AppState::test);
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+        let ping_handler = server_cx.new(|_| ());
+        server_session.add_request_handler::<rpc::proto::Ping, _, _, _>(
+            ping_handler.downgrade(),
+            |_entity, _envelope, _cx| async { Ok(rpc::proto::Ack {}) },
+        );
+        let shell_handler = server_cx.new(|_| ());
+        // The handler set only keeps a weak reference, so leak the entity
+        // to keep the registration alive for the whole test.
+        std::mem::forget(shell_handler.clone());
+        server_session.add_request_handler::<rpc::proto::GetTerminalShell, _, _, _>(
+            shell_handler.downgrade(),
+            |_entity, _envelope, _cx| async {
+                Ok(rpc::proto::GetTerminalShellResponse {
+                    shell: Some(rpc::proto::Shell {
+                        shell_type: Some(rpc::proto::shell::ShellType::Program(
+                            "/bin/bash".to_string(),
+                        )),
+                    }),
+                })
+            },
+        );
+        drop(connect_guard);
+
+        let remote_client = RemoteClient::connect_mock(opts, cx).await;
+        let project = cx.update(|cx| {
+            Project::remote(
+                remote_client,
+                params.client.clone(),
+                params.node_runtime.clone(),
+                params.user_store.clone(),
+                params.languages.clone(),
+                params.fs.clone(),
+                false,
+                cx,
+            )
+        });
+
+        let window_handle = cx.add_window({
+            let params = params.clone();
+            let project_for_workspace = project.clone();
+            move |window, cx| {
+                window.activate_window();
+                let workspace = cx.new(|cx| {
+                    let mut workspace = Workspace::new(
+                        None,
+                        project_for_workspace.clone(),
+                        params.clone(),
+                        window,
+                        cx,
+                    );
+                    workspace.register_action(TerminalPanel::new_terminal);
+                    let panel = cx.new(|cx| TerminalPanel::new(&mut workspace, window, cx));
+                    workspace.add_panel(panel, window, cx);
+                    workspace
+                });
+                MultiWorkspace::new(workspace, window, cx)
+            }
+        });
+
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        (project, workspace, window_handle)
+    }
+
+    /// Regression: the "+" menu dispatches `SpawnDetectedShell` with
+    /// `local: true` in remote projects so the detected (local) executable
+    /// is actually used. Without the force_local routing the spawn would
+    /// go through `create_terminal_shell_with`, drop the override, and
+    /// open the remote server's shell instead — observable here as the
+    /// remote wrapper title ("{host} — Terminal") rather than the
+    /// detected label.
+    #[gpui::test]
+    async fn remote_detected_shell_with_local_uses_local_executable(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        // The mock remote connection wraps terminal spawn commands in a
+        // program literally named `mock`, which doesn't exist on the test
+        // host. Provide a stand-in and expose it to the spawned PTY via
+        // `terminal.env.PATH` so no process-wide state is touched.
+        let mock_bin_dir = tempfile::TempDir::new().unwrap();
+        let mock_binary = mock_bin_dir.path().join("mock");
+        std::fs::write(&mock_binary, "#!/bin/sh\nexec sleep 3000\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&mock_binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let (_project, _workspace, window_handle) =
+            init_remote_test_with_panel(cx, server_cx).await;
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    let mut env = collections::HashMap::default();
+                    env.insert(
+                        "PATH".to_string(),
+                        std::env::join_paths(
+                            std::iter::once(mock_bin_dir.path().to_path_buf()).chain(
+                                std::env::split_paths(&std::env::var("PATH").unwrap_or_default()),
+                            ),
+                        )
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    );
+                    terminal.project.env = Some(env);
+                });
+            });
+        });
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let detected = crate::SpawnDetectedShell {
+                    program: "/bin/bash".to_string(),
+                    args: Vec::new(),
+                    label: "Detected Local Shell".to_string(),
+                    local: true,
+                };
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::spawn_detected_shell(workspace, &detected, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        cx.run_until_parked();
+
+        let terminal_view = window_handle
+            .update(cx, |mw, _window, cx| {
+                let panel = mw
+                    .workspace()
+                    .read_with(cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
+                    .unwrap();
+                let item = panel.read(cx).active_pane.read(cx).active_item();
+                item.and_then(|item| item.act_as::<TerminalView>(cx))
+                    .expect("force_local detected-shell spawn should produce a terminal")
+            })
+            .unwrap();
+
+        terminal_view.update(cx, |view, cx| {
+            let title = view.terminal().read(cx).title(false);
+            assert_eq!(title, "Detected Local Shell");
+        });
+    }
+
+    /// The "+" menu spawning a profile terminal into a focused center pane
+    /// of a remote project routes through `create_local_terminal_with`
+    /// (the override applies), so the view must be tagged for persistence.
+    #[gpui::test]
+    async fn remote_center_pane_profile_spawn_tags_view(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let mock_bin_dir = tempfile::TempDir::new().unwrap();
+        let mock_binary = mock_bin_dir.path().join("mock");
+        std::fs::write(&mock_binary, "#!/bin/sh\nexec sleep 3000\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&mock_binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let (_project, _workspace, window_handle) =
+            init_remote_test_with_panel(cx, server_cx).await;
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    let mut env = collections::HashMap::default();
+                    env.insert(
+                        "PATH".to_string(),
+                        std::env::join_paths(
+                            std::iter::once(mock_bin_dir.path().to_path_buf()).chain(
+                                std::env::split_paths(&std::env::var("PATH").unwrap_or_default()),
+                            ),
+                        )
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    );
+                    terminal.project.env = Some(env);
+                    let mut profiles = collections::IndexMap::default();
+                    profiles.insert(
+                        "Remote Profile".to_string(),
+                        settings::settings_content::TerminalProfile {
+                            program: "/bin/bash".to_string(),
+                            args: None,
+                            title_override: None,
+                        },
+                    );
+                    terminal.project.profiles = Some(profiles);
+                });
+            });
+        });
+
+        // Seed the center pane with a terminal and focus it, so the next
+        // NewTerminal dispatch takes the center-pane path.
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_local_terminal(cx),
+                        None,
+                    )
+                    .detach_and_log_err(cx);
+                });
+                let pane = multi_workspace.workspace().read(cx).active_pane().clone();
+                window.focus(&pane.read(cx).focus_handle(cx), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let action = workspace::NewTerminal {
+                    local: true,
+                    profile: Some("Remote Profile".to_string()),
+                };
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(workspace, &action, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let terminal_view = window_handle
+            .update(cx, |mw, _window, cx| {
+                let pane = mw.workspace().read(cx).active_pane().clone();
+                let item = pane.read(cx).active_item();
+                item.and_then(|item| item.act_as::<TerminalView>(cx))
+                    .expect("center-pane profile spawn should produce a terminal")
+            })
+            .unwrap();
+
+        terminal_view.update(cx, |view, _cx| {
+            assert_eq!(
+                view.profile_name.as_deref(),
+                Some("Remote Profile"),
+                "a center-pane remote spawn with local=true applies the override, \
+                 so the view must be tagged for persistence"
+            );
+        });
     }
 
     /// Creates a file in the given worktree and returns its entry.

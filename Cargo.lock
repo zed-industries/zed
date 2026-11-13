@@ -18077,6 +18077,7 @@ dependencies = [
  "util",
  "util_macros",
  "vte",
+ "which",
  "windows 0.62.2",
 ]
 
@@ -18121,6 +18122,7 @@ dependencies = [
  "shellexpand",
  "shlex 2.0.1",
  "task",
+ "tempfile",
  "terminal",
  "theme",
  "theme_settings",
