@@ -1488,6 +1488,10 @@ mod tests {
     async fn test_streaming_authorize(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(cx, json!({})).await;
 
+        cx.update(|cx| {
+            crate::tests::set_tool_permission(cx, None, settings::ToolPermissionMode::Confirm);
+        });
+
         // Test 1: Path with .zed component should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
         let _auth = cx
@@ -1510,12 +1514,15 @@ mod tests {
             MaybeUndefined::Value("Edit `/etc/hosts`".into())
         );
 
-        // Test 3: Relative path without .zed should not require confirmation
+        // Test 3: Normal in-project path should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        cx.update(|cx| edit_tool.authorize(&PathBuf::from("root/src/main.rs"), &stream_tx, cx))
-            .await
-            .unwrap();
-        assert!(stream_rx.try_recv().is_err());
+        let _auth =
+            cx.update(|cx| edit_tool.authorize(&PathBuf::from("root/src/main.rs"), &stream_tx, cx));
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(
+            event.tool_call.title,
+            MaybeUndefined::Value("Edit `root/src/main.rs`".into())
+        );
 
         // Test 4: Path with .zed in the middle should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1528,12 +1535,9 @@ mod tests {
             MaybeUndefined::Value("Edit `root/.zed/tasks.json` (local settings)".into())
         );
 
-        // Test 5: When global default is allow, sensitive and outside-project
-        // paths still require confirmation
+        // Test 5: With the Allow default, only sensitive paths should require confirmation
         cx.update(|cx| {
-            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
-            agent_settings::AgentSettings::override_global(settings, cx);
+            crate::tests::set_tool_permission(cx, None, settings::ToolPermissionMode::Allow);
         });
 
         // 5.1: .zed/settings.json is a sensitive path — still prompts
@@ -1560,11 +1564,9 @@ mod tests {
             .unwrap();
         assert!(stream_rx.try_recv().is_err());
 
-        // 5.4: With Confirm default, non-project paths still prompt
+        // 5.4: Under Confirm, non-project paths should require confirmation
         cx.update(|cx| {
-            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
-            agent_settings::AgentSettings::override_global(settings, cx);
+            crate::tests::set_tool_permission(cx, None, settings::ToolPermissionMode::Confirm);
         });
 
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1579,8 +1581,8 @@ mod tests {
 
         // 5.5: .agents/skills is a sensitive path — still prompts. The
         // sensitive-path classifier runs regardless of the default mode, so
-        // it doesn't matter that we're now in Confirm mode — we're checking
-        // that the path is recognized and gets the "(agent skills)" tag.
+        // we're checking that the path is recognized and gets the
+        // "(agent skills)" tag.
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
         let _auth = cx.update(|cx| {
             edit_tool.authorize(
@@ -1996,6 +1998,10 @@ mod tests {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/project").as_ref()]).await;
 
+        cx.update(|cx| {
+            crate::tests::set_tool_permission(cx, None, settings::ToolPermissionMode::Confirm);
+        });
+
         let test_cases = vec![
             (
                 "/etc/hosts",
@@ -2009,8 +2015,8 @@ mod tests {
             ),
             (
                 "project/normal_file.rs",
-                false,
-                "Normal project file should not require confirmation",
+                true,
+                "Normal project file should require confirmation",
             ),
         ];
 
@@ -2074,9 +2080,13 @@ mod tests {
         )
         .await;
 
+        cx.update(|cx| {
+            crate::tests::set_tool_permission(cx, None, settings::ToolPermissionMode::Confirm);
+        });
+
         let test_cases = vec![
-            ("frontend/src/main.js", false, "File in first worktree"),
-            ("backend/src/main.rs", false, "File in second worktree"),
+            ("frontend/src/main.js", true, "File in first worktree"),
+            ("backend/src/main.rs", true, "File in second worktree"),
             (
                 "shared/.zed/settings.json",
                 true,
@@ -2129,8 +2139,12 @@ mod tests {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/project").as_ref()]).await;
 
+        cx.update(|cx| {
+            crate::tests::set_tool_permission(cx, None, settings::ToolPermissionMode::Confirm);
+        });
+
         let test_cases = vec![
-            ("", false, "Empty path is treated as project root"),
+            ("", true, "Empty path is treated as project root"),
             ("/", true, "Root directory should be outside project"),
             (
                 "project/../other",
@@ -2139,13 +2153,13 @@ mod tests {
             ),
             (
                 "project/./src/file.rs",
-                false,
+                true,
                 "Path with . should work normally",
             ),
             #[cfg(target_os = "windows")]
             ("C:\\Windows\\System32\\hosts", true, "Windows system path"),
             #[cfg(target_os = "windows")]
-            ("project\\src\\main.rs", false, "Windows-style project path"),
+            ("project\\src\\main.rs", true, "Windows-style project path"),
         ];
 
         for (path, should_confirm, description) in test_cases {
@@ -2185,6 +2199,10 @@ mod tests {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/project").as_ref()]).await;
 
+        cx.update(|cx| {
+            crate::tests::set_tool_permission(cx, None, settings::ToolPermissionMode::Confirm);
+        });
+
         let modes = vec![EditSessionMode::Edit, EditSessionMode::Write];
 
         for _mode in modes {
@@ -2193,7 +2211,6 @@ mod tests {
             let _auth = cx.update(|cx| {
                 edit_tool.authorize(&PathBuf::from("project/.zed/settings.json"), &stream_tx, cx)
             });
-
             stream_rx.expect_authorization().await;
 
             // Test outside path with different modes
@@ -2201,17 +2218,14 @@ mod tests {
             let _auth = cx.update(|cx| {
                 edit_tool.authorize(&PathBuf::from("/outside/file.txt"), &stream_tx, cx)
             });
-
             stream_rx.expect_authorization().await;
 
             // Test normal path with different modes
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-            cx.update(|cx| {
+            let _auth = cx.update(|cx| {
                 edit_tool.authorize(&PathBuf::from("project/normal.txt"), &stream_tx, cx)
-            })
-            .await
-            .unwrap();
-            assert!(stream_rx.try_recv().is_err());
+            });
+            stream_rx.expect_authorization().await;
         }
     }
 
@@ -3246,6 +3260,8 @@ mod tests {
                         .ensure_final_newline_on_save = Some(false);
                 });
             });
+            // Most tests exercise edit mechanics rather than permission policy, so default to allow.
+            crate::tests::set_tool_permission(cx, None, settings::ToolPermissionMode::Allow);
         });
     }
 }
