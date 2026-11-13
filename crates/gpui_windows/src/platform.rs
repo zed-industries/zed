@@ -927,8 +927,9 @@ impl Platform for WindowsPlatform {
             .log_err();
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         self.system_notifications.borrow_mut().dismiss(tag);
+        Task::ready(())
     }
 
     fn on_system_notification_response(

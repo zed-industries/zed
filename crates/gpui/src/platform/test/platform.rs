@@ -735,7 +735,7 @@ impl Platform for TestPlatform {
         system_notifications.shown.push(notification);
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         let mut system_notifications = self.system_notifications.borrow_mut();
         system_notifications
             .delivered
@@ -743,6 +743,7 @@ impl Platform for TestPlatform {
         system_notifications
             .dismissed
             .push(SharedString::from(tag.to_string()));
+        Task::ready(())
     }
 
     fn on_system_notification_response(

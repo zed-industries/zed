@@ -579,8 +579,12 @@ pub trait Platform: 'static {
     ///
     /// Best-effort: some platforms cannot retract a notification once shown,
     /// in which case it ages out of the notification center on its own.
-    fn dismiss_system_notification(&self, tag: &str) {
+    /// The task completes after the platform calls return, not after any
+    /// asynchronous work inside the operating system. Dropping it does not
+    /// cancel dismissal.
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         _ = tag;
+        Task::ready(())
     }
 
     /// Registers the callback invoked when the user activates a system
