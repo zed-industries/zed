@@ -1650,7 +1650,7 @@ impl ExtensionStore {
                 this.update(cx, |_, cx| {
                     SettingsStore::update_global(cx, |store, _| {
                         for (language_name, rules) in semantic_token_rules_to_add {
-                            store.set_language_semantic_token_rules(language_name.0.clone(), rules);
+                            store.set_language_semantic_token_rules(language_name.0, rules);
                         }
                     })
                 })
@@ -1702,7 +1702,7 @@ impl ExtensionStore {
                             this.proxy.register_language_server(
                                 extension.clone(),
                                 language_server_id.clone(),
-                                language.clone(),
+                                language,
                             );
                         }
                     }
@@ -2269,6 +2269,12 @@ impl ExtensionStore {
     ) -> Result<()> {
         static UPLOAD_NONCE: AtomicU64 = AtomicU64::new(0);
 
+        anyhow::ensure!(
+            !path_style.has_root(Path::new(&missing_extension.id)),
+            "extension id must not be rooted: {:?}",
+            missing_extension.id
+        );
+
         if !already_prepared {
             this.update(cx, |this, cx| {
                 this.prepare_remote_extension(
@@ -2293,11 +2299,8 @@ impl ExtensionStore {
         let dest_dir = RemotePathBuf::new(
             path_style
                 .join(remote_tmp_dir, &upload_name)
-                .with_context(|| {
-                    format!(
-                        "failed to construct destination path: {remote_tmp_dir:?}, {upload_name:?}"
-                    )
-                })?,
+                .to_string_lossy()
+                .into_owned(),
             path_style,
         );
         log::info!(

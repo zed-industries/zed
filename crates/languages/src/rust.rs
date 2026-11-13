@@ -3,10 +3,11 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use futures::lock::OwnedMutexGuard;
+use github_releases::{
+    AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
+    latest_github_release,
+};
 use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
-use http_client::github::AssetKind;
-use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 use project::lsp_store::lsp_ext_command;
@@ -72,12 +73,6 @@ impl RustLspAdapter {
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 
-#[cfg(target_os = "linux")]
-enum LibcType {
-    Gnu,
-    Musl,
-}
-
 impl RustLspAdapter {
     fn convert_rust_analyzer_schema(raw_schema: &serde_json::Value) -> serde_json::Value {
         let Some(schema_array) = raw_schema.as_array() else {
@@ -142,58 +137,10 @@ impl RustLspAdapter {
     }
 
     #[cfg(target_os = "linux")]
-    async fn determine_libc_type() -> LibcType {
-        use futures::pin_mut;
-
-        async fn from_ldd_version() -> Option<LibcType> {
-            use util::command::new_command;
-
-            let ldd_output = new_command("ldd").arg("--version").output().await.ok()?;
-            let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
-
-            if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {
-                Some(LibcType::Gnu)
-            } else if ldd_version.contains("musl") {
-                Some(LibcType::Musl)
-            } else {
-                None
-            }
-        }
-
-        if let Some(libc_type) = from_ldd_version().await {
-            return libc_type;
-        }
-
-        let Ok(dir_entries) = smol::fs::read_dir("/lib").await else {
-            // defaulting to gnu because nix doesn't have /lib files due to not following FHS
-            return LibcType::Gnu;
-        };
-        let dir_entries = dir_entries.filter_map(async move |e| e.ok());
-        pin_mut!(dir_entries);
-
-        let mut has_musl = false;
-        let mut has_gnu = false;
-
-        while let Some(entry) = dir_entries.next().await {
-            let file_name = entry.file_name();
-            let file_name = file_name.to_string_lossy();
-            if file_name.starts_with("ld-musl-") {
-                has_musl = true;
-            } else if file_name.starts_with("ld-linux-") {
-                has_gnu = true;
-            }
-        }
-
-        match (has_musl, has_gnu) {
-            (true, _) => LibcType::Musl,
-            (_, true) => LibcType::Gnu,
-            _ => LibcType::Gnu,
-        }
-    }
-
-    #[cfg(target_os = "linux")]
     async fn build_arch_server_name_linux() -> String {
-        let libc = match Self::determine_libc_type().await {
+        use util::libc_type::{LibcType, host_libc_type};
+
+        let libc = match host_libc_type().await {
             LibcType::Musl => "musl",
             LibcType::Gnu => "gnu",
         };
@@ -897,7 +844,8 @@ impl LspInstaller for RustLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,

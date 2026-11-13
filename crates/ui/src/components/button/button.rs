@@ -472,7 +472,6 @@ impl RenderOnce for Button {
         } else {
             self.label_color.unwrap_or_default()
         };
-        let loading_icon_id = (self.base.id().clone(), "loading");
         let wrapped_key_binding = if wrap_key_binding {
             self.key_binding.take()
         } else {
@@ -489,7 +488,7 @@ impl RenderOnce for Button {
                         Icon::new(IconName::LoadCircle)
                             .size(IconSize::Small)
                             .color(Color::Muted)
-                            .with_keyed_rotate_animation(loading_icon_id, 2),
+                            .with_rotate_animation(2),
                     )
                 },
                 |this| {

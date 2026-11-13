@@ -647,6 +647,14 @@ impl PathWithPosition {
         // in the future seems unlikely.
         static SUFFIX_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
+        // `Path::with_file_name` inserts the host's separator, which can
+        // corrupt Unix paths when the editor runs on Windows.
+        let replace_file_name = |input: &str, file_name: &str, replacement: &str| {
+            input.rsplit_once(file_name).map_or_else(
+                || PathBuf::from(input),
+                |(prefix, _)| PathBuf::from(format!("{prefix}{replacement}")),
+            )
+        };
         match SUFFIX_RE
             .captures(maybe_file_name_with_row_col)
             .and_then(|captures| {
@@ -659,7 +667,11 @@ impl PathWithPosition {
                 let column = maybe_column.parse::<u32>().ok();
 
                 Self {
-                    path: path.with_file_name(&maybe_file_name_with_row_col[..file_name_end]),
+                    path: replace_file_name(
+                        trimmed,
+                        maybe_file_name_with_row_col,
+                        &maybe_file_name_with_row_col[..file_name_end],
+                    ),
                     row,
                     column,
                 }
@@ -703,7 +715,7 @@ impl PathWithPosition {
 
                 Self {
                     path: if row.is_some() {
-                        path.with_file_name(path_string)
+                        replace_file_name(s, file_name, &path_string)
                     } else {
                         path.to_path_buf()
                     },
@@ -737,6 +749,55 @@ impl PathWithPosition {
             path_string
         }
     }
+}
+
+/// Parses a path containing a position (e.g. `path:line:column`)
+/// and returns its canonicalized string representation.
+///
+/// If a part of path doesn't exist, it will canonicalize the
+/// existing part and append the non-existing part.
+///
+/// This method must return an absolute path, as many zed
+/// crates assume absolute paths.
+pub fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
+    use anyhow::Context as _;
+
+    match Path::new(argument_str).canonicalize() {
+        Ok(existing_path) => Ok(PathWithPosition::from_path(existing_path)),
+        Err(_) => PathWithPosition::parse_str(argument_str).map_path(|mut path| {
+            let curdir = std::env::current_dir().context("retrieving current directory")?;
+            let mut children = Vec::new();
+            let root;
+            loop {
+                // canonicalize handles './', and '/'.
+                if let Ok(canonicalized) = std::fs::canonicalize(&path) {
+                    root = canonicalized;
+                    break;
+                }
+                // The comparison to `curdir` is just a shortcut
+                // since we know it is canonical. The other one
+                // is if `argument_str` is a string that starts
+                // with a name (e.g. "foo/bar").
+                if path == curdir || path == Path::new("") {
+                    root = curdir;
+                    break;
+                }
+                children.push(
+                    path.file_name()
+                        .with_context(|| format!("parsing as path with position {argument_str}"))?
+                        .to_owned(),
+                );
+                if !path.pop() {
+                    unreachable!("parsing as path with position {argument_str}");
+                }
+            }
+            Ok(children.iter().rev().fold(root, |mut path, child| {
+                path.push(child);
+                path
+            }))
+        }),
+    }
+    .map(|path_with_pos| path_with_pos.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
 #[derive(Clone)]
@@ -1526,6 +1587,23 @@ impl UrlExt for url::Url {
         }
         Err(())
     }
+}
+
+/// Converts the already-decoded path of a URL into a path on a host with `path_style`.
+///
+/// URL paths keep a `/` before a Windows drive letter (`/C:/x`), which Windows cannot open.
+/// The `/` is only dropped when what follows is an absolute drive path, so `/a:12` stays the
+/// rooted file `/a` at line 12.
+/// Unlike [`UrlExt::to_file_path_ext`], this takes a decoded path, not a whole URL, so it also
+/// serves URLs whose authority is not a file host, such as `ssh://`.
+pub fn url_path_to_path(url_path: &str, path_style: PathStyle) -> &str {
+    if path_style.is_windows()
+        && let Some(path) = url_path.strip_prefix('/')
+        && path_style.is_absolute(Path::new(path))
+    {
+        return path;
+    }
+    url_path
 }
 
 #[cfg(test)]
@@ -2483,6 +2561,54 @@ mod tests {
     }
 
     #[test]
+    fn path_with_position_preserves_path_separators() {
+        for (input, expected_path, expected_column) in [
+            (
+                "/home/user/project/src/main.rs:49",
+                "/home/user/project/src/main.rs",
+                None,
+            ),
+            (
+                "/home/user/project/src/main.rs:49:7",
+                "/home/user/project/src/main.rs",
+                Some(7),
+            ),
+            (
+                "/home/user/project/src/main.rs:49:in",
+                "/home/user/project/src/main.rs",
+                None,
+            ),
+            ("src/main.rs(49,7)", "src/main.rs", Some(7)),
+            ("src/main.rs:49/", "src/main.rs", None),
+            ("src/main.rs:49/.", "src/main.rs", None),
+            ("parent//file.rs:49", "parent//file.rs", None),
+            ("parent/./file.rs:49", "parent/./file.rs", None),
+            ("parent/😀.rs:49", "parent/😀.rs", None),
+            ("C:/project/src/main.rs:49", "C:/project/src/main.rs", None),
+            (
+                r"C:\project\src\main.rs:49",
+                r"C:\project\src\main.rs",
+                None,
+            ),
+            (r"src\mixed/main.rs:49", r"src\mixed/main.rs", None),
+            (
+                r"\\server\share/main.rs:49",
+                r"\\server\share/main.rs",
+                None,
+            ),
+        ] {
+            let parsed = PathWithPosition::parse_str(input);
+            assert_eq!(
+                parsed.path.as_os_str(),
+                OsStr::new(expected_path),
+                "{input}"
+            );
+            assert_eq!(parsed.row, Some(49), "{input}");
+            assert_eq!(parsed.column, expected_column, "{input}");
+        }
+    }
+
+    #[test]
     fn path_with_position_preserves_repeated_filename() {
         for (input, expected_path) in [
             ("file.rs/file.rs:12:3", "file.rs/file.rs"),
@@ -3357,6 +3483,30 @@ mod tests {
 
         let path = r"\\windows.localhost\Distro\foo";
         assert_eq!(WslPath::from_path(&path), None);
+    }
+
+    #[test]
+    fn test_url_path_to_path() {
+        let windows = |path| url_path_to_path(path, PathStyle::Windows);
+        assert_eq!(windows("/C:/project/main.rs"), "C:/project/main.rs");
+        assert_eq!(windows("/C:/project/main.rs:12"), "C:/project/main.rs:12");
+        assert_eq!(windows("/d:\\project"), "d:\\project");
+        // Drive roots keep their separator.
+        assert_eq!(windows("/C:/"), "C:/");
+        assert_eq!(windows("/d:\\"), "d:\\");
+        // Not a drive path: left as it is.
+        assert_eq!(windows("/~/project"), "/~/project");
+        assert_eq!(windows("/1:/project"), "/1:/project");
+        assert_eq!(windows("C:/project"), "C:/project");
+        // A rooted file with a row, or a drive without a root, is not an absolute drive path.
+        assert_eq!(windows("/a:12"), "/a:12");
+        assert_eq!(windows("/C:"), "/C:");
+        assert_eq!(windows("/C:project"), "/C:project");
+        // On a Unix host `/C:/x` is a valid absolute path.
+        assert_eq!(
+            url_path_to_path("/C:/project", PathStyle::Unix),
+            "/C:/project"
+        );
     }
 
     #[test]

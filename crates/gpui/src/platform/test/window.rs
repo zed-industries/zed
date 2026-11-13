@@ -1,10 +1,10 @@
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, DispatchEventResult, DisplayId, GpuSpecs, HeadlessAtlas,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions, Scene, Size,
-    TestDisplay, TestPlatform, TextInputConfiguration, TextInputStateChange, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets, WindowParams,
-    WindowVisibility,
+    AnyWindowHandle, Bounds, Decorations, DevicePixels, DispatchEventResult, DisplayId, GpuSpecs,
+    HeadlessAtlas, Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions,
+    Scene, Size, TestDisplay, TestPlatform, TextInputConfiguration, TextInputStateChange,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets,
+    WindowParams, WindowVisibility,
 };
 use gpui_util::ResultExt as _;
 #[cfg(any(test, feature = "test-support"))]
@@ -30,6 +30,7 @@ pub(crate) struct TestWindowState {
     sprite_atlas: Arc<dyn PlatformAtlas>,
     renderer: Option<Box<dyn PlatformHeadlessRenderer>>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
+    close_callback: Option<Box<dyn FnOnce()>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
@@ -56,6 +57,7 @@ pub(crate) struct TestWindowState {
     is_fullscreen: bool,
     scale_factor: f32,
     appearance: WindowAppearance,
+    decorations: Decorations,
     external_drag_files: Vec<(PathBuf, bool)>,
     start_external_drag_result: bool,
 }
@@ -104,6 +106,7 @@ impl TestWindow {
             edited: false,
             document_path: None,
             should_close_handler: None,
+            close_callback: None,
             hit_test_window_control_callback: None,
             input_callback: None,
             active_status_change_callback: None,
@@ -131,10 +134,18 @@ impl TestWindow {
             // Preserve the test platform's historical 2x default.
             scale_factor: 2.0,
             appearance: WindowAppearance::Light,
+            decorations: Decorations::default(),
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
         })))
     }
+    pub fn simulate_close(&self) {
+        let callback = self.0.lock().close_callback.take();
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+
     pub fn simulate_scheduled_frame(&self) -> bool {
         let callback = {
             let mut state = self.0.lock();
@@ -260,6 +271,17 @@ impl TestWindow {
     pub fn simulate_appearance_change(&self, appearance: WindowAppearance) {
         let mut lock = self.0.lock();
         lock.appearance = appearance;
+        let Some(mut callback) = lock.appearance_change_callback.take() else {
+            return;
+        };
+        drop(lock);
+        callback();
+        self.0.lock().appearance_change_callback = Some(callback);
+    }
+
+    pub fn simulate_decorations_change(&self, decorations: Decorations) {
+        let mut lock = self.0.lock();
+        lock.decorations = decorations;
         let Some(mut callback) = lock.appearance_change_callback.take() else {
             return;
         };
@@ -469,8 +491,21 @@ impl PlatformWindow for TestWindow {
     }
 
     fn toggle_fullscreen(&self) {
-        let mut lock = self.0.lock();
-        lock.is_fullscreen = !lock.is_fullscreen;
+        let platform = {
+            let mut lock = self.0.lock();
+            lock.is_fullscreen = !lock.is_fullscreen;
+            lock.platform.upgrade()
+        };
+        if let Some(platform) = platform {
+            let mut window = self.clone();
+            platform
+                .foreground_executor()
+                .spawn(async move {
+                    let size = window.0.lock().bounds.size;
+                    window.simulate_resize(size);
+                })
+                .detach();
+        }
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -534,7 +569,9 @@ impl PlatformWindow for TestWindow {
         self.0.lock().should_close_handler = Some(callback);
     }
 
-    fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
+    fn on_close(&self, callback: Box<dyn FnOnce()>) {
+        self.0.lock().close_callback = Some(callback);
+    }
 
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
         self.0.lock().hit_test_window_control_callback = Some(callback);
@@ -607,5 +644,9 @@ impl PlatformWindow for TestWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
+    }
+
+    fn window_decorations(&self) -> Decorations {
+        self.0.lock().decorations
     }
 }

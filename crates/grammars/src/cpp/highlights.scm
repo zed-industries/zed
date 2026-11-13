@@ -161,6 +161,7 @@ type: (primitive_type) @type.builtin
   "virtual"
   (storage_class_specifier)
   (type_qualifier)
+  (lambda_specifier)
 ] @keyword
 
 [
@@ -197,6 +198,15 @@ type: (primitive_type) @type.builtin
   "#include"
   (preproc_directive)
 ] @keyword.preproc @preproc
+
+(preproc_call
+  argument: (preproc_arg) @preproc)
+
+(preproc_defined
+  "defined" @keyword.preproc)
+
+(preproc_defined
+  (identifier) @constant.macro)
 
 (comment) @comment
 
