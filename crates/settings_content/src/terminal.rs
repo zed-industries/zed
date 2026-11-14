@@ -236,6 +236,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: "system"
     pub bell: Option<TerminalBell>,
+    /// What to show in the title of terminal tabs.
+    ///
+    /// Default: "cwd_and_command"
+    pub tab_title: Option<TerminalTabTitle>,
 }
 
 crate::fallible_options::flattened_deserialize!(TerminalSettingsContent {
@@ -245,7 +249,7 @@ crate::fallible_options::flattened_deserialize!(TerminalSettingsContent {
         cursor_shape, blinking, alternate_scroll, option_as_meta, copy_on_select,
         keep_selection_on_copy, open_links_in_mouse_mode, button, dock, starts_open, flexible,
         default_width, default_height, max_scroll_history_lines, scroll_multiplier, toolbar,
-        scrollbar, minimum_contrast, show_count_badge, bell,
+        scrollbar, minimum_contrast, show_count_badge, bell, tab_title,
     },
     defaults: {},
 });
@@ -484,6 +488,29 @@ pub enum TerminalBell {
     System,
     /// Do not play any sound.
     Off,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalTabTitle {
+    /// Show the working directory name followed by the running command and its arguments.
+    #[default]
+    CwdAndCommand,
+    /// Show only the name of the running process.
+    ProcessName,
 }
 
 #[derive(

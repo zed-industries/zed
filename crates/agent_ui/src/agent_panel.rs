@@ -973,7 +973,7 @@ impl AgentTerminal {
     fn terminal_title_for_view(view: &TerminalView, cx: &App) -> SharedString {
         let terminal = view.terminal().read(cx);
         if terminal.breadcrumb_text.is_empty() {
-            let title = terminal.title(true);
+            let title = terminal.title(true, cx);
             if title == "Terminal" {
                 SharedString::from("")
             } else {
