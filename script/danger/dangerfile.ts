@@ -130,22 +130,22 @@ if (readmeModified) {
   });
 }
 
-if (danger.git.deleted_files.includes(".rules")) {
+if (danger.git.deleted_files.includes("AGENTS.md")) {
   fail(
     [
-      "This PR deletes `.rules`, which contains the mandatory agent self-review rule (the `> [!IMPORTANT]` README marker rule).",
+      "This PR deletes `AGENTS.md`, which contains the mandatory agent self-review rule (the `> [!IMPORTANT]` README marker rule).",
       "If the deletion is intentional, move that rule to another rules file in the same PR.",
     ].join("\n"),
   );
-} else if (danger.git.modified_files.includes(".rules")) {
+} else if (danger.git.modified_files.includes("AGENTS.md")) {
   schedule(async () => {
-    const rulesDiff = await danger.git.diffForFile(".rules");
+    const rulesDiff = await danger.git.diffForFile("AGENTS.md");
     if (rulesDiff && rulesDiff.removed.includes(SELF_REVIEW_MARKER) && !rulesDiff.added.includes(SELF_REVIEW_MARKER)) {
       fail(
         [
-          "This PR removes the mandatory agent self-review rule from `.rules` (the `> [!IMPORTANT]` README marker rule).",
+          "This PR removes the mandatory agent self-review rule from `AGENTS.md` (the `> [!IMPORTANT]` README marker rule).",
           "It has been dropped by accident before and had to be restored in https://github.com/zed-industries/zed/pull/63384.",
-          "If changing it is intentional, keep an equivalent rule containing the same marker text in `.rules`.",
+          "If changing it is intentional, keep an equivalent rule containing the same marker text in `AGENTS.md`.",
         ].join("\n"),
       );
     }
