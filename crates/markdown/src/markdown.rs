@@ -3006,16 +3006,14 @@ impl Element for MarkdownElement {
                                 )
                                 .fill();
 
-                                let checkbox = if let Some(on_toggle) =
-                                    self.on_checkbox_toggle.clone()
-                                {
-                                    let task_source_range = task_range.clone();
-                                    checkbox.on_click(move |_state, window, cx| {
-                                        on_toggle(task_source_range.clone(), !checked, window, cx);
-                                    })
-                                } else {
-                                    checkbox.visualization_only(true)
-                                };
+                                let checkbox =
+                                    if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
+                                        checkbox.on_click(move |_state, window, cx| {
+                                            on_toggle(task_range.clone(), !checked, window, cx);
+                                        })
+                                    } else {
+                                        checkbox.visualization_only(true)
+                                    };
 
                                 let line_height = self
                                     .style

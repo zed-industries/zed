@@ -23,9 +23,9 @@ use gpui::{
 use platform_title_bar::PlatformTitleBar;
 use pretty_assertions::assert_eq;
 use project::AgentId;
-#[cfg(target_os = "macos")]
-use settings::TitleBarVisibility;
-use settings::{Settings, SettingsStore, SidebarDockPosition};
+use settings::{
+    FontSize, Settings, SettingsStore, SidebarDockPosition, TitleBarVisibility, UiDensity,
+};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -2121,6 +2121,136 @@ async fn test_headers_follow_title_bar_visibility(cx: &mut TestAppContext) {
     let archive = header_search_offsets("threads-archive-header-search", cx);
     assert_eq!(archive.hidden, archive.fullscreen);
     assert_ne!(archive.hidden, archive.shown);
+}
+
+#[gpui::test]
+async fn test_header_alignment_with_title_bar_and_tabs(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    let title_bar = cx.new(|cx| {
+        PlatformTitleBar::new("title-bar", cx).with_multi_workspace(multi_workspace.downgrade())
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        let item = cx.new(TestItem::new);
+        workspace.add_item_to_active_pane(Box::new(item), None, false, window, cx);
+    });
+    let window_handle = cx.update(|window, _| window.window_handle());
+
+    for (header_selector, search_selector) in [
+        ("sidebar-header", "sidebar-header-search"),
+        ("threads-archive-header", "threads-archive-header-search"),
+    ] {
+        if header_selector == "threads-archive-header" {
+            sidebar.update_in(cx, |sidebar, window, cx| sidebar.show_archive(window, cx));
+        }
+        for ((font_size, density, decorations, position), scale_factor) in [
+            (
+                12.,
+                UiDensity::Compact,
+                Decorations::Server,
+                SidebarDockPosition::Left,
+            ),
+            (
+                16.,
+                UiDensity::Default,
+                Decorations::Client {
+                    tiling: Tiling::default(),
+                },
+                SidebarDockPosition::Left,
+            ),
+            (
+                24.,
+                UiDensity::Comfortable,
+                Decorations::Client {
+                    tiling: Tiling::default(),
+                },
+                SidebarDockPosition::Right,
+            ),
+            (
+                16.,
+                UiDensity::Comfortable,
+                Decorations::Client {
+                    tiling: Tiling {
+                        top: true,
+                        left: true,
+                        right: true,
+                        bottom: true,
+                    },
+                },
+                SidebarDockPosition::Right,
+            ),
+        ]
+        .into_iter()
+        .cartesian_product([1., 2.])
+        {
+            cx.simulate_scale_factor_change(scale_factor);
+            cx.simulate_window_decorations_change(window_handle, decorations);
+            for (visibility, fullscreen, title_bar_visible) in [
+                (TitleBarVisibility::Always, false, true),
+                (TitleBarVisibility::Never, false, false),
+                (TitleBarVisibility::HideInFullScreen, false, true),
+                (TitleBarVisibility::HideInFullScreen, true, false),
+                (TitleBarVisibility::Always, true, true),
+            ] {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.title_bar.get_or_insert_default().show = Some(visibility);
+                        settings.theme.ui_font_size = Some(FontSize(font_size));
+                        settings.theme.ui_density = Some(density);
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .threads_sidebar
+                            .get_or_insert_default()
+                            .position = Some(position);
+                    });
+                });
+                workspace.update_in(cx, |workspace, window, cx| {
+                    if window.is_fullscreen() != fullscreen {
+                        window.toggle_fullscreen();
+                    }
+                    if title_bar_visible {
+                        workspace.set_titlebar_item(AnyView::from(title_bar.clone()), window, cx);
+                    } else {
+                        workspace.clear_titlebar_item(window, cx);
+                    }
+                    cx.refresh_windows();
+                });
+                cx.run_until_parked();
+
+                let header = cx
+                    .debug_bounds(header_selector)
+                    .expect("header is rendered");
+                let tab = cx.debug_bounds("TAB-0").expect("tab is rendered");
+                let search = cx
+                    .debug_bounds(search_selector)
+                    .expect("search is rendered");
+                let center = if title_bar_visible {
+                    assert_eq!(header.bottom(), tab.top());
+                    match decorations {
+                        Decorations::Client { .. } => header.center().y,
+                        Decorations::Server => header.center().y - px(1.),
+                    }
+                } else {
+                    assert_eq!(header.top(), tab.top());
+                    assert_eq!(header.bottom(), tab.bottom());
+                    tab.center().y - px(0.5)
+                };
+                let expected_top =
+                    ((center - search.size.height / 2.) * scale_factor).floor() / scale_factor;
+                assert_eq!(
+                    search.top(),
+                    expected_top,
+                    "{header_selector}, {visibility:?}, {font_size}px, {scale_factor}x"
+                );
+            }
+        }
+    }
 }
 
 #[gpui::test]

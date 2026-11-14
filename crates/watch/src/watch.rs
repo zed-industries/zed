@@ -280,7 +280,7 @@ mod tests {
         }));
 
         for receiver_id in 0..16 {
-            let executor = cx.executor().clone();
+            let executor = cx.executor();
             let next_id = next_id.clone();
             let closed = closed.clone();
             let mut rx = rx.clone();

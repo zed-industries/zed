@@ -5539,7 +5539,7 @@ impl GitPanel {
                     .clone()
                     .or_else(|| participant.user.name.clone())
                     .unwrap_or_else(|| participant.user.username.clone().to_string());
-                new_co_authors.push((name.clone(), email.clone()))
+                new_co_authors.push((name, email.clone()))
             }
         }
         if !project.is_local()

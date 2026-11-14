@@ -1237,6 +1237,13 @@ pub enum ContentDelta {
 pub struct MessageDelta {
     pub stop_reason: Option<String>,
     pub stop_sequence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_details: Option<RefusalStopDetails>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RefusalStopDetails {
+    pub category: Option<String>,
 }
 
 #[derive(Debug)]

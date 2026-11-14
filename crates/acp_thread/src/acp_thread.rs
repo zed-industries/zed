@@ -14275,7 +14275,7 @@ mod tests {
                 ),
                 (
                     json!({"messageId": "patch", "content": replacement}),
-                    replacement.clone(),
+                    replacement,
                     json!({}),
                 ),
                 (
@@ -14290,7 +14290,7 @@ mod tests {
                 ),
                 (
                     json!({"messageId": "patch", "content": original, "_meta": {"restored": true}}),
-                    original.clone(),
+                    original,
                     json!({"restored": true}),
                 ),
                 (

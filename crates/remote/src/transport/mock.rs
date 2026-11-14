@@ -70,6 +70,8 @@ pub struct MockRemoteConnection {
     server_channel: Arc<ChannelClient>,
     server_cx: SendableCx,
     message_interceptors: parking_lot::Mutex<Option<MessageInterceptors>>,
+    path_style: parking_lot::Mutex<PathStyle>,
+    reported_options: parking_lot::Mutex<Option<RemoteConnectionOptions>>,
     pub(crate) proxy_tx: parking_lot::Mutex<
         Option<
             mpsc::UnboundedSender<(
@@ -141,18 +143,40 @@ impl MockConnection {
         client_to_server: impl Fn(&mut Envelope) + Send + Sync + 'static,
         server_to_client: impl Fn(&mut Envelope) + Send + Sync + 'static,
     ) {
+        *Self::pending(options, cx).message_interceptors.lock() = Some(MessageInterceptors {
+            client_to_server: Arc::new(client_to_server),
+            server_to_client: Arc::new(server_to_client),
+        });
+    }
+
+    /// Makes the connection report `path_style`, as a connection to a host of another OS would.
+    pub fn set_path_style(options: &RemoteConnectionOptions, path_style: PathStyle, cx: &mut App) {
+        *Self::pending(options, cx).path_style.lock() = path_style;
+    }
+
+    /// Makes the connection report `reported` as its options, as a real connection reports the
+    /// options it was opened with, such as a saved SSH connection.
+    pub fn report_connection_options(
+        options: &RemoteConnectionOptions,
+        reported: RemoteConnectionOptions,
+        cx: &mut App,
+    ) {
+        *Self::pending(options, cx).reported_options.lock() = Some(reported);
+    }
+
+    fn pending<'a>(
+        options: &RemoteConnectionOptions,
+        cx: &'a App,
+    ) -> &'a Arc<MockRemoteConnection> {
         let RemoteConnectionOptions::Mock(options) = options else {
-            panic!("message interception requires a mock connection");
+            panic!("this requires a mock connection");
         };
         let (_, connection) = cx
             .global::<MockConnectionRegistry>()
             .pending
             .get(&options.id)
-            .expect("message interceptors must be installed before connecting");
-        *connection.message_interceptors.lock() = Some(MessageInterceptors {
-            client_to_server: Arc::new(client_to_server),
-            server_to_client: Arc::new(server_to_client),
-        });
+            .expect("the mock connection must be configured before connecting");
+        connection
     }
 
     /// Creates a new mock connection pair for testing.
@@ -202,6 +226,8 @@ impl MockConnection {
             server_channel: server_client.clone(),
             server_cx: SendableCx::new(server_cx),
             message_interceptors: parking_lot::Mutex::new(None),
+            path_style: parking_lot::Mutex::new(PathStyle::local()),
+            reported_options: parking_lot::Mutex::new(None),
             proxy_tx: Default::default(),
         });
 
@@ -286,7 +312,10 @@ impl RemoteConnection for MockRemoteConnection {
     }
 
     fn connection_options(&self) -> RemoteConnectionOptions {
-        RemoteConnectionOptions::Mock(self.options.clone())
+        self.reported_options
+            .lock()
+            .clone()
+            .unwrap_or_else(|| RemoteConnectionOptions::Mock(self.options.clone()))
     }
 
     fn simulate_disconnect(&self, cx: &AsyncApp) {
@@ -356,7 +385,7 @@ impl RemoteConnection for MockRemoteConnection {
     }
 
     fn path_style(&self) -> PathStyle {
-        PathStyle::local()
+        *self.path_style.lock()
     }
 
     fn remote_platform(&self) -> crate::RemotePlatform {

@@ -1407,7 +1407,14 @@ mod tests {
         for (finish_reason, expected_stop) in [
             ("STOP", StopReason::EndTurn),
             ("MAX_TOKENS", StopReason::MaxTokens),
-            ("SAFETY", StopReason::Refusal),
+            (
+                "SAFETY",
+                StopReason::Refusal(Some(language_model::RefusalDetails {
+                    reason: "SAFETY".into(),
+                    categories: Vec::new(),
+                    stage: Some(language_model::RefusalStage::Output),
+                })),
+            ),
         ] {
             let (provider, model) = cloud_google_test_model(vec![
                 json!({"event": {"candidates": [{

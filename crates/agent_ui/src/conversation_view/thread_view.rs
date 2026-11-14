@@ -6645,7 +6645,7 @@ impl ThreadView {
                             .toggleable(IconPosition::End, is_selected);
 
                         menu.push_item(entry.handler({
-                            let effort = effort_level.value.clone();
+                            let effort = effort_level.value;
                             let weak_self = weak_self.clone();
                             move |_window, cx| {
                                 let effort = effort.clone();

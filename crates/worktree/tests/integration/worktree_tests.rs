@@ -3851,17 +3851,15 @@ async fn test_random_worktree_operations_during_initial_scan(
 
     let settings = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().settings());
 
-    for (i, snapshot) in snapshots.into_iter().enumerate().rev() {
-        let mut updated_snapshot = snapshot.clone();
+    for (i, mut snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
-            if update.scan_id >= updated_snapshot.scan_id() as u64 {
-                updated_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
+            if update.scan_id >= snapshot.scan_id() as u64 {
+                snapshot.apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
         assert_eq!(
-            updated_snapshot.entries(true, 0).collect::<Vec<_>>(),
+            snapshot.entries(true, 0).collect::<Vec<_>>(),
             final_snapshot.entries(true, 0).collect::<Vec<_>>(),
             "wrong updates after snapshot {i}: {updates:#?}",
         );
