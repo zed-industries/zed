@@ -11,6 +11,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 pub enum AgentThreadStatus {
     #[default]
     Completed,
+    Unconfirmed,
     Running,
     WaitingForConfirmation,
     Error,
@@ -321,6 +322,12 @@ impl RenderOnce for ThreadItem {
                 Icon::new(IconName::Warning)
                     .size(IconSize::XSmall)
                     .color(Color::Warning),
+            )
+        } else if self.status == AgentThreadStatus::Unconfirmed {
+            Some(
+                Icon::new(IconName::Info)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
             )
         } else if self.notified {
             Some(

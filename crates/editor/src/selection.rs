@@ -1778,13 +1778,31 @@ impl Editor {
             return;
         }
 
+        if state.effects.unfold {
+            self.unfold_buffers_with_selections(cx);
+            let ranges = self
+                .selections
+                .disjoint_anchor_ranges()
+                .chain(
+                    self.selections
+                        .pending_anchor()
+                        .map(|selection| selection.range()),
+                )
+                .collect::<Vec<_>>();
+            self.unfold_ranges(&ranges, false, false, cx);
+        }
+
         if state.changed {
             self.selection_history.push(state.history_entry);
+        }
 
+        if state.changed || state.effects.unfold {
             if let Some(autoscroll) = state.effects.scroll {
                 self.request_autoscroll(autoscroll, cx);
             }
+        }
 
+        if state.changed {
             let old_cursor_position = &state.old_cursor_position;
 
             self.selections_did_change(true, old_cursor_position, state.effects, window, cx);
@@ -2085,12 +2103,25 @@ impl Editor {
         change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> R {
         let snapshot = self.display_snapshot(cx);
+        let unfold = effects.unfold
+            || self
+                .deferred_selection_effects_state
+                .as_ref()
+                .is_some_and(|state| state.effects.unfold);
+        let change = |selections: &mut MutableSelectionsCollection<'_, '_>| {
+            if unfold {
+                // Folded display coordinates would otherwise move anchor-based jump destinations.
+                selections.preserve_buffer_positions();
+            }
+            change(selections)
+        };
         if self.deferred_selection_effects_state.is_some() {
             let (changed, result) = self.change_selections_without_effects(&snapshot, change);
             if let Some(state) = &mut self.deferred_selection_effects_state {
                 state.effects.scroll = effects.scroll.or(state.effects.scroll);
                 state.effects.completions = effects.completions;
                 state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
+                state.effects.unfold |= effects.unfold;
                 state.changed |= changed;
             }
             return result;

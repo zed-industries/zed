@@ -3,9 +3,6 @@ mod headless_project;
 #[cfg(test)]
 mod remote_editing_tests;
 
-#[cfg(windows)]
-pub mod windows;
-
 pub use headless_project::{HeadlessAppState, HeadlessProject};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -1191,24 +1188,28 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
 
 #[cfg(windows)]
 fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
-    let binary_path = binary_name.to_string_lossy().to_string();
-    let parameters = format!(
-        "run --log-file \"{}\" --pid-file \"{}\" --stdin-socket \"{}\" --stdout-socket \"{}\" --stderr-socket \"{}\"",
-        paths.log_file.to_string_lossy(),
-        paths.pid_file.to_string_lossy(),
-        paths.stdin_socket.to_string_lossy(),
-        paths.stdout_socket.to_string_lossy(),
-        paths.stderr_socket.to_string_lossy()
-    );
-
-    let directory = binary_name
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    crate::windows::shell_execute_from_explorer(&binary_path, &parameters, &directory)
-        .map_err(|e| SpawnServerError::ProcessStatus(std::io::Error::other(e)))?;
-
+    use smol::process::windows::CommandExt;
+    // Detach from the console and break away from sshd's job so closing the SSH session doesn't kill the daemon.
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    smol::process::Command::new(binary_name)
+        .stdin(util::command::Stdio::null())
+        .stdout(util::command::Stdio::null())
+        .stderr(util::command::Stdio::null())
+        .arg("run")
+        .arg("--log-file")
+        .arg(&paths.log_file)
+        .arg("--pid-file")
+        .arg(&paths.pid_file)
+        .arg("--stdin-socket")
+        .arg(&paths.stdin_socket)
+        .arg("--stdout-socket")
+        .arg(&paths.stdout_socket)
+        .arg("--stderr-socket")
+        .arg(&paths.stderr_socket)
+        .creation_flags(DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB)
+        .spawn()
+        .map_err(SpawnServerError::ProcessStatus)?;
     Ok(())
 }
 

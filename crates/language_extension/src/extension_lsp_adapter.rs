@@ -511,9 +511,11 @@ fn labels_from_extension(
         .map(|label| {
             let label = label?;
             let runs = if label.code.is_empty() {
-                Vec::new()
+                Arc::default()
             } else {
-                language.highlight_text(&label.code.as_str().into(), 0..label.code.len())
+                language
+                    .highlight_text_resolved(label.code.as_str(), 0..label.code.len())
+                    .runs
             };
             build_code_label(&label, &runs, language)
         })

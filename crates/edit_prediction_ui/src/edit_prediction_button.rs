@@ -1,7 +1,6 @@
 use anyhow::Result;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
-use codestral::{self, CodestralEditPredictionDelegate};
 use copilot::Status;
 use edit_prediction::EditPredictionStore;
 use edit_prediction_types::EditPredictionDelegateHandle;
@@ -78,6 +77,10 @@ impl Render for EditPredictionButton {
         }
 
         let language_settings = all_language_settings(None, cx);
+
+        if !language_settings.edit_predictions.button {
+            return div().hidden();
+        }
 
         match language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
@@ -433,6 +436,12 @@ impl Render for EditPredictionButton {
 
                 let show_editor_predictions = self.editor_show_predictions;
                 let user = self.user_store.read(cx).current_user();
+                let zed_cloud_has_no_active_subscription =
+                    matches!(provider, EditPredictionProvider::Zed)
+                        && self
+                            .user_store
+                            .read(cx)
+                            .current_organization_has_no_active_subscription();
                 let excluded_from_plan = edit_prediction::zed_edit_predictions_excluded_from_plan(
                     self.user_store.read(cx),
                     cx,
@@ -443,24 +452,27 @@ impl Render for EditPredictionButton {
                         |ep_store| ep_store.read(cx).mercury_has_payment_required_error(),
                     );
 
-                let indicator_color = if missing_token || mercury_has_error {
-                    Some(Color::Error)
-                } else if excluded_from_plan {
-                    Some(Color::Muted)
-                } else if enabled && (!show_editor_predictions || over_limit) {
-                    Some(if over_limit {
-                        Color::Error
+                let indicator_color =
+                    if missing_token || mercury_has_error || zed_cloud_has_no_active_subscription {
+                        Some(Color::Error)
+                    } else if excluded_from_plan {
+                        Some(Color::Muted)
+                    } else if enabled && (!show_editor_predictions || over_limit) {
+                        Some(if over_limit {
+                            Color::Error
+                        } else {
+                            Color::Muted
+                        })
                     } else {
-                        Color::Muted
-                    })
-                } else {
-                    None
-                };
+                        None
+                    };
 
                 let zed_cloud_needs_sign_in =
                     matches!(provider, EditPredictionProvider::Zed) && user.is_none();
-                let provider_unavailable =
-                    missing_token || mercury_has_error || zed_cloud_needs_sign_in;
+                let provider_unavailable = missing_token
+                    || mercury_has_error
+                    || zed_cloud_needs_sign_in
+                    || zed_cloud_has_no_active_subscription;
 
                 let icon_button = IconButton::new("zed-predict-pending-button", ep_icon)
                     .shape(IconButtonShape::Square)
@@ -476,6 +488,8 @@ impl Render for EditPredictionButton {
                                 "Disabled For This File"
                             } else if zed_cloud_needs_sign_in {
                                 "Sign In Or Configure a Provider"
+                            } else if zed_cloud_has_no_active_subscription {
+                                "This organization has no active subscription"
                             } else if excluded_from_plan {
                                 "Configure a Provider"
                             } else if provider_unavailable || show_editor_predictions {
@@ -564,26 +578,25 @@ impl EditPredictionButton {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
 
-        cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
-            .detach();
+        cx.observe_global::<SettingsStore>(move |_, cx| {
+            load_provider_credentials(cx);
+            cx.notify();
+        })
+        .detach();
 
         cx.observe_global::<EditPredictionStore>(move |_, cx| cx.notify())
             .detach();
 
-        let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
-        let open_ai_compatible_api_token_task =
-            edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
+        cx.observe(&user_store, |_, _, cx| cx.notify()).detach();
 
-        cx.spawn(async move |this, cx| {
-            _ = futures::join!(mercury_api_token_task, open_ai_compatible_api_token_task);
-            this.update(cx, |_, cx| {
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-
-        CodestralEditPredictionDelegate::ensure_api_key_loaded(cx);
+        load_provider_credentials(cx);
+        for key_state in [
+            edit_prediction::mercury::mercury_api_token(cx),
+            edit_prediction::open_ai_compatible::open_ai_compatible_api_token(cx),
+            codestral::codestral_api_key_state(cx),
+        ] {
+            cx.observe(&key_state, |_, _, cx| cx.notify()).detach();
+        }
 
         Self {
             editor_subscription: None,
@@ -1021,22 +1034,34 @@ impl EditPredictionButton {
         }
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
+            let zed_cloud_has_no_active_subscription =
+                all_language_settings(None, cx).edit_predictions.provider
+                    == EditPredictionProvider::Zed
+                    && self
+                        .user_store
+                        .read(cx)
+                        .current_organization_has_no_active_subscription();
             menu = menu
                 .separator()
                 .header("Actions")
-                .entry(
-                    "Predict Edit at Cursor",
-                    Some(Box::new(ShowEditPrediction)),
-                    {
-                        let editor_focus_handle = editor_focus_handle.clone();
-                        move |window, cx| {
-                            telemetry::event!(
-                                "Edit Prediction Menu Action",
-                                action = "predict_at_cursor",
-                            );
-                            editor_focus_handle.dispatch_action(&ShowEditPrediction, window, cx);
-                        }
-                    },
+                .item(
+                    ContextMenuEntry::new("Predict Edit at Cursor")
+                        .action(Box::new(ShowEditPrediction))
+                        .disabled(zed_cloud_has_no_active_subscription)
+                        .handler({
+                            let editor_focus_handle = editor_focus_handle.clone();
+                            move |window, cx| {
+                                telemetry::event!(
+                                    "Edit Prediction Menu Action",
+                                    action = "predict_at_cursor",
+                                );
+                                editor_focus_handle.dispatch_action(
+                                    &ShowEditPrediction,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }),
                 )
                 .context(editor_focus_handle)
                 .when(
@@ -1208,7 +1233,30 @@ impl EditPredictionButton {
                         .separator();
                 }
 
-                if edit_prediction::zed_edit_predictions_excluded_from_plan(
+                let zed_cloud_has_no_active_subscription =
+                    matches!(provider, EditPredictionProvider::Zed)
+                        && self
+                            .user_store
+                            .read(cx)
+                            .current_organization_has_no_active_subscription();
+
+                if zed_cloud_has_no_active_subscription {
+                    menu = menu
+                        .header("Zed AI")
+                        .item(
+                            ContextMenuEntry::new(
+                                "This organization has no active subscription",
+                            )
+                            .disabled(true),
+                        )
+                        .item(
+                            ContextMenuEntry::new(
+                                "Switch organizations or configure another provider to use edit predictions",
+                            )
+                            .disabled(true),
+                        )
+                        .separator();
+                } else if edit_prediction::zed_edit_predictions_excluded_from_plan(
                     self.user_store.read(cx),
                     cx,
                 ) {
@@ -1436,10 +1484,14 @@ impl StatusItemView for EditPredictionButton {
     }
 
     fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
-        // This button is already gated on having a non-disabled edit
-        // prediction provider, which the user manages through provider/AI
-        // settings.
-        None
+        Some(HideStatusItem::new(|settings| {
+            settings
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default()
+                .button = Some(false);
+        }))
     }
 }
 
@@ -1719,6 +1771,13 @@ fn emit_edit_prediction_menu_opened(
     );
 }
 
+fn load_provider_credentials(cx: &mut App) {
+    let _mercury_task = edit_prediction::mercury::load_mercury_api_token(cx);
+    let _open_ai_compatible_task =
+        edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
+    let _codestral_task = codestral::load_codestral_api_key(cx);
+}
+
 fn copilot_settings_url(enterprise_uri: Option<&str>) -> Arc<str> {
     match enterprise_uri {
         Some(uri) => format!("{}{}", uri.trim_end_matches('/'), COPILOT_SETTINGS_PATH).into(),
@@ -1730,8 +1789,84 @@ fn copilot_settings_url(enterprise_uri: Option<&str>) -> Arc<str> {
 mod tests {
     use super::*;
     use anyhow::Context as _;
+    use credentials_provider::test_support::FakeCredentialsProvider;
     use gpui::TestAppContext;
+    use language_model::{ApiKeyState, EnvVar};
     use settings::RootUserSettings;
+    use workspace::AppState;
+    use zed_credentials_provider::ZedCredentialsProvider;
+
+    #[gpui::test]
+    async fn test_credentials_survive_button_recreation(cx: &mut TestAppContext) {
+        let app_state = cx.update(AppState::test);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let credentials = Arc::new(FakeCredentialsProvider::default());
+
+        cx.update(|cx| {
+            cx.set_global(ZedCredentialsProvider(credentials.clone()));
+            language_model::set_credentials_read_gate::<SettingsStore>(
+                |cx| DisableAiSettings::get_global(cx).disable_ai,
+                cx,
+            );
+            let settings = r#"{"disable_ai":true,"edit_predictions":{
+                "open_ai_compatible_api":{"api_url":"https://edit.example","model":"test"}
+            }}"#;
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(settings, cx)
+                    .expect("edit prediction settings");
+            });
+            let env_var = EnvVar {
+                name: SharedString::from("TEST_API_KEY"),
+                value: None,
+            };
+            for key_state in [
+                edit_prediction::mercury::mercury_api_token(cx),
+                edit_prediction::open_ai_compatible::open_ai_compatible_api_token(cx),
+                codestral::codestral_api_key_state(cx),
+            ] {
+                key_state.update(cx, |state, _| {
+                    *state = ApiKeyState::new(state.url.clone(), env_var.clone());
+                });
+            }
+        });
+        let new_button = |cx: &mut TestAppContext| {
+            cx.new(|cx| {
+                EditPredictionButton::new(
+                    app_state.fs.clone(),
+                    app_state.user_store.clone(),
+                    PopoverMenuHandle::default(),
+                    project.clone(),
+                    cx,
+                )
+            })
+        };
+        let button = new_button(cx);
+        cx.run_until_parked();
+        assert_eq!(credentials.take_reads(), Vec::<String>::new());
+        drop(button);
+        let button = new_button(cx);
+        cx.run_until_parked();
+        assert_eq!(credentials.take_reads(), Vec::<String>::new());
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            credentials.take_reads(),
+            [
+                "https://api.inceptionlabs.ai/v1/edit/completions",
+                "https://codestral.mistral.ai",
+                "https://edit.example",
+            ]
+        );
+        drop(button);
+        let _button = new_button(cx);
+        cx.run_until_parked();
+        assert_eq!(credentials.take_reads(), Vec::<String>::new());
+    }
 
     #[test]
     fn test_disabled_globs_selection_and_replacement() -> Result<()> {

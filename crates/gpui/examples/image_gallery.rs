@@ -241,15 +241,16 @@ fn run_example() {
     let app = gpui_platform::application();
     #[cfg(target_family = "wasm")]
     let app = gpui_platform::single_threaded_web();
+    #[cfg(not(target_family = "wasm"))]
+    let http_client =
+        ReqwestClient::user_agent("gpui example").expect("failed to create HTTP client");
+    #[cfg(target_family = "wasm")]
+    let http_client = gpui_web::FetchHttpClient::new(app.foreground_executor().to_send());
+    let app = app.with_http_client(Arc::new(http_client));
 
     app.run(move |cx: &mut App| {
         if !example_support::load_fonts(cx) {
             return;
-        }
-        #[cfg(not(target_family = "wasm"))]
-        {
-            let http_client = ReqwestClient::user_agent("gpui example").unwrap();
-            cx.set_http_client(Arc::new(http_client));
         }
 
         cx.activate(true);

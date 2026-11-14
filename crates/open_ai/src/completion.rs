@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, stream::BoxStream};
 use http_client::StatusCode;
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -11,7 +11,6 @@ use language_model_core::{
     ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
     util::{fix_streamed_json, parse_tool_arguments},
 };
-use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
@@ -42,7 +41,7 @@ fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<Service
     }
 }
 
-/// Omitting effort enables reasoning on Sol/Luna, which then reject temperature.
+/// Omitting effort enables reasoning on Sol/Luna/Terra, which then reject temperature.
 fn temperature_for_model(
     model_id: &str,
     temperature: Option<f32>,
@@ -50,7 +49,9 @@ fn temperature_for_model(
 ) -> Option<f32> {
     temperature.filter(|_| match model_id {
         "gpt-6-astra" | "gpt-6.1-sol" => false,
-        "gpt-6-sol" | "gpt-6-luna" => reasoning_effort == Some(ReasoningEffort::None),
+        "gpt-6-sol" | "gpt-6-luna" | "gpt-6.1-terra" => {
+            reasoning_effort == Some(ReasoningEffort::None)
+        }
         _ => true,
     })
 }
@@ -790,15 +791,15 @@ impl OpenAiResponseEventMapper {
         }
     }
 
-    pub fn map_stream(
+    pub fn map_stream<E: Into<LanguageModelCompletionError> + 'static>(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponsesStreamEvent>>>>,
+        events: BoxStream<'static, Result<ResponsesStreamEvent, E>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+                Err(error) => vec![Err(error.into())],
             })
         })
     }
@@ -881,7 +882,8 @@ impl OpenAiResponseEventMapper {
                     events
                 }
             }
-            ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningDelta { delta, .. }
+            | ResponsesStreamEvent::ReasoningTextDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -900,7 +902,7 @@ impl OpenAiResponseEventMapper {
             }
             ResponsesStreamEvent::RefusalDelta { .. }
             | ResponsesStreamEvent::RefusalDone { .. } => {
-                self.pending_stop_reason = Some(StopReason::Refusal);
+                self.pending_stop_reason = Some(refusal_stop_reason("refusal"));
                 Vec::new()
             }
             ResponsesStreamEvent::FunctionCallArgumentsDelta { item_id, delta, .. } => {
@@ -993,8 +995,9 @@ impl OpenAiResponseEventMapper {
                 let mut stop_reason = match reason {
                     Some("max_tokens" | "max_output_tokens") => StopReason::MaxTokens,
                     Some("content_filter") => {
-                        self.pending_stop_reason = Some(StopReason::Refusal);
-                        StopReason::Refusal
+                        let refusal = refusal_stop_reason("content_filter");
+                        self.pending_stop_reason = Some(refusal.clone());
+                        refusal
                     }
                     _ => self
                         .pending_stop_reason
@@ -1007,8 +1010,10 @@ impl OpenAiResponseEventMapper {
                 if response_output_contains_refusal(&response.output)
                     && !matches!(stop_reason, StopReason::MaxTokens)
                 {
-                    self.pending_stop_reason = Some(StopReason::Refusal);
-                    stop_reason = StopReason::Refusal;
+                    if !stop_reason.is_refusal() {
+                        stop_reason = refusal_stop_reason("refusal");
+                    }
+                    self.pending_stop_reason = Some(stop_reason.clone());
                 }
                 if self.pending_stop_reason.is_none() {
                     events.extend(self.emit_tool_calls_from_output(&response.output));
@@ -1085,6 +1090,7 @@ impl OpenAiResponseEventMapper {
             | ResponsesStreamEvent::ContentPartAdded { .. }
             | ResponsesStreamEvent::ContentPartDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
+            | ResponsesStreamEvent::ReasoningTextDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryPartDone { .. }
             | ResponsesStreamEvent::ReasoningDone { .. }
             | ResponsesStreamEvent::Created { .. }
@@ -1134,7 +1140,7 @@ impl OpenAiResponseEventMapper {
         events.extend(self.capture_reasoning_items_from_output(&response.output));
 
         if response_output_contains_refusal(&response.output) {
-            self.pending_stop_reason = Some(StopReason::Refusal);
+            self.pending_stop_reason = Some(refusal_stop_reason("refusal"));
         }
 
         if self.pending_stop_reason.is_none() {
@@ -1178,8 +1184,8 @@ impl OpenAiResponseEventMapper {
                         Ok(input) => {
                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
-                                    id: LanguageModelToolUseId::from(call_id.clone()),
-                                    name: name.clone(),
+                                    id: LanguageModelToolUseId::from(call_id),
+                                    name,
                                     is_input_complete: true,
                                     input: LanguageModelToolUseInput::Json(input),
                                     raw_input: arguments.clone(),
@@ -1189,8 +1195,8 @@ impl OpenAiResponseEventMapper {
                         }
                         Err(error) => {
                             events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                id: LanguageModelToolUseId::from(call_id.clone()),
-                                tool_name: name.clone(),
+                                id: LanguageModelToolUseId::from(call_id),
+                                tool_name: name,
                                 raw_input: Arc::<str>::from(arguments.clone()),
                                 json_parse_error: error.to_string(),
                             }));
@@ -1455,6 +1461,14 @@ fn response_error_message(error: &ResponseError) -> String {
     }
 }
 
+fn refusal_stop_reason(reason: &str) -> StopReason {
+    StopReason::Refusal(Some(language_model_core::RefusalDetails {
+        reason: reason.into(),
+        categories: Vec::new(),
+        stage: Some(language_model_core::RefusalStage::Output),
+    }))
+}
+
 fn response_output_contains_refusal(output: &[ResponseOutputItem]) -> bool {
     output.iter().any(|item| {
         if let ResponseOutputItem::Message(message) = item {
@@ -1510,7 +1524,12 @@ fn response_reasoning_input_item_from_output(
     ResponseReasoningInputItem {
         id: reasoning.id.clone(),
         summary,
-        content: reasoning.content.clone(),
+        content: reasoning
+            .content
+            .iter()
+            .filter(|part| !matches!(part, crate::responses::ReasoningContentPart::Other))
+            .cloned()
+            .collect(),
         encrypted_content,
         status: reasoning.status.clone(),
     }
@@ -1585,7 +1604,9 @@ mod tests {
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
             OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
-                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .map_stream(Box::pin(futures::stream::iter(
+                    events.into_iter().map(Ok::<_, crate::RequestError>),
+                )))
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
@@ -2374,6 +2395,9 @@ mod tests {
         for (model_id, temperature, effort, expected_temperature) in [
             ("gpt-6.1-sol", Some(0.25), None, None),
             ("gpt-6.1-sol", None, None, None),
+            ("gpt-6.1-terra", Some(0.25), None, None),
+            ("gpt-6.1-terra", Some(0.25), Some(Medium), None),
+            ("gpt-6.1-terra", Some(0.25), Some(NoReasoning), Some(0.25)),
             ("gpt-6-astra", Some(0.25), None, None),
             ("gpt-6-astra", None, None, None),
             ("gpt-6-sol", Some(0.25), None, None),
@@ -3354,9 +3378,34 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         assert!(matches!(
-            mapped[0],
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal)
+            &mapped[0],
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details)))
+                if details.reason == "refusal" && details.categories.is_empty()
         ));
+    }
+
+    #[test]
+    fn responses_content_filter_preserves_structured_reason() {
+        let mapped = map_response_events(vec![
+            serde_json::from_value(json!({
+                "type": "response.incomplete",
+                "response": {
+                    "incomplete_details": {"reason": "content_filter"},
+                    "output": [{"type":"message","content":[{"type":"refusal","refusal":"Declined"}]}]
+                }
+            }))
+            .unwrap(),
+        ]);
+        assert_eq!(
+            mapped,
+            vec![LanguageModelCompletionEvent::Stop(StopReason::Refusal(
+                Some(language_model_core::RefusalDetails {
+                    reason: "content_filter".into(),
+                    categories: Vec::new(),
+                    stage: Some(language_model_core::RefusalStage::Output),
+                })
+            )),]
+        );
     }
 
     #[test]
@@ -3380,7 +3429,7 @@ mod tests {
         assert_eq!(mapped.len(), 1);
         assert!(matches!(
             mapped[0],
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal)
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(_))
         ));
     }
 
@@ -3928,10 +3977,9 @@ mod tests {
             Some("ENC"),
             Some("completed".into()),
         );
-        reasoning_item.content = vec![json!({
-            "type": "reasoning_text",
-            "text": "Internal reasoning text."
-        })];
+        reasoning_item.content = vec![crate::responses::ReasoningContentPart::ReasoningText {
+            text: "Internal reasoning text.".into(),
+        }];
 
         let events = vec![
             ResponsesStreamEvent::OutputItemDone {

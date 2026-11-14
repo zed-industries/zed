@@ -1,4 +1,4 @@
-use super::{OsWatcher, OsWatcherKind};
+use super::{Coverage, OsWatcher, OsWatcherKind};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{
@@ -40,6 +40,7 @@ pub struct WatcherSnapshot {
 #[derive(Clone, Debug, Serialize)]
 pub struct WatchRoot {
     pub path: String,
+    /// Zero when the backend watch is retained only for covered descendants.
     pub registrations: usize,
 }
 
@@ -188,13 +189,10 @@ impl WatchRecording {
                     .paths
                     .0
                     .values()
-                    .filter(|path| path.has_os_watcher)
-                    .filter_map(|path| {
-                        let registration = state.watchers.get(path.watcher_ids.first()?)?;
-                        Some(WatchRoot {
-                            path: registration.path.as_path().to_string_lossy().into_owned(),
-                            registrations: path.watcher_ids.len(),
-                        })
+                    .filter(|path| matches!(path.coverage, Coverage::Watched { .. }))
+                    .map(|path| WatchRoot {
+                        path: path.path.as_path().to_string_lossy().into_owned(),
+                        registrations: path.watcher_ids.len(),
                     })
                     .collect();
                 roots.sort_by(|left, right| left.path.cmp(&right.path));
@@ -391,5 +389,29 @@ mod tests {
         assert!(snapshot.events[0].detail.contains("watch failed"));
         assert_eq!(snapshot.events[1].operation, "unwatch_error");
         assert!(snapshot.events[1].detail.contains("unwatch failed"));
+    }
+
+    #[gpui::test]
+    fn recording_snapshots_retained_roots_without_registrations(cx: &TestAppContext) {
+        let watcher = watcher(OsWatcherKind::Poll, cx);
+        let root = util::path!("/root");
+        let registration = watcher
+            .add(Path::new(root).into(), false, |_| {})
+            .unwrap()
+            .unwrap();
+        let covered = watcher
+            .add(Path::new(util::path!("/root/fail")).into(), false, |_| {})
+            .unwrap()
+            .unwrap();
+        let recording = WatchRecording::new([watcher.clone()]);
+
+        watcher.remove(registration);
+        let roots = &recording.snapshot().watchers[0].roots;
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].path, root);
+        assert_eq!(roots[0].registrations, 0);
+
+        watcher.remove(covered);
+        assert!(recording.snapshot().watchers[0].roots.is_empty());
     }
 }

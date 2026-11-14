@@ -76,6 +76,7 @@ zed_actions.workspace = true
 zed_credentials_provider.workspace = true
 
 [dev-dependencies]
+credentials_provider = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

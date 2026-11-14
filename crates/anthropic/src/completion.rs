@@ -108,6 +108,7 @@ pub async fn collect_compaction_result(
             | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
             | LanguageModelCompletionEvent::StartMessage { .. }
             | LanguageModelCompletionEvent::ReasoningDetails(_)
+            | LanguageModelCompletionEvent::InputTransformations(_)
             | LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started)
             | LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(_)) => {}
         }
@@ -290,7 +291,14 @@ pub fn into_anthropic(
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
-    let requires_adaptive_thinking = model == "claude-opus-5-5";
+    let requires_adaptive_thinking = matches!(
+        model.as_str(),
+        "claude-fable-5-2"
+            | "claude-mythos-5-2"
+            | "claude-opus-5-5"
+            | "claude-sonnet-5-5"
+            | "claude-haiku-5-5"
+    );
     let mode = if requires_adaptive_thinking {
         AnthropicModelMode::AdaptiveThinking
     } else {
@@ -422,21 +430,23 @@ pub fn into_anthropic(
             }),
             AnthropicModelMode::Default => None,
         }
+    } else if model == "claude-sonnet-5-5" {
+        Some(Thinking::BetweenTools)
     } else if crate::requires_explicit_thinking_opt_out(&model) {
-        // On Claude Opus 5, omitting the `thinking` field no longer means
+        // On Claude Opus 5 and Haiku 5.5, omitting the `thinking` field no longer means
         // "off": the model runs adaptive thinking by default, so features
         // that suppress thinking (e.g. inline assist) must opt out
         // explicitly. `disabled` is only accepted at effort `high` or below;
         // that holds here because `output_config` is never sent when thinking
-        // is disallowed, and the server-side default effort is `high`.
+        // is disallowed, and the server-side default effort is `high` or below.
         // <https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-5>
         Some(Thinking::Disabled)
     } else {
         None
     };
 
-    // Opus 5.5 always uses adaptive thinking, which does not accept sampling controls.
-    // <https://platform.claude.com/docs/en/models/opus-5-5/overview>
+    // These models reject non-default sampling controls even when thinking is off.
+    // <https://platform.claude.com/docs/en/build-with-claude/thinking#sampling-parameters>
     let temperature = if requires_adaptive_thinking {
         None
     } else {
@@ -719,14 +729,20 @@ impl AnthropicEventMapper {
             }
             Event::MessageStart { message } => {
                 update_usage(&mut self.usage, &message.usage);
-                vec![
+                let mut events = vec![
                     Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
                         &self.usage,
                     ))),
                     Ok(LanguageModelCompletionEvent::StartMessage {
                         message_id: message.id,
                     }),
-                ]
+                ];
+                if !message.input_transformations.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::InputTransformations(
+                        message.input_transformations,
+                    )));
+                }
+                events
             }
             Event::MessageDelta { delta, usage } => {
                 update_usage(&mut self.usage, &usage);
@@ -735,7 +751,18 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
-                        "refusal" => StopReason::Refusal,
+                        "refusal" => {
+                            StopReason::Refusal(Some(language_model_core::RefusalDetails {
+                                reason: "refusal".into(),
+                                categories: delta
+                                    .stop_details
+                                    .and_then(|details| details.category)
+                                    .into_iter()
+                                    .collect(),
+                                // Classifier timing does not identify which content triggered it.
+                                stage: None,
+                            }))
+                        }
                         "compaction" => StopReason::EndTurn,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
@@ -759,7 +786,9 @@ impl AnthropicEventMapper {
                         "Anthropic ended the stream without finishing its compaction summary"
                     )))];
                 }
-                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
+                vec![Ok(LanguageModelCompletionEvent::Stop(
+                    self.stop_reason.clone(),
+                ))]
             }
             Event::Error { error } => {
                 vec![Err(completion_error_from_anthropic_api(
@@ -1134,6 +1163,8 @@ mod tests {
         // its requests opt into dropping invalidated blocks instead. Models
         // without the prefix-binding check must not receive the beta field.
         for (model, expects_block_binding) in [
+            ("claude-fable-5-2", true),
+            ("claude-mythos-5-2", true),
             ("claude-opus-5-5", true),
             ("claude-fable-5-1", true),
             ("claude-fable-5", false),
@@ -1208,6 +1239,8 @@ mod tests {
         // outright, so those models must keep omitting the field.
         for (model, expects_explicit_opt_out) in [
             ("claude-opus-5", true),
+            ("claude-fable-5-2", false),
+            ("claude-mythos-5-2", false),
             ("claude-opus-5-5", false),
             ("claude-opus-4-8", false),
             ("claude-fable-5", false),
@@ -1262,13 +1295,69 @@ mod tests {
                     "{model} should omit the thinking field entirely"
                 );
             }
-            if model == "claude-opus-5-5" {
+            if matches!(
+                model,
+                "claude-opus-5-5" | "claude-fable-5-2" | "claude-mythos-5-2"
+            ) {
                 assert!(
                     anthropic_request.temperature.is_none(),
                     "{model} must omit temperature because adaptive thinking is always on"
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_thinking_disallowed_sends_between_tools_for_sonnet_5_5() {
+        // Claude Sonnet 5.5 thinks by default but rejects `disabled`, so
+        // suppressing thinking must send its lowest setting instead.
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thread_id: None,
+            prompt_cache_key: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+            max_output_tokens: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-sonnet-5-5".to_string(),
+            1.0,
+            128_000,
+            AnthropicModelMode::AdaptiveThinking,
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let request_json = serde_json::to_value(&anthropic_request).unwrap();
+        assert_eq!(
+            request_json["thinking"],
+            serde_json::json!({ "type": "between_tools" })
+        );
+        assert!(anthropic_request.output_config.is_none());
+        assert!(anthropic_request.temperature.is_none());
+
+        let count_tokens_json =
+            serde_json::to_value(anthropic_request.into_count_tokens_request()).unwrap();
+        assert_eq!(
+            count_tokens_json["thinking"],
+            serde_json::json!({ "type": "between_tools" })
+        );
     }
 
     #[test]
@@ -1780,6 +1869,105 @@ mod tests {
             vec![LanguageModelCompletionEvent::Compaction(
                 CompactionUpdate::Failed
             )]
+        );
+    }
+
+    #[test]
+    fn refusal_stop_carries_metadata_without_explanation_text() {
+        for category in [serde_json::json!("cyber"), serde_json::Value::Null] {
+            let mut mapper =
+                AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+            let event = serde_json::from_value(serde_json::json!({
+                "type": "message_delta",
+                "delta": {
+                    "stop_reason": "refusal",
+                    "stop_sequence": null,
+                    "stop_details": {
+                        "type": "refusal",
+                        "category": category,
+                        "explanation": "private user content"
+                    }
+                },
+                "usage": {"output_tokens": 0}
+            }))
+            .unwrap();
+            let events = mapper
+                .map_event(event)
+                .into_iter()
+                .chain(mapper.map_event(Event::MessageStop))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert!(
+                matches!(&events[1], LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details)))
+                if details.categories == category.as_str().map(str::to_owned).into_iter().collect::<Vec<_>>()
+                    && details.stage.is_none() && details.reason == "refusal")
+            );
+            assert!(
+                !serde_json::to_string(&events)
+                    .unwrap()
+                    .contains("private user content")
+            );
+        }
+    }
+
+    #[test]
+    fn test_event_mapper_preserves_all_input_transformations() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "claude-fable-5-1",
+                "usage": { "input_tokens": 10, "output_tokens": 0 },
+                "input_transformations": [
+                    {
+                        "type": "thinking_dropped",
+                        "path": "messages.1.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "thinking_mismatch_allowed",
+                        "path": "messages.3.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "some_future_transformation",
+                        "path": "messages.5.content.0",
+                        "reason": "some_future_reason"
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let events = mapper
+            .map_event(start_event)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            events.last(),
+            Some(&LanguageModelCompletionEvent::InputTransformations(vec![
+                crate::InputTransformation {
+                    kind: "thinking_dropped".into(),
+                    path: "messages.1.content.0".into(),
+                    reason: "prefix_binding_mismatch".into(),
+                },
+                crate::InputTransformation {
+                    kind: "thinking_mismatch_allowed".into(),
+                    path: "messages.3.content.0".into(),
+                    reason: "prefix_binding_mismatch".into(),
+                },
+                crate::InputTransformation {
+                    kind: "some_future_transformation".into(),
+                    path: "messages.5.content.0".into(),
+                    reason: "some_future_reason".into(),
+                },
+            ]))
         );
     }
 

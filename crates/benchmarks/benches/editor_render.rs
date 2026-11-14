@@ -390,9 +390,10 @@ fn render_highlighted_editor(cx: &mut BenchAppContext) {
     });
     let probe = "fn main() {}";
     assert!(
-        !language
+        language
             .highlight_text(&Rope::from(probe), 0..probe.len())
-            .is_empty(),
+            .next()
+            .is_some(),
         "the benchmark language must resolve syntax highlights against the theme"
     );
     let buffer = cx.update(|cx| {

@@ -1,4 +1,4 @@
-# Builds the `bwrap_test_helper` binary (sandbox crate, `nixos-test` feature)
+# Builds the `bwrap-test-helper` binary (sandbox crate, `nixos-test` feature)
 # used by the Bubblewrap sandbox VM tests in this directory.
 {
   pkgs,
@@ -38,7 +38,7 @@ let
     version = "0.0.0";
     inherit src;
     cargoLock = ../../../Cargo.lock;
-    cargoExtraArgs = "-p sandbox --bin bwrap_test_helper --features sandbox/nixos-test --locked";
+    cargoExtraArgs = "-p sandbox --bin bwrap-test-helper --features sandbox/nixos-test --locked";
     CARGO_PROFILE = "dev";
     doCheck = false;
 
@@ -58,7 +58,7 @@ craneLib.buildPackage (
     installPhase = ''
       runHook preInstall
       mkdir -p $out/bin
-      cp target/debug/bwrap_test_helper $out/bin/bwrap_test_helper
+      cp target/debug/bwrap-test-helper $out/bin/bwrap-test-helper
       runHook postInstall
     '';
 

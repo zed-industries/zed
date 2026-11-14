@@ -18,7 +18,7 @@ doctest = false
 # DNS-rebinding/SSRF protection, so it must NEVER be enabled in a real Zed
 # build (debug or release) — it exists solely for the NixOS sandbox integration
 # tests, whose echo servers live on the VM's private network. Enabled only via
-# `sandbox/nixos-test` when building `bwrap_test_helper`.
+# `sandbox/nixos-test` when building `bwrap-test-helper`.
 nixos-integration-tests = []
 
 [dependencies]

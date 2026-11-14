@@ -144,7 +144,7 @@ if ! "$skip_sentry"; then
         echo "Attempting sentry upload (attempt $attempt/3)..."
         if sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
             "${target_dir}/${target_triple}"/release/zed \
-            "${target_dir}/${remote_server_triple}"/release/remote_server; then
+            "${target_dir}/${remote_server_triple}"/release/remote-server; then
             echo "Sentry upload successful on attempt $attempt"
             break
         fi
@@ -163,10 +163,10 @@ fi
 # We use llvm-objcopy because GNU objcopy on older distros (e.g. Ubuntu 20.04)
 # doesn't understand CREL sections produced by newer LLVM.
 llvm-objcopy --only-keep-debug "${target_dir}/${target_triple}/release/zed" "${target_dir}/${target_triple}/release/zed.dbg"
-llvm-objcopy --only-keep-debug "${target_dir}/${remote_server_triple}/release/remote_server" "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
+llvm-objcopy --only-keep-debug "${target_dir}/${remote_server_triple}/release/remote-server" "${target_dir}/${remote_server_triple}/release/remote-server.dbg"
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
-if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then
+if ldd "${target_dir}/${remote_server_triple}/release/remote-server" | grep -q 'libcrypto\|libssl'; then
     if [[ "$remote_server_triple" == *-musl ]]; then
         echo "Error: remote_server still depends on libssl or libcrypto" && exit 1
     else
@@ -190,7 +190,7 @@ zed_dir="${temp_dir}/zed$suffix.app"
 mkdir -p "${zed_dir}/bin" "${zed_dir}/libexec"
 llvm-objcopy --strip-unneeded "${target_dir}/${target_triple}/release/zed" "${zed_dir}/libexec/zed-editor"
 llvm-objcopy --strip-debug --discard-all "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/zed"
-llvm-objcopy --strip-debug --discard-all "${target_dir}/${remote_server_triple}/release/remote_server" "${temp_dir}/remote_server"
+llvm-objcopy --strip-debug --discard-all "${target_dir}/${remote_server_triple}/release/remote-server" "${temp_dir}/remote_server"
 
 # Libs
 # Bundle libstdc++ so older supported systems can run binaries built with our

@@ -1,7 +1,7 @@
 use super::*;
 use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::{v1::schema as acp_v1, v2::schema as acp_v2};
 use agent_settings::AgentSettings;
 use agent_ui::{
     ThreadId,
@@ -16,15 +16,25 @@ use agent_ui::{
 };
 use chrono::DateTime;
 use fs::{FakeFs, Fs};
-use gpui::{App, Bounds, Hsla, Point, Rgba, TestAppContext, UpdateGlobal, VisualTestContext};
+use gpui::{
+    AnyView, App, Bounds, Corners, Decorations, Hsla, Point, Rgba, ScaledPixels, TestAppContext,
+    Tiling, UpdateGlobal, VisualTestContext, point,
+};
+use platform_title_bar::PlatformTitleBar;
 use pretty_assertions::assert_eq;
 use project::AgentId;
-use settings::{Settings, SettingsStore};
+use settings::{
+    FontSize, Settings, SettingsStore, SidebarDockPosition, TitleBarVisibility, UiDensity,
+};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 use util::{path_list::PathList, rel_path::rel_path};
+use workspace::{
+    dock::{DockPosition, PanelEvent, test::TestPanel},
+    item::test::TestItem,
+};
 
 fn use_unique_metadata_databases(cx: &mut TestAppContext) {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -478,7 +488,7 @@ fn save_thread_metadata(
 ) {
     cx.update(|cx| {
         let worktree_paths = project.read(cx).worktree_paths(cx);
-        let remote_connection = project.read(cx).remote_connection_options(cx);
+        let remote_connection = project.read(cx).remote_connection_options(cx).cloned();
         let thread_id = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
@@ -604,18 +614,18 @@ fn request_test_tool_authorization(
 ) {
     let tool_call_id = acp::ToolCallId::new(tool_call_id);
     let label = format!("Tool {tool_call_id}");
-    let option_id = acp::PermissionOptionId::new(option_id);
+    let option_id = acp_v2::PermissionOptionId::new(option_id);
     let _authorization_task = cx.update(|_, cx| {
         thread.update(cx, |thread, cx| {
             thread
                 .request_tool_call_authorization(
-                    acp::ToolCall::new(tool_call_id, label)
-                        .kind(acp::ToolKind::Edit)
+                    acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id.0), label)
+                        .kind(acp_v1::ToolKind::Edit)
                         .into(),
-                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                         option_id,
                         "Allow",
-                        acp::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     acp_thread::AuthorizationKind::PermissionGrant,
                     cx,
@@ -708,6 +718,33 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
+async fn test_sidebar_background_with_transparent_panel(cx: &mut TestAppContext) {
+    let (_, project) = init_multi_project_test(&["/my-project"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    for panel_alpha in [0.0, 0.4] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
+        let background = cx.update(|_, cx| {
+            let colors = cx.theme().colors();
+            colors.background.blend(colors.panel_background)
+        });
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(400.), px(240.)),
+            |_, _| sidebar.clone().into_any_element(),
+        );
+
+        cx.update(|window, _| {
+            let quads = window.painted_quads();
+            let sidebar_background = quads.first().expect("Sidebar should paint its background");
+            assert_eq!(sidebar_background.background.as_solid(), Some(background));
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));
@@ -716,8 +753,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
     save_n_test_threads(1, &project, cx).await;
 
-    for (query, surface_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
-        set_sidebar_test_surface_alpha(surface_alpha, cx);
+    for (query, panel_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
         type_in_search(&sidebar, query, cx);
         let row_bounds = sidebar.read_with(cx, |sidebar, _| {
             sidebar
@@ -779,8 +816,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
                 .bounds
                 .map(|value| px(value.as_f32() / window.scale_factor()))
         });
-        for surface_alpha in [1.0, 0.0, 0.2] {
-            set_sidebar_test_surface_alpha(surface_alpha, cx);
+        for panel_alpha in [1.0, 0.0, 0.2] {
+            set_sidebar_test_panel_alpha(panel_alpha, cx);
             assert_sidebar_action_hover(selector, row_bounds, cx);
         }
     }
@@ -1902,6 +1939,318 @@ async fn test_refocus_sidebar_with_selection_preserves_it(cx: &mut TestAppContex
         assert!(sidebar.focus_handle.is_focused(window));
         assert_eq!(sidebar.selection, Some(0));
     });
+}
+
+#[gpui::test]
+async fn test_leaving_sidebar_after_previous_focus_target_is_removed(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar_closed(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let title_bar = cx.new(TestItem::new);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.set_titlebar_item(AnyView::from(title_bar.clone()), window, cx);
+        let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.toggle_dock(DockPosition::Right, window, cx);
+        panel
+    });
+    cx.run_until_parked();
+    panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+    cx.run_until_parked();
+    title_bar.update_in(cx, |title_bar, window, cx| {
+        title_bar.focus_handle(cx).focus(window, cx);
+    });
+    cx.run_until_parked();
+    let focus_state = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            let focused_region = [
+                (FocusedRegion::TitleBar, title_bar.focus_handle(cx)),
+                (FocusedRegion::Sidebar, sidebar.focus_handle(cx)),
+                (FocusedRegion::Panel, panel.focus_handle(cx)),
+                (FocusedRegion::Pane, workspace.focus_handle(cx)),
+            ]
+            .into_iter()
+            .find_map(|(region, focus_handle)| {
+                focus_handle.contains_focused(window, cx).then_some(region)
+            });
+            (focused_region, panel.read(cx).zoomed)
+        })
+    };
+    assert_eq!(focus_state(cx), (Some(FocusedRegion::TitleBar), true));
+
+    cx.dispatch_action(FocusWorkspaceSidebar);
+    cx.run_until_parked();
+    assert_eq!(focus_state(cx), (Some(FocusedRegion::Sidebar), true));
+
+    cx.dispatch_action(FocusWorkspaceSidebar);
+    cx.run_until_parked();
+    assert_eq!(focus_state(cx), (Some(FocusedRegion::TitleBar), true));
+
+    cx.dispatch_action(FocusWorkspaceSidebar);
+    cx.run_until_parked();
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.clear_titlebar_item(window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(focus_state(cx), (Some(FocusedRegion::Sidebar), true));
+
+    cx.dispatch_action(FocusWorkspaceSidebar);
+    cx.run_until_parked();
+    assert_eq!(focus_state(cx), (Some(FocusedRegion::Panel), true));
+}
+
+#[gpui::test]
+async fn test_window_frame_corners_follow_content(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    setup_sidebar_closed(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let window_handle = cx.update(|window, _| window.window_handle());
+    cx.simulate_window_decorations_change(
+        window_handle,
+        Decorations::Client {
+            tiling: Tiling::default(),
+        },
+    );
+    let title_bar = cx.new(|cx| {
+        PlatformTitleBar::new("title-bar", cx).with_multi_workspace(multi_workspace.downgrade())
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.set_titlebar_item(AnyView::from(title_bar), window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        window_corners(cx),
+        WindowCorners {
+            top_left: WindowCorner::Rounded,
+            top_right: WindowCorner::Rounded,
+            bottom_left: WindowCorner::Rounded,
+            bottom_right: WindowCorner::Rounded,
+        },
+        "title bar and status bar shown"
+    );
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.clear_titlebar_item(window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        window_corners(cx),
+        WindowCorners {
+            top_left: WindowCorner::Square,
+            top_right: WindowCorner::Square,
+            bottom_left: WindowCorner::Rounded,
+            bottom_right: WindowCorner::Rounded,
+        },
+        "title bar hidden"
+    );
+
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.status_bar.get_or_insert_default().show = Some(false);
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        window_corners(cx),
+        WindowCorners {
+            top_left: WindowCorner::Square,
+            top_right: WindowCorner::Square,
+            bottom_left: WindowCorner::Square,
+            bottom_right: WindowCorner::Square,
+        },
+        "title bar and status bar hidden"
+    );
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.toggle_sidebar(window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        window_corners(cx),
+        WindowCorners {
+            top_left: WindowCorner::Rounded,
+            top_right: WindowCorner::Square,
+            bottom_left: WindowCorner::Rounded,
+            bottom_right: WindowCorner::Square,
+        },
+        "title bar and status bar hidden, sidebar open on the left"
+    );
+
+    cx.update(|_, cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.threads_sidebar.position = SidebarDockPosition::Right;
+        AgentSettings::override_global(settings, cx);
+    });
+    multi_workspace.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    assert_eq!(
+        window_corners(cx),
+        WindowCorners {
+            top_left: WindowCorner::Square,
+            top_right: WindowCorner::Rounded,
+            bottom_left: WindowCorner::Square,
+            bottom_right: WindowCorner::Rounded,
+        },
+        "title bar and status bar hidden, sidebar open on the right"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+async fn test_headers_follow_title_bar_visibility(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let thread_list = header_search_offsets("sidebar-header-search", cx);
+    assert_eq!(thread_list.hidden, thread_list.fullscreen);
+    assert_ne!(thread_list.hidden, thread_list.shown);
+
+    sidebar.update_in(cx, |sidebar, window, cx| sidebar.show_archive(window, cx));
+    cx.run_until_parked();
+    let archive = header_search_offsets("threads-archive-header-search", cx);
+    assert_eq!(archive.hidden, archive.fullscreen);
+    assert_ne!(archive.hidden, archive.shown);
+}
+
+#[gpui::test]
+async fn test_header_alignment_with_title_bar_and_tabs(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    let title_bar = cx.new(|cx| {
+        PlatformTitleBar::new("title-bar", cx).with_multi_workspace(multi_workspace.downgrade())
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        let item = cx.new(TestItem::new);
+        workspace.add_item_to_active_pane(Box::new(item), None, false, window, cx);
+    });
+    let window_handle = cx.update(|window, _| window.window_handle());
+
+    for (header_selector, search_selector) in [
+        ("sidebar-header", "sidebar-header-search"),
+        ("threads-archive-header", "threads-archive-header-search"),
+    ] {
+        if header_selector == "threads-archive-header" {
+            sidebar.update_in(cx, |sidebar, window, cx| sidebar.show_archive(window, cx));
+        }
+        for ((font_size, density, decorations, position), scale_factor) in [
+            (
+                12.,
+                UiDensity::Compact,
+                Decorations::Server,
+                SidebarDockPosition::Left,
+            ),
+            (
+                16.,
+                UiDensity::Default,
+                Decorations::Client {
+                    tiling: Tiling::default(),
+                },
+                SidebarDockPosition::Left,
+            ),
+            (
+                24.,
+                UiDensity::Comfortable,
+                Decorations::Client {
+                    tiling: Tiling::default(),
+                },
+                SidebarDockPosition::Right,
+            ),
+            (
+                16.,
+                UiDensity::Comfortable,
+                Decorations::Client {
+                    tiling: Tiling {
+                        top: true,
+                        left: true,
+                        right: true,
+                        bottom: true,
+                    },
+                },
+                SidebarDockPosition::Right,
+            ),
+        ]
+        .into_iter()
+        .cartesian_product([1., 2.])
+        {
+            cx.simulate_scale_factor_change(scale_factor);
+            cx.simulate_window_decorations_change(window_handle, decorations);
+            for (visibility, fullscreen, title_bar_visible) in [
+                (TitleBarVisibility::Always, false, true),
+                (TitleBarVisibility::Never, false, false),
+                (TitleBarVisibility::HideInFullScreen, false, true),
+                (TitleBarVisibility::HideInFullScreen, true, false),
+                (TitleBarVisibility::Always, true, true),
+            ] {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.title_bar.get_or_insert_default().show = Some(visibility);
+                        settings.theme.ui_font_size = Some(FontSize(font_size));
+                        settings.theme.ui_density = Some(density);
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .threads_sidebar
+                            .get_or_insert_default()
+                            .position = Some(position);
+                    });
+                });
+                workspace.update_in(cx, |workspace, window, cx| {
+                    if window.is_fullscreen() != fullscreen {
+                        window.toggle_fullscreen();
+                    }
+                    if title_bar_visible {
+                        workspace.set_titlebar_item(AnyView::from(title_bar.clone()), window, cx);
+                    } else {
+                        workspace.clear_titlebar_item(window, cx);
+                    }
+                    cx.refresh_windows();
+                });
+                cx.run_until_parked();
+
+                let header = cx
+                    .debug_bounds(header_selector)
+                    .expect("header is rendered");
+                let tab = cx.debug_bounds("TAB-0").expect("tab is rendered");
+                let search = cx
+                    .debug_bounds(search_selector)
+                    .expect("search is rendered");
+                let center = if title_bar_visible {
+                    assert_eq!(header.bottom(), tab.top());
+                    match decorations {
+                        Decorations::Client { .. } => header.center().y,
+                        Decorations::Server => header.center().y - px(1.),
+                    }
+                } else {
+                    assert_eq!(header.top(), tab.top());
+                    assert_eq!(header.bottom(), tab.bottom());
+                    tab.center().y - px(0.5)
+                };
+                let expected_top =
+                    ((center - search.size.height / 2.) * scale_factor).floor() / scale_factor;
+                assert_eq!(
+                    search.top(),
+                    expected_top,
+                    "{header_selector}, {visibility:?}, {font_size}px, {scale_factor}x"
+                );
+            }
+        }
+    }
 }
 
 #[gpui::test]
@@ -4119,8 +4468,33 @@ async fn test_archive_selected_thread_archives_closed_linked_worktree(cx: &mut T
     });
 
     focus_sidebar(&sidebar, cx);
-    sidebar.update_in(cx, |sidebar, _window, _cx| {
+    let previous_status = sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(thread_index);
+        let Some(ListEntry::Thread(thread)) = sidebar.contents.entries.get_mut(thread_index) else {
+            panic!("expected selected thread");
+        };
+        std::mem::replace(
+            &mut Arc::make_mut(thread).status,
+            AgentThreadStatus::Unconfirmed,
+        )
+    });
+    cx.dispatch_action(ArchiveSelectedThread);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_by_session(&worktree_session_id)
+                .map(|thread| thread.archived)
+        }),
+        Some(false),
+        "unconfirmed activity must not permit archival"
+    );
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        let Some(ListEntry::Thread(thread)) = sidebar.contents.entries.get_mut(thread_index) else {
+            panic!("expected selected thread");
+        };
+        Arc::make_mut(thread).status = previous_status;
     });
     cx.dispatch_action(ArchiveSelectedThread);
     for _ in 0..8 {
@@ -4167,6 +4541,82 @@ async fn test_archive_selected_thread_archives_closed_linked_worktree(cx: &mut T
         !fs.is_dir(Path::new("/worktrees/project/feature-a/project"))
             .await,
         "linked worktree directory should be removed from disk after archiving its thread"
+    );
+}
+
+#[gpui::test]
+async fn test_archive_thread_with_deleted_closed_linked_worktree(cx: &mut TestAppContext) {
+    let (main_project, _fs) = init_test_project_with_git("/project", cx).await;
+    main_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let main_workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+    // A thread on a linked worktree that no longer exists on disk.
+    let worktree_session_id = acp::SessionId::new(Arc::from("worktree-thread"));
+    let worktree_folder_paths =
+        PathList::new(&[PathBuf::from("/worktrees/project/feature-a/project")]);
+    save_thread_metadata_with_main_paths(
+        "worktree-thread",
+        "Worktree Thread",
+        worktree_folder_paths,
+        PathList::new(&[PathBuf::from("/project")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        let thread = sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(thread)
+                    if thread.metadata.session_id.as_ref() == Some(&worktree_session_id) =>
+                {
+                    Some(thread)
+                }
+                _ => None,
+            })
+            .expect("worktree thread should be visible in sidebar");
+        assert!(
+            matches!(thread.workspace, ThreadEntryWorkspace::Closed { .. }),
+            "thread should start closed so archiving has to open its workspace"
+        );
+    });
+
+    // Opening the missing worktree falls back to the main workspace, so the
+    // thread's entry is still closed after archiving opens it.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&worktree_session_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    let thread_archived = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&worktree_session_id)
+            .map(|thread| thread.archived)
+    });
+    assert_eq!(
+        thread_archived,
+        Some(true),
+        "thread should be archived even though its worktree no longer exists"
+    );
+    assert_eq!(
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace
+            .workspaces()
+            .cloned()
+            .collect::<Vec<_>>()),
+        vec![main_workspace],
+        "archiving should leave only the main workspace open"
     );
 }
 
@@ -4412,15 +4862,17 @@ async fn test_parallel_threads_shown_with_live_status(cx: &mut TestAppContext) {
     cx.update(|_, cx| {
         connection.send_update(
             session_id_a.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                "working...".into(),
+            )),
             cx,
         );
     });
     cx.run_until_parked();
 
     // Open thread B (idle, default response) — thread A goes to background.
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -4453,8 +4905,8 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let connection = StubAgentConnection::new().with_supports_load_session(true);
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -4463,11 +4915,22 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     save_test_thread_metadata(&parent_session_id, &project, cx).await;
 
     let subagent_session_id = acp::SessionId::new("subagent-session");
-    cx.update(|_, cx| {
-        let parent_thread = panel.read(cx).active_agent_thread(cx).unwrap();
-        parent_thread.update(cx, |thread: &mut AcpThread, cx| {
-            thread.subagent_spawned(subagent_session_id.clone(), cx);
-        });
+    let parent_thread = cx.update(|_, cx| panel.read(cx).active_agent_thread(cx).unwrap());
+    let subagent = cx
+        .update(|_, cx| {
+            let parent = parent_thread.read(cx);
+            parent.connection().clone().load_session(
+                subagent_session_id.clone(),
+                parent.project().clone(),
+                PathList::default(),
+                None,
+                cx,
+            )
+        })
+        .await
+        .expect("subagent session");
+    parent_thread.update(cx, |thread: &mut AcpThread, cx| {
+        thread.register_subagent(subagent, cx);
     });
     cx.run_until_parked();
 
@@ -4500,6 +4963,90 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
 }
 
 #[gpui::test]
+async fn test_elicitation_marks_sidebar_thread_waiting_until_responded(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    open_thread_with_connection(&panel, StubAgentConnection::new(), cx);
+    send_message(&panel, cx);
+    let session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+    let thread = cx.update(|_, cx| panel.read(cx).active_agent_thread(cx).unwrap());
+    let thread_status = |cx: &mut VisualTestContext| {
+        sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    ListEntry::Thread(thread)
+                        if thread.metadata.session_id.as_ref() == Some(&session_id) =>
+                    {
+                        Some(thread.status)
+                    }
+                    _ => None,
+                })
+                .expect("Expected thread entry in sidebar")
+        })
+    };
+    assert_eq!(thread_status(cx), AgentThreadStatus::Running);
+
+    for action in [
+        acp_v2::ElicitationAction::Accept(acp_v2::ElicitationAcceptAction::new().content(
+            std::collections::BTreeMap::from([(
+                "choice".to_string(),
+                acp_v2::ElicitationContentValue::from("first"),
+            )]),
+        )),
+        acp_v2::ElicitationAction::Decline,
+        acp_v2::ElicitationAction::Cancel,
+    ] {
+        let (elicitation_id, response_task) = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation_with_id(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(session_id.clone()),
+                            serde_json::from_value(serde_json::json!({
+                                "type": "object",
+                                "required": ["choice"],
+                                "properties": {
+                                    "choice": {
+                                        "type": "string",
+                                        "oneOf": [
+                                            { "const": "first", "title": "First" },
+                                            { "const": "second", "title": "Second" }
+                                        ]
+                                    }
+                                }
+                            }))
+                            .expect("Valid single-select schema"),
+                        ),
+                        "Choose one",
+                    ),
+                    cx,
+                )
+                .expect("Elicitation should be accepted")
+        });
+        cx.run_until_parked();
+        assert_eq!(thread_status(cx), AgentThreadStatus::WaitingForConfirmation);
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp_v2::CreateElicitationResponse::new(action),
+                cx,
+            );
+        });
+        response_task.await;
+        cx.run_until_parked();
+        assert_eq!(thread_status(cx), AgentThreadStatus::Running);
+    }
+}
+
+#[gpui::test]
 async fn test_background_thread_completion_triggers_notification(cx: &mut TestAppContext) {
     let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
     let (multi_workspace, cx) =
@@ -4517,7 +5064,7 @@ async fn test_background_thread_completion_triggers_notification(cx: &mut TestAp
     cx.update(|_, cx| {
         connection_a.send_update(
             session_id_a.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("chunk".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new("chunk".into())),
             cx,
         );
     });
@@ -4542,7 +5089,7 @@ async fn test_background_thread_completion_triggers_notification(cx: &mut TestAp
     );
 
     // Complete thread A's turn (transition Running → Completed).
-    connection_a.end_turn(session_id_a.clone(), acp::StopReason::EndTurn);
+    connection_a.end_turn(session_id_a.clone(), acp_v1::StopReason::EndTurn);
     cx.run_until_parked();
 
     // The completed background thread shows a notification indicator.
@@ -5662,8 +6209,8 @@ async fn test_thread_title_update_propagates_to_sidebar(cx: &mut TestAppContext)
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Hi there!".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Hi there!".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -5716,8 +6263,8 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Hi there!".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Hi there!".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -5845,8 +6392,8 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Hi there!".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Hi there!".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -5963,8 +6510,8 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
 
     // Save a thread so it appears in the list.
     let connection_a = StubAgentConnection::new();
-    connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection_a.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel_a, connection_a, cx);
     send_message(&panel_a, cx);
@@ -6032,8 +6579,8 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     });
 
     let connection_b = StubAgentConnection::new();
-    connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Thread B".into()),
+    connection_b.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Thread B".into()),
     )]);
     open_thread_with_connection(&panel_b, connection_b, cx);
     send_message(&panel_b, cx);
@@ -6086,8 +6633,8 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     });
 
     let connection_b2 = StubAgentConnection::new();
-    connection_b2.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new(DEFAULT_THREAD_TITLE.into()),
+    connection_b2.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new(DEFAULT_THREAD_TITLE.into()),
     )]);
     open_thread_with_connection(&panel_b, connection_b2, cx);
     send_message(&panel_b, cx);
@@ -6176,8 +6723,8 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
 
     // Start a thread and send a message so it has history.
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -6652,8 +7199,8 @@ async fn test_sending_message_from_draft_promotes_in_place(cx: &mut TestAppConte
     cx.run_until_parked();
 
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("ok".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("ok".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     let draft_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
@@ -6707,8 +7254,8 @@ async fn test_cmd_n_shows_new_thread_entry(cx: &mut TestAppContext) {
 
     // Create a non-empty thread (has messages).
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -6830,8 +7377,8 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
 
     // Create a non-empty thread in the worktree workspace.
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&worktree_panel, connection, cx);
     send_message(&worktree_panel, cx);
@@ -6955,8 +7502,8 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
     // Give the main panel a real thread we can park the draft behind
     // later. Send a message to promote the draft→real thread.
     let real_connection = StubAgentConnection::new();
-    real_connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("done".into()),
+    real_connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&main_panel, real_connection, cx);
     agent_ui::test_support::send_message(&main_panel, cx);
@@ -7636,7 +8183,9 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
     cx.update(|_, cx| {
         connection.send_update(
             session_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                "working...".into(),
+            )),
             cx,
         );
     });
@@ -7723,7 +8272,9 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
     cx.update(|_, cx| {
         connection.send_update(
             session_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                "working...".into(),
+            )),
             cx,
         );
     });
@@ -7734,7 +8285,7 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
         vec!["v [project]", "  Hello {wt-feature-a} * (running)",]
     );
 
-    connection.end_turn(session_id, acp::StopReason::EndTurn);
+    connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
     cx.run_until_parked();
 
     assert_eq!(
@@ -8865,7 +9416,9 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
     cx.update(|_, cx| {
         connection.send_update(
             thread2_session_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                "working...".into(),
+            )),
             cx,
         );
     });
@@ -9943,8 +10496,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // Thread C (oldest), Thread B, Thread A (newest) — by created_at.
     // We send messages in each so they also get last_message_sent_or_queued timestamps.
     let connection_c = StubAgentConnection::new();
-    connection_c.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done C".into()),
+    connection_c.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done C".into()),
     )]);
     open_thread_with_connection(&panel, connection_c, cx);
     send_message(&panel, cx);
@@ -9961,8 +10514,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     );
 
     let connection_b = StubAgentConnection::new();
-    connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done B".into()),
+    connection_b.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done B".into()),
     )]);
     open_thread_with_connection(&panel, connection_b, cx);
     send_message(&panel, cx);
@@ -9979,8 +10532,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     );
 
     let connection_a = StubAgentConnection::new();
-    connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done A".into()),
+    connection_a.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done A".into()),
     )]);
     open_thread_with_connection(&panel, connection_a, cx);
     send_message(&panel, cx);
@@ -10290,8 +10843,8 @@ async fn test_archive_thread_drops_retained_conversation_view(cx: &mut TestAppCo
     cx.run_until_parked();
 
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -10365,8 +10918,8 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
 
     // Create a thread in project-a (non-active — project-b is active).
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel_a, connection, cx);
     agent_ui::test_support::send_message(&panel_a, cx);
@@ -10392,8 +10945,8 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     // Create a thread in project-b (the active workspace) and verify it
     // becomes the active entry.
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel_b, connection, cx);
     agent_ui::test_support::send_message(&panel_b, cx);
@@ -10438,8 +10991,8 @@ async fn test_unarchive_only_shows_restored_thread(cx: &mut TestAppContext) {
 
     // Create a thread and send a message so it's a real thread.
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Hello".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Hello".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel, connection, cx);
     agent_ui::test_support::send_message(&panel, cx);
@@ -10763,8 +11316,8 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
 
     // Create a thread and send a message so it's no longer a draft.
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel, connection, cx);
     agent_ui::test_support::send_message(&panel, cx);
@@ -10973,8 +11526,8 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
     cx.run_until_parked();
 
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel_b, connection, cx);
     agent_ui::test_support::send_message(&panel_b, cx);
@@ -11104,8 +11657,8 @@ async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(cx: &mut 
     cx.run_until_parked();
 
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel, connection, cx);
     agent_ui::test_support::send_message(&panel, cx);
@@ -11218,8 +11771,8 @@ async fn test_switch_to_workspace_with_archived_thread_shows_no_active_entry(
 
     // Create a thread in project-a's panel (currently non-active).
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel_a, connection, cx);
     agent_ui::test_support::send_message(&panel_a, cx);
@@ -11414,7 +11967,7 @@ async fn test_archive_last_thread_on_linked_worktree_does_not_create_new_thread_
     cx.update(|_, cx| {
         connection.send_update(
             worktree_thread_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("done".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new("done".into())),
             cx,
         );
     });
@@ -11583,7 +12136,7 @@ async fn test_archive_last_thread_on_linked_worktree_with_no_siblings_leaves_gro
     cx.update(|_, cx| {
         connection.send_update(
             worktree_thread_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("done".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new("done".into())),
             cx,
         );
     });
@@ -11885,7 +12438,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
     cx.update(|_, cx| {
         connection.send_update(
             worktree_thread_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("done".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new("done".into())),
             cx,
         );
     });
@@ -12505,8 +13058,8 @@ async fn test_startup_successful_restoration_no_spurious_draft(cx: &mut TestAppC
 
     // Create and send a message to make a real thread.
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -12536,8 +13089,8 @@ async fn test_project_header_click_restores_last_viewed(cx: &mut TestAppContext)
 
     // Create two threads in project-a.
     let conn1 = StubAgentConnection::new();
-    conn1.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    conn1.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel_a, conn1, cx);
     send_message(&panel_a, cx);
@@ -12545,8 +13098,8 @@ async fn test_project_header_click_restores_last_viewed(cx: &mut TestAppContext)
     save_test_thread_metadata(&thread_a1, &project_a, cx).await;
 
     let conn2 = StubAgentConnection::new();
-    conn2.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    conn2.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel_a, conn2, cx);
     send_message(&panel_a, cx);
@@ -13281,7 +13834,7 @@ mod property_test {
                     let key = &keys[project_group_index];
                     let ws = mw
                         .workspaces_for_project_group(key, cx)
-                        .first()
+                        .next()
                         .cloned()
                         .unwrap_or_else(|| mw.workspace().clone());
                     let project = ws.read(cx).project().clone();
@@ -13297,12 +13850,11 @@ mod property_test {
                     let thread_id = active_thread_id(&panel, cx);
                     let session_id = active_session_id(&panel, cx);
                     // Make the thread non-draft without exercising the prompt
-                    // send path; these invariants are about sidebar state, not
-                    // git checkpointing during user prompts.
+                    // send path; these invariants are about sidebar state.
                     cx.update(|_, cx| {
                         connection.send_update(
                             session_id.clone(),
-                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
                                 "Done".into(),
                             )),
                             cx,
@@ -13328,7 +13880,7 @@ mod property_test {
                         interacted_at: None,
                         worktree_paths: project.read(cx).worktree_paths(cx),
                         archived: false,
-                        remote_connection: project.read(cx).remote_connection_options(cx),
+                        remote_connection: project.read(cx).remote_connection_options(cx).cloned(),
                     });
                     cx.update(|_, cx| {
                         ThreadMetadataStore::global(cx)
@@ -13435,7 +13987,7 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[index];
                     mw.workspaces_for_project_group(key, cx)
-                        .first()
+                        .next()
                         .cloned()
                         .unwrap_or_else(|| mw.workspace().clone())
                 });
@@ -13505,7 +14057,7 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
                     mw.workspaces_for_project_group(key, cx)
-                        .first()
+                        .next()
                         .cloned()
                         .unwrap()
                 });
@@ -13525,7 +14077,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx).first().cloned()
+                    mw.workspaces_for_project_group(key, cx).next().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -13552,7 +14104,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx).first().cloned()
+                    mw.workspaces_for_project_group(key, cx).next().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -14177,7 +14729,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
     let (main_worktree_paths, remote_connection) = project.read_with(cx, |p, cx| {
         (
             p.project_group_key(cx).path_list().clone(),
-            p.remote_connection_options(cx),
+            p.remote_connection_options(cx).cloned(),
         )
     });
     cx.update(|_window, cx| {
@@ -15130,7 +15682,7 @@ async fn test_remote_archive_thread_with_active_connection(
     // the folder at the linked worktree checkout and the main at the
     // parent repo, so `build_root_plan` targets the linked worktree
     // specifically and knows which main repo owns it.
-    let remote_connection = project.read_with(cx, |p, cx| p.remote_connection_options(cx));
+    let remote_connection = project.read_with(cx, |p, cx| p.remote_connection_options(cx).cloned());
 
     // Record the worktree as Zed-created on the client, keyed by the remote
     // connection identity, with the creation time of the gitdir on the
@@ -15824,11 +16376,12 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
     );
 }
 
-fn set_sidebar_test_surface_alpha(alpha: f32, cx: &mut VisualTestContext) {
+fn set_sidebar_test_panel_alpha(alpha: f32, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         let mut theme = cx.theme().as_ref().clone();
         theme.styles.colors.background = Hsla::from(gpui::rgb(0xdcdcdd));
-        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
+        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xff00ff));
+        theme.styles.colors.panel_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
         theme.styles.colors.element_background = Hsla::from(gpui::rgb(0xebebec));
         theme.styles.colors.ghost_element_hover = Hsla::from(gpui::rgb(0xdfdfe0));
         theme::GlobalTheme::update_theme(cx, Arc::new(theme));
@@ -15878,4 +16431,147 @@ fn sidebar_painted_background_at(position: Point<Pixels>, cx: &mut VisualTestCon
             .expect("solid background at pointer");
         u32::from(Rgba::from(color))
     })
+}
+
+#[derive(Debug, PartialEq)]
+enum FocusedRegion {
+    TitleBar,
+    Sidebar,
+    Panel,
+    Pane,
+}
+
+#[derive(Debug, PartialEq)]
+struct WindowCorners {
+    top_left: WindowCorner,
+    top_right: WindowCorner,
+    bottom_left: WindowCorner,
+    bottom_right: WindowCorner,
+}
+
+#[derive(Debug, PartialEq)]
+enum WindowCorner {
+    Rounded,
+    Square,
+    Overflow,
+    Gap,
+}
+
+fn window_corners(cx: &mut VisualTestContext) -> WindowCorners {
+    cx.update(|window, _| {
+        let scale_factor = window.scale_factor();
+        let frame = Bounds::new(Point::default(), window.viewport_size())
+            .inset(theme::CLIENT_SIDE_DECORATION_SHADOW)
+            .scale(scale_factor);
+        let quads = window.painted_quads();
+        let outline = quads
+            .iter()
+            .find(|quad| quad.bounds == frame && !quad.border_color.is_transparent())
+            .expect("window frame border");
+        let probe_offset = 1.5 * scale_factor;
+        let corner = |x: ScaledPixels, y: ScaledPixels, direction_x: f32, direction_y: f32| {
+            let probe = point(
+                ScaledPixels(x.0 + direction_x * probe_offset),
+                ScaledPixels(y.0 + direction_y * probe_offset),
+            );
+            let inside_outline =
+                rounded_bounds_contain(outline.bounds, outline.corner_radii, probe);
+            let painted = quads.iter().any(|quad| {
+                !quad.background.is_transparent()
+                    && quad.content_mask.bounds.contains(&probe)
+                    && rounded_bounds_contain(quad.bounds, quad.corner_radii, probe)
+            });
+            match (inside_outline, painted) {
+                (false, false) => WindowCorner::Rounded,
+                (true, true) => WindowCorner::Square,
+                (false, true) => WindowCorner::Overflow,
+                (true, false) => WindowCorner::Gap,
+            }
+        };
+        WindowCorners {
+            top_left: corner(frame.left(), frame.top(), 1., 1.),
+            top_right: corner(frame.right(), frame.top(), -1., 1.),
+            bottom_right: corner(frame.right(), frame.bottom(), -1., -1.),
+            bottom_left: corner(frame.left(), frame.bottom(), 1., -1.),
+        }
+    })
+}
+
+fn rounded_bounds_contain(
+    bounds: Bounds<ScaledPixels>,
+    corner_radii: Corners<ScaledPixels>,
+    position: Point<ScaledPixels>,
+) -> bool {
+    bounds.contains(&position)
+        && [
+            (corner_radii.top_left, bounds.left(), bounds.top(), 1., 1.),
+            (
+                corner_radii.top_right,
+                bounds.right(),
+                bounds.top(),
+                -1.,
+                1.,
+            ),
+            (
+                corner_radii.bottom_right,
+                bounds.right(),
+                bounds.bottom(),
+                -1.,
+                -1.,
+            ),
+            (
+                corner_radii.bottom_left,
+                bounds.left(),
+                bounds.bottom(),
+                1.,
+                -1.,
+            ),
+        ]
+        .into_iter()
+        .all(
+            |(radius, x, y, direction_x, direction_y): (_, _, _, f32, f32)| {
+                let center_x = x.0 + direction_x * radius.0;
+                let center_y = y.0 + direction_y * radius.0;
+                let distance_x = (center_x - position.x.0) * direction_x;
+                let distance_y = (center_y - position.y.0) * direction_y;
+                distance_x <= 0. || distance_y <= 0. || distance_x.hypot(distance_y) <= radius.0
+            },
+        )
+}
+
+#[cfg(target_os = "macos")]
+struct HeaderSearchOffsets {
+    shown: Pixels,
+    hidden: Pixels,
+    fullscreen: Pixels,
+}
+
+#[cfg(target_os = "macos")]
+fn header_search_offsets(
+    selector: &'static str,
+    cx: &mut VisualTestContext,
+) -> HeaderSearchOffsets {
+    let offset = |visibility, cx: &mut VisualTestContext| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.title_bar.get_or_insert_default().show = Some(visibility);
+            });
+        });
+        cx.run_until_parked();
+        cx.debug_bounds(selector)
+            .expect("header search is rendered")
+            .left()
+    };
+    let shown = offset(TitleBarVisibility::Always, cx);
+    let hidden = offset(TitleBarVisibility::Never, cx);
+    cx.update(|window, _| window.toggle_fullscreen());
+    cx.run_until_parked();
+    let fullscreen = offset(TitleBarVisibility::Always, cx);
+    cx.update(|window, _| window.toggle_fullscreen());
+    cx.run_until_parked();
+    HeaderSearchOffsets {
+        shown,
+        hidden,
+        fullscreen,
+    }
 }

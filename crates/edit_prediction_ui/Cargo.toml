@@ -47,10 +47,13 @@ zeta_prompt.workspace = true
 
 [dev-dependencies]
 copilot = { workspace = true, features = ["test-support"] }
+credentials_provider = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 indoc.workspace = true
+language_model.workspace = true
 project = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+zed_credentials_provider.workspace = true
 
 

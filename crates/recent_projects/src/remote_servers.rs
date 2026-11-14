@@ -1501,7 +1501,10 @@ impl RemoteServerProjects {
                 true,
                 cx,
             );
-            Picker::list(delegate, window, cx).embedded()
+            Picker::list(delegate, window, cx)
+                .list_measure_all()
+                .show_scrollbar(true)
+                .embedded()
         });
         let mut read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
         let ssh_config_updates = if read_ssh_config {
@@ -2948,7 +2951,6 @@ impl RemoteServerProjects {
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         v_flex()
-            .min_h(rems(20.))
             .size_full()
             .child(self.default_picker.clone())
             .into_any_element()

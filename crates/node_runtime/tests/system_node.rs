@@ -7,13 +7,64 @@
 #![cfg(unix)]
 
 use anyhow::Result;
-use node_runtime::{NodeDiscoveryError, SystemNode};
+use node_runtime::{NodeBinaryOptions, NodeDiscoveryError, NodeRuntime, SystemNode};
 use semver::Version;
 use std::{
     env, fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
+    sync::Arc,
 };
+
+#[test]
+fn configured_runtime_keeps_node_available_when_npm_is_missing() -> Result<()> {
+    if env::var_os(CHILD).is_some() {
+        let directory = env::current_dir()?;
+        paths::set_custom_data_dir(&directory.join("data").to_string_lossy());
+        let node = directory.join("node");
+        let npm = directory.join("npm");
+        return smol::block_on(async {
+            for configured_npm in [PathBuf::from("npm"), PathBuf::from("./npm"), npm.clone()] {
+                let runtime = NodeRuntime::new(
+                    Arc::new(http_client::BlockedHttpClient),
+                    None,
+                    watch::channel(Some(NodeBinaryOptions {
+                        use_paths: Some((node.clone(), configured_npm)),
+                        ..Default::default()
+                    }))
+                    .1,
+                );
+                assert_eq!(runtime.binary_path().await?, node);
+                let error = runtime
+                    .npm_command(None, "info", &[])
+                    .await
+                    .expect_err("npm is missing");
+                assert!(error.to_string().contains("finding npm executable"));
+                assert_eq!(runtime.binary_path().await?, node);
+
+                fs::write(&npm, "#!/bin/sh\npwd -P\n")?;
+                fs::set_permissions(&npm, fs::Permissions::from_mode(0o755))?;
+                let command = runtime.npm_command(None, "info", &[]).await?;
+                assert_eq!(command.path, npm);
+                let output = runtime.run_npm_subcommand(None, "info", &[]).await?;
+                assert_eq!(
+                    String::from_utf8(output.stdout)?.trim(),
+                    fs::canonicalize(command.current_dir)?.to_string_lossy(),
+                );
+                fs::remove_file(&npm)?;
+            }
+            Ok(())
+        });
+    }
+
+    let directory = tempfile::tempdir()?;
+    fake_node(directory.path(), "printf 'v22.0.0\\n'")?;
+    run_child_test(
+        "configured_runtime_keeps_node_available_when_npm_is_missing",
+        directory.path(),
+        directory.path(),
+    )
+}
 
 #[test]
 fn discovers_node_without_npm_and_passes_the_search_path_to_the_probe() -> Result<()> {

@@ -50,6 +50,21 @@ done
 
 shift $((OPTIND-1))
 
+if [[ -z "${SDKROOT+x}" ]]; then
+    SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+fi
+if [[ "$SDKROOT" != /* || ! -f "$SDKROOT/SDKSettings.plist" ]] ||
+    ! sdk_name=$(/usr/libexec/PlistBuddy -c 'Print :CanonicalName' "$SDKROOT/SDKSettings.plist" 2>/dev/null) ||
+    ! sdk_version=$(/usr/libexec/PlistBuddy -c 'Print :Version' "$SDKROOT/SDKSettings.plist" 2>/dev/null) ||
+    [[ ! "$sdk_name" =~ ^macosx[0-9]+(\.[0-9]+){0,2}$ ||
+       ! "$sdk_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] ||
+    (( 10#${sdk_version%%.*} < 26 )); then
+    echo "macOS SDK 26 or newer is required; set SDKROOT to a valid macOS SDK directory (selected: $SDKROOT)." >&2
+    exit 1
+fi
+export SDKROOT
+export MACOSX_DEPLOYMENT_TARGET=12.0
+echo "Using macOS SDK $sdk_version at $SDKROOT (deployment target 12.0)"
 
 # Get release channel
 pushd crates/zed
@@ -312,7 +327,7 @@ function extract_debug_symbols() {
         cat target/dsymutil.log
         exit 1
     fi
-    if ! dsymutil --flat "target/${target_triple}/${target_dir}/remote_server" 2> target/dsymutil.log; then
+    if ! dsymutil --flat "target/${target_triple}/${target_dir}/remote-server" 2> target/dsymutil.log; then
         echo "dsymutil failed"
         cat target/dsymutil.log
         exit 1
@@ -330,7 +345,7 @@ function upload_debug_symbols() {
             echo "Sentry upload attempt $attempt..."
             if sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
                 "target/${target_triple}/${target_dir}/zed.dwarf" \
-                "target/${target_triple}/${target_dir}/remote_server.dwarf"; then
+                "target/${target_triple}/${target_dir}/remote-server.dwarf"; then
                 break
             else
                 echo "Sentry upload failed on attempt $attempt"
@@ -354,12 +369,12 @@ if [[ "$target_dir" == "release" && "$local_install" != true ]]; then
     extract_debug_symbols
     strip -x "target/${target_triple}/${target_dir}/zed"
     strip -x "target/${target_triple}/${target_dir}/cli"
-    strip -x "target/${target_triple}/${target_dir}/remote_server"
+    strip -x "target/${target_triple}/${target_dir}/remote-server"
 fi
 
 cp target/${target_triple}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
 cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 sign_app_binaries
 
-sign_binary "target/$target_triple/release/remote_server"
-gzip -f --stdout --best target/$target_triple/release/remote_server > target/zed-remote-server-macos-$arch_suffix.gz
+sign_binary "target/$target_triple/release/remote-server"
+gzip -f --stdout --best target/$target_triple/release/remote-server > target/zed-remote-server-macos-$arch_suffix.gz

@@ -10,7 +10,7 @@ use crate::thread_metadata_store::{
 use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v2::schema as acp;
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use collections::HashMap;
@@ -28,7 +28,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use platform_title_bar::apply_title_bar_insets;
+use platform_title_bar::{SidebarWindowControls, TitleBarSettings, apply_title_bar_insets};
 use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
@@ -663,6 +663,7 @@ impl ThreadsArchiveView {
                 let archived_color = Color::Custom(cx.theme().colors().icon_muted.opacity(0.6));
 
                 let base = ThreadItem::new(id, thread.display_title())
+                    .base_bg(cx.theme().colors().panel_background)
                     .icon(icon)
                     .when(is_archived, |this| {
                         this.archived(true)
@@ -858,30 +859,36 @@ impl ThreadsArchiveView {
 
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
-        let sidebar_on_left = matches!(
-            AgentSettings::get_global(cx).sidebar_side(),
-            settings::SidebarSide::Left
-        );
-        let sidebar_on_right = !sidebar_on_left;
-        let not_fullscreen = !window.is_fullscreen() && !window.is_simple_fullscreen();
-        let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
-        let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
-        let right_window_controls =
-            !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_right;
-        let header_height = platform_title_bar_height(window);
+        let SidebarWindowControls {
+            traffic_lights,
+            left: left_window_controls,
+            right: right_window_controls,
+        } = SidebarWindowControls::new(AgentSettings::get_global(cx).sidebar_side(), window, cx);
+        let title_bar_visible = TitleBarSettings::is_title_bar_visible(window, cx);
+        let header_height = if title_bar_visible {
+            platform_title_bar_height(window)
+        } else {
+            Tab::container_height(cx)
+        };
         let show_focus_keybinding =
             self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
 
         h_flex()
+            .debug_selector(|| "threads-archive-header".into())
             .h(header_height)
-            .map(|header| match window.window_decorations() {
-                Decorations::Client { .. } => apply_title_bar_insets(
-                    header,
-                    left_window_controls,
-                    right_window_controls,
-                    false,
-                ),
-                Decorations::Server => header.mt_px().pb_px(),
+            .map(|header| {
+                if !title_bar_visible {
+                    return header.mt_px();
+                }
+                match window.window_decorations() {
+                    Decorations::Client { .. } => apply_title_bar_insets(
+                        header,
+                        left_window_controls,
+                        right_window_controls,
+                        false,
+                    ),
+                    Decorations::Server => header.mt_px().pb_px(),
+                }
             })
             .when(left_window_controls, |this| {
                 this.children(Self::render_left_window_controls(window, cx))
@@ -905,6 +912,7 @@ impl ThreadsArchiveView {
             })
             .child(
                 h_flex()
+                    .debug_selector(|| "threads-archive-header-search".into())
                     .ml_1()
                     .min_w_0()
                     .w_full()
