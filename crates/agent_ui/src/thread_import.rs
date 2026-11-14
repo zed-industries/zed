@@ -816,6 +816,7 @@ async fn collect_all_sessions(
 ) -> anyhow::Result<SessionByAgent> {
     let mut sessions = Vec::new();
     let mut cursor: Option<String> = None;
+    let mut seen_cursors = HashSet::default();
     loop {
         let request = AgentSessionListRequest {
             cwd: cwd.clone(),
@@ -826,8 +827,9 @@ async fn collect_all_sessions(
         let response = task.await?;
         sessions.extend(response.sessions);
         match response.next_cursor {
-            Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-            _ => break,
+            Some(next) if seen_cursors.insert(next.clone()) => cursor = Some(next),
+            Some(_) => anyhow::bail!("Agent session list returned a repeated cursor"),
+            None => break,
         }
     }
     Ok(SessionByAgent {
@@ -950,7 +952,13 @@ fn reconcile_project_threads(
 
         if let Some(existing) = existing {
             let mut metadata = existing.clone();
-            if let Some(title) = session.title {
+            let title_is_newer = session
+                .updated_at
+                .as_ref()
+                .is_some_and(|updated_at| updated_at > &existing.updated_at);
+            if let Some(title) = session.title
+                && (title_is_newer || metadata.title.is_none())
+            {
                 metadata.title = Some(title);
             }
             if let Some(updated_at) = session.updated_at
@@ -1316,6 +1324,53 @@ mod tests {
         assert_eq!(requests[1].cursor.as_deref(), Some("page-2"));
     }
 
+    struct CyclicSessionList {
+        calls: std::cell::Cell<usize>,
+    }
+
+    impl acp_thread::AgentSessionList for CyclicSessionList {
+        fn list_sessions(
+            &self,
+            request: AgentSessionListRequest,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<acp_thread::AgentSessionListResponse>> {
+            let calls = self.calls.get() + 1;
+            assert!(calls <= 3, "a cursor cycle must terminate");
+            self.calls.set(calls);
+            let next = match request.cursor.as_deref() {
+                None | Some("b") => "a",
+                Some("a") => "b",
+                _ => unreachable!(),
+            };
+            Task::ready(Ok(acp_thread::AgentSessionListResponse {
+                sessions: Vec::new(),
+                next_cursor: Some(next.to_string()),
+                meta: None,
+            }))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
+            self
+        }
+    }
+
+    #[gpui::test]
+    async fn test_collect_all_sessions_rejects_cursor_cycles(cx: &mut TestAppContext) {
+        let list = Rc::new(CyclicSessionList {
+            calls: Default::default(),
+        });
+        let result = cx
+            .spawn({
+                let list = list.clone();
+                async move |mut cx| {
+                    collect_all_sessions(AgentId::new("agent-a"), None, None, list, &mut cx).await
+                }
+            })
+            .await;
+        assert!(result.is_err());
+        assert_eq!(list.calls.get(), 3);
+    }
+
     #[test]
     fn test_collect_project_threads_only_includes_matching_project() {
         let project_paths = PathList::new(&[Path::new("/project")]);
@@ -1520,6 +1575,52 @@ mod tests {
         assert_eq!(updated.title_override.as_deref(), Some("Pinned title"));
         assert_eq!(updated.worktree_paths, original_paths);
         assert!(updated.created_at.is_some());
+    }
+
+    #[test]
+    fn test_reconcile_project_threads_ignores_stale_titles() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let agent_id = AgentId::new("agent-a");
+        let session_id = acp::SessionId::new("existing");
+        let now = Utc::now();
+        let existing = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(session_id.clone()),
+            agent_id: agent_id.clone(),
+            title: Some("Current title".into()),
+            title_override: None,
+            updated_at: now,
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: worktree_paths.clone(),
+            remote_connection: None,
+            archived: false,
+        };
+
+        for updated_at in [Some(now - chrono::Duration::minutes(1)), None] {
+            let sessions = SessionByAgent {
+                agent_id: agent_id.clone(),
+                remote_connection: None,
+                sessions: vec![make_session(
+                    "existing",
+                    Some("Stale title"),
+                    Some(project_paths.clone()),
+                    updated_at,
+                    None,
+                )],
+            };
+            let result = reconcile_project_threads(
+                sessions,
+                worktree_paths.clone(),
+                std::iter::once((
+                    agent_session_key(&agent_id, &session_id, None),
+                    existing.clone(),
+                ))
+                .collect(),
+            );
+            assert!(result.is_empty(), "stale listing must not change metadata");
+        }
     }
 
     #[test]
