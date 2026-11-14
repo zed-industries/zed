@@ -217,6 +217,12 @@ fn test_edit_events(cx: &mut TestAppContext) {
                     EditorEvent::BufferEdited => {
                         events.borrow_mut().push(("editor1", "buffer edited"))
                     }
+                    EditorEvent::TransactionUndone { .. } => {
+                        events.borrow_mut().push(("editor1", "transaction undone"))
+                    }
+                    EditorEvent::TransactionRedone { .. } => {
+                        events.borrow_mut().push(("editor1", "transaction redone"))
+                    }
                     _ => {}
                 },
             )
@@ -235,6 +241,12 @@ fn test_edit_events(cx: &mut TestAppContext) {
                     EditorEvent::Edited { .. } => events.borrow_mut().push(("editor2", "edited")),
                     EditorEvent::BufferEdited => {
                         events.borrow_mut().push(("editor2", "buffer edited"))
+                    }
+                    EditorEvent::TransactionUndone { .. } => {
+                        events.borrow_mut().push(("editor2", "transaction undone"))
+                    }
+                    EditorEvent::TransactionRedone { .. } => {
+                        events.borrow_mut().push(("editor2", "transaction redone"))
                     }
                     _ => {}
                 },
@@ -274,6 +286,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
         mem::take(&mut *events.borrow_mut()),
         [
             ("editor1", "edited"),
+            ("editor1", "transaction undone"),
             ("editor1", "buffer edited"),
             ("editor2", "buffer edited"),
         ]
@@ -285,6 +298,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
         mem::take(&mut *events.borrow_mut()),
         [
             ("editor1", "edited"),
+            ("editor1", "transaction redone"),
             ("editor1", "buffer edited"),
             ("editor2", "buffer edited"),
         ]
@@ -296,6 +310,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
         mem::take(&mut *events.borrow_mut()),
         [
             ("editor2", "edited"),
+            ("editor2", "transaction undone"),
             ("editor1", "buffer edited"),
             ("editor2", "buffer edited"),
         ]
@@ -307,6 +322,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
         mem::take(&mut *events.borrow_mut()),
         [
             ("editor2", "edited"),
+            ("editor2", "transaction redone"),
             ("editor1", "buffer edited"),
             ("editor2", "buffer edited"),
         ]
