@@ -21,7 +21,8 @@ use windows::{
         Graphics::Dwm::*,
         Graphics::Gdi::*,
         System::{
-            Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
+            Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*,
+            SystemInformation::OSVERSIONINFOW, SystemServices::*,
         },
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -574,6 +575,9 @@ impl WindowsWindow {
         register_drag_drop(&this)?;
         set_non_rude_hwnd(hwnd, true);
         configure_dwm_dark_mode(hwnd, appearance);
+        if params.kind == WindowKind::PopUp {
+            hide_dwm_border(hwnd);
+        }
         this.state.border_offset.update(hwnd)?;
         let placement =
             retrieve_window_placement(hwnd, display, params.bounds, &this.state.border_offset)?;
@@ -1624,6 +1628,31 @@ fn dwm_set_window_composition_attribute(hwnd: HWND, backdrop_type: u32) {
         if !result.is_ok() {
             return;
         }
+    }
+}
+
+/// Pop-ups are created as overlapped windows, which Windows 11 outlines with its window border.
+fn hide_dwm_border(hwnd: HWND) {
+    let mut version = OSVERSIONINFOW {
+        dwOSVersionInfoSize: std::mem::size_of::<OSVERSIONINFOW>() as u32,
+        ..Default::default()
+    };
+    let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+
+    // DWMWA_BORDER_COLOR is available only on Windows 11 (build 22000) or later
+    if !status.is_ok() || version.dwBuildNumber < 22000 {
+        return;
+    }
+
+    let color = DWMWA_COLOR_NONE;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            &color as *const _ as *const _,
+            std::mem::size_of_val(&color) as u32,
+        )
+        .log_err();
     }
 }
 
