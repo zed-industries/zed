@@ -761,6 +761,45 @@ impl SystemWindowTabController {
         }
     }
 
+    /// Replace the recorded tab group containing `tabs` with the group reported by the platform.
+    ///
+    /// The platform can regroup windows without going through the other methods here, for
+    /// example when the OS restores windows into the same tab group after a restart.
+    pub fn sync_tab_group(cx: &mut App, tabs: Vec<SystemWindowTab>) {
+        let controller = cx.global_mut::<SystemWindowTabController>();
+        let platform_tab_ids: Vec<WindowId> = tabs.iter().map(|tab| tab.id).collect();
+
+        let already_in_sync = controller.tab_groups.values().any(|group| {
+            group
+                .iter()
+                .map(|tab| tab.id)
+                .eq(platform_tab_ids.iter().copied())
+        });
+        if already_in_sync {
+            return;
+        }
+
+        let mut tabs = tabs;
+        for tab in &mut tabs {
+            let existing_tab = controller
+                .tab_groups
+                .values()
+                .flatten()
+                .find(|existing_tab| existing_tab.id == tab.id);
+            if let Some(existing_tab) = existing_tab {
+                tab.last_active_at = existing_tab.last_active_at;
+            }
+        }
+
+        controller.tab_groups.retain(|_, group| {
+            group.retain(|tab| !platform_tab_ids.contains(&tab.id));
+            !group.is_empty()
+        });
+
+        let new_group_id = controller.tab_groups.keys().max().map_or(0, |max| max + 1);
+        controller.tab_groups.insert(new_group_id, tabs);
+    }
+
     /// Remove a tab from a tab group.
     pub fn remove_tab(cx: &mut App, id: WindowId) -> Option<SystemWindowTab> {
         let controller = cx.global_mut::<SystemWindowTabController>();
@@ -3806,8 +3845,56 @@ mod test {
 
     use crate::{
         AppContext, Context, Empty, FallbackFontClass, IntoElement, MissingGlyph, Render,
-        TestAppContext, Window,
+        SystemWindowTab, SystemWindowTabController, TestAppContext, Window,
     };
+
+    #[gpui::test]
+    fn test_sync_tab_group_follows_platform_grouping(cx: &mut TestAppContext) {
+        let first_window = cx.add_window(|_, _| Empty);
+        let second_window = cx.add_window(|_, _| Empty);
+        let first_id = first_window.window_id();
+        let second_id = second_window.window_id();
+        let first_tab = SystemWindowTab::new("first".into(), first_window.into());
+        let second_tab = SystemWindowTab::new("second".into(), second_window.into());
+
+        cx.update(|cx| {
+            SystemWindowTabController::add_tab(cx, first_id, vec![first_tab.clone()]);
+            SystemWindowTabController::add_tab(cx, second_id, vec![second_tab.clone()]);
+            assert_eq!(
+                cx.global::<SystemWindowTabController>().tab_groups().len(),
+                2
+            );
+
+            SystemWindowTabController::sync_tab_group(
+                cx,
+                vec![first_tab.clone(), second_tab.clone()],
+            );
+            let controller = cx.global::<SystemWindowTabController>();
+            assert_eq!(controller.tab_groups().len(), 1);
+            let tab_ids: Vec<_> = controller
+                .tabs(first_id)
+                .expect("first window should be in a tab group")
+                .iter()
+                .map(|tab| tab.id)
+                .collect();
+            assert_eq!(tab_ids, vec![first_id, second_id]);
+
+            SystemWindowTabController::sync_tab_group(
+                cx,
+                vec![first_tab.clone(), second_tab.clone()],
+            );
+            assert_eq!(
+                cx.global::<SystemWindowTabController>().tab_groups().len(),
+                1
+            );
+
+            SystemWindowTabController::sync_tab_group(cx, vec![second_tab.clone()]);
+            let controller = cx.global::<SystemWindowTabController>();
+            assert_eq!(controller.tab_groups().len(), 2);
+            assert_eq!(controller.tabs(first_id).map(|tabs| tabs.len()), Some(1));
+            assert_eq!(controller.tabs(second_id).map(|tabs| tabs.len()), Some(1));
+        });
+    }
 
     #[gpui::test]
     fn app_borrow_diagnostics(cx: &mut TestAppContext) {

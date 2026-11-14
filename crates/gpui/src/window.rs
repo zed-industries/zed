@@ -2225,6 +2225,9 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
+                        if active && let Some(tabs) = window.platform_window.tabbed_windows() {
+                            SystemWindowTabController::sync_tab_group(cx, tabs);
+                        }
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
                         window
