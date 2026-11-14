@@ -183,7 +183,7 @@ To find supported effort values:
 2. Enable thinking if it is off, then open the thinking effort menu. The "Change Thinking Effort" menu lists the model's supported levels. If the model offers no effort choices, omit `effort`.
 3. Choose a level and read `agent.default_model.effort` in `settings.json` for the exact value to use in `agent.subagent_model.effort`.
 
-These controls change the current thread and saved default model settings, and can update a matching favorite model. Restore your previous selections afterward if needed.
+These controls change the current thread, the saved default model settings when the thread uses the default model, and can update a matching favorite model. Restore your previous selections afterward if needed.
 
 The optional `speed` field accepts `"fast"` or `"standard"`. It applies only to models that support fast mode. Omitting it from `agent.subagent_model` leaves speed unspecified rather than inheriting the parent's speed.
 

@@ -120,6 +120,14 @@ Open the [Agent Panel](./agent-panel.md), then use the agent selector or the new
 
 You can also create keybindings for specific agents with {#action agent::NewExternalAgentThread}.
 
+Picking an option such as the agent's model or mode from the thread's menus also saves it as that agent's default, so new threads start with it. Zed stores these defaults in your settings under `agent_servers.<agent>`.
+
+To change an option for the current thread only, hold Shift when you pick it (`shift-click` or `shift-enter`). Shift doesn't work for on/off switches or for cycling through options with the keyboard.
+
+Options tied to the model, such as effort or fast mode, are only saved as the default when the thread uses your default model, so a setting tuned for another model doesn't carry over.
+
+Shift only stops Zed from saving the choice. Some agents also remember choices in their own configuration.
+
 ## Configuration Boundaries {#configuration-boundaries}
 
 External Agents run as separate processes that communicate with Zed over ACP. This creates a boundary between Zed configuration and agent-native configuration.

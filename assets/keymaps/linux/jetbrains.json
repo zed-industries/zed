@@ -106,6 +106,12 @@
     },
   },
   {
+    "context": "AcpThread > Picker > Editor",
+    "bindings": {
+      "shift-enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "BufferSearchBar || ProjectSearchBar",
     "bindings": {
       "alt-c": "search::ToggleCaseSensitive",

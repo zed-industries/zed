@@ -172,7 +172,7 @@ impl ModelPickerDelegate {
         let next_model = favorite_models[next_index].clone();
 
         self.selector
-            .select_model(next_model.id.clone(), cx)
+            .select_model(next_model.id.clone(), true, cx)
             .detach_and_log_err(cx);
 
         self.selected_model = Some(next_model);
@@ -271,8 +271,9 @@ impl PickerDelegate for ModelPickerDelegate {
             self.filtered_entries.get(self.selected_index)
             && model_info.disabled.is_none()
         {
+            let save_to_settings = !window.modifiers().shift;
             self.selector
-                .select_model(model_info.id.clone(), cx)
+                .select_model(model_info.id.clone(), save_to_settings, cx)
                 .detach_and_log_err(cx);
             self.selected_model = Some(model_info.clone());
             let current_index = self.selected_index;
@@ -483,7 +484,7 @@ async fn fuzzy_search(
 
 #[cfg(test)]
 mod tests {
-    use gpui::{App, TestAppContext, VisualTestContext};
+    use gpui::{App, Modifiers, TestAppContext, VisualTestContext};
     use std::cell::RefCell;
 
     use super::*;
@@ -560,8 +561,10 @@ mod tests {
             .collect()
     }
 
-    #[gpui::test]
-    fn confirming_model_selects_model(cx: &mut TestAppContext) {
+    fn confirm_second_model(
+        modifiers: Modifiers,
+        cx: &mut TestAppContext,
+    ) -> Vec<(AgentModelId, bool)> {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -581,6 +584,7 @@ mod tests {
         cx.run_until_parked();
 
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.simulate_modifiers_change(modifiers);
         window_handle
             .update(&mut cx, |picker, window, cx| {
                 picker.delegate.set_selected_index(1, window, cx);
@@ -588,16 +592,29 @@ mod tests {
             })
             .unwrap();
 
+        model_selector.selected_models.borrow().clone()
+    }
+
+    #[gpui::test]
+    fn confirming_model_selects_model(cx: &mut TestAppContext) {
         assert_eq!(
-            model_selector.selected_models.borrow().as_slice(),
-            &[AgentModelId::new("manual")]
+            confirm_second_model(Modifiers::none(), cx),
+            [(AgentModelId::new("manual"), true)]
+        );
+    }
+
+    #[gpui::test]
+    fn confirming_model_with_shift_does_not_save_to_settings(cx: &mut TestAppContext) {
+        assert_eq!(
+            confirm_second_model(Modifiers::shift(), cx),
+            [(AgentModelId::new("manual"), false)]
         );
     }
 
     struct TestModelSelector {
         models: Vec<AgentModelInfo>,
         selected_model: RefCell<AgentModelInfo>,
-        selected_models: RefCell<Vec<AgentModelId>>,
+        selected_models: RefCell<Vec<(AgentModelId, bool)>>,
     }
 
     impl TestModelSelector {
@@ -636,8 +653,15 @@ mod tests {
             Task::ready(Ok(AgentModelList::Flat(self.models.clone())))
         }
 
-        fn select_model(&self, model_id: AgentModelId, _cx: &mut App) -> Task<Result<()>> {
-            self.selected_models.borrow_mut().push(model_id.clone());
+        fn select_model(
+            &self,
+            model_id: AgentModelId,
+            save_to_settings: bool,
+            _cx: &mut App,
+        ) -> Task<Result<()>> {
+            self.selected_models
+                .borrow_mut()
+                .push((model_id.clone(), save_to_settings));
             if let Some(model) = self.models.iter().find(|model| model.id == model_id) {
                 *self.selected_model.borrow_mut() = model.clone();
             }

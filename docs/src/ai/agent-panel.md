@@ -166,6 +166,8 @@ Configure automatic compaction with `agent.auto_compact`. See [Agent Settings](.
 
 After you've configured your LLM providers—either via [API access](./use-api-access.md) or through [Zed-hosted models](../account/zed-hosted-models.md)—you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
+Choosing a model from the model selector in the Zed Agent also saves it as `agent.default_model` in your settings, so new threads start with it. To change the model for the current thread only, hold Shift when you pick it (`shift-click` or `shift-enter`).
+
 > The same model can be offered via multiple providers - for example, Claude Sonnet 4.5 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
@@ -173,7 +175,7 @@ After you've configured your LLM providers—either via [API access](./use-api-a
 
 You can mark specific models as favorites either through the model selector, by clicking on the star icon button that appears as you hover the model, or through your settings via the `agent.favorite_models` settings key.
 
-Cycle through your favorites with {#kb agent::CycleFavoriteModels} without opening the model selector.
+Cycle through your favorites with {#kb agent::CycleFavoriteModels} without opening the model selector. This also saves the model as your default.
 
 ## Using Tools and Profiles {#using-tools}
 
