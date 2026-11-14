@@ -368,9 +368,20 @@ fn skill_completion_icon_color(skill: &AvailableSkill, cx: &App) -> Option<Hsla>
 fn skill_completion_documentation(skill: &AvailableSkill) -> CompletionDocumentation {
     let text = match &skill.warning {
         Some(warning) => warning.clone(),
-        None => skill.description.to_string().into(),
+        None => unwrap_hard_line_breaks(&skill.description).into(),
     };
     CompletionDocumentation::MultiLinePlainText(text)
+}
+
+fn unwrap_hard_line_breaks(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .split(|line| line.is_empty())
+        .filter(|paragraph| !paragraph.is_empty())
+        .map(|paragraph| paragraph.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 #[derive(Debug, Clone)]
@@ -2979,6 +2990,27 @@ mod tests {
         assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
 
         assert_eq!(SlashCommandCompletion::try_parse("/ ", 0), None);
+    }
+
+    #[test]
+    fn test_skill_completion_documentation_unwraps_hard_line_breaks() {
+        let skill = AvailableSkill {
+            name: "wrapped-skill".into(),
+            description: "This skill has a description hard-wrapped at 78 characters per line.\n  That causes ragged text.\n\nExpected: unwrap\nand reflow.\n".into(),
+            source: SharedString::default(),
+            skill_file_path: PathBuf::from("/skills/wrapped-skill/SKILL.md"),
+            warning: None,
+        };
+
+        let CompletionDocumentation::MultiLinePlainText(text) =
+            skill_completion_documentation(&skill)
+        else {
+            panic!("expected multi-line plain text documentation");
+        };
+        assert_eq!(
+            text.as_ref(),
+            "This skill has a description hard-wrapped at 78 characters per line. That causes ragged text.\n\nExpected: unwrap and reflow."
+        );
     }
 
     #[test]
