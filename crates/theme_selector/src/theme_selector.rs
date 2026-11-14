@@ -3,17 +3,18 @@ mod icon_theme_selector;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
-    Window, actions,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, KeybindingKeystroke, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, Render, UpdateGlobal, WeakEntity, Window,
+    actions,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 use theme::{Appearance, SystemAppearance, Theme, ThemeMeta, ThemeRegistry};
 use theme_settings::{
     ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings, appearance_to_mode,
 };
-use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
+use ui::{KeyBinding, ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_workspace};
 use zed_actions::{ExtensionCategoryFilter, Extensions};
@@ -105,10 +106,11 @@ impl Focusable for ThemeSelector {
 }
 
 impl Render for ThemeSelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("ThemeSelector")
             .w(rems(34.))
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(self.picker.clone())
     }
 }
@@ -121,6 +123,19 @@ impl ThemeSelector {
     ) -> Self {
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
+    }
+
+    fn handle_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .set_showing_original_theme(event.modifiers.alt, cx);
+        });
     }
 }
 
@@ -144,6 +159,9 @@ struct ThemeSelectorDelegate {
     original_theme_id: Option<usize>,
     /// The currently selected new theme.
     new_theme: Arc<Theme>,
+    /// Whether the original theme is temporarily being shown instead of the
+    /// currently selected new theme.
+    showing_original_theme: bool,
     selection_completed: bool,
     selected_theme: Option<Arc<Theme>>,
     selected_index: usize,
@@ -211,6 +229,7 @@ impl ThemeSelectorDelegate {
             original_system_appearance,
             original_theme_id,
             new_theme: original_theme, // Start with the original theme.
+            showing_original_theme: false,
             selected_index,
             selection_completed: false,
             selected_theme: None,
@@ -257,18 +276,96 @@ impl ThemeSelectorDelegate {
     }
 
     fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
-        // Update the global (in-memory) theme settings.
+        self.new_theme = new_theme;
+
+        if !self.showing_original_theme {
+            self.override_global_theme(cx);
+        }
+    }
+
+    /// Updates the global (in-memory) theme settings to show the currently selected new theme.
+    fn override_global_theme(&self, cx: &mut App) {
         SettingsStore::update_global(cx, |store, _| {
             override_global_theme(
                 store,
-                &new_theme,
+                &self.new_theme,
                 &self.original_theme_settings.theme,
                 self.original_system_appearance,
             )
         });
-
-        self.new_theme = new_theme;
     }
+
+    fn set_showing_original_theme(
+        &mut self,
+        showing_original_theme: bool,
+        cx: &mut Context<Picker<ThemeSelectorDelegate>>,
+    ) {
+        if self.selection_completed || self.showing_original_theme == showing_original_theme {
+            return;
+        }
+
+        self.showing_original_theme = showing_original_theme;
+
+        if showing_original_theme {
+            SettingsStore::update_global(cx, |store, _| {
+                store.override_global(self.original_theme_settings.clone());
+            });
+        } else {
+            self.override_global_theme(cx);
+        }
+
+        cx.notify();
+    }
+}
+
+/// Renders the footer button that, while pressed, shows the theme that was set before the selector
+/// was opened, just like holding `alt` does.
+///
+/// `set_showing_original_theme` is called with whether the original theme should be shown.
+pub(crate) fn render_compare_button(
+    set_showing_original_theme: impl Fn(bool, &mut App) + 'static,
+    cx: &App,
+) -> impl IntoElement {
+    let set_showing_original_theme = Rc::new(set_showing_original_theme);
+
+    // There's no action bound to holding `alt`, so the keystroke is built by hand, using `alt` as
+    // the key in order to have it rendered just like the keybindings of other buttons.
+    let alt_keystroke = KeybindingKeystroke::from_keystroke(Keystroke {
+        modifiers: Modifiers::none(),
+        key: "alt".into(),
+        key_char: None,
+    });
+
+    // `Button` only reports clicks, so pressing and releasing is handled by a wrapping element.
+    div()
+        .on_mouse_down(MouseButton::Left, {
+            let set_showing_original_theme = set_showing_original_theme.clone();
+            move |_, window, cx| {
+                // Like clickable buttons do, keep the mouse down from moving focus away from the
+                // picker's editor.
+                window.prevent_default();
+                set_showing_original_theme(true, cx);
+            }
+        })
+        // The mouse may be released anywhere in the window, so the release is handled both over
+        // and outside of the button. The original theme is kept if `alt` is still being held.
+        .capture_any_mouse_up({
+            let set_showing_original_theme = set_showing_original_theme.clone();
+            move |event, window, cx| {
+                if event.button == MouseButton::Left {
+                    set_showing_original_theme(window.modifiers().alt, cx);
+                }
+            }
+        })
+        .on_mouse_up_out(MouseButton::Left, move |_, window, cx| {
+            set_showing_original_theme(window.modifiers().alt, cx);
+        })
+        .child(
+            Button::new("compare-theme", "Compare").key_binding(KeyBinding::from_keystrokes(
+                [alt_keystroke].into(),
+                KeyBinding::is_vim_mode(cx),
+            )),
+        )
 }
 
 /// Overrides the global (in-memory) theme settings.
@@ -532,6 +629,26 @@ impl PickerDelegate for ThemeSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
+        // The button is kept while the original theme is being shown, even if the selection moves
+        // to the original theme, so that releasing the button is still handled.
+        let show_compare_button =
+            self.showing_original_theme || !self.is_original_theme(self.selected_index);
+        let compare_button = show_compare_button.then(|| {
+            let picker = cx.entity().downgrade();
+            render_compare_button(
+                move |showing_original_theme, cx| {
+                    picker
+                        .update(cx, |picker, cx| {
+                            picker
+                                .delegate
+                                .set_showing_original_theme(showing_original_theme, cx);
+                        })
+                        .log_err();
+                },
+                cx,
+            )
+        });
+
         Some(
             h_flex()
                 .p_2()
@@ -551,7 +668,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                             cx.open_url("https://zed.dev/docs/themes");
                         })),
                 )
-                .child(
+                .child(h_flex().gap_2().children(compare_button).child(
                     Button::new("more-themes", "Install Themes").on_click(cx.listener({
                         move |_, _, window, cx| {
                             window.dispatch_action(
@@ -563,7 +680,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                             );
                         }
                     })),
-                )
+                ))
                 .into_any_element(),
         )
     }
@@ -667,6 +784,72 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> String {
         picker.read_with(cx, |picker, _| picker.delegate.new_theme.name.to_string())
+    }
+
+    fn shown_theme_name(cx: &mut VisualTestContext) -> String {
+        cx.read(|cx| {
+            ThemeSettings::get_global(cx)
+                .theme
+                .name(SystemAppearance::global(cx).0)
+                .0
+                .to_string()
+        })
+    }
+
+    fn select_theme(
+        picker: &Entity<Picker<ThemeSelectorDelegate>>,
+        theme_name: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        let target_index = picker.read_with(cx, |picker, _| {
+            picker
+                .delegate
+                .matches
+                .iter()
+                .position(|theme_match| theme_match.string == theme_name)
+                .expect("theme should be in the list of matches")
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index(target_index, None, true, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_theme_selector_shows_original_theme_while_alt_is_held(cx: &mut TestAppContext) {
+        let app_state = setup_test(cx).await;
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let original_theme_name = shown_theme_name(cx);
+        let picker = open_theme_selector(&workspace, cx);
+
+        select_theme(&picker, "Test Light", cx);
+        assert_eq!(shown_theme_name(cx), "Test Light");
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(
+            shown_theme_name(cx),
+            original_theme_name,
+            "original theme should be shown while alt is held"
+        );
+
+        select_theme(&picker, "Test Dark A", cx);
+        assert_eq!(
+            shown_theme_name(cx),
+            original_theme_name,
+            "changing the selection while alt is held should keep showing the original theme"
+        );
+        assert_eq!(previewed_theme_name(&picker, cx), "Test Dark A");
+
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(
+            shown_theme_name(cx),
+            "Test Dark A",
+            "selected theme should be shown again once alt is released"
+        );
     }
 
     #[gpui::test]
