@@ -2422,16 +2422,24 @@ impl Buffer {
         })
     }
 
-    /// Returns a `Diff` ensuring the buffer ends with a trailing newline.
+    /// Returns a `Diff` normalizing the newlines at the end of the buffer.
     ///
-    /// When `modified_rows` is `None`, the whole buffer is considered: trailing whitespace and
-    /// blank lines at the end of the file are collapsed into a single newline.
+    /// When `modified_rows` is `None`, the whole buffer is considered:
+    /// - `ensure_final_newline` appends a newline if the buffer doesn't end with one.
+    /// - `trim_final_newlines` collapses the trailing whitespace and blank lines at the end of the
+    ///   file into a single newline. On its own it never adds a final newline, it only removes the
+    ///   extra ones.
     ///
     /// When `modified_rows` is `Some`, the operation is scoped to a "Format Selection": a single
-    /// newline is appended only when the last line is non-empty and its row falls within one of
-    /// the ranges. Trailing blank lines are left intact so that formatting a selection cannot
-    /// delete unselected rows.
-    pub fn ensure_final_newline(&self, modified_rows: Option<&[Range<u32>]>) -> Diff {
+    /// newline is appended only when `ensure_final_newline` is set, the last line is non-empty and
+    /// its row falls within one of the ranges. Trailing blank lines are left intact so that
+    /// formatting a selection cannot delete unselected rows.
+    pub fn normalize_final_newlines(
+        &self,
+        modified_rows: Option<&[Range<u32>]>,
+        ensure_final_newline: bool,
+        trim_final_newlines: bool,
+    ) -> Diff {
         let len = self.len();
         let line_ending = self.line_ending();
         let base_version = self.version();
@@ -2445,30 +2453,37 @@ impl Buffer {
             let last_row_is_modified = modified_rows
                 .iter()
                 .any(|range| range.contains(&max_point.row));
-            if last_line_is_empty || !last_row_is_modified {
+            if !ensure_final_newline || last_line_is_empty || !last_row_is_modified {
                 Vec::new()
             } else {
                 Vec::from([(len..len, newline)])
             }
         } else {
-            let mut offset = len;
-            let mut already_normalized = false;
+            let mut tail_start = len;
+            let mut tail_has_newline = false;
             for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
                 let non_whitespace_len = chunk
                     .trim_end_matches(|c: char| c.is_ascii_whitespace())
                     .len();
-                offset -= chunk.len();
-                offset += non_whitespace_len;
+                tail_start -= chunk.len() - non_whitespace_len;
+                tail_has_newline |= chunk[non_whitespace_len..].contains('\n');
                 if non_whitespace_len != 0 {
-                    already_normalized =
-                        offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n");
                     break;
                 }
             }
-            if already_normalized {
-                Vec::new()
+            let ends_with_newline = self.as_rope().reversed_chars_at(len).next() == Some('\n');
+
+            if trim_final_newlines && (ensure_final_newline || tail_has_newline) {
+                let already_normalized = tail_start + 1 == len && ends_with_newline;
+                if already_normalized {
+                    Vec::new()
+                } else {
+                    Vec::from([(tail_start..len, newline)])
+                }
+            } else if ensure_final_newline && !ends_with_newline {
+                Vec::from([(len..len, newline)])
             } else {
-                Vec::from([(offset..len, newline)])
+                Vec::new()
             }
         };
         Diff {

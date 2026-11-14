@@ -4756,7 +4756,7 @@ async fn test_final_newline_modified_last_line(cx: &mut gpui::TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline(Some(&[0u32..3]));
+        let diff = buffer.normalize_final_newlines(Some(&[0u32..3]), true, true);
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\nline2\n");
     });
@@ -4769,7 +4769,7 @@ async fn test_final_newline_unmodified_last_line(cx: &mut gpui::TestAppContext) 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline(Some(&[0u32..2]));
+        let diff = buffer.normalize_final_newlines(Some(&[0u32..2]), true, true);
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\nline2");
     });
@@ -4784,7 +4784,7 @@ async fn test_final_newline_does_not_collapse_trailing_blank_lines(cx: &mut gpui
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline(Some(&[0u32..4]));
+        let diff = buffer.normalize_final_newlines(Some(&[0u32..4]), true, true);
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\n\n");
     });
@@ -4798,7 +4798,7 @@ async fn test_final_newline_in_range_only_inserts(cx: &mut gpui::TestAppContext)
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline(Some(&[0u32..2]));
+        let diff = buffer.normalize_final_newlines(Some(&[0u32..2]), true, true);
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1  \n");
     });
@@ -4822,11 +4822,74 @@ async fn test_final_newline_whole_buffer(cx: &mut gpui::TestAppContext) {
     for (input, expected) in cases {
         let buffer = cx.new(|cx| Buffer::local(input, cx));
         buffer.update(cx, |buffer, cx| {
-            let diff = buffer.ensure_final_newline(None);
+            let diff = buffer.normalize_final_newlines(None, true, true);
             buffer.apply_diff(diff, cx);
             assert_eq!(buffer.text(), expected, "wrong result for input {input:?}");
         });
     }
+}
+
+#[gpui::test]
+async fn test_final_newline_whole_buffer_without_trimming(cx: &mut gpui::TestAppContext) {
+    // (input, expected) pairs for the whole-buffer (`None`) case with trimming disabled.
+    let cases = [
+        // Content without a trailing newline still gets one appended.
+        ("line0\nline1", "line0\nline1\n"),
+        ("line0\nline1  ", "line0\nline1  \n"),
+        // A buffer already ending in a newline is left untouched, including extra blank lines.
+        ("line0\nline1\n", "line0\nline1\n"),
+        ("line0\nline1\n\n\n", "line0\nline1\n\n\n"),
+        // An empty buffer stays empty.
+        ("", ""),
+    ];
+
+    for (input, expected) in cases {
+        let buffer = cx.new(|cx| Buffer::local(input, cx));
+        buffer.update(cx, |buffer, cx| {
+            let diff = buffer.normalize_final_newlines(None, true, false);
+            buffer.apply_diff(diff, cx);
+            assert_eq!(buffer.text(), expected, "wrong result for input {input:?}");
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_trim_final_newlines_without_ensuring(cx: &mut gpui::TestAppContext) {
+    // (input, expected) pairs for trimming without ensuring a final newline.
+    let cases = [
+        // Extra blank lines and whitespace at the end of the file collapse to one newline.
+        ("line0\nline1\n\n\n", "line0\nline1\n"),
+        ("line0\nline1  \n  \n", "line0\nline1\n"),
+        // A buffer already ending in a single newline is left untouched.
+        ("line0\nline1\n", "line0\nline1\n"),
+        // A final newline is never added.
+        ("line0\nline1", "line0\nline1"),
+        ("line0\nline1  ", "line0\nline1  "),
+        // An empty buffer stays empty.
+        ("", ""),
+    ];
+
+    for (input, expected) in cases {
+        let buffer = cx.new(|cx| Buffer::local(input, cx));
+        buffer.update(cx, |buffer, cx| {
+            let diff = buffer.normalize_final_newlines(None, false, true);
+            buffer.apply_diff(diff, cx);
+            assert_eq!(buffer.text(), expected, "wrong result for input {input:?}");
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_trim_final_newlines_in_range_does_nothing(cx: &mut gpui::TestAppContext) {
+    // Formatting a selection must not delete unselected rows, so trimming alone is a no-op.
+    let text = "line0\nline1\n\n\n";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.normalize_final_newlines(Some(&[0u32..4]), false, true);
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), text);
+    });
 }
 
 #[gpui::test]
@@ -4861,7 +4924,7 @@ async fn test_final_newline_in_range_crlf(cx: &mut gpui::TestAppContext) {
     });
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline(Some(&[0u32..3]));
+        let diff = buffer.normalize_final_newlines(Some(&[0u32..3]), true, true);
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\nline2\n");
         assert_eq!(buffer.line_ending(), LineEnding::Windows);

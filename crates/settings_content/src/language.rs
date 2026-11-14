@@ -618,6 +618,12 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub ensure_final_newline_on_save: Option<bool>,
+    /// Whether or not to remove extra blank lines at the end of a buffer when
+    /// saving it, leaving a single final newline. Never adds a final newline
+    /// on its own.
+    ///
+    /// Default: true
+    pub trim_final_newlines_on_save: Option<bool>,
     /// How line endings should be handled for new files and during format and
     /// save operations.
     ///
