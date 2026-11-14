@@ -22,6 +22,7 @@ pub(crate) enum ParsedHtmlElement {
     List(ParsedHtmlList),
     Table(ParsedHtmlTable),
     BlockQuote(ParsedHtmlBlockQuote),
+    Div(ParsedHtmlDiv),
     Paragraph(ParsedHtmlParagraph),
     Image(HtmlImage),
 }
@@ -33,6 +34,15 @@ pub(crate) struct ParsedHtmlParagraph {
     pub contents: HtmlParagraph,
 }
 
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
+pub(crate) struct ParsedHtmlDiv {
+    pub source_range: Range<usize>,
+    #[allow(dead_code)]
+    pub text_align: Option<TextAlign>,
+    pub children: Vec<ParsedHtmlElement>,
+}
+
 impl ParsedHtmlElement {
     pub fn source_range(&self) -> Option<Range<usize>> {
         Some(match self {
@@ -40,6 +50,7 @@ impl ParsedHtmlElement {
             Self::List(list) => list.source_range.clone(),
             Self::Table(table) => table.source_range.clone(),
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
+            Self::Div(div) => div.source_range.clone(),
             Self::Paragraph(paragraph) => match paragraph.contents.first()? {
                 HtmlParagraphChunk::Text(text) => text.source_range.clone(),
                 HtmlParagraphChunk::Image(image) => image.source_range.clone(),
@@ -329,6 +340,10 @@ fn parse_html_node(
             } else if name.local == local_name!("table") {
                 if let Some(table) = extract_html_table(node, source_range) {
                     elements.push(ParsedHtmlElement::Table(table));
+                }
+            } else if name.local == local_name!("div") {
+                if let Some(div) = extract_html_div(node, source_range, text_align) {
+                    elements.push(ParsedHtmlElement::Div(div));
                 }
             } else {
                 consume_children(source_range, node, elements, context);
@@ -752,6 +767,38 @@ fn extract_html_blockquote(
     }
 }
 
+fn extract_html_div(
+    node: &Node,
+    source_range: Range<usize>,
+    text_align: Option<TextAlign>,
+) -> Option<ParsedHtmlDiv> {
+    let mut children = Vec::new();
+    consume_children(
+        source_range.clone(),
+        node,
+        &mut children,
+        &ParseHtmlNodeContext::default(),
+    );
+
+    if children.is_empty() {
+        return None;
+    }
+
+    for child in &mut children {
+        if let ParsedHtmlElement::Paragraph(paragraph) = child
+            && paragraph.text_align.is_none()
+        {
+            paragraph.text_align = text_align;
+        }
+    }
+
+    Some(ParsedHtmlDiv {
+        source_range,
+        text_align,
+        children,
+    })
+}
+
 fn extract_html_table(node: &Node, source_range: Range<usize>) -> Option<ParsedHtmlTable> {
     let mut header_rows = Vec::new();
     let mut body_rows = Vec::new();
@@ -993,6 +1040,21 @@ mod tests {
             panic!("expected heading");
         };
         assert_eq!(heading.text_align, Some(TextAlign::Right));
+    }
+
+    #[test]
+    fn parses_div_alignment_for_unaligned_paragraphs() {
+        let html = "<div align=\"center\">Center</div>";
+        let parsed = parse_html_block(html, 0..html.len()).unwrap();
+        let ParsedHtmlElement::Div(div) = &parsed.children[0] else {
+            panic!("expected div");
+        };
+        assert_eq!(div.text_align, Some(TextAlign::Center));
+
+        let ParsedHtmlElement::Paragraph(paragraph) = &div.children[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.text_align, Some(TextAlign::Center));
     }
 
     #[test]
