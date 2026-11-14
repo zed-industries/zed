@@ -25,6 +25,7 @@ mod model_search;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
+mod system_notifications;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 pub mod terminal_thread_metadata_store;
