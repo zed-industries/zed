@@ -4089,6 +4089,7 @@ dependencies = [
  "serde",
  "serde_json",
  "system_specs",
+ "util",
  "windows 0.62.2",
  "zstd",
 ]
