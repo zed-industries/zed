@@ -5,7 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use collections::{HashMap, HashSet};
+use anyhow::Context as _;
+use collections::{BTreeSet, HashMap, HashSet};
 use fs::{FakeFs, Fs};
 use futures::{FutureExt, StreamExt};
 use gpui::{Entity, TestAppContext, UpdateGlobal as _};
@@ -27,6 +28,274 @@ use unindent::Unindent;
 use util::{path, rel_path::rel_path};
 
 use crate::init_test;
+
+#[gpui::test]
+async fn test_deleted_workspace_folders_are_removed(cx: &mut TestAppContext) {
+    check_deleted_workspace_folders(cx, false).await;
+}
+
+#[gpui::test]
+async fn test_deleted_workspace_folders_during_initialization(cx: &mut TestAppContext) {
+    check_deleted_workspace_folders(cx, true).await;
+}
+
+async fn check_deleted_workspace_folders(cx: &mut TestAppContext, delay_initialization: bool) {
+    struct PythonManifestProvider;
+
+    impl language::ManifestProvider for PythonManifestProvider {
+        fn name(&self) -> language::ManifestName {
+            gpui::SharedString::new_static("pyproject.toml").into()
+        }
+
+        fn search(&self, query: language::ManifestQuery) -> Option<Arc<util::rel_path::RelPath>> {
+            query.path.ancestors().take(query.depth).find_map(|path| {
+                query
+                    .delegate
+                    .exists(&path.join(rel_path("pyproject.toml")), Some(false))
+                    .then(|| Arc::from(path))
+            })
+        }
+    }
+
+    init_test(cx);
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        project::ManifestProvidersStore::global(cx).register(Arc::new(PythonManifestProvider));
+    });
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "first": { "pyproject.toml": "", "main.py": "first = 1" },
+            "second": { "pyproject.toml": "", "main.py": "second = 2" }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let languages = project.read_with(cx, |project, _| project.languages().clone());
+    languages.add(super::python_lang(fs.clone()));
+    let capabilities = lsp::ServerCapabilities {
+        workspace: Some(lsp::WorkspaceServerCapabilities {
+            workspace_folders: Some(lsp::WorkspaceFoldersServerCapabilities {
+                supported: Some(true),
+                change_notifications: Some(lsp::OneOf::Left(true)),
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let (initialize_sender, initialize_receiver) = futures::channel::oneshot::channel();
+    let mut initialize_sender = Some(initialize_sender);
+    let initialize_receiver = Arc::new(Mutex::new(Some(initialize_receiver)));
+    let mut servers = languages.register_fake_lsp(
+        "Python",
+        FakeLspAdapter {
+            name: "basedpyright",
+            capabilities: capabilities.clone(),
+            initializer: Some(Box::new(move |server| {
+                let initialize_receiver = initialize_receiver.clone();
+                let capabilities = capabilities.clone();
+                server.set_request_handler::<lsp::request::Initialize, _, _>(move |_, _| {
+                    let initialize_receiver = initialize_receiver.lock().take();
+                    let capabilities = capabilities.clone();
+                    async move {
+                        initialize_receiver
+                            .context("server initializes once")?
+                            .await?;
+                        Ok(lsp::InitializeResult {
+                            capabilities,
+                            server_info: None,
+                        })
+                    }
+                });
+            })),
+            ..Default::default()
+        },
+    );
+    let (first_buffer, first_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/first/main.py"), cx)
+        })
+        .await
+        .expect("first Python file opens");
+    let mut server = servers.next().await.expect("Python server starts");
+    if !delay_initialization {
+        initialize_sender
+            .take()
+            .expect("initialization sender is available")
+            .send(())
+            .expect("server is waiting for initialization");
+    }
+    cx.run_until_parked();
+    let (_second_buffer, _second_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/second/main.py"), cx)
+        })
+        .await
+        .expect("second Python file opens");
+    cx.run_until_parked();
+    let first_uri = Uri::from_file_path(path!("/root/first")).expect("valid first workspace URI");
+    let second_uri =
+        Uri::from_file_path(path!("/root/second")).expect("valid second workspace URI");
+    let server_id = server.server.server_id();
+    let workspace_folders = |cx: &mut TestAppContext| {
+        project.read_with(cx, |project, cx| {
+            let store = project.lsp_store();
+            let store = store.read(cx);
+            match store
+                .as_local()
+                .expect("local project")
+                .language_servers
+                .get(&server_id)
+                .expect("shared server is registered")
+            {
+                LanguageServerState::Starting {
+                    pending_workspace_folders,
+                    ..
+                } => pending_workspace_folders.lock().clone(),
+                LanguageServerState::Running { server, .. } => server.workspace_folders(),
+            }
+        })
+    };
+    assert_eq!(
+        workspace_folders(cx),
+        BTreeSet::from([first_uri.clone(), second_uri.clone()])
+    );
+    assert!(servers.next().now_or_never().is_none());
+    while server
+        .try_receive_notification::<lsp::notification::DidChangeWorkspaceFolders>()
+        .now_or_never()
+        .flatten()
+        .is_some()
+    {}
+
+    drop(first_handle);
+    drop(first_buffer);
+    fs.remove_dir(
+        path!("/root/first").as_ref(),
+        fs::RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("first workspace is deleted");
+    cx.run_until_parked();
+    assert_eq!(workspace_folders(cx), BTreeSet::from([second_uri.clone()]));
+    if delay_initialization {
+        initialize_sender
+            .take()
+            .expect("initialization sender is available")
+            .send(())
+            .expect("server is waiting for initialization");
+        cx.run_until_parked();
+        assert_eq!(
+            server.server.workspace_folders(),
+            BTreeSet::from([second_uri.clone()])
+        );
+    }
+    let change = server
+        .receive_notification::<lsp::notification::DidChangeWorkspaceFolders>()
+        .await;
+    if delay_initialization {
+        assert_eq!(
+            change.event.added,
+            vec![lsp::workspace_folder_for_uri(second_uri)]
+        );
+        assert!(change.event.removed.is_empty());
+    } else {
+        assert!(change.event.added.is_empty());
+        assert_eq!(
+            change.event.removed,
+            vec![lsp::workspace_folder_for_uri(first_uri)]
+        );
+    }
+    assert!(servers.next().now_or_never().is_none());
+}
+
+#[gpui::test]
+async fn test_removing_worktree_updates_shared_server_workspace_folders(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+    fs.insert_tree(
+        path!("/external"),
+        json!({ "dependency.rs": "pub fn dependency() {}" }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let languages = project.read_with(cx, |project, _| project.languages().clone());
+    languages.add(rust_lang());
+    let mut servers = languages.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                workspace: Some(lsp::WorkspaceServerCapabilities {
+                    workspace_folders: Some(lsp::WorkspaceFoldersServerCapabilities {
+                        supported: Some(true),
+                        change_notifications: Some(lsp::OneOf::Left(true)),
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/main.rs"), cx)
+        })
+        .await
+        .expect("root file opens");
+    let mut server = servers.next().await.expect("Rust server starts");
+    cx.run_until_parked();
+    let server_id = server.server.server_id();
+    let root_uri = Uri::from_file_path(path!("/root")).expect("valid workspace URI");
+    assert_eq!(
+        server.server.workspace_folders(),
+        BTreeSet::from([root_uri.clone()])
+    );
+    while server
+        .try_receive_notification::<lsp::notification::DidChangeWorkspaceFolders>()
+        .now_or_never()
+        .flatten()
+        .is_some()
+    {}
+    let external_uri =
+        Uri::from_file_path(path!("/external/dependency.rs")).expect("valid external document URI");
+    let _external_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(external_uri, server_id, cx)
+        })
+        .await
+        .expect("external file opens in the existing server");
+    cx.run_until_parked();
+    let root_id = buffer.read_with(cx, |buffer, cx| {
+        buffer.file().expect("file-backed buffer").worktree_id(cx)
+    });
+    project.update(cx, |project, cx| project.remove_worktree(root_id, cx));
+    cx.run_until_parked();
+    project.read_with(cx, |project, cx| {
+        assert!(
+            project
+                .lsp_store()
+                .read(cx)
+                .language_server_for_id(server_id)
+                .is_some()
+        );
+    });
+    assert!(server.server.workspace_folders().is_empty());
+    let change = server
+        .receive_notification::<lsp::notification::DidChangeWorkspaceFolders>()
+        .await;
+    assert!(change.event.added.is_empty());
+    assert_eq!(
+        change.event.removed,
+        vec![lsp::workspace_folder_for_uri(root_uri)]
+    );
+}
 
 #[gpui::test]
 async fn test_diagnostic_batches_skip_paths_without_worktrees(cx: &mut TestAppContext) {
