@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::agent_connection_store::AgentConnectionStore;
@@ -10,6 +11,7 @@ use crate::thread_metadata_store::{
 use crate::{Agent, AgentPanel, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
+use acp_thread::AgentSessionList;
 use agent_client_protocol::v2::schema as acp;
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
@@ -848,14 +850,7 @@ impl ThreadsArchiveView {
                     })?;
                     let state = connection_task.await?;
                     let task = cx.update(|cx| {
-                        state
-                            .connection
-                            .session_list(cx)
-                            .filter(|list| list.supports_delete())
-                            .map(|list| list.delete_session(session_id, cx))
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("This agent does not support deleting sessions")
-                            })
+                        delete_session_if_supported(state.connection.session_list(cx), session_id, cx)
                     })?;
                     task.await?;
                 }
@@ -1699,9 +1694,79 @@ impl PickerDelegate for ProjectPickerDelegate {
     }
 }
 
+fn delete_session_if_supported(
+    list: Option<Rc<dyn AgentSessionList>>,
+    session_id: &acp::SessionId,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    list.filter(|list| list.supports_delete())
+        .map(|list| list.delete_session(session_id, cx))
+        .unwrap_or_else(|| Task::ready(Ok(())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    struct DeleteSessionListStub {
+        supports_delete: bool,
+        delete_calls: Rc<Cell<usize>>,
+    }
+
+    impl AgentSessionList for DeleteSessionListStub {
+        fn list_sessions(
+            &self,
+            _: acp_thread::AgentSessionListRequest,
+            _: &mut App,
+        ) -> Task<anyhow::Result<acp_thread::AgentSessionListResponse>> {
+            unreachable!("deleting a thread must not list sessions")
+        }
+
+        fn supports_delete(&self) -> bool {
+            self.supports_delete
+        }
+
+        fn delete_session(
+            &self,
+            _: &acp::SessionId,
+            _: &mut App,
+        ) -> Task<anyhow::Result<()>> {
+            self.delete_calls.set(self.delete_calls.get() + 1);
+            Task::ready(Err(anyhow::anyhow!("remote deletion failed")))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
+            self
+        }
+    }
+
+    #[gpui::test]
+    async fn test_delete_thread_without_remote_delete_support(cx: &mut gpui::TestAppContext) {
+        let session_id = acp::SessionId::new("session");
+        let delete_calls = Rc::new(Cell::new(0));
+        let list = Rc::new(DeleteSessionListStub {
+            supports_delete: false,
+            delete_calls: delete_calls.clone(),
+        });
+
+        assert!(cx.update(|cx| delete_session_if_supported(None, &session_id, cx)).await.is_ok());
+        assert!(cx.update(|cx| delete_session_if_supported(Some(list), &session_id, cx)).await.is_ok());
+        assert_eq!(delete_calls.get(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_delete_thread_preserves_remote_delete_failure(cx: &mut gpui::TestAppContext) {
+        let session_id = acp::SessionId::new("session");
+        let delete_calls = Rc::new(Cell::new(0));
+        let list = Rc::new(DeleteSessionListStub {
+            supports_delete: true,
+            delete_calls: delete_calls.clone(),
+        });
+
+        assert!(cx.update(|cx| delete_session_if_supported(Some(list), &session_id, cx)).await.is_err());
+        assert_eq!(delete_calls.get(), 1);
+    }
 
     #[test]
     fn test_fuzzy_match_positions_returns_byte_indices() {
