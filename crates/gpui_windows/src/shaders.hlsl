@@ -248,11 +248,9 @@ float4 oklab_to_srgb(float4 color) {
 }
 
 float4 over(float4 below, float4 above) {
-    float4 result;
     float alpha = above.a + below.a * (1.0 - above.a);
-    result.rgb = (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
-    result.a = alpha;
-    return result;
+    float3 premultiplied = above.rgb * above.a + below.rgb * below.a * (1.0 - above.a);
+    return float4(premultiplied / (alpha == 0.0 ? 1.0 : alpha), alpha);
 }
 
 float2 to_tile_position(float2 unit_vertex, AtlasTile tile) {
@@ -830,11 +828,10 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
             }
         }
 
-        // Blend the border on top of the background and then linearly interpolate
-        // between the two as we slide inside the background.
-        float4 blended_border = over(background, border_color);
-        color = lerp(background, blended_border,
-                    saturate(antialias_threshold - inner_sdf));
+        // Apply coverage to the border alpha before compositing so that
+        // transparent backgrounds do not darken the antialiased inner edge.
+        border_color.a *= saturate(antialias_threshold - inner_sdf);
+        color = over(background, border_color);
     }
 
     return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
