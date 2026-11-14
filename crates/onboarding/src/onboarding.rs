@@ -384,7 +384,7 @@ impl Render for Onboarding {
             .child(
                 div()
                     .id("page-content")
-                    .size_full()
+                    .flex_1()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
                     .vertical_scrollbar_for(&self.scroll_handle, window, cx)
