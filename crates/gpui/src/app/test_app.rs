@@ -450,6 +450,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
         self.simulate_event(crate::ScrollEvent {
             position,
             delta: crate::ScrollDelta::Pixels(delta),
+            wheel_notches: None,
             modifiers: Default::default(),
             touch_phase: crate::TouchPhase::Moved,
             source: crate::ScrollSource::Pointer,

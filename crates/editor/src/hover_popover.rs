@@ -2331,6 +2331,7 @@ mod tests {
             editor_cx.simulate_event(gpui::ScrollEvent {
                 position: viewport.center(),
                 delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-20.))),
+                wheel_notches: None,
                 modifiers: Modifiers::none(),
                 touch_phase: gpui::TouchPhase::Moved,
                 source: gpui::ScrollSource::Pointer,

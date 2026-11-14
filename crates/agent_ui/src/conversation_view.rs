@@ -7271,6 +7271,7 @@ pub(crate) mod tests {
         cx.simulate_event(gpui::ScrollEvent {
             position: notices.center(),
             delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-10_000.))),
+            wheel_notches: None,
             modifiers: gpui::Modifiers::default(),
             touch_phase: gpui::TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
