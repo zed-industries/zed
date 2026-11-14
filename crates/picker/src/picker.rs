@@ -374,6 +374,16 @@ pub trait PickerDelegate: Sized + 'static {
     /// then change how much space they use for rendering the match
     fn preview_layout_changed(&mut self, _layout_is_horizontal: bool) {}
 
+    /// Called when the preview is shown or hidden, including once when the
+    /// picker opens with its initial (persisted) layout.
+    fn preview_visibility_changed(
+        &mut self,
+        _visible: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+    }
+
     fn render_match(
         &self,
         ix: usize,
@@ -648,6 +658,11 @@ impl<D: PickerDelegate> Picker<D> {
         // give delegate the initial preview layout
         this.delegate
             .preview_layout_changed(matches!(initial_layout, preview::Layout::Right));
+        if has_preview {
+            let visible = initial_layout != preview::Layout::Hidden;
+            this.delegate
+                .preview_visibility_changed(visible, window, cx);
+        }
         if this.reopenable {
             let focus_handle = this.focus_handle(cx);
             workspace::register_reopenable_picker(&focus_handle, cx);
@@ -1618,6 +1633,8 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         };
         let was_hidden = preview.layout == preview::Layout::Hidden;
+        let is_hidden = layout == preview::Layout::Hidden;
+        let visibility_changed = was_hidden != is_hidden;
         preview.layout = layout;
         if was_hidden {
             self.update_preview(window, cx);
@@ -1635,6 +1652,10 @@ impl<D: PickerDelegate> Picker<D> {
             });
         self.delegate
             .preview_layout_changed(matches!(layout, preview::Layout::Right));
+        if visibility_changed {
+            self.delegate
+                .preview_visibility_changed(!is_hidden, window, cx);
+        }
         cx.notify();
     }
 }
