@@ -7,6 +7,7 @@ use crate::{Oid, RunHook, SHA256_HEX_LENGTH, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
 use collections::HashMap;
+use encoding_rs::Encoding;
 use file_content::{ByteContent, decode_byte_header};
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
@@ -934,6 +935,8 @@ pub trait GitRepository: Send + Sync {
         path: RepoPath,
         content: Rope,
         line_ending: LineEnding,
+        encoding: &'static Encoding,
+        has_bom: bool,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
     fn blame_at_revision(
@@ -2497,13 +2500,16 @@ impl GitRepository for RealGitRepository {
         path: RepoPath,
         content: Rope,
         line_ending: LineEnding,
+        encoding: &'static Encoding,
+        has_bom: bool,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let git = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
                 let git = git?;
-                crate::blame::Blame::for_path(&git, &path, &content, line_ending).await
+                crate::blame::Blame::for_path(&git, &path, &content, line_ending, encoding, has_bom)
+                    .await
             })
             .boxed()
     }
@@ -5929,6 +5935,145 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(first_sha.clone(), 0..1)]
         );
+    }
+
+    #[gpui::test]
+    async fn test_blame_contents_in_buffer_encoding(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let long_line_count = 4096;
+        let long_unchanged_text = "日本語のテキスト\n".repeat(long_line_count as usize);
+        let long_committed_text = format!("{long_unchanged_text}こんにちは\n");
+        let long_edited_text = format!("{long_unchanged_text}こんばんは\n");
+
+        let cases = [
+            (
+                "windows_1252.txt",
+                encoding_rs::WINDOWS_1252,
+                false,
+                LineEnding::Unix,
+                "plain\ncafé crème\nrésumé\n",
+                "plain\ncafé crème\nrésumé edited\n",
+                Some(0..2),
+            ),
+            (
+                "shift_jis.txt",
+                encoding_rs::SHIFT_JIS,
+                false,
+                LineEnding::Unix,
+                "plain\n日本語のテキスト\nこんにちは\n",
+                "plain\n日本語のテキスト\nこんばんは 😀\n",
+                Some(0..2),
+            ),
+            (
+                "shift_jis_crlf.txt",
+                encoding_rs::SHIFT_JIS,
+                false,
+                LineEnding::Windows,
+                "plain\n日本語のテキスト\nこんにちは\n",
+                "plain\n日本語のテキスト\nこんばんは\n",
+                Some(0..2),
+            ),
+            (
+                "iso_2022_jp.txt",
+                encoding_rs::ISO_2022_JP,
+                false,
+                LineEnding::Unix,
+                "plain\n日本語のテキスト\nこんにちは\n",
+                "plain\n日本語のテキスト\nこんばんは\n",
+                Some(0..2),
+            ),
+            (
+                "utf_8_bom.txt",
+                encoding_rs::UTF_8,
+                true,
+                LineEnding::Unix,
+                "plain\ncafé 日本語\nrésumé\n",
+                "plain\ncafé 日本語\nrésumé edited\n",
+                Some(0..2),
+            ),
+            (
+                "utf_16le.txt",
+                encoding_rs::UTF_16LE,
+                true,
+                LineEnding::Unix,
+                "plain\n上の行\nlast\n",
+                "plain\n上の行\nlast edited\n",
+                None,
+            ),
+            (
+                "long_iso_2022_jp.txt",
+                encoding_rs::ISO_2022_JP,
+                false,
+                LineEnding::Unix,
+                long_committed_text.as_str(),
+                long_edited_text.as_str(),
+                Some(0..long_line_count),
+            ),
+        ];
+
+        for (file_name, encoding, has_bom, line_ending, committed_text, _, _) in &cases {
+            let committed_text = committed_text.replace('\n', line_ending.as_str());
+            fs::write(
+                repo_dir.path().join(file_name),
+                file_content::encode_text(committed_text, encoding, *has_bom),
+            )
+            .unwrap();
+        }
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add encoded files"]);
+        let commit_sha = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        for (file_name, encoding, has_bom, line_ending, _, edited_text, committed_lines) in cases {
+            let blame = repo
+                .blame(
+                    repo_path(file_name),
+                    Rope::from(edited_text),
+                    line_ending,
+                    encoding,
+                    has_bom,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                blame
+                    .entries
+                    .iter()
+                    .map(|entry| (entry.sha.to_string(), entry.range.clone()))
+                    .collect::<Vec<_>>(),
+                committed_lines
+                    .map(|range| (commit_sha.clone(), range))
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                "unexpected blame for {file_name}"
+            );
+        }
+
+        // Git exits without reading stdin for a path that isn't in HEAD, which breaks the pipe
+        // while the contents are still being written.
+        let untracked_text = "日本語のテキスト\n".repeat(1 << 18);
+        let blame = repo
+            .blame(
+                repo_path("untracked.txt"),
+                Rope::from(untracked_text.as_str()),
+                LineEnding::Unix,
+                encoding_rs::SHIFT_JIS,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(blame.entries, Vec::new());
     }
 
     #[gpui::test]
