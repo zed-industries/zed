@@ -14,12 +14,10 @@ use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
-use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use text::LineEnding;
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -929,12 +927,8 @@ pub trait GitRepository: Send + Sync {
         ignore_shallow_boundary: bool,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<CommitDiff>>;
-    fn blame(
-        &self,
-        path: RepoPath,
-        content: Rope,
-        line_ending: LineEnding,
-    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+    fn blame(&self, path: RepoPath, content: Vec<u8>)
+    -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
     fn blame_at_revision(
         &self,
@@ -2495,15 +2489,14 @@ impl GitRepository for RealGitRepository {
     fn blame(
         &self,
         path: RepoPath,
-        content: Rope,
-        line_ending: LineEnding,
+        content: Vec<u8>,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let git = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
                 let git = git?;
-                crate::blame::Blame::for_path(&git, &path, &content, line_ending).await
+                crate::blame::Blame::for_path(&git, &path, &content).await
             })
             .boxed()
     }
@@ -5929,6 +5922,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(first_sha.clone(), 0..1)]
         );
+    }
+
+    #[gpui::test]
+    async fn test_blame_untracked_path_with_large_contents(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("committed.txt"), "line one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "First commit"]);
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Git exits without reading stdin for a path that isn't in HEAD, which breaks the pipe
+        // while the contents are still being written.
+        let blame = repo
+            .blame(repo_path("untracked.txt"), b"line\n".repeat(1 << 20))
+            .await
+            .unwrap();
+        assert_eq!(blame.entries, Vec::new());
     }
 
     #[gpui::test]

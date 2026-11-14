@@ -26,9 +26,7 @@ use git::{
 use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
-use rope::Rope;
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool, time::SystemTime};
-use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 #[derive(Clone)]
@@ -1141,12 +1139,7 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn blame(
-        &self,
-        path: RepoPath,
-        _content: Rope,
-        _line_ending: LineEnding,
-    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
+    fn blame(&self, path: RepoPath, _content: Vec<u8>) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
                 .blames

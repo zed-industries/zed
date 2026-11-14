@@ -7,7 +7,6 @@ use futures::{AsyncWriteExt, TryFutureExt, try_join};
 use serde::{Deserialize, Serialize};
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use std::ops::Range;
-use text::{LineEnding, Rope};
 use time::OffsetDateTime;
 use time::UtcOffset;
 use time::macros::format_description;
@@ -21,13 +20,8 @@ pub struct Blame {
 }
 
 impl Blame {
-    pub(crate) async fn for_path(
-        git: &GitBinary,
-        path: &RepoPath,
-        content: &Rope,
-        line_ending: LineEnding,
-    ) -> Result<Self> {
-        let entries = run_git_blame(git, path, BlameSource::Contents(content, line_ending)).await?;
+    pub(crate) async fn for_path(git: &GitBinary, path: &RepoPath, content: &[u8]) -> Result<Self> {
+        let entries = run_git_blame(git, path, BlameSource::Contents(content)).await?;
         Self::with_commit_details(git, entries).await
     }
 
@@ -77,7 +71,7 @@ const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
 
 #[derive(Clone, Copy)]
 enum BlameSource<'a> {
-    Contents(&'a Rope, LineEnding),
+    Contents(&'a [u8]),
     Revision(Oid),
 }
 
@@ -124,11 +118,9 @@ async fn run_git_blame(
         .context("failed to get stderr from git blame command")?;
 
     let write_stdin = async move {
-        if let BlameSource::Contents(contents, line_ending) = source {
+        if let BlameSource::Contents(contents) = source {
             let mut stdin = stdin.context("failed to get pipe to stdin of git blame command")?;
-            for chunk in text::chunks_with_line_ending(contents, line_ending) {
-                stdin.write_all(chunk.as_bytes()).await?;
-            }
+            stdin.write_all(contents).await?;
             stdin.flush().await?;
         }
         anyhow::Ok(())
@@ -178,8 +170,14 @@ async fn run_git_blame(
             .context("waiting for git blame process")
     };
 
-    let ((), entries, stderr, status) =
-        try_join!(write_stdin, read_stdout, read_stderr, wait_for_status)?;
+    // Git closes stdin when it exits early, for example for an untracked path, so a failed
+    // write is only reported once the exit status and stderr have been examined.
+    let (write_result, entries, stderr, status) = try_join!(
+        async { anyhow::Ok(write_stdin.await) },
+        read_stdout,
+        read_stderr,
+        wait_for_status
+    )?;
 
     if !status.success() {
         let trimmed = stderr.trim();
@@ -188,6 +186,7 @@ async fn run_git_blame(
         }
         anyhow::bail!("git blame process failed: {stderr}");
     }
+    write_result.context("writing contents to git blame")?;
 
     Ok(entries)
 }

@@ -16708,6 +16708,92 @@ async fn test_staging_non_utf8_hunk_preserves_index_encoding(cx: &mut gpui::Test
     );
 }
 
+#[gpui::test]
+async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let shift_jis_text = "int a; /* 日本語のコメント */\nint b;\nint c; /* もう一つ */\n";
+    let windows_1252_text = "x = \"café\"\ny = \"crème brûlée\"\nz = 1\n";
+    let utf_16_text = "plain\n上の行\nlast\n";
+    let cases = [
+        (
+            "sjis.c",
+            encoding_rs::SHIFT_JIS,
+            shift_jis_text,
+            encoding_rs::SHIFT_JIS.encode(shift_jis_text).0.into_owned(),
+            true,
+        ),
+        (
+            "latin.py",
+            encoding_rs::WINDOWS_1252,
+            windows_1252_text,
+            encoding_rs::WINDOWS_1252
+                .encode(windows_1252_text)
+                .0
+                .into_owned(),
+            true,
+        ),
+        (
+            "utf_16.txt",
+            encoding_rs::UTF_16LE,
+            utf_16_text,
+            [0xFF, 0xFE]
+                .into_iter()
+                .chain(utf_16_text.encode_utf16().flat_map(u16::to_le_bytes))
+                .collect(),
+            false,
+        ),
+    ];
+
+    let root = TempTree::new(json!({ "project": {} }));
+    let work_dir = root.path().join("project");
+    git_init(&work_dir);
+    for (file_name, _, _, bytes, _) in &cases {
+        std::fs::write(work_dir.join(file_name), bytes).unwrap();
+        git_add(file_name, &work_dir);
+    }
+    git_commit("Initial commit", &work_dir);
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    for (file_name, encoding, text, _, is_blamed) in cases {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(work_dir.join(file_name), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            assert_eq!(buffer.encoding(), encoding, "encoding of {file_name}");
+            assert_eq!(buffer.text(), text, "text of {file_name}");
+            buffer.edit([(buffer.len()..buffer.len(), "uncommitted\n")], None, cx);
+        });
+
+        let blame = project
+            .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
+            .await
+            .unwrap()
+            .unwrap();
+        let committed_lines = is_blamed.then(|| 0..text.lines().count() as u32);
+        assert_eq!(
+            blame
+                .entries
+                .iter()
+                .map(|entry| entry.range.clone())
+                .collect::<Vec<_>>(),
+            committed_lines.into_iter().collect::<Vec<_>>(),
+            "blame of {file_name}"
+        );
+    }
+}
+
 #[gpui::test(iterations = 25)]
 async fn test_staging_random_hunks(
     mut rng: StdRng,
