@@ -76,24 +76,20 @@ apps:
     desktop: share/applications/dev.zed.Zed.desktop
     environment:
       ZED_BUNDLE_TYPE: snap
-      # snapcraft sets DF_1_NODEFLIB on all ELFs of classic snaps, which makes
-      # the dynamic linker refuse to resolve bare sonames via /etc/ld.so.cache.
-      # The Vulkan loader dlopens ICDs by bare soname, so the bundled Mesa
-      # drivers must come first here; the host directories afterwards provide
-      # anything not bundled (e.g. the NVIDIA ICD library).
+      # snapcraft sets DF_1_NODEFLIB on all ELFs of the snap, which makes the
+      # dynamic linker ignore /etc/ld.so.cache for them, and the Vulkan loader
+      # dlopens ICD libraries by bare soname. Bundled sonames still resolve
+      # through the RPATH snapcraft injects ($ORIGIN), but host ICD libraries
+      # not shipped in the snap (e.g. NVIDIA's) need these host directories.
       LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu
-      # Enumerate only our bundled Mesa ICDs plus the host's NVIDIA one. The
-      # host's Mesa ICD manifests must not be discovered: their libraries were
-      # built for the host's glibc (which may be newer than the base's) and,
-      # for lavapipe, they pull in the host's libgallium, which mismatches the
-      # bundled lavapipe and segfaults during device enumeration. Missing
-      # files in the list are ignored, and both NVIDIA manifest locations are
-      # listed because the driver package may install either.
+      # The Vulkan loader only discovers ICD manifests under the host's XDG
+      # paths, never $SNAP/usr/share/vulkan/icd.d, so without this the bundled
+      # Mesa ICDs would be invisible on hosts without Vulkan drivers (e.g.
+      # containers) and the software fallback would be lost. Listing the
+      # bundled manifests also keeps every Vulkan library resolving to the
+      # snap's own coherent Mesa build instead of the host's, which may not
+      # match the base runtime. Host Mesa manifests are omitted on purpose;
+      # they would only shadow the bundled ones. Missing files in the list
+      # are ignored, and both NVIDIA manifest locations are listed because
+      # the driver package may install either.
       VK_DRIVER_FILES: $SNAP/usr/share/vulkan/icd.d/radeon_icd.json:$SNAP/usr/share/vulkan/icd.d/intel_icd.json:$SNAP/usr/share/vulkan/icd.d/intel_hasvk_icd.json:$SNAP/usr/share/vulkan/icd.d/nouveau_icd.json:$SNAP/usr/share/vulkan/icd.d/lvp_icd.json:/usr/share/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json
-      # wgpu also enumerates a GL backend via EGL. That would pull in the
-      # host's GL stack (libEGL -> libEGL_mesa -> libgallium), which may be
-      # built against a newer glibc than the base's and segfaults during
-      # initialization. Pointing glvnd at a nonexistent vendor file makes
-      # eglInitialize fail cleanly, so wgpu skips the GL adapter and renders
-      # through Vulkan only, which the bundled drivers above cover.
-      __EGL_VENDOR_LIBRARY_FILENAMES: /nonexistent-egl-vendor.json
