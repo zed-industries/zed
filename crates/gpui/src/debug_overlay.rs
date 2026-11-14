@@ -17,6 +17,17 @@ pub enum DebugFrameOverlayMode {
     Full,
 }
 
+#[allow(missing_docs)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct DebugFrameOverlayStats {
+    pub current_ms: Option<f32>,
+    pub p90_ms: Option<f32>,
+    pub p99_ms: Option<f32>,
+    pub max_ms: Option<f32>,
+    pub frames: u64,
+    pub samples: usize,
+}
+
 impl DebugFrameOverlayMode {
     /// Returns the next mode in the Hidden → FrameTime → Detailed cycle.
     pub fn next(self) -> Self {
@@ -92,6 +103,22 @@ impl DebugFrameOverlay {
         self.draw_durations.push_back(draw_duration);
     }
 
+    pub(crate) fn stats(&self) -> DebugFrameOverlayStats {
+        let mut sorted: Vec<Duration> = self.draw_durations.iter().copied().collect();
+        sorted.sort_unstable();
+        let percentile = |numerator: usize| {
+            (!sorted.is_empty()).then(|| sorted[(sorted.len() - 1) * numerator / 100])
+        };
+        DebugFrameOverlayStats {
+            current_ms: self.draw_durations.back().copied().map(duration_ms),
+            p90_ms: percentile(90).map(duration_ms),
+            p99_ms: percentile(99).map(duration_ms),
+            max_ms: sorted.last().copied().map(duration_ms),
+            frames: self.total_frame_count,
+            samples: self.draw_durations.len(),
+        }
+    }
+
     pub(crate) fn paint(&self, scene: &mut Scene, viewport_size: Size<Pixels>, scale_factor: f32) {
         if !self.is_enabled() {
             return;
@@ -161,30 +188,29 @@ impl DebugFrameOverlay {
     }
 
     fn lines(&self) -> Vec<String> {
-        let current = self.draw_durations.back().copied();
         match self.mode {
             DebugFrameOverlayMode::Hidden => Vec::new(),
-            DebugFrameOverlayMode::Minimal => vec![format_ms(current)],
+            DebugFrameOverlayMode::Minimal => {
+                vec![format_ms(
+                    self.draw_durations.back().copied().map(duration_ms),
+                )]
+            }
             DebugFrameOverlayMode::Full => {
-                let mut sorted: Vec<Duration> = self.draw_durations.iter().copied().collect();
-                sorted.sort_unstable();
-                let percentile = |numerator: usize| {
-                    (!sorted.is_empty()).then(|| sorted[(sorted.len() - 1) * numerator / 100])
-                };
+                let stats = self.stats();
                 // Past five digits the count would break the column
                 // alignment, so it saturates instead.
-                let frame_count = if self.total_frame_count > 99_999 {
+                let frame_count = if stats.frames > 99_999 {
                     "LOTS".to_string()
                 } else {
-                    self.total_frame_count.to_string()
+                    stats.frames.to_string()
                 };
                 // Labels are padded to a uniform width so the fixed-width
                 // durations start in the same column on every line.
                 vec![
-                    format!("CUR {}", format_ms(current)),
-                    format!("1%  {}", format_ms(percentile(99))),
-                    format!("10% {}", format_ms(percentile(90))),
-                    format!("MAX {}", format_ms(sorted.last().copied())),
+                    format!("CUR {}", format_ms(stats.current_ms)),
+                    format!("1%  {}", format_ms(stats.p99_ms)),
+                    format!("10% {}", format_ms(stats.p90_ms)),
+                    format!("MAX {}", format_ms(stats.max_ms)),
                     format!("FRAMES {frame_count:>5}"),
                 ]
             }
@@ -192,14 +218,15 @@ impl DebugFrameOverlay {
     }
 }
 
+fn duration_ms(duration: Duration) -> f32 {
+    duration.as_secs_f32() * 1000.0
+}
+
 /// Formats as `abc.d MS`, right-aligned in room for three integer digits and
 /// one decimal (padded with spaces, not zeroes), so stacked readouts align.
-fn format_ms(duration: Option<Duration>) -> String {
-    match duration {
-        Some(duration) => {
-            let ms = duration.as_secs_f32() * 1000.0;
-            format!("{ms:>5.1} MS")
-        }
+fn format_ms(milliseconds: Option<f32>) -> String {
+    match milliseconds {
+        Some(ms) => format!("{ms:>5.1} MS"),
         None => "   -- MS".into(),
     }
 }
@@ -424,5 +451,20 @@ mod tests {
         overlay.record_frame(Duration::from_millis(10));
         overlay.set_mode(DebugFrameOverlayMode::Minimal);
         assert_eq!(overlay.lines(), vec![" 10.0 MS".to_string()]);
+    }
+
+    #[test]
+    fn stats_match_the_full_overlay_percentiles() {
+        let mut overlay = DebugFrameOverlay::new();
+        for milliseconds in 1..=100 {
+            overlay.record_frame(Duration::from_millis(milliseconds));
+        }
+        let stats = overlay.stats();
+        assert_eq!(stats.current_ms, Some(100.0));
+        assert_eq!(stats.p99_ms, Some(99.0));
+        assert_eq!(stats.p90_ms, Some(90.0));
+        assert_eq!(stats.max_ms, Some(100.0));
+        assert_eq!(stats.frames, 100);
+        assert_eq!(stats.samples, 100);
     }
 }
