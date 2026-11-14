@@ -199,10 +199,10 @@ impl Keymap {
         let mut pending_bindings = SmallVec::<[(BindingIndex, &KeyBinding); 1]>::new();
 
         for (ix, binding) in keymap_bindings {
-            let Some(depth) = self.binding_enabled(binding, context_stack) else {
+            let Some(pending) = binding.match_keystrokes(input) else {
                 continue;
             };
-            let Some(pending) = binding.match_keystrokes(input) else {
+            let Some(depth) = self.binding_enabled(binding, context_stack) else {
                 continue;
             };
 
