@@ -1456,7 +1456,7 @@ impl Buffer {
             if is_included {
                 edits.push((
                     edit.old.clone(),
-                    self.text_for_range(edit.new.clone()).collect::<String>(),
+                    self.text_for_range(edit.new).collect::<String>(),
                 ));
             }
         }

@@ -3581,7 +3581,7 @@ async fn test_refusal(cx: &mut TestAppContext) {
     // If the model refuses to continue, the thread should remove all the messages after the last user message.
     fake.send_last_event(
         &model,
-        LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+        LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
     );
     let events = events.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events), vec![acp_v2::StopReason::Refusal]);
@@ -4195,6 +4195,79 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     send.collect::<Vec<_>>().await;
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.title(), Some("Hello world".into()))
+    });
+}
+
+#[gpui::test]
+async fn test_title_generation_disabled_by_settings(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    let set_auto_generate_thread_titles = |enabled, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.auto_generate_thread_titles = enabled;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        })
+    };
+    set_auto_generate_thread_titles(false, cx);
+
+    let summary_model = fake.model("summary");
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake.send_last_text(&model, "Hey!");
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+    assert_eq!(fake.pending_completions_for(&summary_model), Vec::new());
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+
+    set_auto_generate_thread_titles(true, cx);
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake.send_last_text(&model, "Hey again!");
+    fake.end_last(&model);
+    cx.run_until_parked();
+    let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+    fake.send_text(&summary_model, &summary_request, "Auto title\n");
+    fake.end_stream(&summary_model, &summary_request);
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Auto title".into()))
+    });
+
+    set_auto_generate_thread_titles(false, cx);
+    thread.update(cx, |thread, cx| {
+        assert!(thread.regenerate_title(cx));
+    });
+    cx.run_until_parked();
+    let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+    fake.send_text(&summary_model, &summary_request, "Manual title\n");
+    fake.end_stream(&summary_model, &summary_request);
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Manual title".into()))
     });
 }
 
@@ -7273,7 +7346,7 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
         }
         test.fake.send_last_event(
             &test.model,
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
         );
         test.fake.end_last(&test.model);
         assert_eq!(

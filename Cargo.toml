@@ -172,6 +172,7 @@ members = [
     "crates/project_benchmarks",
     "crates/project_panel",
     "crates/project_symbols",
+    "crates/project_bookmarks",
     "crates/prompt_store",
     "crates/proto",
     "crates/proxy_handshake",
@@ -447,6 +448,7 @@ prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
+project_bookmarks = { path = "crates/project_bookmarks" }
 prompt_store = { path = "crates/prompt_store" }
 proto = { path = "crates/proto" }
 proxy_handshake = { path = "crates/proxy_handshake" }
@@ -533,7 +535,7 @@ accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.22"
 accesskit_windows = "0.34"
-agent-client-protocol = { version = "=5.0.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
+agent-client-protocol = { version = "=5.2.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
@@ -682,8 +684,8 @@ itertools = "0.14.0"
 js-sys = "0.3"
 jsonschema = { version = "0.51", default-features = false }
 jsonwebtoken = { version = "10.0", default-features = false }
-jupyter-protocol = "1.4.0"
-jupyter-websocket-client = "1.1.0"
+jupyter-protocol = "2.0.3"
+jupyter-websocket-client = "3.0.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 libwebrtc = "0.3.26"
@@ -695,12 +697,12 @@ lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "82d7fc
 mach2 = "0.6"
 markup5ever_rcdom = "0.39"
 mdbook = { version = "=0.4.40", default-features = false, features = ["search"] }
-merman = { version = "=0.8.0-alpha.5", default-features = false }
+merman = { version = "=0.9.3", default-features = false }
 mime = "0.3.17"
 minidumper = "0.11"
 moka = { version = "0.12.10", features = ["sync"] }
 nanoid = "0.4"
-nbformat = "1.2.0"
+nbformat = "3.0.0"
 nix = "0.30"
 notify-rust = "4"
 nucleo = { package = "nucleo-matcher", version = "0.3" }
@@ -827,7 +829,6 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
 ] }
 octocrab = { version = "0.49", default-features = false }
 oo7 = { git = "https://github.com/zed-industries/oo7", rev = "731c1215edb6905876c6137ab300428c7b8d7c13", version = "0.6", default-features = false }
-open = "5.0.0"
 ordered-float = "5"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
@@ -880,7 +881,7 @@ resvg = { version = "0.46.0", default-features = false, features = [
     "raster-images",
 ] }
 rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit"] }
-runtimelib = { version = "1.4.0", default-features = false, features = [
+jupyter-zmq-client = { version = "3.0.0", default-features = false, features = [
     "async-dispatcher-runtime", "aws-lc-rs"
 ] }
 rust-embed = { version = "8.11", features = ["include-exclude", "compression"] }
@@ -1135,6 +1136,7 @@ outline = { codegen-units = 1 }
 paths = { codegen-units = 1 }
 prettier = { codegen-units = 1 }
 project_symbols = { codegen-units = 1 }
+project_bookmarks = { codegen-units = 1 }
 refineable = { codegen-units = 1 }
 release_channel = { codegen-units = 1 }
 reqwest_client = { codegen-units = 1 }

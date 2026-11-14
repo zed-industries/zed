@@ -30,6 +30,25 @@ pub trait CratesIoClient: Send + Sync {
     /// belongs to an owner of the crate.
     async fn update_crate(&self, name: &CrateName, update: &CrateUpdate) -> Result<Crate>;
 
+    /// Lists both user and team owners.
+    async fn list_owners(&self, name: &CrateName) -> Result<Vec<Owner>>;
+
+    /// Returns one outcome per requested owner.
+    ///
+    /// Requires a token with the `change-owners` endpoint scope that belongs
+    /// to a user owner of the crate. crates.io accepts at most ten owners per
+    /// request.
+    async fn add_owners(
+        &self,
+        name: &CrateName,
+        owners: &[OwnerLogin],
+    ) -> Result<Vec<OwnerAddition>>;
+
+    /// Requires a token with the `change-owners` endpoint scope that belongs
+    /// to a user owner of the crate. crates.io rejects removing the last user
+    /// owner.
+    async fn remove_owners(&self, name: &CrateName, owners: &[OwnerLogin]) -> Result<()>;
+
     /// Requires a token with the `trusted-publishing` endpoint scope that
     /// belongs to an owner of the crate.
     async fn list_github_configs(&self, crate_name: &CrateName) -> Result<Vec<GitHubConfig>>;

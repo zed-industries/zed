@@ -69,6 +69,9 @@ pub struct MockRemoteConnection {
     options: MockConnectionOptions,
     server_channel: Arc<ChannelClient>,
     server_cx: SendableCx,
+    message_interceptors: parking_lot::Mutex<Option<MessageInterceptors>>,
+    path_style: parking_lot::Mutex<PathStyle>,
+    reported_options: parking_lot::Mutex<Option<RemoteConnectionOptions>>,
     pub(crate) proxy_tx: parking_lot::Mutex<
         Option<
             mpsc::UnboundedSender<(
@@ -134,6 +137,48 @@ pub struct MockConnection;
 pub type ConnectGuard = oneshot::Sender<()>;
 
 impl MockConnection {
+    pub fn intercept_messages(
+        options: &RemoteConnectionOptions,
+        cx: &mut App,
+        client_to_server: impl Fn(&mut Envelope) + Send + Sync + 'static,
+        server_to_client: impl Fn(&mut Envelope) + Send + Sync + 'static,
+    ) {
+        *Self::pending(options, cx).message_interceptors.lock() = Some(MessageInterceptors {
+            client_to_server: Arc::new(client_to_server),
+            server_to_client: Arc::new(server_to_client),
+        });
+    }
+
+    /// Makes the connection report `path_style`, as a connection to a host of another OS would.
+    pub fn set_path_style(options: &RemoteConnectionOptions, path_style: PathStyle, cx: &mut App) {
+        *Self::pending(options, cx).path_style.lock() = path_style;
+    }
+
+    /// Makes the connection report `reported` as its options, as a real connection reports the
+    /// options it was opened with, such as a saved SSH connection.
+    pub fn report_connection_options(
+        options: &RemoteConnectionOptions,
+        reported: RemoteConnectionOptions,
+        cx: &mut App,
+    ) {
+        *Self::pending(options, cx).reported_options.lock() = Some(reported);
+    }
+
+    fn pending<'a>(
+        options: &RemoteConnectionOptions,
+        cx: &'a App,
+    ) -> &'a Arc<MockRemoteConnection> {
+        let RemoteConnectionOptions::Mock(options) = options else {
+            panic!("this requires a mock connection");
+        };
+        let (_, connection) = cx
+            .global::<MockConnectionRegistry>()
+            .pending
+            .get(&options.id)
+            .expect("the mock connection must be configured before connecting");
+        connection
+    }
+
     /// Creates a new mock connection pair for testing.
     ///
     /// This function:
@@ -180,6 +225,9 @@ impl MockConnection {
             options: opts.clone(),
             server_channel: server_client.clone(),
             server_cx: SendableCx::new(server_cx),
+            message_interceptors: parking_lot::Mutex::new(None),
+            path_style: parking_lot::Mutex::new(PathStyle::local()),
+            reported_options: parking_lot::Mutex::new(None),
             proxy_tx: Default::default(),
         });
 
@@ -193,6 +241,12 @@ impl MockConnection {
 
         (server_client.into(), tx)
     }
+}
+
+#[derive(Clone)]
+struct MessageInterceptors {
+    client_to_server: Arc<dyn Fn(&mut Envelope) + Send + Sync>,
+    server_to_client: Arc<dyn Fn(&mut Envelope) + Send + Sync>,
 }
 
 #[async_trait(?Send)]
@@ -258,7 +312,10 @@ impl RemoteConnection for MockRemoteConnection {
     }
 
     fn connection_options(&self) -> RemoteConnectionOptions {
-        RemoteConnectionOptions::Mock(self.options.clone())
+        self.reported_options
+            .lock()
+            .clone()
+            .unwrap_or_else(|| RemoteConnectionOptions::Mock(self.options.clone()))
     }
 
     fn simulate_disconnect(&self, cx: &AsyncApp) {
@@ -299,20 +356,27 @@ impl RemoteConnection for MockRemoteConnection {
             &self.server_cx.get(cx),
         ));
 
+        let message_interceptors = self.message_interceptors.lock().clone();
         cx.background_spawn(async move {
             loop {
                 select_biased! {
                     server_to_client = server_outgoing_rx.next().fuse() => {
-                        let Some(server_to_client) = server_to_client else {
+                        let Some(mut server_to_client) = server_to_client else {
                             return Ok(1)
                         };
+                        if let Some(interceptors) = &message_interceptors {
+                            (interceptors.server_to_client)(&mut server_to_client);
+                        }
                         connection_activity_tx.try_send(()).ok();
                         client_incoming_tx.send(server_to_client).await.ok();
                     }
                     client_to_server = client_outgoing_rx.next().fuse() => {
-                        let Some(client_to_server) = client_to_server else {
+                        let Some(mut client_to_server) = client_to_server else {
                             return Ok(1)
                         };
+                        if let Some(interceptors) = &message_interceptors {
+                            (interceptors.client_to_server)(&mut client_to_server);
+                        }
                         server_incoming_tx.send(client_to_server).await.ok();
                     }
                 }
@@ -321,7 +385,7 @@ impl RemoteConnection for MockRemoteConnection {
     }
 
     fn path_style(&self) -> PathStyle {
-        PathStyle::local()
+        *self.path_style.lock()
     }
 
     fn remote_platform(&self) -> crate::RemotePlatform {

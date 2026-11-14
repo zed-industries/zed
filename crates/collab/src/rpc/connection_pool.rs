@@ -32,11 +32,7 @@ impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
         // v0.204.1 was the first version after the auto-update bug.
         // We reject any clients older than that to hope we can persuade them to upgrade.
-        if self.0 < Version::new(0, 204, 1) {
-            return false;
-        }
-
-        true
+        self.0 >= Version::new(0, 204, 1)
     }
 }
 

@@ -20,6 +20,7 @@ use agent_client_protocol::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{
     FutureExt as _,
     channel::mpsc,
@@ -30,7 +31,7 @@ use project::{
     AgentId, AgentServerStore, Project,
     agent_server_store::{AgentServerCommand, AllAgentServersSettings},
 };
-use settings::SettingsStore;
+use settings::{AgentConfigOptionValue, SettingsStore};
 use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 use task::SpawnInTerminal;
 use util::ResultExt as _;
@@ -825,6 +826,45 @@ impl AcpV2Connection {
         Ok(())
     }
 
+    /// `session/options` is still a draft, so Zed only uses it with the ACP beta flag.
+    fn supports_initial_config_options(&self, cx: &App) -> bool {
+        cx.has_flag::<AcpBetaFeatureFlag>()
+            && self
+                .initialize_response
+                .capabilities
+                .session
+                .as_ref()
+                .is_some_and(|session| session.options.is_some())
+    }
+
+    fn initial_config_options(&self, cx: &App) -> Vec<acp::InitialSessionConfigOption> {
+        let Some(settings_store) = cx.try_global::<SettingsStore>() else {
+            return Vec::new();
+        };
+        let Some(defaults) = settings_store
+            .get::<AllAgentServersSettings>(None)
+            .get(self.id.as_ref())
+        else {
+            return Vec::new();
+        };
+        let mut entries = defaults.default_config_options().iter().collect::<Vec<_>>();
+        entries.sort_by_key(|(config_id, _)| *config_id);
+        entries
+            .into_iter()
+            .map(|(config_id, value)| {
+                let value = match value {
+                    AgentConfigOptionValue::ValueId(value_id) => {
+                        acp::SessionConfigOptionValue::id(value_id.clone())
+                    }
+                    AgentConfigOptionValue::Boolean(value) => {
+                        acp::SessionConfigOptionValue::boolean(*value)
+                    }
+                };
+                acp::InitialSessionConfigOption::new(config_id.clone(), value)
+            })
+            .collect()
+    }
+
     async fn apply_new_session_defaults(
         &self,
         thread: &Entity<AcpThread>,
@@ -1293,9 +1333,14 @@ impl AgentConnection for AcpV2Connection {
             Ok(context) => context,
             Err(error) => return Task::ready(Err(error)),
         };
-        let request = acp::NewSessionRequest::new(context.cwd.clone())
+        let mut request = acp::NewSessionRequest::new(context.cwd.clone())
             .additional_directories(context.additional_directories.clone())
             .mcp_servers(context.mcp_servers.clone());
+        if self.supports_initial_config_options(cx) {
+            // `apply_new_session_defaults` still runs after creation, so defaults the agent
+            // ignored here (for example, ones that depend on another option) get another chance.
+            request = request.config_options(self.initial_config_options(cx));
+        }
         let request = self.connection.prepare_request(request);
         let request_id = request.id().clone();
         let (response, applied) = Self::ordered_prepared_response(
@@ -2985,6 +3030,81 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_new_session_sends_defaults_as_initial_config_options(cx: &mut TestAppContext) {
+        use settings::AgentConfigOptionValue::{Boolean, ValueId};
+
+        let harness = SessionHarness::new(
+            acp::AgentCapabilities::new().session(
+                acp::SessionCapabilities::new().options(acp::SessionOptionsCapabilities::new()),
+            ),
+            vec![],
+            vec![],
+            cx,
+        )
+        .await;
+        // Toggling the flag rewrites user settings, which drops the overridden defaults.
+        let set_beta_with_defaults = |enabled, cx: &mut TestAppContext| {
+            cx.update(|cx| crate::acp::set_acp_beta(enabled, cx));
+            set_startup_defaults(
+                HashMap::from_iter([
+                    ("model".into(), ValueId("large".into())),
+                    ("enabled".into(), Boolean(true)),
+                ]),
+                cx,
+            );
+        };
+        set_beta_with_defaults(false, cx);
+        let mut creation = harness.create(cx);
+        let (request, _) = harness.new_request(&mut creation, cx).await;
+        assert!(
+            request.config_options.is_empty(),
+            "initial config options require the ACP beta flag"
+        );
+        harness
+            .new_responses
+            .try_send(Ok(acp::NewSessionResponse::new("without-beta")))
+            .expect("new response");
+        bounded(creation, cx).await.expect("initialized");
+
+        set_beta_with_defaults(true, cx);
+        let mut creation = harness.create(cx);
+        let (request, _) = harness.new_request(&mut creation, cx).await;
+        assert_eq!(
+            request.config_options,
+            vec![
+                acp::InitialSessionConfigOption::new(
+                    "enabled",
+                    acp::SessionConfigOptionValue::boolean(true),
+                ),
+                acp::InitialSessionConfigOption::new(
+                    "model",
+                    acp::SessionConfigOptionValue::id("large"),
+                ),
+            ]
+        );
+        harness
+            .new_responses
+            .try_send(Ok(initial_response().config_options(vec![
+                acp::SessionConfigOption::select(
+                    "model",
+                    "Model",
+                    "large",
+                    vec![
+                        acp::SessionConfigSelectOption::new("small", "Small"),
+                        acp::SessionConfigSelectOption::new("large", "Large"),
+                    ],
+                ),
+                acp::SessionConfigOption::boolean("enabled", "Enabled", true),
+            ])))
+            .expect("new response");
+        bounded(creation, cx).await.expect("initialized");
+        assert!(
+            harness.config_requests.is_empty(),
+            "defaults the agent applied are not sent again"
+        );
+    }
+
+    #[gpui::test]
     async fn v2_new_session_applies_defaults_before_delivery(cx: &mut TestAppContext) {
         use settings::AgentConfigOptionValue::{Boolean, ValueId};
 
@@ -3020,7 +3140,11 @@ mod tests {
             ),
         ];
         let mut creation = harness.create(cx);
-        harness.new_request(&mut creation, cx).await;
+        let (request, _) = harness.new_request(&mut creation, cx).await;
+        assert!(
+            request.config_options.is_empty(),
+            "initial config options require the options capability"
+        );
         harness
             .new_responses
             .try_send(Ok(initial_response().config_options(offered.clone())))

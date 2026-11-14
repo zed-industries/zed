@@ -5,7 +5,7 @@ use acp_thread::{
     PermissionPattern, PermissionRequest, PermissionRequestId, ProtocolErrorInfo, RetryStatus,
     SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
 };
-use acp_thread::{AgentConnection, Plan};
+use acp_thread::{AgentConnection, Plan, PlanContent};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NoModelConfiguredError, ThreadStore};
 use agent_client_protocol::v2::schema as acp_v2;
@@ -874,17 +874,17 @@ impl ConversationView {
             .pending_tool_call(&session_id, cx)
     }
 
-    pub fn root_thread_has_pending_tool_call(&self, cx: &App) -> bool {
+    pub fn root_thread_is_waiting_for_input(&self, cx: &App) -> bool {
         let Some(root_thread) = self.root_thread_view() else {
             return false;
         };
         let root_session_id = root_thread.read(cx).thread.read(cx).session_id().clone();
         self.as_connected().is_some_and(|connected| {
-            connected
-                .conversation
-                .read(cx)
+            let conversation = connected.conversation.read(cx);
+            conversation
                 .pending_tool_call(&root_session_id, cx)
                 .is_some()
+                || !conversation.elicitation_requests.is_empty()
         })
     }
 
@@ -9588,7 +9588,7 @@ pub(crate) mod tests {
                 .read(cx)
                 .plan()
                 .expect("active plan")
-                .entries
+                .entries()
                 .first()
                 .expect("active plan entry")
                 .content
@@ -9624,7 +9624,7 @@ pub(crate) mod tests {
                 thread
                     .plan()
                     .expect("completed plan")
-                    .entries
+                    .entries()
                     .first()
                     .expect("completed plan entry")
                     .content,
@@ -9650,7 +9650,7 @@ pub(crate) mod tests {
             let entry = thread
                 .plan()
                 .expect("reopened plan")
-                .entries
+                .entries()
                 .first()
                 .expect("reopened plan entry");
             assert_eq!(entry.content, plan_content);
@@ -9699,7 +9699,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert_thread_list_item_count_matches_entries(view, cx);
-            assert!(view.thread.read(cx).plan().is_none_or(Plan::is_empty));
+            assert!(
+                view.thread
+                    .read(cx)
+                    .plan()
+                    .is_none_or(|plan| plan.is_empty(cx))
+            );
         });
         connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
         cx.run_until_parked();
@@ -9730,7 +9735,7 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
         let markdown = thread.read_with(cx, |thread, _| {
-            thread.plan().expect("visible plan").entries[0]
+            thread.plan().expect("visible plan").entries()[0]
                 .content
                 .clone()
         });
@@ -9805,7 +9810,7 @@ pub(crate) mod tests {
             assert!(cx.debug_bounds(row).is_some(), "{row}");
             thread.read_with(cx, |thread, cx| {
                 assert_eq!(
-                    thread.plan().expect("visible plan").entries[0].content,
+                    thread.plan().expect("visible plan").entries()[0].content,
                     markdown
                 );
                 assert_eq!(markdown.read(cx).source(), "Unchanged task");
@@ -9835,7 +9840,14 @@ pub(crate) mod tests {
         assert!(cx.debug_bounds("plan-status-All Done").is_none());
         thread.update(cx, |thread, cx| {
             thread.upsert_plan_items(acp_v2::PlanItems::new("status-plan", vec![]), None, cx);
-            assert!(thread.plan().expect("empty selected plan").is_empty());
+            assert!(thread.plan().is_none());
+            assert!(
+                thread
+                    .plan_by_id(&"status-plan".into())
+                    .expect("emptied plan")
+                    .entries()
+                    .is_empty()
+            );
             assert!(thread.entries().is_empty());
         });
         cx.run_until_parked();
@@ -20552,6 +20564,64 @@ pub(crate) mod tests {
             scroll_top, 3,
             "the link opens the subagent at its view of the message"
         );
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_session_reference_opens_its_session(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let root =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
+        let child = conversation_view.update(cx, |view, cx| {
+            create_test_acp_subagent(
+                root_session_id.clone(),
+                "child",
+                Rc::new(connection.clone()),
+                view.project.clone(),
+                cx,
+            )
+        });
+        child.update(cx, |child, cx| {
+            child
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").title("Investigator"),
+                    cx,
+                )
+                .expect("ACP subagent")
+        });
+        root.update(cx, |root, cx| root.register_subagent(child.clone(), cx));
+        root.update(cx, |root, cx| {
+            root.upsert_wire_tool_call(
+                acp_v2::ToolCallUpdate::new("delegate")
+                    .title("Delegate")
+                    .status(acp_v2::ToolCallStatus::Completed)
+                    .content(vec![
+                        acp_v2::SessionReference::new("child").into(),
+                        acp_v2::SessionReference::new("unknown").into(),
+                    ]),
+                cx,
+            )
+        })
+        .expect("tool call");
+        conversation_view.update(cx, |view, cx| view.expand_tool_call("delegate".into(), cx));
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("tool-call-session-reference-0-1").is_none(),
+            "an unknown session is not a link"
+        );
+        let link = cx
+            .debug_bounds("tool-call-session-reference-0-0")
+            .expect("the reference links to its session");
+        cx.simulate_click(link.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        let active_session_id = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).session_id().clone());
+        assert_eq!(active_session_id, acp_v2::SessionId::new("child"));
     }
 
     #[gpui::test]

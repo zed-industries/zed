@@ -27,10 +27,7 @@ actions!(
 
 fn should_replay(action: &dyn Action) -> bool {
     // skip so that we don't leave the character palette open
-    if editor::actions::ShowCharacterPalette.partial_eq(action) {
-        return false;
-    }
-    true
+    !editor::actions::ShowCharacterPalette.partial_eq(action)
 }
 
 fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
