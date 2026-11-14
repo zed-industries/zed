@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::LazyLock};
+use std::sync::LazyLock;
 
 use anyhow::Result;
 use collections::FxHashMap;
@@ -179,12 +179,13 @@ fn is_image_format(format: u32) -> bool {
 
 fn write_string(item: &ClipboardString) -> Result<()> {
     // CF_UNICODETEXT is null-terminated, so replace embedded NUL characters with spaces.
-    let text = if item.text.contains('\0') {
-        Cow::Owned(item.text.replace('\0', " "))
-    } else {
-        Cow::Borrowed(item.text.as_str())
-    };
-    let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect_vec();
+    let text = item.text.replace('\0', " ").replace("\r\n", "\n");
+    // Windows applications expect CRLF line endings in CF_UNICODETEXT.
+    let wide: Vec<u16> = text
+        .replace('\n', "\r\n")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect_vec();
     set_clipboard_bytes(&wide, CF_UNICODETEXT.0 as u32)?;
 
     if let Some(metadata) = item.metadata.as_ref() {
@@ -233,7 +234,8 @@ fn convert_to_png(bytes: &[u8], format: ImageFormat) -> Option<Vec<u8>> {
 }
 
 fn read_string() -> Option<ClipboardEntry> {
-    let text = get_clipboard_string(CF_UNICODETEXT.0 as u32)?;
+    // Normalize to LF so that apps the same line endings on every platform.
+    let text = get_clipboard_string(CF_UNICODETEXT.0 as u32)?.replace("\r\n", "\n");
     let metadata = read_clipboard_metadata(&text);
     Some(ClipboardEntry::String(ClipboardString { text, metadata }))
 }
@@ -391,4 +393,10 @@ impl Drop for LockedGlobal {
     fn drop(&mut self) {
         unsafe { GlobalUnlock(self.global).ok() };
     }
+}
+
+#[cfg(test)]
+pub(crate) fn read_raw_clipboard_text() -> Option<String> {
+    let _clip = ClipboardGuard::open()?;
+    get_clipboard_string(CF_UNICODETEXT.0 as u32)
 }
