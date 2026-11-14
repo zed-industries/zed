@@ -1386,10 +1386,9 @@ impl Editor {
                     .find(|(id, _, _, _, _)| *id == selection.id)
                 {
                     if *was_empty {
-                        selection.start.column = selection
-                            .start
-                            .column
-                            .saturating_sub((*prefix_len + *suffix_len) as u32);
+                        let column = selection.end.column.saturating_sub(*suffix_len as u32);
+                        selection.start.column = column;
+                        selection.end.column = column;
                     } else {
                         selection.start.column =
                             selection.start.column.saturating_sub(*prefix_len as u32);
