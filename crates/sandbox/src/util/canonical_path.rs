@@ -19,11 +19,9 @@ use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd};
 /// that was captured, closing the classic time-of-check-to-time-of-use hole
 /// where a verified path is swapped for a symlink before it is actually used.
 /// On **Windows** it is a plain path string, but constrained by construction to
-/// one of the two shapes a sandboxed WSL command can name: a Windows drive path
-/// (`C:\...`, on NTFS) or a Linux-absolute path (`/...`, inside the WSL distro).
-/// `\\wsl.localhost\...`, other UNC paths, and relative paths are rejected — a
-/// sandboxed project is always local (WSL projects are remote and unsandboxed),
-/// so a grant is either the project's own NTFS files or a WSL-native location.
+/// a Windows drive path (`C:\...`). UNC paths (including `\\wsl.localhost\...`)
+/// and relative paths are rejected: a sandboxed project is always local, and
+/// sandbox grants only cover local drives.
 /// On other platforms it is a plain canonical path (see the constructors for the
 /// per-platform rationale).
 ///
@@ -91,7 +89,13 @@ impl CanonicalPathBuf {
                 fd: std::sync::Arc::new(fd),
             })
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(target_os = "windows")]
+        {
+            let path = dunce::canonicalize(path)?;
+            require_windows_grant_shape(&path)?;
+            Ok(Self { path })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         {
             Ok(Self {
                 path: path.to_path_buf(),
@@ -110,10 +114,12 @@ impl CanonicalPathBuf {
     /// symlink leaf (`S_IFLNK` check, [`io::ErrorKind::PermissionDenied`]), and
     /// requires the fd's real path to still equal `path` (also
     /// `PermissionDenied` otherwise) — so any component swapped for a symlink
-    /// after approval fails closed. On **macOS/other** the claimed path is
-    /// trusted verbatim: Seatbelt re-resolves the access path at syscall time
-    /// (so a later swap is denied, not redirected), and WSL/other resolve
-    /// elsewhere.
+    /// after approval fails closed. On **Windows** the claimed path must still
+    /// canonicalize to itself (also `PermissionDenied` otherwise), so a component
+    /// that became a junction or symlink after approval fails closed. On
+    /// **macOS/other** the claimed path is trusted verbatim: Seatbelt re-resolves
+    /// the access path at syscall time, so a later swap is denied, not
+    /// redirected.
     pub(crate) fn from_canonical(path: PathBuf) -> io::Result<Self> {
         // Same absolute-path requirement as `resolve`: a persisted or
         // hand-authored relative grant must never be resolved against Zed's own
@@ -176,7 +182,22 @@ impl CanonicalPathBuf {
                 fd: std::sync::Arc::new(fd),
             })
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(target_os = "windows")]
+        {
+            let current = dunce::canonicalize(&path)?;
+            if current != path {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "sandbox write grant {} was redirected to {}",
+                        path.display(),
+                        current.display()
+                    ),
+                ));
+            }
+            Ok(Self { path })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         {
             Ok(Self { path })
         }
@@ -188,7 +209,6 @@ impl CanonicalPathBuf {
     }
 
     /// Consume this value, returning the canonical path.
-    #[cfg_attr(target_os = "windows", expect(dead_code))]
     pub(crate) fn into_path(self) -> PathBuf {
         self.path
     }
@@ -210,9 +230,8 @@ impl CanonicalPathBuf {
 }
 
 /// Reject a non-absolute grant path. Gated to the platforms whose constructors
-/// resolve paths against the process working directory; on WSL/other the path is
-/// a namespace-specific form that `Path::is_absolute` would misjudge, and its
-/// real resolution happens WSL-side (see `crate::windows_wsl`).
+/// resolve paths against the process working directory. Windows checks the
+/// path's shape instead (see `require_windows_grant_shape`).
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn require_absolute(path: &Path) -> io::Result<()> {
     if path.is_absolute() {
@@ -225,30 +244,23 @@ fn require_absolute(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Windows: enforce that a stored grant path is one of the two shapes a
-/// sandboxed WSL command can name — a Windows drive path (`C:\...` or `\\?\C:\...`,
-/// on NTFS) or a Linux-absolute path (`/...`, inside the WSL distro). Everything
-/// else (notably `\\wsl.localhost\...` and other UNC paths, and relative paths)
-/// is rejected, so an invalid grant shape can't be represented as a
-/// [`CanonicalPathBuf`]. `Path::is_absolute` isn't used: it would reject a
-/// perfectly valid Linux-absolute grant like `/home/me` on Windows.
+/// Windows: enforce that a stored grant path is a Windows drive path (`C:\...`
+/// or `\\?\C:\...`). Everything else (UNC paths such as `\\wsl.localhost\...`,
+/// and relative paths) is rejected, so an invalid grant shape can't be
+/// represented as a [`CanonicalPathBuf`].
 #[cfg(target_os = "windows")]
 fn require_windows_grant_shape(path: &Path) -> io::Result<()> {
     let text = path.to_string_lossy();
-    // Linux-absolute (WSL): exactly one leading '/'.
-    let is_wsl = text.starts_with('/') && !text.starts_with("//");
-    // Windows drive (NTFS): `X:...`, optionally behind the `\\?\` verbatim prefix.
     let drive = text.strip_prefix(r"\\?\").unwrap_or(&text);
     let drive = drive.as_bytes();
     let is_windows_drive = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
-    if is_wsl || is_windows_drive {
+    if is_windows_drive {
         Ok(())
     } else {
         Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "sandbox grant path {} is neither a Windows drive path (`C:\\...`) \
-                 nor a WSL absolute path (`/...`)",
+                "sandbox grant path {} is not a Windows drive path (`C:\\...`)",
                 path.display()
             ),
         ))
@@ -325,25 +337,23 @@ mod tests {
 
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {
-    use super::CanonicalPathBuf;
-    use std::path::PathBuf;
+    use super::{CanonicalPathBuf, require_windows_grant_shape};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn constructors_enforce_windows_grant_shape() {
-        // Accepted: Windows drive paths (NTFS) and WSL absolute paths.
-        for ok in [
-            r"C:\Users\me",
-            r"\\?\C:\Users\me",
-            "/home/me/proj",
-            "/mnt/c/Users/me",
-        ] {
+        for ok in [r"C:\Users\me", r"\\?\C:\Users\me"] {
             assert!(
-                CanonicalPathBuf::from_canonical(PathBuf::from(ok)).is_ok(),
+                require_windows_grant_shape(Path::new(ok)).is_ok(),
                 "{ok} should be accepted"
             );
         }
-        // Rejected: `\\wsl.localhost\...`, other UNC, and relative paths.
+        // `from_canonical` also requires an existing path that still resolves to itself.
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dunce::canonicalize(dir.path()).unwrap();
+        assert!(CanonicalPathBuf::from_canonical(canonical).is_ok());
         for bad in [
+            "/home/me/proj",
             r"\\wsl.localhost\Ubuntu\home\me",
             r"\\wsl$\Ubuntu\home\me",
             r"\\server\share\dir",

@@ -56,7 +56,7 @@ use text::Bias;
 use ui::App;
 use util::markdown::{MarkdownCodeBlock, MarkdownEscaped};
 use util::path_list::PathList;
-use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
+use util::{ResultExt, paths::PathStyle};
 use uuid::Uuid;
 
 pub(crate) enum MetadataUpdate {
@@ -222,11 +222,6 @@ pub struct SandboxAuthorizationDetails {
     pub unsandboxed: bool,
     #[serde(default)]
     pub write_paths: Vec<settings::GrantedWritePath>,
-    /// Windows/WSL only: the command will write to a path on a Windows drive
-    /// (DrvFs), whose sandbox-integrity guarantees are weaker. Drives the
-    /// weaker-guarantee warning banner in the approval prompt.
-    #[serde(default)]
-    pub warn_windows_fs: bool,
     /// The agent-provided justification for requesting these permissions,
     /// shown to the user (attributed to the agent) in the approval prompt.
     #[serde(default)]
@@ -269,7 +264,7 @@ pub struct SandboxFallbackAuthorizationDetails {
     #[serde(default)]
     pub reason: String,
     /// Slug of the sandboxing docs section that best explains how to fix this
-    /// failure (see [`crate::LinuxWslSandboxError::docs_section`]), rendered as a
+    /// failure (see [`crate::SandboxCreationError::docs_section`]), rendered as a
     /// "Learn more" link. `None` when the cause is unknown.
     #[serde(default)]
     pub docs_section: Option<String>,
@@ -8307,6 +8302,7 @@ impl AcpThread {
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<SandboxWrap>,
+        shell: String,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
@@ -8341,88 +8337,37 @@ impl AcpThread {
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let env = env.await;
-                let shell = project
-                    .update(cx, |project, cx| {
-                        project
-                            .remote_client()
-                            .and_then(|r| r.read(cx).default_system_shell())
-                    })
-                    .unwrap_or_else(|| get_default_system_shell_preferring_bash());
 
+                let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                if headless
+                    || (cfg!(any(target_os = "linux", target_os = "windows"))
+                        && sandbox_wrap.is_some())
+                {
+                    builder = builder.non_interactive();
+                }
+                let (task_command, task_args) = builder
+                    .redirect_stdin_to_dev_null()
+                    .build(Some(command.clone()), &args);
                 // The sandbox owns the network proxy (for restricted-network
                 // policies) and injects the child's proxy env vars, returning
                 // the env to spawn with. On Windows, restricted host access is
                 // rejected inside the sandbox before command preparation.
-                #[cfg(target_os = "windows")]
-                let (task_command, task_args, task_env, sandbox, spawn_cwd) =
-                    if sandbox_wrap.is_some() {
-                        let (task_command, task_args) = task::ShellBuilder::new(
-                            &Shell::Program("/bin/sh".to_string()),
-                            false,
-                        )
-                        .non_interactive()
-                        .redirect_stdin_to_dev_null()
-                        .build(Some(command.clone()), &args);
-                        let wrap = cx.background_spawn(prepare_sandbox_wrap(
-                            task_command,
-                            task_args,
-                            cwd.clone(),
-                            sandbox_wrap,
-                            env,
-                        ));
-                        let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
-                        let (task_command, task_args, task_env, sandbox) = futures::select_biased! {
-                            result = wrap.fuse() => result?,
-                            _ = timeout.fuse() => return Err(anyhow::Error::new(
-                                sandbox::SandboxError::WslUnavailable(format!(
-                                    "WSL did not respond within {} seconds while preparing the sandboxed command",
-                                    WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
-                                )),
-                            )),
-                        };
-                        (task_command, task_args, task_env, sandbox, None)
-                    } else {
-                        // No sandbox wrap means we're running unsandboxed, and
-                        // on Windows that deliberately changes the shell: the
-                        // sandboxed path runs under WSL's Linux bash, but this
-                        // fallback uses the host's `shell` against the native cwd.
-                        let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
-                        if headless {
-                            builder = builder.non_interactive();
-                        }
-                        let (task_command, task_args) = builder
-                            .redirect_stdin_to_dev_null()
-                            .build(Some(command.clone()), &args);
-                        (task_command, task_args, env, None, cwd.clone())
-                    };
-
-                #[cfg(not(target_os = "windows"))]
-                let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
-                    let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
-                    if headless || (cfg!(target_os = "linux") && sandbox_wrap.is_some()) {
-                        builder = builder.non_interactive();
-                    }
-                    let (task_command, task_args) = builder
-                        .redirect_stdin_to_dev_null()
-                        .build(Some(command.clone()), &args);
-                    let (task_command, task_args, task_env, sandbox) = cx
-                        .background_spawn(prepare_sandbox_wrap(
-                            task_command,
-                            task_args,
-                            cwd.clone(),
-                            sandbox_wrap,
-                            env,
-                        ))
-                        .await?;
-                    (task_command, task_args, task_env, sandbox, cwd.clone())
-                };
+                let (task_command, task_args, task_env, sandbox) = cx
+                    .background_spawn(prepare_sandbox_wrap(
+                        task_command,
+                        task_args,
+                        cwd.clone(),
+                        sandbox_wrap,
+                        env,
+                    ))
+                    .await?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
                                 command: Some(task_command),
                                 args: task_args,
-                                cwd: spawn_cwd,
+                                cwd: cwd.clone(),
                                 env: task_env,
                                 ..Default::default()
                             },
@@ -16911,6 +16856,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    util::get_default_system_shell_preferring_bash(),
                     cx,
                 )
             })
@@ -16940,6 +16886,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    util::get_default_system_shell_preferring_bash(),
                     cx,
                 )
             })
