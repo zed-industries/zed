@@ -77,6 +77,7 @@ postage.workspace = true
 prettier.workspace = true
 rand.workspace = true
 regex.workspace = true
+regex-automata.workspace = true
 release_channel.workspace = true
 remote.workspace = true
 rpc.workspace = true

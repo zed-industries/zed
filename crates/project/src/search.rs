@@ -472,11 +472,15 @@ impl SearchQuery {
                     // The pattern is not guaranteed to match the whole line, for instance when
                     // searching within a selection that starts or ends mid-line, so fall back to
                     // matching the hit on its own.
-                    return Some(regex.replace(line.get(hit)?, replacement));
+                    return Some(regex.replace(line.get(hit)?, |captures: &Captures<str>| {
+                        expand_replacement(regex, captures, &replacement)
+                    }));
                 };
-                let mut replaced = String::new();
-                captures.expand(&replacement, &mut replaced);
-                Some(Cow::Owned(replaced))
+                Some(Cow::Owned(expand_replacement(
+                    regex,
+                    &captures,
+                    &replacement,
+                )))
             }
 
             SearchQuery::Regex {
@@ -693,6 +697,31 @@ impl SearchQuery {
     }
 }
 
+/// Expands capture group references in `replacement` the way the `regex` crate does: an
+/// unbraced reference such as `$1` or `$name` ends at the first character outside of
+/// `[0-9A-Za-z_]`.
+///
+/// `fancy_regex` treats every Unicode alphanumeric character as part of the reference instead,
+/// so `$1ème` would refer to a nonexistent group named `1ème` and expand to nothing.
+fn expand_replacement(regex: &Regex, captures: &Captures<str>, replacement: &str) -> String {
+    let mut expanded = String::new();
+    regex_automata::util::interpolate::string(
+        replacement,
+        |index, output| {
+            if let Some(group) = captures.get(index) {
+                output.push_str(group.as_str());
+            }
+        },
+        |name| {
+            regex
+                .capture_names()
+                .position(|group_name| group_name == Some(name))
+        },
+        &mut expanded,
+    );
+    expanded
+}
+
 async fn detect_single_line(
     search: &AhoCorasick,
     reader: &mut (dyn Read + Send),
@@ -833,4 +862,60 @@ fn count_newlines(bytes: &[u8]) -> usize {
 
 fn invalid_data() -> anyhow::Error {
     anyhow::Error::from(io::Error::from(io::ErrorKind::InvalidData))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchQuery;
+    use util::paths::PathMatcher;
+
+    fn regex_query(pattern: &str, replacement: &str) -> SearchQuery {
+        SearchQuery::regex(
+            pattern,
+            false,
+            true,
+            false,
+            false,
+            PathMatcher::default(),
+            PathMatcher::default(),
+            false,
+            None,
+        )
+        .unwrap()
+        .with_replacement(replacement.to_string())
+    }
+
+    fn replace_first_hit(pattern: &str, replacement: &str, line: &str) -> Option<String> {
+        let query = regex_query(pattern, replacement);
+        let hit = query.search_str(line).into_iter().next()?;
+        query
+            .replacement_for(line, hit)
+            .map(|replacement| replacement.into_owned())
+    }
+
+    #[test]
+    fn test_replacement_for_capture_reference_followed_by_non_ascii_text() {
+        assert_eq!(
+            replace_first_hit(r"(\d+)e", "$1ème", "2e étage").as_deref(),
+            Some("2ème")
+        );
+        assert_eq!(
+            replace_first_hit(r"(\d+)e", "${1}ème", "2e étage").as_deref(),
+            Some("2ème")
+        );
+        assert_eq!(
+            replace_first_hit(r"(?<number>\d+)e", "$numberème", "2e étage").as_deref(),
+            Some("2ème")
+        );
+    }
+
+    #[test]
+    fn test_replacement_for_capture_reference_when_hit_does_not_match_in_line() {
+        // The lookbehind keeps the pattern from matching at the hit within the line, which
+        // exercises the fallback that matches the hit on its own.
+        let query = regex_query(r"(?<!x)(\d+)e", "$1ème");
+        let line = "x2e";
+        let hit = 1..line.len();
+        assert_eq!(query.replacement_for(line, hit).as_deref(), Some("2ème"));
+    }
 }
