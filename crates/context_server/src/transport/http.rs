@@ -103,7 +103,11 @@ impl HttpTransport {
     /// Build a POST request for the given message body, attaching all standard
     /// headers (content-type, accept, session ID, static headers, and bearer
     /// token if available).
-    fn build_request(&self, message: &[u8]) -> Result<http_client::Request<AsyncBody>> {
+    fn build_request(
+        &self,
+        message: &[u8],
+        access_token: Option<&str>,
+    ) -> Result<http_client::Request<AsyncBody>> {
         let mut request_builder = Request::builder()
             .method(Method::POST)
             .uri(&self.endpoint)
@@ -118,7 +122,7 @@ impl HttpTransport {
         }
 
         // Attach bearer token when a token provider is present.
-        if let Some(token) = self.token_provider.as_ref().and_then(|p| p.access_token()) {
+        if let Some(token) = access_token {
             request_builder = request_builder.header("Authorization", format!("Bearer {}", token));
         }
 
@@ -161,11 +165,15 @@ impl HttpTransport {
         // 401 round-trip before they can recover.
         if let Some(ref provider) = self.token_provider {
             if provider.access_token().is_none() {
-                provider.try_refresh().await.unwrap_or(false);
+                provider.try_refresh(None).await.unwrap_or(false);
             }
         }
 
-        let request = self.build_request(message.as_bytes())?;
+        let access_token = self
+            .token_provider
+            .as_ref()
+            .and_then(|provider| provider.access_token());
+        let request = self.build_request(message.as_bytes(), access_token.as_deref())?;
         let mut response = self.http_client.send(request).await?;
 
         // On 401, try refreshing the token and retry once.
@@ -185,9 +193,14 @@ impl HttpTransport {
                 });
 
             if let Some(ref provider) = self.token_provider {
-                if provider.try_refresh().await.unwrap_or(false) {
+                if provider
+                    .try_refresh(access_token.as_deref())
+                    .await
+                    .unwrap_or(false)
+                {
                     // Retry with the refreshed token.
-                    let retry_request = self.build_request(message.as_bytes())?;
+                    let retry_request =
+                        self.build_request(message.as_bytes(), provider.access_token().as_deref())?;
                     response = self.http_client.send(retry_request).await?;
 
                     // If still 401 after refresh, give up.
@@ -462,7 +475,7 @@ mod tests {
             self.token.lock().clone()
         }
 
-        async fn try_refresh(&self) -> Result<bool> {
+        async fn try_refresh(&self, _rejected_access_token: Option<&str>) -> Result<bool> {
             self.refresh_count.fetch_add(1, Ordering::SeqCst);
 
             let refresh_succeeds = self.refresh_succeeds.load(Ordering::SeqCst);
