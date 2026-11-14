@@ -38,6 +38,12 @@ harness = false
 required-features = ["bench-support"]
 
 [[bench]]
+name = "inline_objects"
+path = "../gpui/benches/inline_objects.rs"
+harness = false
+required-features = ["bench-support"]
+
+[[bench]]
 name = "inspector_render"
 harness = false
 required-features = ["bench-support"]

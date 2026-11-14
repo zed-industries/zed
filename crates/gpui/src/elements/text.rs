@@ -1,9 +1,10 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
-    HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
-    WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+    HighlightStyle, Hitbox, HitboxBehavior, InlineObject, InlineObjectPlacement,
+    InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, SharedString, Size, TextAlign, TextOverflow, TextRun, TextStyle, TooltipId,
+    TruncateFrom, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
+    register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -263,7 +264,7 @@ impl Element for &'static str {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let state = TextLayout::default();
-        let layout_id = state.layout(SharedString::new_static(self), None, window, cx);
+        let layout_id = state.layout(SharedString::new_static(self), None, None, window, cx);
         (layout_id, state)
     }
 
@@ -329,7 +330,7 @@ impl Element for SharedString {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let state = TextLayout::default();
-        let layout_id = state.layout(self.clone(), None, window, cx);
+        let layout_id = state.layout(self.clone(), None, None, window, cx);
         (layout_id, state)
     }
 
@@ -369,6 +370,9 @@ pub struct StyledText {
     runs: Option<Vec<TextRun>>,
     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
     delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
+    inline_objects: Option<Vec<InlineObject>>,
+    paint_inline_object:
+        Option<Box<dyn FnMut(usize, InlineObjectPlacement, &mut Window, &mut App)>>,
     layout: TextLayout,
 }
 
@@ -380,6 +384,8 @@ impl StyledText {
             runs: None,
             delayed_highlights: None,
             delayed_font_family_overrides: None,
+            inline_objects: None,
+            paint_inline_object: None,
             layout: TextLayout::default(),
         }
     }
@@ -513,6 +519,42 @@ impl StyledText {
         self.runs = Some(runs);
         self
     }
+
+    /// Embed replaced [`InlineObject`] spans into this styled text.
+    ///
+    /// Inline objects must be sorted by `range.start`, non-overlapping, fall on UTF-8 character
+    /// boundaries, and must not span across newline characters.
+    pub fn with_inline_objects(
+        mut self,
+        inline_objects: impl IntoIterator<Item = InlineObject>,
+    ) -> Self {
+        let mut previous_end = 0;
+        let collected: Vec<InlineObject> = inline_objects
+            .into_iter()
+            .inspect(|object| {
+                debug_assert!(object.range.start >= previous_end);
+                debug_assert!(object.range.start < object.range.end);
+                debug_assert!(object.range.end <= self.text.len());
+                debug_assert!(self.text.is_char_boundary(object.range.start));
+                debug_assert!(self.text.is_char_boundary(object.range.end));
+                debug_assert!(!self.text[object.range.clone()].contains('\n'));
+                previous_end = object.range.end;
+            })
+            .collect();
+        if !collected.is_empty() {
+            self.inline_objects = Some(collected);
+        }
+        self
+    }
+
+    /// Register a callback invoked during [`Element::paint`] for each visible [`InlineObject`].
+    pub fn on_paint_inline_object(
+        mut self,
+        painter: impl FnMut(usize, InlineObjectPlacement, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.paint_inline_object = Some(Box::new(painter));
+        self
+    }
 }
 
 impl Element for StyledText {
@@ -547,7 +589,10 @@ impl Element for StyledText {
             Self::apply_font_family_overrides(runs, overrides);
         }
 
-        let layout_id = self.layout.layout(self.text.clone(), runs, window, cx);
+        let inline_objects = self.inline_objects.take();
+        let layout_id = self
+            .layout
+            .layout(self.text.clone(), runs, inline_objects, window, cx);
         (layout_id, ())
     }
 
@@ -573,7 +618,18 @@ impl Element for StyledText {
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.layout.paint(&self.text, window, cx)
+        self.layout.paint(&self.text, window, cx);
+        if let Some(mut paint_inline_object) = self.paint_inline_object.take() {
+            let content_mask = window.content_mask().bounds;
+            let count = self.layout.inline_object_count();
+            for index in 0..count {
+                if let Some(placement) = self.layout.inline_object_placement(index)
+                    && placement.bounds.intersects(&content_mask)
+                {
+                    paint_inline_object(index, placement, window, cx);
+                }
+            }
+        }
     }
 }
 
@@ -592,10 +648,82 @@ struct TextLayoutInner {
     len: usize,
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
+    text_align: TextAlign,
     wrap_width: Option<Pixels>,
     truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
+    inline_object_slots: SmallVec<[Option<(usize, usize)>; 2]>,
+}
+
+fn adjust_inline_objects_after_truncation(
+    original_text: &str,
+    truncated_text: &str,
+    truncation_affix: &str,
+    truncate_from: TruncateFrom,
+    inline_objects: &[InlineObject],
+) -> (Vec<InlineObject>, Vec<usize>) {
+    let kept_bytes = truncated_text.len().saturating_sub(truncation_affix.len());
+    let mut surviving_objects = Vec::with_capacity(inline_objects.len());
+    let mut surviving_indices = Vec::with_capacity(inline_objects.len());
+
+    match truncate_from {
+        TruncateFrom::End => {
+            for (index, object) in inline_objects.iter().enumerate() {
+                if object.range.end <= kept_bytes {
+                    surviving_objects.push(object.clone());
+                    surviving_indices.push(index);
+                }
+            }
+        }
+        TruncateFrom::Start => {
+            let suffix_start = original_text.len().saturating_sub(kept_bytes);
+            let affix_len = truncation_affix.len();
+            for (index, object) in inline_objects.iter().enumerate() {
+                if object.range.start >= suffix_start {
+                    surviving_objects.push(InlineObject {
+                        range: (object.range.start - suffix_start + affix_len)
+                            ..(object.range.end - suffix_start + affix_len),
+                        width: object.width,
+                        ascent: object.ascent,
+                        descent: object.descent,
+                    });
+                    surviving_indices.push(index);
+                }
+            }
+        }
+        TruncateFrom::Middle => {
+            let mut front_len = original_text
+                .bytes()
+                .zip(truncated_text.bytes())
+                .take_while(|(left, right)| left == right)
+                .count()
+                .min(kept_bytes);
+            while !original_text.is_char_boundary(front_len) {
+                front_len -= 1;
+            }
+            let back_len = kept_bytes.saturating_sub(front_len);
+            let back_start = original_text.len().saturating_sub(back_len);
+            let back_shift = front_len + truncation_affix.len();
+            for (index, object) in inline_objects.iter().enumerate() {
+                if object.range.end <= front_len {
+                    surviving_objects.push(object.clone());
+                    surviving_indices.push(index);
+                } else if object.range.start >= back_start {
+                    surviving_objects.push(InlineObject {
+                        range: (object.range.start - back_start + back_shift)
+                            ..(object.range.end - back_start + back_shift),
+                        width: object.width,
+                        ascent: object.ascent,
+                        descent: object.descent,
+                    });
+                    surviving_indices.push(index);
+                }
+            }
+        }
+    }
+
+    (surviving_objects, surviving_indices)
 }
 
 impl TextLayout {
@@ -603,10 +731,12 @@ impl TextLayout {
         &self,
         text: SharedString,
         runs: Option<Vec<TextRun>>,
+        inline_objects: Option<Vec<InlineObject>>,
         window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
         let text_style = window.text_style();
+        let text_align = text_style.text_align;
         let font_size = text_style.font_size.to_pixels(window.rem_size());
         let line_height = window.pixel_snap(
             text_style
@@ -619,6 +749,7 @@ impl TextLayout {
         } else {
             vec![text_style.to_run(text.len())]
         };
+        let inline_objects = inline_objects.unwrap_or_default();
         window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
@@ -668,59 +799,98 @@ impl TextLayout {
                     return size;
                 }
 
-                let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    // Taking a wrapper from the pool locks it twice and moves its
-                    // character width cache around, so only do it when truncating.
-                    let mut line_wrapper =
-                        cx.text_system().line_wrapper(text_style.font(), font_size);
-                    if let Some(max_lines) = text_style.line_clamp
-                        && let Some(wrap_width) = wrap_width
-                    {
-                        line_wrapper.truncate_wrapped_line(
-                            text.clone(),
-                            wrap_width,
-                            max_lines,
-                            &truncation_affix,
-                            &runs,
-                            truncate_from,
-                        )
-                    } else if let Some(unclipped) = window
-                        .text_system()
-                        .shape_text(text.clone(), font_size, &runs, None, None)
-                        .log_err()
-                        && unclipped
-                            .iter()
-                            .all(|line| line.size(line_height).width <= truncate_width)
-                    {
-                        // The truncation decision below sums per-character advances,
-                        // which overestimates the shaped width (no kerning), truncating
-                        // text that fits exactly in its measured width. Skip truncation
-                        // whenever the honestly-shaped text fits; the shaping result
-                        // comes from the line layout cache when the same text was
-                        // already measured untruncated this frame.
-                        (text.clone(), Cow::Borrowed(&*runs))
+                let (shaped_text, runs, surviving_objects, surviving_indices) =
+                    if let Some(truncate_width) = truncate_width {
+                        // Taking a wrapper from the pool locks it twice and moves its
+                        // character width cache around, so only do it when truncating.
+                        let mut line_wrapper =
+                            cx.text_system().line_wrapper(text_style.font(), font_size);
+                        let (truncated_text, truncated_runs) = if let Some(max_lines) =
+                            text_style.line_clamp
+                            && let Some(wrap_width) = wrap_width
+                        {
+                            line_wrapper.truncate_wrapped_line(
+                                text.clone(),
+                                wrap_width,
+                                max_lines,
+                                &truncation_affix,
+                                &runs,
+                                truncate_from,
+                            )
+                        } else if let Some(unclipped) = window
+                            .text_system()
+                            .shape_text_with_inline_objects(
+                                text.clone(),
+                                font_size,
+                                &runs,
+                                None,
+                                None,
+                                &inline_objects,
+                            )
+                            .log_err()
+                            && unclipped
+                                .iter()
+                                .all(|line| line.size(line_height).width <= truncate_width)
+                        {
+                            // The truncation decision below sums per-character advances,
+                            // which overestimates the shaped width (no kerning), truncating
+                            // text that fits exactly in its measured width. Skip truncation
+                            // whenever the honestly-shaped text fits; the shaping result
+                            // comes from the line layout cache when the same text was
+                            // already measured untruncated this frame.
+                            (text.clone(), Cow::Borrowed(&*runs))
+                        } else {
+                            line_wrapper.truncate_line(
+                                text.clone(),
+                                truncate_width,
+                                &truncation_affix,
+                                &runs,
+                                truncate_from,
+                            )
+                        };
+
+                        if !inline_objects.is_empty() && matches!(truncated_runs, Cow::Owned(_)) {
+                            let (adjusted_objects, adjusted_indices) =
+                                adjust_inline_objects_after_truncation(
+                                    &text,
+                                    &truncated_text,
+                                    &truncation_affix,
+                                    truncate_from,
+                                    &inline_objects,
+                                );
+                            (
+                                truncated_text,
+                                truncated_runs,
+                                Cow::Owned(adjusted_objects),
+                                Some(adjusted_indices),
+                            )
+                        } else {
+                            (
+                                truncated_text,
+                                truncated_runs,
+                                Cow::Borrowed(inline_objects.as_slice()),
+                                None,
+                            )
+                        }
                     } else {
-                        line_wrapper.truncate_line(
+                        (
                             text.clone(),
-                            truncate_width,
-                            &truncation_affix,
-                            &runs,
-                            truncate_from,
+                            Cow::Borrowed(&*runs),
+                            Cow::Borrowed(inline_objects.as_slice()),
+                            None,
                         )
-                    }
-                } else {
-                    (text.clone(), Cow::Borrowed(&*runs))
-                };
-                let len = text.len();
+                    };
+                let len = shaped_text.len();
 
                 let Some(lines) = window
                     .text_system()
-                    .shape_text(
-                        text,
+                    .shape_text_with_inline_objects(
+                        shaped_text,
                         font_size,
                         &runs,
                         wrap_width,            // Wrap if we know the width.
                         text_style.line_clamp, // Limit the number of lines if line_clamp is set.
+                        &surviving_objects,
                     )
                     .log_err()
                 else {
@@ -728,13 +898,33 @@ impl TextLayout {
                         lines: Default::default(),
                         len: 0,
                         line_height,
+                        text_align,
                         wrap_width,
                         truncate_width,
                         size: Some(Size::default()),
                         bounds: None,
+                        inline_object_slots: Default::default(),
                     });
                     return Size::default();
                 };
+
+                let mut inline_object_slots = SmallVec::new();
+                if !inline_objects.is_empty() {
+                    inline_object_slots.resize(inline_objects.len(), None);
+                    let mut surviving_cursor = 0;
+                    for (line_ix, line) in lines.iter().enumerate() {
+                        for object_ix_in_line in 0..line.layout.inline_objects().len() {
+                            let original_ix = surviving_indices
+                                .as_ref()
+                                .and_then(|indices| indices.get(surviving_cursor).copied())
+                                .unwrap_or(surviving_cursor);
+                            if let Some(slot) = inline_object_slots.get_mut(original_ix) {
+                                *slot = Some((line_ix, object_ix_in_line));
+                            }
+                            surviving_cursor += 1;
+                        }
+                    }
+                }
 
                 let mut size: Size<Pixels> = Size::default();
                 for line in &lines {
@@ -747,10 +937,12 @@ impl TextLayout {
                     lines,
                     len,
                     line_height,
+                    text_align,
                     wrap_width,
                     truncate_width,
                     size: Some(size),
                     bounds: None,
+                    inline_object_slots,
                 });
 
                 size
@@ -928,6 +1120,41 @@ impl TextLayout {
             .iter()
             .map(|line| line.layout.clone())
             .collect()
+    }
+
+    /// Returns the number of [`InlineObject`]s registered on this text layout.
+    pub fn inline_object_count(&self) -> usize {
+        self.0
+            .borrow()
+            .as_ref()
+            .map_or(0, |state| state.inline_object_slots.len())
+    }
+
+    /// Resolves the window-space bounds and baseline of the [`InlineObject`] at `index`.
+    ///
+    /// Returns `None` if `index` is out of range or if the inline object was truncated or clamped
+    /// out of the laid-out text.
+    pub fn inline_object_placement(&self, index: usize) -> Option<InlineObjectPlacement> {
+        let element_state = self.0.borrow();
+        let element_state = element_state.as_ref()?;
+        let bounds = element_state.bounds?;
+        let (target_line_ix, object_ix_in_line) =
+            (*element_state.inline_object_slots.get(index)?)?;
+
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        for line in &element_state.lines[..target_line_ix] {
+            line_origin.y += line.size(line_height).height;
+        }
+        element_state.lines[target_line_ix]
+            .layout
+            .inline_object_placement(
+                object_ix_in_line,
+                line_origin,
+                line_height,
+                element_state.text_align,
+                Some(bounds.size.width),
+            )
     }
 
     /// The bounds of this layout.
@@ -1279,6 +1506,7 @@ impl Element for InteractiveText {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::px;
 
     #[test]
     fn test_into_element_for() {
@@ -1307,6 +1535,149 @@ mod tests {
         assert_ne!(
             make_text_unstable_id(false).id,
             make_text_unstable_id(true).id
+        );
+    }
+
+    #[test]
+    fn test_adjust_inline_objects_after_truncation() {
+        let original = "prefix \u{fffc} middle \u{fffc} suffix";
+        let first_start = "prefix ".len();
+        let first_end = first_start + '\u{fffc}'.len_utf8();
+        let second_start = "prefix \u{fffc} middle ".len();
+        let second_end = second_start + '\u{fffc}'.len_utf8();
+        let objects = vec![
+            InlineObject {
+                range: first_start..first_end,
+                width: px(20.),
+                ascent: px(12.),
+                descent: px(4.),
+            },
+            InlineObject {
+                range: second_start..second_end,
+                width: px(30.),
+                ascent: px(14.),
+                descent: px(5.),
+            },
+        ];
+
+        let (end_objects, end_indices) = adjust_inline_objects_after_truncation(
+            original,
+            "prefix \u{fffc}…",
+            "…",
+            TruncateFrom::End,
+            &objects,
+        );
+        assert_eq!(end_indices, vec![0]);
+        assert_eq!(end_objects.len(), 1);
+        assert_eq!(end_objects[0].range, first_start..first_end);
+
+        let (start_objects, start_indices) = adjust_inline_objects_after_truncation(
+            original,
+            "…\u{fffc} suffix",
+            "…",
+            TruncateFrom::Start,
+            &objects,
+        );
+        assert_eq!(start_indices, vec![1]);
+        assert_eq!(start_objects.len(), 1);
+        assert_eq!(
+            start_objects[0].range,
+            "…".len()..("…".len() + '\u{fffc}'.len_utf8())
+        );
+
+        let (mid_objects, mid_indices) = adjust_inline_objects_after_truncation(
+            original,
+            "prefix \u{fffc}…\u{fffc} suffix",
+            "…",
+            TruncateFrom::Middle,
+            &objects,
+        );
+        assert_eq!(mid_indices, vec![0, 1]);
+        assert_eq!(mid_objects.len(), 2);
+        assert_eq!(mid_objects[0].range, first_start..first_end);
+        let expected_second_start = "prefix \u{fffc}…".len();
+        assert_eq!(
+            mid_objects[1].range,
+            expected_second_start..(expected_second_start + '\u{fffc}'.len_utf8())
+        );
+    }
+
+    #[crate::test]
+    fn test_styled_text_inline_object_painting_and_placement(cx: &mut crate::TestAppContext) {
+        use crate::{
+            AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, div,
+            px, size,
+        };
+
+        let painted_placements: Rc<RefCell<Vec<(usize, InlineObjectPlacement)>>> =
+            Rc::new(RefCell::new(Vec::new()));
+        let captured_layout: Rc<RefCell<Option<TextLayout>>> = Rc::new(RefCell::new(None));
+
+        struct InlineObjectView {
+            painted_placements: Rc<RefCell<Vec<(usize, InlineObjectPlacement)>>>,
+            captured_layout: Rc<RefCell<Option<TextLayout>>>,
+        }
+
+        impl Render for InlineObjectView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let text = "hi \u{fffc}\nbye \u{fffc}";
+                let first_start = "hi ".len();
+                let first_end = first_start + '\u{fffc}'.len_utf8();
+                let second_start = "hi \u{fffc}\nbye ".len();
+                let second_end = second_start + '\u{fffc}'.len_utf8();
+                let painted_placements = self.painted_placements.clone();
+                let styled_text = StyledText::new(text)
+                    .with_inline_objects([
+                        InlineObject {
+                            range: first_start..first_end,
+                            width: px(32.),
+                            ascent: px(20.),
+                            descent: px(8.),
+                        },
+                        InlineObject {
+                            range: second_start..second_end,
+                            width: px(48.),
+                            ascent: px(16.),
+                            descent: px(6.),
+                        },
+                    ])
+                    .on_paint_inline_object(move |index, placement, _, _| {
+                        painted_placements.borrow_mut().push((index, placement));
+                    });
+                *self.captured_layout.borrow_mut() = Some(styled_text.layout().clone());
+                div()
+                    .w(px(200.))
+                    .text_size(px(10.))
+                    .line_height(px(16.))
+                    .child(styled_text)
+            }
+        }
+
+        let window = cx.add_window({
+            let painted_placements = painted_placements.clone();
+            let captured_layout = captured_layout.clone();
+            move |_, _| InlineObjectView {
+                painted_placements,
+                captured_layout,
+            }
+        });
+
+        painted_placements.borrow_mut().clear();
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        let layout = captured_layout.borrow().clone().unwrap();
+        assert_eq!(layout.inline_object_count(), 2);
+        let first_placement = layout.inline_object_placement(0).unwrap();
+        let second_placement = layout.inline_object_placement(1).unwrap();
+        assert_eq!(first_placement.bounds.size, size(px(32.), px(28.)));
+        assert_eq!(second_placement.bounds.size, size(px(48.), px(22.)));
+        assert!(second_placement.bounds.origin.y >= first_placement.bounds.bottom());
+
+        let painted = painted_placements.borrow();
+        assert_eq!(
+            painted.as_slice(),
+            &[(0, first_placement), (1, second_placement)]
         );
     }
 }
