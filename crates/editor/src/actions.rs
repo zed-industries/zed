@@ -608,13 +608,13 @@ actions!(
         GoToImplementationSplit,
         /// Goes to the next bookmark in the file.
         GoToNextBookmark,
-        /// Goes to the next change in the file.
+        /// Goes to the next change, across files and panes.
         GoToNextChange,
         /// Goes to the parent module of the current file.
         GoToParentModule,
         /// Goes to the previous bookmark in the file.
         GoToPreviousBookmark,
-        /// Goes to the previous change in the file.
+        /// Goes to the previous change, across files and panes.
         GoToPreviousChange,
         /// Goes to the next symbol.
         GoToNextSymbol,

@@ -125,7 +125,7 @@ use sqlez::{
 use status_bar::StatusBar;
 pub use status_bar::{HideStatusItem, StatusItemView, add_hide_button_entry};
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     borrow::Cow,
     cell::{Cell, RefCell},
     cmp,
@@ -170,9 +170,11 @@ use crate::{
         SerializedAxis,
         model::{SerializedItem, SerializedPane, SerializedPaneGroup, add_saved_rows},
     },
+    searchable::Direction,
     security_modal::SecurityModal,
 };
 
+const MAX_CHANGE_HISTORY_LEN: usize = 1024;
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 pub const MAX_RECENT_SELECTIONS: usize = 20;
 
@@ -1646,6 +1648,14 @@ struct DispatchingKeystrokes {
     task: Option<Shared<Task<()>>>,
 }
 
+#[derive(Clone)]
+struct ChangeLocation {
+    item_id: EntityId,
+    /// `None` for an untitled buffer, which can only be found by its `item_id`.
+    project_path: Option<ProjectPath>,
+    data: Arc<dyn Any + Send + Sync>,
+}
+
 /// Collects everything project-related for a certain window opened.
 /// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
 ///
@@ -1701,6 +1711,8 @@ pub struct Workspace {
     worktree_trust_prompt_check: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
+    change_history: Vec<ChangeLocation>,
+    change_history_position: Option<usize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
@@ -2212,6 +2224,8 @@ impl Workspace {
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
+            change_history: Vec::new(),
+            change_history_position: None,
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
             bounds: Default::default(),
@@ -3175,6 +3189,8 @@ impl Workspace {
     }
 
     pub fn clear_navigation_history(&mut self, window: &mut Window, cx: &mut Context<Workspace>) {
+        self.change_history.clear();
+        self.change_history_position = None;
         for pane in &self.panes {
             pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
         }
@@ -3506,6 +3522,108 @@ impl Workspace {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
         self.navigate_history(pane, NavigationMode::GoingForward, window, cx)
+    }
+
+    pub fn push_change_location(
+        &mut self,
+        item_id: EntityId,
+        project_path: Option<ProjectPath>,
+        data: Arc<dyn Any + Send + Sync>,
+        replace_last: bool,
+    ) {
+        self.change_history_position = None;
+        if replace_last {
+            self.change_history.pop();
+        } else if self.change_history.len() >= MAX_CHANGE_HISTORY_LEN {
+            self.change_history.remove(0);
+        }
+        self.change_history.push(ChangeLocation {
+            item_id,
+            project_path,
+            data,
+        });
+    }
+
+    pub fn last_change_location(
+        &self,
+    ) -> Option<(EntityId, Option<&ProjectPath>, &Arc<dyn Any + Send + Sync>)> {
+        let last = self.change_history.last()?;
+        Some((last.item_id, last.project_path.as_ref(), &last.data))
+    }
+
+    /// `is_at_change` tells whether the cursor is already on a change, which is then skipped
+    /// so that the jump is never a no-op.
+    pub fn go_to_change(
+        &mut self,
+        direction: Direction,
+        is_at_change: impl Fn(EntityId, Option<&ProjectPath>, &Arc<dyn Any + Send + Sync>) -> bool,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
+        let Some(last_index) = self.change_history.len().checked_sub(1) else {
+            return Task::ready(Ok(()));
+        };
+        let step = |index: usize| match direction {
+            Direction::Prev => index.saturating_sub(1),
+            Direction::Next => (index + 1).min(last_index),
+        };
+        let mut index = step(
+            self.change_history_position
+                .unwrap_or(self.change_history.len()),
+        );
+        while step(index) != index
+            && self.change_history.get(index).is_some_and(|location| {
+                is_at_change(
+                    location.item_id,
+                    location.project_path.as_ref(),
+                    &location.data,
+                )
+            })
+        {
+            index = step(index);
+        }
+        self.change_history_position = Some(index);
+        let Some(location) = self.change_history.get(index).cloned() else {
+            return Task::ready(Ok(()));
+        };
+
+        let open_item = self
+            .panes
+            .iter()
+            .flat_map(|pane| pane.read(cx).items().map(move |item| (pane, item)))
+            .filter(|(_, item)| {
+                item.item_id() == location.item_id
+                    || (location.project_path.is_some()
+                        && item.buffer_kind(cx) == ItemBufferKind::Singleton
+                        && item.project_path(cx) == location.project_path)
+            })
+            .max_by_key(|(pane, item)| {
+                (
+                    item.item_id() == location.item_id,
+                    *pane == &self.active_pane,
+                )
+            })
+            .map(|(pane, item)| (pane.clone(), item.boxed_clone()));
+
+        if let Some((pane, item)) = open_item {
+            pane.update(cx, |pane, cx| {
+                if let Some(index) = pane.index_for_item(item.as_ref()) {
+                    pane.activate_item(index, true, true, window, cx);
+                }
+            });
+            item.navigate(location.data, window, cx);
+            return Task::ready(Ok(()));
+        }
+
+        let Some(project_path) = location.project_path else {
+            return Task::ready(Ok(()));
+        };
+        let open_path = self.open_path(project_path, None, true, window, cx);
+        cx.spawn_in(window, async move |_, cx| {
+            let item = open_path.await?;
+            cx.update(|window, cx| item.navigate(location.data, window, cx))?;
+            Ok(())
+        })
     }
 
     pub fn reopen_closed_item(

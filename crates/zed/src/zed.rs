@@ -2892,7 +2892,9 @@ mod tests {
     use assets::Assets;
     use collections::HashSet;
     use editor::{
-        DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
+        DisplayPoint, Editor, MultiBufferOffset, SelectionEffects,
+        actions::{GoToNextChange, GoToPreviousChange},
+        display_map::DisplayRow,
     };
     use extension::ExtensionHostProxy;
     use fs::FakeFs;
@@ -5689,6 +5691,170 @@ mod tests {
                 })
             })
         }
+    }
+
+    #[gpui::test]
+    async fn test_go_to_change_across_files(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "file1": "contents 1\n".repeat(20),
+                    "file2": "contents 2\n".repeat(20),
+                }),
+            )
+            .await;
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let first_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
+        let (file1, file2) = (entries[0].clone(), entries[1].clone());
+
+        async fn open(
+            workspace: &Entity<Workspace>,
+            path: &ProjectPath,
+            cx: &mut VisualTestContext,
+        ) -> Entity<Editor> {
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_path(path.clone(), None, true, window, cx)
+                })
+                .await
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        }
+
+        fn move_to_row(editor: &Entity<Editor>, row: u32, cx: &mut VisualTestContext) {
+            editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_display_ranges([DisplayPoint::new(DisplayRow(row), 0)
+                        ..DisplayPoint::new(DisplayRow(row), 0)])
+                });
+            });
+        }
+
+        fn insert_at_row(editor: &Entity<Editor>, row: u32, cx: &mut VisualTestContext) {
+            move_to_row(editor, row, cx);
+            editor.update_in(cx, |editor, window, cx| editor.insert("x", window, cx));
+        }
+
+        fn go_to_change(action: impl Action, cx: &mut VisualTestContext) {
+            cx.dispatch_action(action);
+            cx.run_until_parked();
+        }
+
+        fn active_location(
+            workspace: &Entity<Workspace>,
+            cx: &mut VisualTestContext,
+        ) -> (ProjectPath, DisplayPoint) {
+            workspace.update(cx, |workspace, cx| {
+                let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+                editor.update(cx, |editor, cx| {
+                    let selections = editor
+                        .selections
+                        .display_ranges(&editor.display_snapshot(cx));
+                    (editor.active_project_path(cx).unwrap(), selections[0].start)
+                })
+            })
+        }
+
+        let editor1 = open(&workspace, &file1, cx).await;
+        let editor1_location = (file1.clone(), DisplayPoint::new(DisplayRow(10), 2));
+        insert_at_row(&editor1, 10, cx);
+        editor1.update_in(cx, |editor, window, cx| editor.insert("x", window, cx));
+        move_to_row(&editor1, 15, cx);
+        open(&workspace, &file2, cx).await;
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(active_location(&workspace, cx), editor1_location);
+
+        let scroll_y = |cx: &mut VisualTestContext| {
+            editor1.update(cx, |editor, cx| editor.scroll_position(cx).y)
+        };
+        let edit_scroll_y = scroll_y(cx);
+        editor1.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(point(0., edit_scroll_y + 5.), window, cx);
+        });
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(scroll_y(cx), edit_scroll_y);
+
+        let editor2 = open(&workspace, &file2, cx).await;
+        insert_at_row(&editor2, 7, cx);
+        move_to_row(&editor2, 15, cx);
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.save_active_item(SaveIntent::Save, window, cx)
+            })
+            .await
+            .unwrap();
+        first_pane
+            .update_in(cx, |pane, window, cx| {
+                pane.close_active_item(&Default::default(), window, cx)
+            })
+            .await
+            .unwrap();
+        drop(editor2);
+        cx.run_until_parked();
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file2.clone(), DisplayPoint::new(DisplayRow(7), 1))
+        );
+
+        open(&workspace, &file1, cx).await;
+        let second_pane = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(first_pane.clone(), SplitDirection::Right, window, cx)
+        });
+        let split_editor = open(&workspace, &file1, cx).await;
+        insert_at_row(&split_editor, 12, cx);
+        first_pane.update_in(cx, |pane, window, cx| {
+            window.focus(&pane.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        go_to_change(GoToPreviousChange, cx);
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.active_pane(), &second_pane);
+        });
+
+        let editor2_location = (file2.clone(), DisplayPoint::new(DisplayRow(7), 1));
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(active_location(&workspace, cx), editor2_location);
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(active_location(&workspace, cx), editor1_location);
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(active_location(&workspace, cx), editor1_location);
+        go_to_change(GoToNextChange, cx);
+        assert_eq!(active_location(&workspace, cx), editor2_location);
+
+        cx.dispatch_action(workspace::NewFile);
+        cx.run_until_parked();
+        let untitled = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        });
+        untitled.update_in(cx, |editor, window, cx| editor.insert("x", window, cx));
+        open(&workspace, &file2, cx).await;
+        go_to_change(GoToPreviousChange, cx);
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).unwrap().item_id(),
+                untitled.entity_id()
+            );
+        });
+
+        untitled.update_in(cx, |editor, window, cx| editor.insert("x", window, cx));
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(DisplayRow(12), 1))
+        );
     }
 
     #[gpui::test]

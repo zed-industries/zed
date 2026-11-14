@@ -1673,6 +1673,8 @@ pub(crate) struct NavigationData {
     cursor_position: Point,
     scroll_anchor: ScrollAnchor,
     scroll_top_row: u32,
+    /// Reveals the location even if the cursor is already there, and records the one it leaves.
+    is_change_jump: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8031,6 +8033,7 @@ impl Editor {
                 window,
                 cx,
             );
+            self.record_change_location(cx);
             cx.emit(EditorEvent::Edited { transaction_id });
             cx.emit(EditorEvent::TransactionUndone { transaction_id });
         }
@@ -8060,6 +8063,7 @@ impl Editor {
                 window,
                 cx,
             );
+            self.record_change_location(cx);
             cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
@@ -8831,6 +8835,7 @@ impl Editor {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
 
+            self.record_change_location(cx);
             cx.emit(EditorEvent::Edited { transaction_id });
             Some(transaction_id)
         } else {
