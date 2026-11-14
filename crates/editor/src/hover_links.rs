@@ -813,8 +813,8 @@ pub(crate) fn find_url(
     let relative_offset = offset - token_start;
     for link in finder.links(&input) {
         if link.start() <= relative_offset && link.end() >= relative_offset {
-            let range = snapshot.anchor_before(token_start + link.start())
-                ..snapshot.anchor_after(token_start + link.end());
+            let range = snapshot.anchor_after(token_start + link.start())
+                ..snapshot.anchor_before(token_start + link.end());
             return Some((range, link.as_str().to_string()));
         }
     }
@@ -3352,6 +3352,46 @@ mod tests {
             cx.opened_url(),
             Some("https://zed.dev/channel/had-(oops)".into())
         );
+    }
+
+    #[gpui::test]
+    async fn test_url_highlight_excludes_inserted_boundary_whitespace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+        let url = "https://zed.dev/releases";
+
+        for (prefix, whitespace) in [("", "\n"), ("é ", "\t"), ("See ", " ")] {
+            cx.set_state(&format!("{prefix}ˇ{url}"));
+            cx.update_editor(|editor, _, cx| editor.hide_hovered_link(cx));
+            let position = cx.pixel_position(&format!("{prefix}https://zed.dev/relˇeases"));
+            let modifiers = cx.read(Modifiers::secondary_key);
+            cx.simulate_mouse_move(position, None, modifiers);
+            cx.assert_editor_text_highlights(
+                HighlightKey::HoveredLinkState,
+                &format!("{prefix}«{url}ˇ»"),
+            );
+
+            cx.update_editor(|editor, window, cx| editor.insert(whitespace, window, cx));
+            cx.assert_editor_text_highlights(
+                HighlightKey::HoveredLinkState,
+                &format!("{prefix}{whitespace}«{url}ˇ»"),
+            );
+
+            cx.set_selections_state(&format!("{prefix}{whitespace}{url}ˇ"));
+            cx.update_editor(|editor, window, cx| editor.insert(whitespace, window, cx));
+            cx.assert_editor_text_highlights(
+                HighlightKey::HoveredLinkState,
+                &format!("{prefix}{whitespace}«{url}ˇ»{whitespace}"),
+            );
+
+            let position = cx.pixel_position(&format!(
+                "{prefix}{whitespace}https://zed.dev/relˇeases{whitespace}"
+            ));
+            cx.simulate_click(position, modifiers);
+            assert_eq!(cx.opened_url(), Some(url.into()));
+        }
     }
 
     #[gpui::test]
