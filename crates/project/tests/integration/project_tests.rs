@@ -19072,6 +19072,85 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_changes_in_ignored_dir_do_not_refresh_git_status(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": ".cache/\n",
+            "README.md": "tracked",
+            ".cache": {
+                "existing.txt": "1",
+            },
+        }),
+    )
+    .await;
+
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", ".cache/\n".into()),
+            ("README.md", "tracked".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    // Writes below an ignored directory must not spawn `git status`. Watchers
+    // report the directory itself when its children change (and the worktree
+    // reloads the nearest loaded ancestor), so touch the directory as well.
+    let status_calls_before = fs.git_status_call_count();
+    for ix in 0..5 {
+        fs.atomic_write(
+            PathBuf::from(path!("/root/.cache")).join(format!("file-{ix}.txt")),
+            ix.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+    fs.remove_file(
+        path!("/root/.cache/existing.txt").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.touch_path(path!("/root/.cache")).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        fs.git_status_call_count(),
+        status_calls_before,
+        "changes in a gitignored directory should not trigger git status"
+    );
+
+    // A change to a tracked path still refreshes status.
+    fs.atomic_write(path!("/root/README.md").into(), "modified".into())
+        .await
+        .unwrap();
+    tree.flush_fs_events(cx).await;
+    cx.executor().run_until_parked();
+    assert!(fs.git_status_call_count() > status_calls_before);
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    cx.read(|cx| {
+        let status = repository
+            .read(cx)
+            .status_for_path(&repo_path("README.md"))
+            .map(|entry| entry.status);
+        assert_eq!(status, Some(StatusCode::Modified.worktree()));
+    });
+}
+
 // NOTE:
 // This test always fails on Windows, because on Windows, unlike on Unix, you can't rename
 // a directory which some program has already open.
