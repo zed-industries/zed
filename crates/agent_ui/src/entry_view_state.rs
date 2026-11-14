@@ -474,6 +474,7 @@ impl EntryViewState {
                     for diff in diffs {
                         let diff_id = diff.entity_id();
                         if let collections::hash_map::Entry::Vacant(entry) = views.entry(diff_id) {
+                            cx.observe(&diff, |_, _, cx| cx.notify()).detach();
                             let multibuffer = diff.update(cx, |diff, cx| diff.multibuffer(cx));
                             let editor =
                                 create_multibuffer_diff_editor(multibuffer.clone(), window, cx);
