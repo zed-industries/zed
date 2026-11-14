@@ -32,7 +32,17 @@ Zed supports remote development on Windows through both SSH and WSL. You can con
 
 For detailed instructions on setting up and using remote development features, including SSH configuration, WSL setup, and troubleshooting, see the [Remote Development documentation](./remote-development.md).
 
+To open a project from a WSL terminal with `zed .`, see [Opening a folder from a WSL terminal](./remote-development.md#opening-a-folder-from-a-wsl-terminal).
+
 ## Troubleshooting
+
+### Zed is not found in a WSL terminal {#zed-is-not-found-in-a-wsl-terminal}
+
+Keep the Windows installer's **Add to PATH** option selected, then restart your terminal application. WSL imports the Windows PATH by default.
+
+Run `command -v zed` in WSL to check that it resolves to the Windows installation's `bin/zed` script. If it finds another installation, adjust your PATH order or use the launcher's full WSL path. You can find the default installation by opening `%LOCALAPPDATA%\Programs\Zed` in Windows File Explorer.
+
+If you disabled Windows PATH imports with `appendWindowsPath=false` in `/etc/wsl.conf`, add the WSL path to Zed's `bin` folder to your shell's PATH in `~/.bashrc` (Bash) or `~/.zshrc` (Zsh), then open a new shell. Launching Windows Zed requires [WSL interoperability](https://learn.microsoft.com/en-us/windows/wsl/wsl-config#interop-settings) to be enabled.
 
 ### Zed fails to start or shows a blank window
 
