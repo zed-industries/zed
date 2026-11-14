@@ -117,4 +117,9 @@ impl BlinkManager {
     pub(crate) fn enabled(&self) -> bool {
         self.enabled
     }
+
+    #[cfg(test)]
+    pub(crate) fn hide_cursor(&mut self) {
+        self.visible = false;
+    }
 }
