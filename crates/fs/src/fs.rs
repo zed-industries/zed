@@ -583,47 +583,6 @@ impl RealFs {
             is_case_sensitive: Default::default(),
         })
     }
-
-    #[cfg(target_os = "windows")]
-    fn canonicalize(path: &Path) -> Result<PathBuf> {
-        use std::ffi::OsString;
-        use std::os::windows::ffi::OsStringExt;
-        use windows::Win32::Storage::FileSystem::GetVolumePathNameW;
-        use windows::core::HSTRING;
-
-        // std::fs::canonicalize resolves mapped network paths to UNC paths, which can
-        // confuse some software. To mitigate this, we canonicalize the input, then rebase
-        // the result onto the input's original volume root if both paths are on the same
-        // volume. This keeps the same drive letter or mount point the caller used.
-
-        let abs_path = if path.is_relative() {
-            std::env::current_dir()?.join(path)
-        } else {
-            path.to_path_buf()
-        };
-
-        let path_hstring = HSTRING::from(abs_path.as_os_str());
-        let mut vol_buf = vec![0u16; abs_path.as_os_str().len() + 2];
-        unsafe { GetVolumePathNameW(&path_hstring, &mut vol_buf)? };
-        let volume_root = {
-            let len = vol_buf
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(vol_buf.len());
-            PathBuf::from(OsString::from_wide(&vol_buf[..len]))
-        };
-
-        let resolved_path = dunce::canonicalize(&abs_path)?;
-        let resolved_root = dunce::canonicalize(&volume_root)?;
-
-        if let Ok(relative) = resolved_path.strip_prefix(&resolved_root) {
-            let mut result = volume_root;
-            result.push(relative);
-            Ok(result)
-        } else {
-            Ok(resolved_path)
-        }
-    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1062,13 +1021,7 @@ impl Fs for RealFs {
         let path = path.to_owned();
         self.executor
             .spawn(async move {
-                #[cfg(target_os = "windows")]
-                let result = Self::canonicalize(&path);
-
-                #[cfg(not(target_os = "windows"))]
-                let result = std::fs::canonicalize(&path);
-
-                result.with_context(|| format!("canonicalizing {path:?}"))
+                util::paths::canonicalize(&path).with_context(|| format!("canonicalizing {path:?}"))
             })
             .await
     }

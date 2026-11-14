@@ -6556,7 +6556,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
- "dunce",
  "fs",
  "futures 0.3.34",
  "git",

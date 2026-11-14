@@ -228,11 +228,12 @@ fn write_message_to_instance_pipe(message: &[u8]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::split_paths_and_urls;
+    use std::path::Path;
 
     #[test]
     fn test_split_paths_and_urls() {
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
-        let canonical = std::fs::canonicalize(file).unwrap();
+        let canonical = util::paths::canonicalize(Path::new(file)).unwrap();
         let url = "zed://file/C:/project/main.rs:3";
 
         let (paths, urls) = split_paths_and_urls(&[format!("{file}:2:5"), url.to_string()]);
