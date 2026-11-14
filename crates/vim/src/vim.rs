@@ -1890,21 +1890,23 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Label jumps always push to the jump list, even when the target is fewer than 10 rows away.
+        let effects = SelectionEffects::default().nav_history(true);
         self.update_editor(cx, |_, editor, cx| match behaviour {
             HelixJumpBehaviour::Move => {
-                editor.change_selections(Default::default(), window, cx, |s| {
+                editor.change_selections(effects, window, cx, |s| {
                     s.select_anchor_ranges([candidate.range.clone()])
                 });
             }
             HelixJumpBehaviour::MoveToWordStart => {
-                editor.change_selections(Default::default(), window, cx, |s| {
+                editor.change_selections(effects, window, cx, |s| {
                     // Vim users expect jump labels to behave like motions, leaving
                     // normal mode at the label instead of selecting the word.
                     s.select_anchor_ranges([candidate.range.start..candidate.range.start])
                 });
             }
             HelixJumpBehaviour::ExtendToWordStart => {
-                editor.change_selections(Default::default(), window, cx, |s| {
+                editor.change_selections(effects, window, cx, |s| {
                     s.move_with(&mut |map, selection| {
                         let word_start = candidate.range.start.to_display_point(map);
                         let tail = selection.tail();
@@ -1919,7 +1921,7 @@ impl Vim {
                 });
             }
             HelixJumpBehaviour::Extend => {
-                editor.change_selections(Default::default(), window, cx, |s| {
+                editor.change_selections(effects, window, cx, |s| {
                     s.move_with(&mut |map, selection| {
                         let word_start = candidate.range.start.to_display_point(map);
                         let word_end = candidate.range.end.to_display_point(map);
