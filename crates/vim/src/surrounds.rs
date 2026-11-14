@@ -213,9 +213,12 @@ impl Vim {
                     if let Some(range) = pair_object.range(&display_map, *selection, true, None) {
                         // If the current parenthesis object is single-line,
                         // then we need to filter whether it is the current line or not
+                        // (buffer rows, so that a soft wrapped line still counts as one)
                         if !pair_object.is_multiline() {
-                            let is_same_row = selection.start.row() == range.start.row()
-                                && selection.end.row() == range.end.row();
+                            let is_same_row = selection.start.to_point(&display_map).row
+                                == range.start.to_point(&display_map).row
+                                && selection.end.to_point(&display_map).row
+                                    == range.end.to_point(&display_map).row;
                             if !is_same_row {
                                 anchors.push(start..start);
                                 continue;
@@ -423,8 +426,10 @@ impl Vim {
                                 .range(&display_map, *selection, true, None)
                                 .filter(|range| {
                                     object.is_multiline()
-                                        || (selection.start.row() == range.start.row()
-                                            && selection.end.row() == range.end.row())
+                                        || (selection.start.to_point(&display_map).row
+                                            == range.start.to_point(&display_map).row
+                                            && selection.end.to_point(&display_map).row
+                                                == range.end.to_point(&display_map).row)
                                 });
                         let Some(range) = in_range else {
                             updated_cursor_ranges.push(start..start);
@@ -659,8 +664,10 @@ pub fn bracket_pair_for_str_helix(text: &str) -> BracketPair {
 
 #[cfg(test)]
 mod test {
-    use gpui::KeyBinding;
+    use gpui::{KeyBinding, UpdateGlobal};
     use indoc::indoc;
+    use language::language_settings::SoftWrap;
+    use settings::SettingsStore;
 
     use crate::{
         PushAddSurrounds,
@@ -1580,6 +1587,45 @@ mod test {
             The ˇ{quick} brown
             fox jumps over
             the lazy dog."},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_surrounds_with_soft_wrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.soft_wrap = Some(SoftWrap::Bounded);
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .preferred_line_length = Some(20);
+                });
+            });
+        });
+
+        let wrapped_line = "let s = \"a string that is long enough to wrap ˇacross several rows\";";
+
+        cx.set_state(wrapped_line, Mode::Normal);
+        cx.update_editor(|editor, _, cx| {
+            assert!(
+                editor.display_snapshot(cx).max_point().row().0 > 0,
+                "the line should be soft wrapped"
+            );
+        });
+        cx.simulate_keystrokes("c s \" '");
+        cx.assert_state(
+            "let s = ˇ'a string that is long enough to wrap across several rows';",
+            Mode::Normal,
+        );
+
+        cx.set_state(wrapped_line, Mode::Normal);
+        cx.simulate_keystrokes("d s \"");
+        cx.assert_state(
+            "let s = ˇa string that is long enough to wrap across several rows;",
             Mode::Normal,
         );
     }
