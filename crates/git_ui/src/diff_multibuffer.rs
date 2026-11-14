@@ -39,7 +39,7 @@ use ztracing::instrument;
 
 /// Loading every changed file at once makes the first one land no sooner than the
 /// last, leaving a large diff on a spinner. Throughput flattens past this point.
-const MAX_CONCURRENT_BUFFER_LOADS: usize = 16;
+pub(crate) const MAX_CONCURRENT_BUFFER_LOADS: usize = 16;
 
 struct BufferSubscriptions {
     _diff: Entity<BufferDiff>,
