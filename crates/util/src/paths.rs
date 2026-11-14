@@ -751,6 +751,65 @@ impl PathWithPosition {
     }
 }
 
+/// Returns the canonical, absolute form of a path, resolving symlinks and `.`/`..` components.
+///
+/// On Windows, `std::fs::canonicalize` resolves mapped network drives to UNC paths
+/// (e.g. `Z:\project` becomes `\\?\UNC\server\share\project`), which confuses some
+/// software. This function instead keeps the drive letter or mount point the caller
+/// used, and avoids the `\\?\` verbatim prefix where possible.
+#[cfg(not(target_family = "wasm"))]
+pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        canonicalize_preserving_volume(path)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::canonicalize(path)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn canonicalize_preserving_volume(path: &Path) -> std::io::Result<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::Storage::FileSystem::GetVolumePathNameW;
+    use windows::core::HSTRING;
+
+    // Canonicalize the input, then rebase the result onto the input's original
+    // volume root if both paths are on the same volume. This keeps the same drive
+    // letter or mount point the caller used.
+
+    let abs_path = if path.is_relative() {
+        std::env::current_dir()?.join(path)
+    } else {
+        path.to_path_buf()
+    };
+
+    let path_hstring = HSTRING::from(abs_path.as_os_str());
+    let mut vol_buf = vec![0u16; abs_path.as_os_str().len() + 2];
+    unsafe { GetVolumePathNameW(&path_hstring, &mut vol_buf)? };
+    let volume_root = {
+        let len = vol_buf
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(vol_buf.len());
+        PathBuf::from(OsString::from_wide(&vol_buf[..len]))
+    };
+
+    let resolved_path = dunce::canonicalize(&abs_path)?;
+    let resolved_root = dunce::canonicalize(&volume_root)?;
+
+    if let Ok(relative) = resolved_path.strip_prefix(&resolved_root) {
+        let mut result = volume_root;
+        result.push(relative);
+        Ok(result)
+    } else {
+        Ok(resolved_path)
+    }
+}
+
 /// Parses a path containing a position (e.g. `path:line:column`)
 /// and returns its canonicalized string representation.
 ///
@@ -762,7 +821,7 @@ impl PathWithPosition {
 pub fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     use anyhow::Context as _;
 
-    match Path::new(argument_str).canonicalize() {
+    match canonicalize(Path::new(argument_str)) {
         Ok(existing_path) => Ok(PathWithPosition::from_path(existing_path)),
         Err(_) => PathWithPosition::parse_str(argument_str).map_path(|mut path| {
             let curdir = std::env::current_dir().context("retrieving current directory")?;
@@ -770,7 +829,7 @@ pub fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
             let root;
             loop {
                 // canonicalize handles './', and '/'.
-                if let Ok(canonicalized) = std::fs::canonicalize(&path) {
+                if let Ok(canonicalized) = canonicalize(&path) {
                     root = canonicalized;
                     break;
                 }
