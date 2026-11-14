@@ -304,6 +304,7 @@ impl Editor {
                                 for (server_id, server_tokens) in tokens {
                                     let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
                                         server_id,
+                                        buffer_id,
                                         language_name.as_ref(),
                                         cx,
                                     ) else {
