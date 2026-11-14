@@ -24,3 +24,125 @@
               (block_scalar) @injection.content)
           ]
           (#set! injection.language "javascript"))))))
+
+; SQL injection via comment annotation
+; Examples:
+;   # language=sql
+;   query: SELECT * FROM users
+;
+;   # sql
+;   query: |
+;     SELECT * FROM users
+;
+;   queries:
+;     # language=sql
+;     - SELECT * FROM users
+
+; Top-level mapping pair preceded by comment
+(stream
+  (comment) @_comment
+  .
+  (document
+    (block_node
+      (block_mapping
+        .
+        (block_mapping_pair
+          value: [
+            (flow_node
+              (plain_scalar
+                (string_scalar) @injection.content))
+            (flow_node
+              (single_quote_scalar) @injection.content)
+            (flow_node
+              (double_quote_scalar) @injection.content)
+            (block_node
+              (block_scalar) @injection.content)
+          ]))))
+  (#match? @_comment "^#\\s*(language=)?(?i:sql)\\s*$")
+  (#set! injection.language "sql"))
+
+; Mapping pair preceded by comment in block_mapping
+(block_mapping
+  (comment) @_comment
+  .
+  (block_mapping_pair
+    value: [
+      (flow_node
+        (plain_scalar
+          (string_scalar) @injection.content))
+      (flow_node
+        (single_quote_scalar) @injection.content)
+      (flow_node
+        (double_quote_scalar) @injection.content)
+      (block_node
+        (block_scalar) @injection.content)
+    ])
+  (#match? @_comment "^#\\s*(language=)?(?i:sql)\\s*$")
+  (#set! injection.language "sql"))
+
+; Mapping pair where comment is between key and value
+(block_mapping_pair
+  (comment) @_comment
+  .
+  value: [
+    (flow_node
+      (plain_scalar
+        (string_scalar) @injection.content))
+    (flow_node
+      (single_quote_scalar) @injection.content)
+    (flow_node
+      (double_quote_scalar) @injection.content)
+    (block_node
+      (block_scalar) @injection.content)
+    (block_node
+      (block_mapping
+        .
+        (block_mapping_pair
+          value: [
+            (flow_node
+              (plain_scalar
+                (string_scalar) @injection.content))
+            (flow_node
+              (single_quote_scalar) @injection.content)
+            (flow_node
+              (double_quote_scalar) @injection.content)
+            (block_node
+              (block_scalar) @injection.content)
+          ])))
+    (block_node
+      (block_sequence
+        .
+        (block_sequence_item
+          [
+            (flow_node
+              (plain_scalar
+                (string_scalar) @injection.content))
+            (flow_node
+              (single_quote_scalar) @injection.content)
+            (flow_node
+              (double_quote_scalar) @injection.content)
+            (block_node
+              (block_scalar) @injection.content)
+          ])))
+  ]
+  (#match? @_comment "^#\\s*(language=)?(?i:sql)\\s*$")
+  (#set! injection.language "sql"))
+
+; Sequence item preceded by comment in block_sequence
+(block_sequence
+  (comment) @_comment
+  .
+  (block_sequence_item
+    [
+      (flow_node
+        (plain_scalar
+          (string_scalar) @injection.content))
+      (flow_node
+        (single_quote_scalar) @injection.content)
+      (flow_node
+        (double_quote_scalar) @injection.content)
+      (block_node
+        (block_scalar) @injection.content)
+    ])
+  (#match? @_comment "^#\\s*(language=)?(?i:sql)\\s*$")
+  (#set! injection.language "sql"))
