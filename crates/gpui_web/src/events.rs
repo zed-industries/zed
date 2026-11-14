@@ -113,6 +113,10 @@ impl TouchIds {
     fn end(&mut self, pointer_id: i32) -> Option<TouchId> {
         self.active.remove(&pointer_id)
     }
+
+    fn len(&self) -> usize {
+        self.active.len()
+    }
 }
 
 impl Default for ClickState {
@@ -259,12 +263,20 @@ impl WebWindowInner {
                 if this.keyboard_likely_dismissed() {
                     this.ime_mirror.set_virtual_keyboard_enabled(false);
                 }
-                let Some(touch_id) = this.touch_ids.borrow_mut().start(event.pointer_id()) else {
-                    log::error!("exhausted touch identifiers");
-                    return;
+                let (touch_id, active_count) = {
+                    let mut touch_ids = this.touch_ids.borrow_mut();
+                    let Some(touch_id) = touch_ids.start(event.pointer_id()) else {
+                        log::error!("exhausted touch identifiers");
+                        return;
+                    };
+                    (touch_id, touch_ids.len())
                 };
+                if active_count > 1 {
+                    this.touch_multi_sequence.set(true);
+                    this.touch_tap_candidate.set(None);
+                }
                 this.state.borrow_mut().mouse_position = position;
-                if this.touch_tap_candidate.get().is_none() {
+                if !this.touch_multi_sequence.get() && this.touch_tap_candidate.get().is_none() {
                     this.touch_tap_candidate
                         .set(Some((event.pointer_id(), position)));
                 }
@@ -327,8 +339,12 @@ impl WebWindowInner {
             let position = pointer_position_in_element(&event);
 
             if event.pointer_type() == "touch" {
-                let Some(touch_id) = this.touch_ids.borrow_mut().end(event.pointer_id()) else {
-                    return;
+                let (touch_id, remaining) = {
+                    let mut touch_ids = this.touch_ids.borrow_mut();
+                    let Some(touch_id) = touch_ids.end(event.pointer_id()) else {
+                        return;
+                    };
+                    (touch_id, touch_ids.len())
                 };
                 this.state.borrow_mut().mouse_position = position;
                 let completes_tap = match this.touch_tap_candidate.get() {
@@ -348,6 +364,9 @@ impl WebWindowInner {
                     predicted_position: None,
                     force: None,
                 }));
+                if remaining == 0 {
+                    this.touch_multi_sequence.set(false);
+                }
 
                 // A keyboard opening or closing mid-gesture reflows the
                 // layout, so the release position no longer refers to the
@@ -445,8 +464,12 @@ impl WebWindowInner {
         self.listen("pointercancel", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             if event.pointer_type() == "touch" {
-                let Some(touch_id) = this.touch_ids.borrow_mut().end(event.pointer_id()) else {
-                    return;
+                let (touch_id, remaining) = {
+                    let mut touch_ids = this.touch_ids.borrow_mut();
+                    let Some(touch_id) = touch_ids.end(event.pointer_id()) else {
+                        return;
+                    };
+                    (touch_id, touch_ids.len())
                 };
                 if let Some((pointer_id, _)) = this.touch_tap_candidate.get()
                     && pointer_id == event.pointer_id()
@@ -460,6 +483,9 @@ impl WebWindowInner {
                     predicted_position: None,
                     force: None,
                 }));
+                if remaining == 0 {
+                    this.touch_multi_sequence.set(false);
+                }
             } else {
                 this.pressed_button.set(None);
             }
@@ -495,7 +521,7 @@ impl WebWindowInner {
     /// We don't use `navigator.virtualKeyboard` here because it's
     /// Chromium-only.
     pub(crate) fn show_virtual_keyboard(self: &Rc<Self>) {
-        if !self.touch_input {
+        if !self.touch_input || self.touch_multi_sequence.get() {
             return;
         }
         let was_enabled = self.ime_mirror.virtual_keyboard_enabled();
