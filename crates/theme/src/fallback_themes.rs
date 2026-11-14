@@ -232,6 +232,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 pane_focused_border: blue,
                 pane_group_border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 scrollbar_thumb_background: gpui::transparent_black(),
+                scrollbar_active_scope_marker: hsla(0.0, 0.0, 1.0, 0.6),
                 scrollbar_thumb_hover_background: hover,
                 scrollbar_thumb_active_background: hsla(
                     225.0 / 360.,
