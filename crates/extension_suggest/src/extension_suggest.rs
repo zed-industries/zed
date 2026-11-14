@@ -160,7 +160,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
         "python-requirements",
         &["constraints.txt", "requirements.txt"],
     ),
-    ("r", &["R", "Rmd", "qmd", "r", "rmd"]),
+    ("r", &["R", "r"]),
     ("racket", &["rkt"]),
     ("rescript", &["res", "resi"]),
     ("rst", &["rst"]),
