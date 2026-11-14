@@ -28,7 +28,7 @@ use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
 use gpui::{
-    Action as _, AnyElement, App, ClickEvent, ClipboardItem, Context, Decorations, DismissEvent,
+    Action as _, AnyElement, App, ClickEvent, Context, Decorations, DismissEvent,
     Entity, EntityId, FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render,
     SharedString, Task, TaskExt, WeakEntity, Window, WindowBackgroundAppearance, WindowHandle,
     linear_color_stop, linear_gradient, list, prelude::*, px,
@@ -1410,7 +1410,6 @@ impl Sidebar {
         let mut notified_threads = previous.notified_threads;
         let mut notified_terminals: HashSet<TerminalId> = HashSet::new();
         let mut new_live_statuses: HashMap<ThreadId, AgentThreadStatus> = HashMap::new();
-        let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
         let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut current_terminal_ids: HashSet<TerminalId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
@@ -1926,7 +1925,6 @@ impl Sidebar {
                     &mut entries,
                     matched_terminals,
                     matched_threads,
-                    &mut current_session_ids,
                     &mut current_thread_ids,
                 );
             } else {
@@ -1976,7 +1974,6 @@ impl Sidebar {
                     &mut entries,
                     terminals,
                     threads,
-                    &mut current_session_ids,
                     &mut current_thread_ids,
                 );
             }
@@ -5754,7 +5751,6 @@ impl Sidebar {
         entries: &mut Vec<ListEntry>,
         terminals: Vec<TerminalEntry>,
         threads: Vec<Arc<ThreadEntry>>,
-        current_session_ids: &mut HashSet<acp::SessionId>,
         current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
     ) {
         fn display_time(entry: &ListEntry) -> DateTime<Utc> {
@@ -5776,9 +5772,6 @@ impl Sidebar {
 
         for entry in row_entries {
             if let ListEntry::Thread(thread) = &entry {
-                if let Some(session_id) = &thread.metadata.session_id {
-                    current_session_ids.insert(session_id.clone());
-                }
                 current_thread_ids.insert(thread.metadata.thread_id);
             }
             entries.push(entry);
@@ -6435,15 +6428,6 @@ impl Sidebar {
                                         );
                                     })
                                     .ok();
-                            }
-                        });
-
-                        menu = menu.entry("Copy Session ID", None, {
-                            let session_id = session_id.clone();
-                            move |_window, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                    session_id.0.to_string(),
-                                ));
                             }
                         });
 
