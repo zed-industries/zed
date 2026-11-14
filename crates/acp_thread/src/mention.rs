@@ -75,6 +75,9 @@ pub enum MentionUri {
         source: String,
         skill_file_path: PathBuf,
     },
+    ContextServer {
+        server_id: String,
+    },
 }
 
 impl MentionUri {
@@ -274,6 +277,16 @@ impl MentionUri {
                         source: source.context("missing skill source")?,
                         skill_file_path: skill_file_path.context("missing skill file path")?,
                     })
+                } else if path.starts_with("/agent/context-server/") {
+                    let server_id = path
+                        .strip_prefix("/agent/context-server/")
+                        .context("Missing context server id")?;
+                    if server_id.is_empty() {
+                        bail!("Empty context server id");
+                    }
+                    Ok(Self::ContextServer {
+                        server_id: server_id.to_string(),
+                    })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -329,7 +342,8 @@ impl MentionUri {
             | MentionUri::Fetch { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::GitDiff { .. }
-            | MentionUri::MergeConflict { .. } => None,
+            | MentionUri::MergeConflict { .. }
+            | MentionUri::ContextServer { .. } => None,
         }
     }
 
@@ -367,6 +381,7 @@ impl MentionUri {
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
             MentionUri::Skill { name, .. } => name.clone(),
+            MentionUri::ContextServer { server_id } => server_id.clone(),
         }
     }
 
@@ -452,6 +467,7 @@ impl MentionUri {
             MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
             MentionUri::MergeConflict { .. } => IconName::GitMergeConflict.path().into(),
             MentionUri::Skill { .. } => IconName::Sparkle.path().into(),
+            MentionUri::ContextServer { .. } => IconName::Server.path().into(),
         }
     }
 
@@ -581,6 +597,11 @@ impl MentionUri {
                     .append_pair("name", name)
                     .append_pair("source", source)
                     .append_pair("path", &skill_file_path.to_string_lossy());
+                url
+            }
+            MentionUri::ContextServer { server_id } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path(&format!("/agent/context-server/{}", server_id));
                 url
             }
         }
@@ -1407,6 +1428,17 @@ mod tests {
         let parsed = MentionUri::parse(&serialized, PathStyle::local()).unwrap();
 
         assert_eq!(parsed, skill_uri);
+    }
+
+    #[test]
+    fn test_parse_context_server_uri_round_trip() {
+        let uri = MentionUri::ContextServer {
+            server_id: "github".to_string(),
+        };
+        let link = uri.as_link().to_string();
+        assert_eq!(link, "[@github](zed:///agent/context-server/github)");
+        let parsed = MentionUri::parse("zed:///agent/context-server/github", PathStyle::local()).unwrap();
+        assert_eq!(parsed, uri);
     }
 
     #[test]
