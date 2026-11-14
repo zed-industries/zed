@@ -550,14 +550,53 @@ pub struct BufferChunks<'a> {
     range: Range<usize>,
     chunks: text::Chunks<'a>,
     diagnostic_endpoints: Option<Peekable<vec::IntoIter<DiagnosticEndpoint>>>,
-    error_depth: usize,
-    warning_depth: usize,
-    information_depth: usize,
-    hint_depth: usize,
-    unnecessary_depth: usize,
+    diagnostic_depths: DiagnosticDepths,
+    untagged_diagnostic_depths: DiagnosticDepths,
+    unnecessary_depths: DiagnosticDepths,
+    deprecated_depths: DiagnosticDepths,
     underline: bool,
     highlights: Option<BufferChunkHighlights<'a>>,
     cached_highlights: Option<CachedChunkHighlightsIter>,
+}
+
+/// The number of diagnostics of each severity that cover the current position of [`BufferChunks`].
+#[derive(Clone, Copy, Debug, Default)]
+struct DiagnosticDepths {
+    error: usize,
+    warning: usize,
+    information: usize,
+    hint: usize,
+}
+
+impl DiagnosticDepths {
+    fn update(&mut self, endpoint: &DiagnosticEndpoint) {
+        let depth = match endpoint.severity {
+            DiagnosticSeverity::ERROR => &mut self.error,
+            DiagnosticSeverity::WARNING => &mut self.warning,
+            DiagnosticSeverity::INFORMATION => &mut self.information,
+            DiagnosticSeverity::HINT => &mut self.hint,
+            _ => return,
+        };
+        if endpoint.is_start {
+            *depth += 1;
+        } else {
+            *depth -= 1;
+        }
+    }
+
+    fn most_severe(&self) -> Option<DiagnosticSeverity> {
+        if self.error > 0 {
+            Some(DiagnosticSeverity::ERROR)
+        } else if self.warning > 0 {
+            Some(DiagnosticSeverity::WARNING)
+        } else if self.information > 0 {
+            Some(DiagnosticSeverity::INFORMATION)
+        } else if self.hint > 0 {
+            Some(DiagnosticSeverity::HINT)
+        } else {
+            None
+        }
+    }
 }
 
 /// A chunk of a buffer's text, along with its syntax highlight and
@@ -579,8 +618,13 @@ pub struct Chunk<'a> {
     pub chars: u128,
     /// Bitmap of newline indices in this chunk
     pub newlines: u128,
-    /// Whether this chunk of text is marked as unnecessary.
-    pub is_unnecessary: bool,
+    /// The severity of the diagnostic associated with this chunk that marks it
+    /// as neither unnecessary nor deprecated, if any.
+    pub untagged_diagnostic_severity: Option<DiagnosticSeverity>,
+    /// The severity of the diagnostic marking this chunk of text as unnecessary, if any.
+    pub unnecessary_severity: Option<DiagnosticSeverity>,
+    /// The severity of the diagnostic marking this chunk of text as deprecated, if any.
+    pub deprecated_severity: Option<DiagnosticSeverity>,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
     /// Whether this chunk of text was originally an inlay.
@@ -604,6 +648,7 @@ pub(crate) struct DiagnosticEndpoint {
     underline: bool,
     severity: DiagnosticSeverity,
     is_unnecessary: bool,
+    is_deprecated: bool,
 }
 
 /// A class of characters, used for characterizing a run of text.
@@ -5721,11 +5766,10 @@ impl<'a> BufferChunks<'a> {
             buffer_snapshot,
             chunks,
             diagnostic_endpoints,
-            error_depth: 0,
-            warning_depth: 0,
-            information_depth: 0,
-            hint_depth: 0,
-            unnecessary_depth: 0,
+            diagnostic_depths: DiagnosticDepths::default(),
+            untagged_diagnostic_depths: DiagnosticDepths::default(),
+            unnecessary_depths: DiagnosticDepths::default(),
+            deprecated_depths: DiagnosticDepths::default(),
             underline: true,
             highlights,
             cached_highlights,
@@ -5815,6 +5859,7 @@ impl<'a> BufferChunks<'a> {
                     is_start: true,
                     severity: entry.diagnostic.severity,
                     is_unnecessary: entry.diagnostic.is_unnecessary,
+                    is_deprecated: entry.diagnostic.is_deprecated,
                     underline: entry.diagnostic.underline,
                 });
                 diagnostic_endpoints.push(DiagnosticEndpoint {
@@ -5822,16 +5867,17 @@ impl<'a> BufferChunks<'a> {
                     is_start: false,
                     severity: entry.diagnostic.severity,
                     is_unnecessary: entry.diagnostic.is_unnecessary,
+                    is_deprecated: entry.diagnostic.is_deprecated,
                     underline: entry.diagnostic.underline,
                 });
             }
             diagnostic_endpoints
                 .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
             *diagnostics = diagnostic_endpoints.into_iter().peekable();
-            self.hint_depth = 0;
-            self.error_depth = 0;
-            self.warning_depth = 0;
-            self.information_depth = 0;
+            self.diagnostic_depths = DiagnosticDepths::default();
+            self.untagged_diagnostic_depths = DiagnosticDepths::default();
+            self.unnecessary_depths = DiagnosticDepths::default();
+            self.deprecated_depths = DiagnosticDepths::default();
         }
     }
 
@@ -5845,44 +5891,16 @@ impl<'a> BufferChunks<'a> {
     }
 
     fn update_diagnostic_depths(&mut self, endpoint: DiagnosticEndpoint) {
-        let depth = match endpoint.severity {
-            DiagnosticSeverity::ERROR => &mut self.error_depth,
-            DiagnosticSeverity::WARNING => &mut self.warning_depth,
-            DiagnosticSeverity::INFORMATION => &mut self.information_depth,
-            DiagnosticSeverity::HINT => &mut self.hint_depth,
-            _ => return,
-        };
-        if endpoint.is_start {
-            *depth += 1;
-        } else {
-            *depth -= 1;
-        }
-
+        self.diagnostic_depths.update(&endpoint);
         if endpoint.is_unnecessary {
-            if endpoint.is_start {
-                self.unnecessary_depth += 1;
-            } else {
-                self.unnecessary_depth -= 1;
-            }
+            self.unnecessary_depths.update(&endpoint);
         }
-    }
-
-    fn current_diagnostic_severity(&self) -> Option<DiagnosticSeverity> {
-        if self.error_depth > 0 {
-            Some(DiagnosticSeverity::ERROR)
-        } else if self.warning_depth > 0 {
-            Some(DiagnosticSeverity::WARNING)
-        } else if self.information_depth > 0 {
-            Some(DiagnosticSeverity::INFORMATION)
-        } else if self.hint_depth > 0 {
-            Some(DiagnosticSeverity::HINT)
-        } else {
-            None
+        if endpoint.is_deprecated {
+            self.deprecated_depths.update(&endpoint);
         }
-    }
-
-    fn current_code_is_unnecessary(&self) -> bool {
-        self.unnecessary_depth > 0
+        if !endpoint.is_unnecessary && !endpoint.is_deprecated {
+            self.untagged_diagnostic_depths.update(&endpoint);
+        }
     }
 }
 
@@ -5999,8 +6017,10 @@ impl<'a> Iterator for BufferChunks<'a> {
                 text: slice,
                 syntax_highlight_id: highlight_id,
                 underline: self.underline,
-                diagnostic_severity: self.current_diagnostic_severity(),
-                is_unnecessary: self.current_code_is_unnecessary(),
+                diagnostic_severity: self.diagnostic_depths.most_severe(),
+                untagged_diagnostic_severity: self.untagged_diagnostic_depths.most_severe(),
+                unnecessary_severity: self.unnecessary_depths.most_severe(),
+                deprecated_severity: self.deprecated_depths.most_severe(),
                 tabs,
                 chars,
                 newlines,

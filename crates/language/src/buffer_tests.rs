@@ -5668,6 +5668,62 @@ fn test_chunk_highlights_across_row_chunk_seeks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_diagnostic_tags_across_chunk_seeks(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let buffer = cx.new(|cx| Buffer::local("aaaa bbbb cccc", cx));
+    buffer.update(cx, |buffer, cx| {
+        let diagnostics = DiagnosticSet::new(
+            [DiagnosticEntry::new(
+                PointUtf16::new(0, 0)..PointUtf16::new(0, 9),
+                Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    is_unnecessary: true,
+                    is_deprecated: true,
+                    ..Default::default()
+                },
+            )],
+            buffer,
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+    });
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let mut chunks = snapshot.chunks(
+        0..snapshot.len(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: true,
+        },
+    );
+    let first_chunk = chunks.next().expect("buffer has text");
+    let hint = Some(DiagnosticSeverity::HINT);
+    assert_eq!(
+        (
+            first_chunk.unnecessary_severity,
+            first_chunk.deprecated_severity
+        ),
+        (hint, hint)
+    );
+
+    chunks.seek(5..snapshot.len());
+    let tagged_text_after_seek = chunks
+        .map(|chunk| {
+            (
+                chunk.text,
+                chunk.unnecessary_severity,
+                chunk.deprecated_severity,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tagged_text_after_seek,
+        [("bbbb", hint, hint), (" cccc", None, None)],
+        "seeking from inside a tagged diagnostic must not count it twice"
+    );
+}
+
+#[gpui::test]
 fn test_oversized_chunks_bypass_the_highlight_cache(cx: &mut TestAppContext) {
     if std::env::var_os("ZED_DISABLE_HIGHLIGHT_CACHE").is_some() {
         return;
