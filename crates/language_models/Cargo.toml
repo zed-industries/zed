@@ -13,7 +13,7 @@ path = "src/language_models.rs"
 doctest = false
 
 [features]
-test-support = []
+test-support = ["dep:cloud_llm_client"]
 
 [dependencies]
 ai_onboarding.workspace = true
@@ -28,6 +28,7 @@ bedrock = { workspace = true, features = ["schemars"] }
 client.workspace = true
 cloud_api_client.workspace = true
 cloud_api_types.workspace = true
+cloud_llm_client = { workspace = true, optional = true }
 collections.workspace = true
 component.workspace = true
 convert_case.workspace = true

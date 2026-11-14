@@ -54,9 +54,9 @@ use git::{
 use gpui::{
     AbsoluteLength, Action, Anchor, AnyElement, AsyncApp, AsyncWindowContext, ClickEvent,
     ClipboardItem, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
-    MouseButton, MouseDownEvent, Pixels, Point, PromptLevel, ScrollStrategy, Subscription, Task,
-    TaskExt, TextStyle, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
-    uniform_list,
+    MouseButton, MouseDownEvent, Pixels, Point, PromptLevel, ReadGlobal, ScrollStrategy,
+    Subscription, Task, TaskExt, TextStyle, UniformListScrollHandle, WeakEntity, actions, anchored,
+    deferred, uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferEvent, File};
@@ -6891,7 +6891,8 @@ impl GitPanel {
 
         let button = if can_commit && has_commit_model_configuration_error {
             button.hoverable_tooltip(move |_window, cx| {
-                cx.new(|_| GenerateCommitMessageConfigurationTooltip).into()
+                cx.new(|cx| GenerateCommitMessageConfigurationTooltip::new(cx))
+                    .into()
             })
         } else {
             button.tooltip(move |_window, cx| {
@@ -9873,49 +9874,96 @@ impl GitPanel {
     }
 }
 
-struct GenerateCommitMessageConfigurationTooltip;
+enum GenerateCommitMessageConfigurationTooltip {
+    ConfigureProvider,
+    SavedModelUnavailable,
+}
+
+impl GenerateCommitMessageConfigurationTooltip {
+    fn new(cx: &App) -> Self {
+        let registry = LanguageModelRegistry::read_global(cx);
+        if registry.commit_message_model(cx).is_some() {
+            return Self::ConfigureProvider;
+        }
+        let Some(agent) = SettingsStore::global(cx)
+            .raw_user_settings()
+            .and_then(|settings| settings.content.agent.as_ref())
+        else {
+            return Self::ConfigureProvider;
+        };
+
+        let mut saved_model_unavailable = false;
+        for selection in [
+            agent.commit_message_model.as_ref(),
+            agent.default_model.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let provider_id =
+                language_model::LanguageModelProviderId(selection.provider.0.clone().into());
+            let Some(provider) = registry.provider(&provider_id) else {
+                return Self::ConfigureProvider;
+            };
+            if !provider.is_authenticated(cx) {
+                return Self::ConfigureProvider;
+            }
+            saved_model_unavailable |= !provider
+                .provided_models(cx)
+                .iter()
+                .any(|model| model.id().0.as_ref() == selection.model.as_str());
+        }
+
+        if saved_model_unavailable {
+            Self::SavedModelUnavailable
+        } else {
+            Self::ConfigureProvider
+        }
+    }
+}
 
 impl Render for GenerateCommitMessageConfigurationTooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui::tooltip_container(cx, |container, _cx| {
-            container
-                .gap_1p5()
-                .child(Label::new(
-                    "Configure an LLM provider to generate commit messages.",
-                ))
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Button::new("configure-commit-message-provider", "Configure Provider")
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .label_size(LabelSize::Small)
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(
-                                        zed_actions::OpenSettingsAt {
-                                            path: "llm_providers".to_string(),
-                                            target: None,
-                                        }
-                                        .boxed_clone(),
-                                        cx,
-                                    );
-                                }),
-                        )
-                        .child(
-                            Button::new("llm-provider-docs", "See Docs")
-                                .style(ButtonStyle::OutlinedGhost)
-                                .end_icon(
-                                    Icon::new(IconName::ArrowUpRight)
-                                        .color(Color::Muted)
-                                        .size(IconSize::Small),
-                                )
-                                .label_size(LabelSize::Small)
-                                .on_click(move |_, _, cx| {
-                                    cx.open_url(&zed_urls::llm_provider_docs(cx))
-                                }),
-                        ),
-                )
+        let description = match self {
+            Self::ConfigureProvider => "Configure an LLM provider to generate commit messages.",
+            Self::SavedModelUnavailable => {
+                "Your saved model is unavailable. Choose another model in the Agent panel."
+            }
+        };
+        ui::tooltip_container(cx, move |container, _cx| {
+            container.gap_1p5().child(Label::new(description)).child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("configure-commit-message-provider", "Configure Provider")
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ModalSurface)
+                            .label_size(LabelSize::Small)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::OpenSettingsAt {
+                                        path: "llm_providers".to_string(),
+                                        target: None,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
+                            }),
+                    )
+                    .child(
+                        Button::new("llm-provider-docs", "See Docs")
+                            .style(ButtonStyle::OutlinedGhost)
+                            .end_icon(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small),
+                            )
+                            .label_size(LabelSize::Small)
+                            .on_click(move |_, _, cx| {
+                                cx.open_url(&zed_urls::llm_provider_docs(cx))
+                            }),
+                    ),
+            )
         })
     }
 }
@@ -10765,6 +10813,78 @@ mod tests {
             language_model::init(cx);
             editor::init(cx);
             crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn test_commit_generation_hint_distinguishes_unavailable_saved_model(cx: &mut TestAppContext) {
+        use language_model::{
+            ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+            fake_provider::FakeLanguageModelProvider,
+        };
+
+        init_test(cx);
+        cx.update(|cx| {
+            assert!(matches!(
+                GenerateCommitMessageConfigurationTooltip::new(cx),
+                GenerateCommitMessageConfigurationTooltip::ConfigureProvider,
+            ));
+            SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(
+                    r#"{"agent":{"default_model":{"provider":"zed.dev","model":"claude-opus-4-6"}}}"#,
+                    cx,
+                ).unwrap();
+            });
+            assert!(matches!(
+                GenerateCommitMessageConfigurationTooltip::new(cx),
+                GenerateCommitMessageConfigurationTooltip::ConfigureProvider,
+            ), "a missing provider still needs provider setup");
+
+            let provider = Arc::new(FakeLanguageModelProvider::new(
+                ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+            ));
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(LanguageModelRegistry::read_global(cx).commit_message_model(cx).is_none());
+            assert!(matches!(
+                GenerateCommitMessageConfigurationTooltip::new(cx),
+                GenerateCommitMessageConfigurationTooltip::SavedModelUnavailable,
+            ), "an authenticated provider with a removed saved model needs model recovery, not setup");
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(
+                    r#"{"agent":{"commit_message_model":{"provider":"zed.dev","model":"claude-opus-4-6"}}}"#,
+                    cx,
+                ).unwrap();
+            });
+            assert!(matches!(
+                GenerateCommitMessageConfigurationTooltip::new(cx),
+                GenerateCommitMessageConfigurationTooltip::SavedModelUnavailable,
+            ));
+
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                let available = registry.provider(&ZED_CLOUD_PROVIDER_ID).unwrap().default_model(cx);
+                registry.set_commit_message_model(available, cx);
+            });
+            assert!(matches!(
+                GenerateCommitMessageConfigurationTooltip::new(cx),
+                GenerateCommitMessageConfigurationTooltip::ConfigureProvider,
+            ), "a working background fallback must not be described as unavailable");
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.set_commit_message_model(None, cx);
+            });
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings("{}", cx).unwrap();
+            });
+            assert!(matches!(
+                GenerateCommitMessageConfigurationTooltip::new(cx),
+                GenerateCommitMessageConfigurationTooltip::ConfigureProvider,
+            ), "without a saved selection the normal setup hint must remain");
         });
     }
 

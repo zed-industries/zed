@@ -53,7 +53,7 @@ impl PlanDefinitions {
     pub fn student_plan(&self) -> impl IntoElement {
         List::new()
             .child(ListBulletItem::new("Unlimited edit predictions"))
-            .child(ListBulletItem::new("$10 of tokens in Zed agent"))
+            .child(ListBulletItem::new("$10/month in GPT Luna credits"))
             .child(ListBulletItem::new(
                 "Optional credit packs for additional usage",
             ))
