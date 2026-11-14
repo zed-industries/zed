@@ -71,8 +71,9 @@ pub struct SettingsProfileSelectorDelegate {
     selected_index: usize,
     preview_enabled: bool,
     selection_completed: bool,
-    /// Whether this selector applied a profile that hasn't been confirmed yet.
-    preview_applied: bool,
+    /// The profile this selector last applied without it being confirmed yet,
+    /// or `None` if it hasn't applied anything.
+    applied_profile_name: Option<Option<String>>,
     selector: WeakEntity<SettingsProfileSelector>,
 }
 
@@ -112,7 +113,7 @@ impl SettingsProfileSelectorDelegate {
             selected_index: 0,
             preview_enabled: false,
             selection_completed: false,
-            preview_applied: false,
+            applied_profile_name: None,
             selector,
         };
 
@@ -137,18 +138,23 @@ impl SettingsProfileSelectorDelegate {
     ) -> Option<String> {
         let mat = self.matches.get(self.selected_index)?;
         let profile_name = self.profile_names.get(mat.candidate_id)?.clone();
-        self.preview_applied = true;
-        Self::update_active_profile_name_global(profile_name, cx)
+        let applied_profile_name = Self::update_active_profile_name_global(profile_name, cx);
+        self.applied_profile_name = Some(applied_profile_name.clone());
+        applied_profile_name
     }
 
     fn restore_original_profile(&mut self, cx: &mut Context<Picker<Self>>) {
-        if !std::mem::take(&mut self.preview_applied) {
+        let Some(applied_profile_name) = self.applied_profile_name.take() else {
             return;
-        }
+        };
         let active_profile_name = cx
             .try_global::<ActiveSettingsProfileName>()
             .map(|profile_name| profile_name.0.clone());
-        if active_profile_name != self.original_profile_name {
+        // Only undo our own change: if the profile was changed elsewhere since
+        // this selector applied one, keep that newer choice.
+        if active_profile_name == applied_profile_name
+            && active_profile_name != self.original_profile_name
+        {
             Self::update_active_profile_name_global(self.original_profile_name.clone(), cx);
         }
         self.selected_profile_name = None;
@@ -956,6 +962,64 @@ mod tests {
                     .map(|p| p.0.clone()),
                 Some("Large Font".to_string())
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_settings_profile_selector_hiding_preview_keeps_profile_changed_elsewhere(
+        cx: &mut TestAppContext,
+    ) {
+        let user_settings_json = json!({
+            "buffer_font_size": 10.0,
+            "profiles": {
+                "Large Font": {
+                    "settings": {
+                        "buffer_font_size": 20.0
+                    }
+                },
+                "Huge Font": {
+                    "settings": {
+                        "buffer_font_size": 30.0
+                    }
+                }
+            }
+        });
+        let (workspace, cx) = init_test(user_settings_json, cx).await;
+
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        active_settings_profile_picker(&workspace, cx);
+        cx.dispatch_action(picker::TogglePreview);
+        cx.dispatch_action(SelectNext);
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Large Font".to_string())
+            );
+        });
+
+        // While this selector previews "Large Font", the profile changes from
+        // somewhere else (e.g. another window).
+        cx.update(|_, cx| {
+            cx.set_global(ActiveSettingsProfileName("Huge Font".to_string()));
+        });
+
+        // Hiding the preview and cancelling must only undo this selector's own
+        // change, not the newer one made elsewhere.
+        cx.dispatch_action(picker::TogglePreview);
+        cx.run_until_parked();
+        cx.dispatch_action(Cancel);
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Huge Font".to_string())
+            );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(30.0));
         });
     }
 }
