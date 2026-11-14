@@ -3535,10 +3535,10 @@ impl BackgroundScannerState {
                 }
             }
 
-            if let Err(ix) = removed_ids.binary_search(&entry.id) {
-                removed_ids.insert(ix, entry.id);
-            }
+            removed_ids.push(entry.id);
         }
+        removed_ids.sort_unstable();
+        removed_ids.dedup();
 
         self.snapshot
             .entries_by_id
