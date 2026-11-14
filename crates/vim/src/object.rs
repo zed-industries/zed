@@ -143,7 +143,7 @@ fn cover_or_next<I: Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBuffer
                     end: end_off.to_display_point(map),
                 },
                 open_range: open_range.clone(),
-                close_range: close_range.clone(),
+                close_range,
             };
 
             if open_range

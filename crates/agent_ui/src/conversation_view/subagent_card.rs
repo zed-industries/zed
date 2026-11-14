@@ -162,6 +162,7 @@ impl SubagentStatus {
         match tool_call.status() {
             ToolCallStatus::Pending
             | ToolCallStatus::InProgress
+            | ToolCallStatus::Paused
             | ToolCallStatus::WaitingForConfirmation => Self::Running,
             _ if has_user_canceled_output(tool_call, cx) => Self::Canceled,
             ToolCallStatus::Canceled => Self::Canceled,

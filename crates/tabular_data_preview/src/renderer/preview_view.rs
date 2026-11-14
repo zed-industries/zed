@@ -23,6 +23,8 @@ impl Render for TableView {
             .bg(theme.colors().editor_background)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::move_focused_cell))
+            .on_action(cx.listener(Self::extend_selection))
+            .on_action(cx.listener(Self::clear_selection))
             .child({
                 let is_loading = self.is_loading;
                 if is_loading || self.engine.contents.number_of_cols == 0 {

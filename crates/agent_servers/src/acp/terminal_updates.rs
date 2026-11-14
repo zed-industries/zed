@@ -86,6 +86,7 @@ pub fn decode_terminal_notification(
                     cwd: update.cwd,
                     output,
                     exit_status: update.exit_status,
+                    capabilities: update.capabilities,
                     meta: update.meta,
                 },
             }

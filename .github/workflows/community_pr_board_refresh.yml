@@ -1,10 +1,10 @@
-# Community PR Board — daily meta information refresh
+# Community PR Board — daily signal fields refresh
 #
 # Walks every open PR on the community board and recomputes its signal
 # fields. Backstop for changes that don't reach the event-driven workflow,
 # either because the relevant webhook isn't subscribed or doesn't fire at all.
 
-name: PR Board Meta Fields Refresh
+name: Community PR Board Signals Refresh
 
 on:
   schedule:
@@ -34,6 +34,7 @@ jobs:
           owner: zed-industries
           repositories: zed
           permission-issues: read
+          permission-members: read
           permission-organization-projects: write
           permission-pull-requests: read
 

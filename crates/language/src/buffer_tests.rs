@@ -5668,6 +5668,54 @@ fn test_chunk_highlights_across_row_chunk_seeks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_chunks_seek_out_of_unnecessary_diagnostic(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let first_row = "let unused = 1;\n";
+    let second_row = "let used = 2;\n";
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(format!("{first_row}{second_row}"), cx);
+        let diagnostics = DiagnosticSet::new(
+            [DiagnosticEntry::new(
+                PointUtf16::new(0, 4)..PointUtf16::new(0, 10),
+                Diagnostic {
+                    is_unnecessary: true,
+                    ..Default::default()
+                },
+            )],
+            &buffer,
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+        buffer
+    });
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let mut chunks = snapshot.chunks(
+        0..snapshot.len(),
+        LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: true,
+        },
+    );
+    let unnecessary_chunk = chunks.find(|chunk| chunk.is_unnecessary);
+    assert_eq!(
+        unnecessary_chunk.map(|chunk| chunk.text),
+        Some("unused"),
+        "the diagnostic range must be reported as unnecessary before seeking"
+    );
+
+    chunks.seek(first_row.len()..snapshot.len());
+    let chunks_after_seek = chunks
+        .map(|chunk| (chunk.text, chunk.is_unnecessary))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        chunks_after_seek,
+        vec![(second_row, false)],
+        "seeking away from an unnecessary diagnostic must not leave later text marked unnecessary"
+    );
+}
+
+#[gpui::test]
 fn test_oversized_chunks_bypass_the_highlight_cache(cx: &mut TestAppContext) {
     if std::env::var_os("ZED_DISABLE_HIGHLIGHT_CACHE").is_some() {
         return;

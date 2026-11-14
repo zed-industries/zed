@@ -1,10 +1,10 @@
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, DispatchEventResult, DisplayId, GpuSpecs, HeadlessAtlas,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions, Scene, Size,
-    TestDisplay, TestPlatform, TextInputConfiguration, TextInputStateChange, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets, WindowParams,
-    WindowVisibility,
+    AnyWindowHandle, Bounds, Decorations, DevicePixels, DispatchEventResult, DisplayId, GpuSpecs,
+    HeadlessAtlas, Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions,
+    Scene, Size, TestDisplay, TestPlatform, TextInputConfiguration, TextInputStateChange,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets,
+    WindowParams, WindowVisibility,
 };
 use gpui_util::ResultExt as _;
 #[cfg(any(test, feature = "test-support"))]
@@ -57,6 +57,7 @@ pub(crate) struct TestWindowState {
     is_fullscreen: bool,
     scale_factor: f32,
     appearance: WindowAppearance,
+    decorations: Decorations,
     external_drag_files: Vec<(PathBuf, bool)>,
     start_external_drag_result: bool,
 }
@@ -133,6 +134,7 @@ impl TestWindow {
             // Preserve the test platform's historical 2x default.
             scale_factor: 2.0,
             appearance: WindowAppearance::Light,
+            decorations: Decorations::default(),
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
         })))
@@ -269,6 +271,17 @@ impl TestWindow {
     pub fn simulate_appearance_change(&self, appearance: WindowAppearance) {
         let mut lock = self.0.lock();
         lock.appearance = appearance;
+        let Some(mut callback) = lock.appearance_change_callback.take() else {
+            return;
+        };
+        drop(lock);
+        callback();
+        self.0.lock().appearance_change_callback = Some(callback);
+    }
+
+    pub fn simulate_decorations_change(&self, decorations: Decorations) {
+        let mut lock = self.0.lock();
+        lock.decorations = decorations;
         let Some(mut callback) = lock.appearance_change_callback.take() else {
             return;
         };
@@ -478,8 +491,21 @@ impl PlatformWindow for TestWindow {
     }
 
     fn toggle_fullscreen(&self) {
-        let mut lock = self.0.lock();
-        lock.is_fullscreen = !lock.is_fullscreen;
+        let platform = {
+            let mut lock = self.0.lock();
+            lock.is_fullscreen = !lock.is_fullscreen;
+            lock.platform.upgrade()
+        };
+        if let Some(platform) = platform {
+            let mut window = self.clone();
+            platform
+                .foreground_executor()
+                .spawn(async move {
+                    let size = window.0.lock().bounds.size;
+                    window.simulate_resize(size);
+                })
+                .detach();
+        }
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -618,5 +644,9 @@ impl PlatformWindow for TestWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
+    }
+
+    fn window_decorations(&self) -> Decorations {
+        self.0.lock().decorations
     }
 }

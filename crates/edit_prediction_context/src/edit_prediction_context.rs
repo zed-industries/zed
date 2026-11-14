@@ -653,7 +653,7 @@ fn identifiers_for_position(
         if let Some(body_range) = item.body_range(&buffer) {
             ranges.push(item.range.start..body_range.start.to_offset(&buffer));
         } else {
-            ranges.push(item.range.clone());
+            ranges.push(item.range);
         }
     }
 

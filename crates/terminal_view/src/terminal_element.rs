@@ -1753,14 +1753,6 @@ impl Element for TerminalElement {
     }
 }
 
-impl IntoElement for TerminalElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 struct TerminalInputHandler {
     terminal_view: Entity<TerminalView>,
     workspace: WeakEntity<Workspace>,

@@ -1,8 +1,9 @@
-use gpui::WindowButtonLayout;
-use settings::{RegisterSetting, Settings, SettingsContent};
+use gpui::{App, Window, WindowButtonLayout};
+use settings::{RegisterSetting, Settings, SettingsContent, TitleBarVisibility};
 
 #[derive(Copy, Clone, Debug, RegisterSetting)]
 pub struct TitleBarSettings {
+    pub show: TitleBarVisibility,
     pub show_branch_status_icon: bool,
     pub show_onboarding_banner: bool,
     pub show_user_picture: bool,
@@ -16,10 +17,23 @@ pub struct TitleBarSettings {
     pub button_layout: Option<WindowButtonLayout>,
 }
 
+impl TitleBarSettings {
+    pub fn is_title_bar_visible(window: &Window, cx: &App) -> bool {
+        match Self::get_global(cx).show {
+            TitleBarVisibility::Always => true,
+            TitleBarVisibility::Never => false,
+            TitleBarVisibility::HideInFullScreen => {
+                !window.is_fullscreen() && !window.is_simple_fullscreen()
+            }
+        }
+    }
+}
+
 impl Settings for TitleBarSettings {
     fn from_settings(s: &SettingsContent) -> Self {
         let content = s.title_bar.clone().unwrap();
         TitleBarSettings {
+            show: content.show.unwrap(),
             show_branch_status_icon: content.show_branch_status_icon.unwrap(),
             show_onboarding_banner: content.show_onboarding_banner.unwrap(),
             show_user_picture: content.show_user_picture.unwrap(),
