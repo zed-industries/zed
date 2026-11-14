@@ -1,10 +1,11 @@
 use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions,
     ContextServerConfiguration, ForegroundWork, PendingSessionUpdates, ReadOnlyConfigOptions,
-    UnsupportedVersion, apply_v2_session_notification, close_undelivered_session,
-    drain_foreground_queue, enqueue_notification, first_class_terminal_auth_task,
-    is_disconnect_error, is_resource_not_found, map_acp_error, mcp_configurations_for_project,
-    runtime, transport, with_v2_client_ingress, work_dirs_from_session_info,
+    UnsupportedVersion, agent_runs_locally, apply_v2_session_notification,
+    close_undelivered_session, drain_foreground_queue, enqueue_notification,
+    first_class_terminal_auth_task, is_disconnect_error, is_resource_not_found, map_acp_error,
+    mcp_configurations_for_project, runtime, transport, with_v2_client_ingress,
+    work_dirs_from_session_info,
 };
 use acp_thread::{
     AcpThread, AgentConnection, AgentSessionConfigOptions, AgentSessionInfo, AgentSessionList,
@@ -231,13 +232,16 @@ impl AcpV2Connection {
         agent_server_store: WeakEntity<AgentServerStore>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        let run_locally = agent_server_store
+            .read_with(cx, |store, _| store.agent_runs_locally(&agent_id))
+            .unwrap_or(false);
         let transport::StdioProcess {
             child,
             incoming,
             outgoing,
             stderr,
             debug_log,
-        } = transport::spawn_stdio(&project, command, cx)?;
+        } = transport::spawn_stdio(&project, command, run_locally, cx)?;
         let mut child = transport::OwnedChild(child);
         let status = child
             .0
@@ -993,7 +997,11 @@ impl AcpV2Connection {
         }
         let path_style = project.read(cx).path_style(cx);
         let context = match self.session_context(
-            mcp_configurations_for_project(&project, cx),
+            mcp_configurations_for_project(
+                &project,
+                agent_runs_locally(&self.agent_server_store, &self.id, cx),
+                cx,
+            ),
             &work_dirs,
             |path| path_style.is_absolute(path),
         ) {
@@ -1326,7 +1334,11 @@ impl AgentConnection for AcpV2Connection {
     ) -> Task<Result<Entity<AcpThread>>> {
         let path_style = project.read(cx).path_style(cx);
         let context = match self.session_context(
-            mcp_configurations_for_project(&project, cx),
+            mcp_configurations_for_project(
+                &project,
+                agent_runs_locally(&self.agent_server_store, &self.id, cx),
+                cx,
+            ),
             &work_dirs,
             |path| path_style.is_absolute(path),
         ) {
@@ -2498,6 +2510,7 @@ mod tests {
                 AllAgentServersSettings(HashMap::from_iter([(
                     "session-test".into(),
                     settings::CustomAgentServerSettings::Custom {
+                        remote: true,
                         path: "test-agent".into(),
                         args: Vec::new(),
                         env: HashMap::default(),
@@ -7935,6 +7948,7 @@ done
                 AllAgentServersSettings(HashMap::from_iter([(
                     "terminal-test".to_owned(),
                     settings::CustomAgentServerSettings::Custom {
+                        remote: true,
                         path: "/bin/sh".into(),
                         args: vec!["--base".into()],
                         env: HashMap::from_iter([("BASE".into(), "1".into())]),

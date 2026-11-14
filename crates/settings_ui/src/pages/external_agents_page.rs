@@ -338,6 +338,7 @@ pub(crate) struct CustomAgentForm {
     default_mode: Option<String>,
     default_config_options: HashMap<String, AgentConfigOptionValue>,
     favorite_config_option_values: HashMap<String, Vec<String>>,
+    remote: bool,
     /// Stable handles for the Cancel/Save buttons so they can render a focus
     /// ring. `Filled`/`Subtle` buttons only get a subtle `focus_visible`
     /// background change otherwise, which is hard to see.
@@ -361,6 +362,7 @@ impl CustomAgentForm {
         let mut default_mode = None;
         let mut default_config_options = HashMap::default();
         let mut favorite_config_option_values = HashMap::default();
+        let mut remote = true;
 
         // Pre-fill from the raw settings so invalid values typed directly into
         // settings.json still load into the form for correction.
@@ -373,7 +375,9 @@ impl CustomAgentForm {
                     default_mode: mode,
                     default_config_options: config_options,
                     favorite_config_option_values: favorites,
+                    remote: remote_setting,
                 } => {
+                    remote = *remote_setting;
                     command_initial = Some(path.to_string_lossy().to_string());
                     if !args.is_empty() {
                         args_initial = Some(args.join(" "));
@@ -410,6 +414,7 @@ impl CustomAgentForm {
             default_mode,
             default_config_options,
             favorite_config_option_values,
+            remote,
             cancel_focus_handle: cx.focus_handle(),
             save_focus_handle: cx.focus_handle(),
             error: None,
@@ -784,6 +789,7 @@ struct CustomAgentFormValues {
     default_mode: Option<String>,
     default_config_options: HashMap<String, AgentConfigOptionValue>,
     favorite_config_option_values: HashMap<String, Vec<String>>,
+    remote: bool,
 }
 
 fn build_settings_from_form(
@@ -799,6 +805,7 @@ fn build_settings_from_form(
         default_mode: form.default_mode.clone(),
         default_config_options: form.default_config_options.clone(),
         favorite_config_option_values: form.favorite_config_option_values.clone(),
+        remote: form.remote,
     };
     build_settings_from_values(values)
 }
@@ -836,6 +843,7 @@ fn build_settings_from_values(
         default_mode: values.default_mode,
         default_config_options: values.default_config_options,
         favorite_config_option_values: values.favorite_config_option_values,
+        remote: values.remote,
     };
 
     Ok((AgentId(name.into()), values.original_id, content))
@@ -948,6 +956,7 @@ async fn add_custom_agent_settings_entry(
                                 default_mode: None,
                                 default_config_options: Default::default(),
                                 favorite_config_option_values: Default::default(),
+                                remote: true,
                             },
                         );
                     }
@@ -1045,6 +1054,7 @@ mod tests {
             default_mode: None,
             default_config_options: HashMap::default(),
             favorite_config_option_values: HashMap::default(),
+            remote: true,
         }
     }
 
@@ -1112,6 +1122,7 @@ mod tests {
                 default_mode: None,
                 default_config_options: HashMap::default(),
                 favorite_config_option_values: HashMap::default(),
+                remote: true,
             }
         );
     }

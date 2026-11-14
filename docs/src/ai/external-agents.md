@@ -156,6 +156,27 @@ External Agents may read credentials locally, remotely, or through their own sig
 
 Zed LLM provider API keys saved in the local keychain are not automatically the same as an External Agent's credentials.
 
+### Running a Custom Agent Locally {#remote-projects-local-agent}
+
+By default, agents run on the remote machine when you work on a remote project. To run a custom agent on your local machine instead, define it in your local settings with `"remote": false`:
+
+```json [settings]
+{
+  "agent_servers": {
+    "my-agent": {
+      "type": "custom",
+      "command": "my-agent",
+      "args": ["--acp"],
+      "remote": false
+    }
+  }
+}
+```
+
+The agent process runs locally, and Zed performs the file reads, file writes, and terminal commands it requests on the remote project. Anything the agent does on its own, such as reading files directly or running its own subprocesses, happens on your local machine unless the agent is set up to reach the remote machine itself (for example, through an SSH backend).
+
+MCP servers are matched to where the agent runs: a locally running agent receives your MCP servers that have `"remote": false`, and not the ones that run on the remote server.
+
 ## Custom Agents {#custom-agents}
 
 Use custom agents when you are developing an ACP-compatible agent or need to run an agent that is not in the registry.

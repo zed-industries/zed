@@ -1,10 +1,11 @@
 use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions, FlattenAcpResult as _,
-    ForegroundWork, ReadOnlyConfigOptions, UnsupportedVersion, apply_subagent_update,
-    drain_foreground_queue, enqueue_notification, enqueue_request, first_class_terminal_auth_task,
-    handle_v2_complete_elicitation, handle_v2_create_elicitation, map_acp_error,
-    mcp_configurations_for_project, respond_err, respond_result, runtime, session_thread,
-    terminal_auth_task_id, transport, with_v2_client_ingress, work_dirs_from_session_info,
+    ForegroundWork, ReadOnlyConfigOptions, UnsupportedVersion, agent_runs_locally,
+    apply_subagent_update, drain_foreground_queue, enqueue_notification, enqueue_request,
+    first_class_terminal_auth_task, handle_v2_complete_elicitation, handle_v2_create_elicitation,
+    map_acp_error, mcp_configurations_for_project, respond_err, respond_result, runtime,
+    session_thread, terminal_auth_task_id, transport, with_v2_client_ingress,
+    work_dirs_from_session_info,
 };
 use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
@@ -560,13 +561,16 @@ impl AcpConnection {
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let original_command = command.clone();
+        let run_locally = agent_server_store
+            .read_with(cx, |store, _| store.agent_runs_locally(&agent_id))
+            .unwrap_or(false);
         let transport::StdioProcess {
             child,
             incoming,
             outgoing,
             stderr,
             debug_log,
-        } = transport::spawn_stdio(&project, command, cx)?;
+        } = transport::spawn_stdio(&project, command, run_locally, cx)?;
         let mut child = transport::OwnedChild(child);
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
@@ -1343,7 +1347,11 @@ impl AgentConnection for AcpConnection {
             Err(error) => return Task::ready(Err(error)),
         };
         let name = self.id.0.clone();
-        let mcp_servers = mcp_servers_for_project(&project, cx);
+        let mcp_servers = mcp_servers_for_project(
+            &project,
+            agent_runs_locally(&self.agent_server_store, &self.id, cx),
+            cx,
+        );
         let sends_initial_config_options = self.agent_supports_initial_config_options(cx);
 
         cx.spawn(async move |cx| {
@@ -1535,7 +1543,11 @@ impl AgentConnection for AcpConnection {
             ))));
         }
 
-        let mcp_servers = mcp_servers_for_project(&project, cx);
+        let mcp_servers = mcp_servers_for_project(
+            &project,
+            agent_runs_locally(&self.agent_server_store, &self.id, cx),
+            cx,
+        );
         self.open_or_create_session(
             session_id,
             project,
@@ -1579,7 +1591,11 @@ impl AgentConnection for AcpConnection {
             ))));
         }
 
-        let mcp_servers = mcp_servers_for_project(&project, cx);
+        let mcp_servers = mcp_servers_for_project(
+            &project,
+            agent_runs_locally(&self.agent_server_store, &self.id, cx),
+            cx,
+        );
         self.open_or_create_session(
             session_id,
             project,
@@ -5818,6 +5834,7 @@ mod tests {
                 AllAgentServersSettings(HashMap::from_iter([(
                     "test".to_string(),
                     settings::CustomAgentServerSettings::Custom {
+                        remote: true,
                         path: PathBuf::from("test-agent"),
                         args: vec!["--acp".into(), "--verbose".into()],
                         env: HashMap::from_iter([
@@ -6487,6 +6504,7 @@ mod tests {
                 AllAgentServersSettings(HashMap::from_iter([(
                     "test".to_string(),
                     settings::CustomAgentServerSettings::Custom {
+                        remote: true,
                         path: PathBuf::from("test-agent"),
                         args: Vec::new(),
                         env: HashMap::default(),
@@ -10026,8 +10044,12 @@ exit 7
     }
 }
 
-fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpServer> {
-    mcp_configurations_for_project(project, cx)
+fn mcp_servers_for_project(
+    project: &Entity<Project>,
+    agent_runs_locally: bool,
+    cx: &App,
+) -> Vec<acp::McpServer> {
+    mcp_configurations_for_project(project, agent_runs_locally, cx)
         .into_iter()
         .map(|(name, configuration)| match &*configuration {
             project::context_server_store::ContextServerConfiguration::Custom {
