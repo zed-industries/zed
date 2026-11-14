@@ -30,6 +30,107 @@ message AgentServerCommand {
   optional SpawnInTerminal login = 5;
 }
 
+message GetGlobalSkills {
+  uint64 project_id = 1;
+}
+
+message GetGlobalSkillsResponse {
+  repeated GlobalSkillLoadResult results = 1;
+}
+
+message GlobalSkillLoadResult {
+  oneof variant {
+    GlobalSkill skill = 1;
+    GlobalSkillLoadError error = 2;
+  }
+}
+
+message GlobalSkill {
+  string name = 1;
+  string description = 2;
+  string skill_file_path = 3;
+  string directory_path = 4;
+  bool disable_model_invocation = 5;
+  repeated GlobalSkillLoadWarning load_warnings = 6;
+}
+
+message GlobalSkillLoadWarning {
+  message DescriptionTooLong {
+    uint64 actual_len = 1;
+    uint64 max_len = 2;
+  }
+
+  oneof variant {
+    DescriptionTooLong description_too_long = 1;
+  }
+}
+
+message GlobalSkillLoadError {
+  string path = 1;
+  string message = 2;
+}
+
+message GlobalSkillsChanged {
+  uint64 project_id = 1;
+}
+
+message CreateGlobalSkill {
+  uint64 project_id = 1;
+  string name = 2;
+  string description = 3;
+  string body = 4;
+  bool disable_model_invocation = 5;
+}
+
+message CreateGlobalSkillResponse {
+  string skill_file_path = 1;
+}
+
+message TrashGlobalSkill {
+  uint64 project_id = 1;
+  string directory_name = 2;
+}
+
+message ResolveGlobalSkillPath {
+  uint64 project_id = 1;
+  string path = 2;
+  bool may_not_exist = 3;
+}
+
+message ResolveGlobalSkillPathResponse {
+  optional string path = 1;
+  bool is_skills_dir = 2;
+  bool is_linked = 3;
+}
+
+message ApplyGlobalSkillFileOperation {
+  message CreateDirectory {
+    string path = 1;
+  }
+
+  message Delete {
+    string path = 1;
+  }
+
+  message Copy {
+    string source = 1;
+    string destination = 2;
+  }
+
+  message Move {
+    string source = 1;
+    string destination = 2;
+  }
+
+  uint64 project_id = 1;
+  oneof operation {
+    CreateDirectory create_directory = 2;
+    Delete delete = 3;
+    Copy copy = 4;
+    Move move = 5;
+  }
+}
+
 message ExternalAgentsUpdated {
   uint64 project_id = 1;
   repeated string names = 2;

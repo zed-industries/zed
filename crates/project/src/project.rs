@@ -447,6 +447,8 @@ pub enum Event {
     },
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
+    /// The remote server's `~/.agents/skills` changed.
+    GlobalSkillsChanged,
     BufferEdited {
         source: BufferEditSource,
     },
@@ -1763,6 +1765,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
+            remote_proto.add_entity_message_handler(Self::handle_global_skills_changed);
             remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto
@@ -5868,6 +5871,15 @@ impl Project {
             });
             Ok(())
         })
+    }
+
+    async fn handle_global_skills_changed(
+        this: Entity<Self>,
+        _: TypedEnvelope<proto::GlobalSkillsChanged>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |_, cx| cx.emit(Event::GlobalSkillsChanged));
+        Ok(())
     }
 
     async fn handle_telemetry_event(

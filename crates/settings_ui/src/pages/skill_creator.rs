@@ -1,7 +1,8 @@
 use agent_skills::{
-    MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE, SKILL_FILE_NAME, SkillMetadata,
-    SkillsUpdatedHook, global_skills_dir, parse_skill_file_content, project_skills_relative_path,
-    slugify_skill_name, validate_description, validate_name,
+    MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE, SKILL_FILE_NAME, SkillsUpdatedHook,
+    existing_skill_path_error, format_skill_file, global_skills_dir, parse_skill_file_content,
+    project_skills_relative_path, slugify_skill_name, validate_description, validate_name,
+    write_skill_to_disk,
 };
 use anyhow::{Context as _, Result, anyhow};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -9,7 +10,7 @@ use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{
     App, AsyncApp, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Task,
-    TextStyle, WeakEntity, WindowHandle, actions,
+    TextStyle, WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, language_settings::SoftWrap};
@@ -23,8 +24,8 @@ use ui::{Banner, Divider, SwitchField, WithScrollbar, prelude::*};
 use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
 use util::rel_path::RelPath;
-use workspace::MultiWorkspace;
 
+use super::skills_setup::{SkillLocation, remote_global_skills_project};
 use crate::{SettingsUiFile, SettingsWindow, all_projects};
 
 actions!(
@@ -73,27 +74,20 @@ struct ImportedSkill {
     disable_model_invocation: bool,
 }
 
-enum ScopeChoice {
-    Global,
-    Project {
-        project: Entity<Project>,
-        worktree: Entity<Worktree>,
-    },
-}
-
-fn scope_for_settings_file(
-    current_file: &SettingsUiFile,
-    original_window: Option<&WindowHandle<MultiWorkspace>>,
+/// Where a skill created with this settings file selected is written.
+fn location_for_settings_file(
+    settings_window: &SettingsWindow,
+    remote_project: Option<Entity<Project>>,
     cx: &App,
-) -> ScopeChoice {
-    if let SettingsUiFile::Project((worktree_id, _)) = current_file {
-        for project in all_projects(original_window, cx) {
+) -> SkillLocation {
+    if let SettingsUiFile::Project((worktree_id, _)) = &settings_window.current_file {
+        for project in all_projects(settings_window.original_window.as_ref(), cx) {
             if let Some(worktree) = project.read(cx).worktree_for_id(*worktree_id, cx) {
-                return ScopeChoice::Project { project, worktree };
+                return SkillLocation::Project { project, worktree };
             }
         }
     }
-    ScopeChoice::Global
+    SkillLocation::global(remote_project)
 }
 
 pub(crate) fn skill_url_from_clipboard(cx: &App) -> Option<String> {
@@ -613,16 +607,13 @@ impl SkillCreatorPage {
 
         // Resolve the scope at save time so the skill is written to whichever
         // settings file is selected at the moment the user clicks Save.
-        let scope = self
+        let location = self
             .settings_window
             .read_with(cx, |settings_window, cx| {
-                scope_for_settings_file(
-                    &settings_window.current_file,
-                    settings_window.original_window.as_ref(),
-                    cx,
-                )
+                let remote_project = remote_global_skills_project(settings_window, cx);
+                location_for_settings_file(settings_window, remote_project, cx)
             })
-            .unwrap_or(ScopeChoice::Global);
+            .unwrap_or(SkillLocation::Local);
         let name = self.current_name(cx);
         let description = self.current_description(cx);
         let body = self.current_body(cx);
@@ -634,8 +625,8 @@ impl SkillCreatorPage {
         cx.notify();
 
         let task = cx.spawn_in(window, async move |this, cx| {
-            let result = match &scope {
-                ScopeChoice::Global => {
+            let result = match &location {
+                SkillLocation::Local => {
                     write_skill_to_disk(
                         fs.as_ref(),
                         &global_skills_dir(),
@@ -646,7 +637,23 @@ impl SkillCreatorPage {
                     )
                     .await
                 }
-                ScopeChoice::Project { project, worktree } => {
+                SkillLocation::RemoteGlobal(project) => {
+                    let create_task = cx.update(|_window, cx| {
+                        agent::create_remote_global_skill(
+                            project,
+                            &name,
+                            &description,
+                            &body,
+                            disable_model_invocation,
+                            cx,
+                        )
+                    });
+                    match create_task {
+                        Ok(create_task) => create_task.await,
+                        Err(error) => Err(error),
+                    }
+                }
+                SkillLocation::Project { project, worktree } => {
                     write_skill_to_worktree(
                         project,
                         worktree,
@@ -1184,48 +1191,6 @@ fn truncate_description(description: &str) -> String {
         .to_string()
 }
 
-/// Serialize the SKILL.md file to disk at `<skills_dir>/<name>/SKILL.md`.
-///
-/// Refuses to overwrite an existing directory at `<skills_dir>/<name>`. The
-/// caller surfaces the resulting error to the user, who picks a different
-/// name.
-async fn write_skill_to_disk(
-    fs: &dyn Fs,
-    skills_dir: &std::path::Path,
-    name: &str,
-    description: &str,
-    body: &str,
-    disable_model_invocation: bool,
-) -> Result<PathBuf> {
-    let skill_dir = skills_dir.join(name);
-    match fs.metadata(&skill_dir).await {
-        Ok(Some(metadata)) => {
-            return Err(existing_skill_path_error(name, &skill_dir, metadata.is_dir));
-        }
-        Ok(None) => {}
-        Err(err) => {
-            return Err(err).with_context(|| {
-                format!(
-                    "failed to check whether {} already exists",
-                    skill_dir.display()
-                )
-            });
-        }
-    }
-
-    let content = format_skill_file(name, description, body, disable_model_invocation)?;
-
-    fs.create_dir(&skill_dir)
-        .await
-        .with_context(|| format!("failed to create skill directory {}", skill_dir.display()))?;
-    let skill_file_path = skill_dir.join(SKILL_FILE_NAME);
-    fs.write(&skill_file_path, content.as_bytes())
-        .await
-        .with_context(|| format!("failed to write {}", skill_file_path.display()))?;
-
-    Ok(skill_file_path)
-}
-
 async fn write_skill_to_worktree(
     project: &Entity<Project>,
     worktree: &Entity<Worktree>,
@@ -1271,53 +1236,6 @@ async fn write_skill_to_worktree(
         .with_context(|| format!("failed to write {}", skill_file_abs_path.display()))?;
 
     Ok(skill_file_abs_path)
-}
-
-fn existing_skill_path_error(
-    name: &str,
-    skill_dir: &std::path::Path,
-    is_dir: bool,
-) -> anyhow::Error {
-    if is_dir {
-        anyhow!(
-            "A skill named \"{name}\" already exists at {}. Pick a different name.",
-            skill_dir.display()
-        )
-    } else {
-        // Without this check, creating the directory fails with a vague "File exists" error.
-        anyhow!(
-            "A file (not a skill directory) already exists at {}. \
-             Delete it or pick a different skill name.",
-            skill_dir.display()
-        )
-    }
-}
-
-fn format_skill_file(
-    name: &str,
-    description: &str,
-    body: &str,
-    disable_model_invocation: bool,
-) -> Result<String> {
-    let metadata = SkillMetadata {
-        name: name.to_string(),
-        description: description.to_string(),
-        disable_model_invocation,
-    };
-    let frontmatter = serde_yaml_ng::to_string(&metadata)
-        .context("failed to serialize skill frontmatter as YAML")?;
-
-    let mut content = String::with_capacity(frontmatter.len() + body.len() + 16);
-    content.push_str("---\n");
-    content.push_str(&frontmatter);
-    content.push_str("---\n");
-    let trimmed_body = body.trim();
-    if !trimmed_body.is_empty() {
-        content.push('\n');
-        content.push_str(trimmed_body);
-        content.push('\n');
-    }
-    Ok(content)
 }
 
 #[cfg(test)]
@@ -1467,55 +1385,6 @@ mod tests {
             self.bytes_read += byte_count;
             Poll::Ready(Ok(byte_count))
         }
-    }
-
-    // Name and description validation rules are unit-tested in
-    // `agent_skills`, which owns `validate_name` / `validate_description`
-    // / `MAX_SKILL_DESCRIPTION_LEN`. The tests below cover the skill
-    // creator's own surface area: SKILL.md formatting and disk-writing.
-
-    #[test]
-    fn format_skill_file_round_trips_through_parser() {
-        let content =
-            format_skill_file("draft-pr", "Push a draft PR", "Do the thing.", false).unwrap();
-        let skill = parse_skill_frontmatter(
-            Path::new("/skills/draft-pr/SKILL.md"),
-            &content,
-            SkillSource::Global,
-        )
-        .expect("generated frontmatter must round-trip through parse_skill_frontmatter");
-        assert_eq!(skill.name, "draft-pr");
-        assert_eq!(skill.description, "Push a draft PR");
-        assert!(!skill.disable_model_invocation);
-    }
-
-    #[test]
-    fn format_skill_file_writes_disable_model_invocation_true() {
-        let content = format_skill_file("my-skill", "description", "body", true).unwrap();
-        assert!(content.contains("disable-model-invocation: true"));
-    }
-
-    #[test]
-    fn format_skill_file_omits_body_when_empty() {
-        let content = format_skill_file("my-skill", "description", "   ", false).unwrap();
-        // The trailing closing-delimiter newline is the last byte.
-        assert!(content.ends_with("---\n"));
-    }
-
-    #[test]
-    fn format_skill_file_escapes_yaml_specials_in_description() {
-        // serde_yaml_ng must quote/escape descriptions that contain YAML
-        // specials so the file round-trips. If we ever swap formatters,
-        // this test will catch a regression.
-        let tricky = "contains: a colon, # a hash, and a \"quote\"";
-        let content = format_skill_file("weird-skill", tricky, "body", false).unwrap();
-        let skill = parse_skill_frontmatter(
-            Path::new("/skills/weird-skill/SKILL.md"),
-            &content,
-            SkillSource::Global,
-        )
-        .expect("YAML-special characters must round-trip");
-        assert_eq!(skill.description, tricky);
     }
 
     #[test]
@@ -1728,97 +1597,6 @@ mod tests {
         assert!(
             !message.contains("tail-that-should-not-appear"),
             "error body should not include the unbounded tail, got: {message}"
-        );
-    }
-
-    #[gpui::test]
-    async fn write_skill_to_disk_creates_directory_and_file(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/skills", serde_json::json!({})).await;
-
-        let path = write_skill_to_disk(
-            fs.as_ref(),
-            Path::new("/skills"),
-            "draft-pr",
-            "Push a draft PR",
-            "Body of the skill.",
-            false,
-        )
-        .await
-        .expect("write should succeed");
-
-        assert_eq!(path, Path::new("/skills/draft-pr/SKILL.md"));
-        let content = fs.load(&path).await.expect("file should exist");
-        let skill = parse_skill_frontmatter(&path, &content, SkillSource::Global)
-            .expect("written file should be parseable");
-        assert_eq!(skill.name, "draft-pr");
-        assert_eq!(skill.description, "Push a draft PR");
-    }
-
-    #[gpui::test]
-    async fn write_skill_to_disk_refuses_to_overwrite(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/skills",
-            serde_json::json!({
-                "draft-pr": {
-                    "SKILL.md": "---\nname: draft-pr\ndescription: existing\n---\nbody\n"
-                }
-            }),
-        )
-        .await;
-
-        let err = write_skill_to_disk(
-            fs.as_ref(),
-            Path::new("/skills"),
-            "draft-pr",
-            "Push a draft PR",
-            "Body of the skill.",
-            false,
-        )
-        .await
-        .expect_err("writing over an existing skill must fail");
-        assert!(
-            err.to_string().contains("already exists"),
-            "error message should mention the conflict, got: {err}"
-        );
-    }
-
-    #[gpui::test]
-    async fn write_skill_to_disk_rejects_non_directory_at_skill_path(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let fs = FakeFs::new(cx.executor());
-        // A *file* (not a directory) sitting at `/skills/draft-pr`. With the
-        // old `is_dir` check this slipped through and we ended up surfacing
-        // the underlying "File exists" OS error.
-        fs.insert_tree(
-            "/skills",
-            serde_json::json!({ "draft-pr": "i am a stray file" }),
-        )
-        .await;
-
-        let err = write_skill_to_disk(
-            fs.as_ref(),
-            Path::new("/skills"),
-            "draft-pr",
-            "Push a draft PR",
-            "Body of the skill.",
-            false,
-        )
-        .await
-        .expect_err("writing where a file already lives must fail");
-        let message = err.to_string();
-        assert!(
-            message.contains("not a skill directory"),
-            "error should explain the conflict is a non-directory, got: {message}"
-        );
-        // Path separator differs between platforms
-        let expected_path = Path::new("/skills").join("draft-pr");
-        let expected_path = expected_path.display().to_string();
-        assert!(
-            message.contains(&expected_path),
-            "error should include the conflicting path {expected_path:?}, got: {message}"
         );
     }
 

@@ -147,16 +147,14 @@ fn write_lines_numbered<'a>(
 /// Skill resources are expected to be plain text (Markdown, scripts, configs).
 /// Image rendering, the action log, and the buffer-backed outline path are
 /// intentionally not exercised here — those are project concerns.
-async fn read_global_skill_file(
+fn read_global_skill_file(
     canonical_path: &Path,
-    fs: &dyn fs::Fs,
+    content: String,
     start_line: Option<u32>,
     end_line: Option<u32>,
     requested_path: &str,
     event_stream: &ToolCallEventStream,
 ) -> Result<LanguageModelToolResultContent, LanguageModelToolResultContent> {
-    let content = fs.load(canonical_path).await.map_err(tool_content_err)?;
-
     event_stream.update_fields(|update| {
         update.locations(vec![
             acp::ToolCallLocation::new(canonical_path.to_path_buf())
@@ -191,9 +189,9 @@ async fn read_global_skill_file(
 
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_global_skill_path, resolve_project_path,
+    resolve_project_path,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
+use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, outline};
 
 /// Reads the content of the given file in the project.
 ///
@@ -308,21 +306,26 @@ impl AgentTool for ReadFileTool {
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
 
             // Fast path: if the model passes a path that resolves under the
-            // global skills directory, read it directly via the
-            // filesystem. Global skills live outside any worktree, so the
-            // standard project-path machinery would refuse them.
-            if let Some(skill_path) =
-                resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
+            // global skills directory, read it directly. Global skills live
+            // outside any worktree, so the standard project-path machinery
+            // would refuse them.
+            let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
+            if let Some(skill_path) = global_skill_files
+                .resolve(Path::new(&input.path), cx)
+                .await
             {
+                let content = global_skill_files
+                    .load(&skill_path, cx)
+                    .await
+                    .map_err(tool_content_err)?;
                 return read_global_skill_file(
                     &skill_path,
-                    fs.as_ref(),
+                    content,
                     input.start_line,
                     input.end_line,
                     &input.path,
                     &event_stream,
-                )
-                .await;
+                );
             }
 
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
