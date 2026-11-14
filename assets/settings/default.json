@@ -2702,6 +2702,7 @@
       },
     },
     "YAML": {
+      "formatter": "language_server",
       "prettier": {
         "allowed": true,
       },
