@@ -212,6 +212,12 @@ pub enum ConverseModel {
     // OpenAI models
     #[serde(rename = "gpt-6-astra")]
     Gpt6Astra,
+    #[serde(rename = "gpt-6.1-sol")]
+    Gpt6_1Sol,
+    #[serde(rename = "gpt-6-sol")]
+    Gpt6Sol,
+    #[serde(rename = "gpt-6-luna")]
+    Gpt6Luna,
     #[serde(rename = "gpt-oss-20b")]
     GptOss20B,
     #[serde(rename = "gpt-oss-120b")]
@@ -278,6 +284,12 @@ impl ConverseModel {
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
         if id == "gpt-6-astra" {
             Ok(Self::Gpt6Astra)
+        } else if id == "gpt-6.1-sol" {
+            Ok(Self::Gpt6_1Sol)
+        } else if id == "gpt-6-sol" {
+            Ok(Self::Gpt6Sol)
+        } else if id == "gpt-6-luna" {
+            Ok(Self::Gpt6Luna)
         } else if id.starts_with("claude-fable-5-1") {
             Ok(Self::ClaudeFable5_1)
         } else if id.starts_with("claude-fable-5") {
@@ -349,6 +361,9 @@ impl ConverseModel {
             Self::NovaPremier => "nova-premier",
             Self::Nova2Lite => "nova-2-lite",
             Self::Gpt6Astra => "gpt-6-astra",
+            Self::Gpt6_1Sol => "gpt-6.1-sol",
+            Self::Gpt6Sol => "gpt-6-sol",
+            Self::Gpt6Luna => "gpt-6-luna",
             Self::GptOss20B => "gpt-oss-20b",
             Self::GptOss120B => "gpt-oss-120b",
             Self::NemotronSuper3_120B => "nemotron-super-3-120b",
@@ -406,6 +421,9 @@ impl ConverseModel {
             Self::NovaPremier => "amazon.nova-premier-v1:0",
             Self::Nova2Lite => "amazon.nova-2-lite-v1:0",
             Self::Gpt6Astra => "openai.gpt-6-astra",
+            Self::Gpt6_1Sol => "openai.gpt-6.1-sol",
+            Self::Gpt6Sol => "openai.gpt-6-sol",
+            Self::Gpt6Luna => "openai.gpt-6-luna",
             Self::GptOss20B => "openai.gpt-oss-20b-1:0",
             Self::GptOss120B => "openai.gpt-oss-120b-1:0",
             Self::NemotronSuper3_120B => "nvidia.nemotron-super-3-120b",
@@ -463,6 +481,9 @@ impl ConverseModel {
             Self::NovaPremier => "Amazon Nova Premier",
             Self::Nova2Lite => "Amazon Nova 2 Lite",
             Self::Gpt6Astra => "GPT-6 Astra",
+            Self::Gpt6_1Sol => "GPT-6.1 Sol",
+            Self::Gpt6Sol => "GPT-6 Sol",
+            Self::Gpt6Luna => "GPT-6 Luna",
             Self::GptOss20B => "GPT OSS 20B",
             Self::GptOss120B => "GPT OSS 120B",
             Self::NemotronSuper3_120B => "Nemotron Super 3 120B",
@@ -514,7 +535,10 @@ impl ConverseModel {
             Self::NovaLite | Self::NovaPro => 300_000,
             Self::NovaPremier => 1_000_000,
             Self::Nova2Lite => 300_000,
-            Self::Gpt6Astra => 1_050_000,
+            // The GPT-6.1 Sol card rounds its window to 1M, but Bedrock accepts the
+            // 922K-token input that OpenAI documents for its 1.05M window.
+            // <https://developers.openai.com/api/docs/models/gpt-6.1-sol>
+            Self::Gpt6Astra | Self::Gpt6_1Sol | Self::Gpt6Sol | Self::Gpt6Luna => 1_050_000,
             Self::GptOss20B | Self::GptOss120B => 128_000,
             Self::NemotronSuper3_120B | Self::NemotronNano3_30B => 262_000,
             Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => 196_000,
@@ -558,7 +582,7 @@ impl ConverseModel {
             | Self::Qwen3CoderNext
             | Self::Qwen3Coder480B => 8_192,
             Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => 5_000,
-            Self::Gpt6Astra => 128_000,
+            Self::Gpt6Astra | Self::Gpt6_1Sol | Self::Gpt6Sol | Self::Gpt6Luna => 128_000,
             Self::GptOss20B | Self::GptOss120B => 16_000,
             Self::NemotronSuper3_120B | Self::NemotronNano3_30B => 131_000,
             Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => 98_000,
@@ -614,7 +638,7 @@ impl ConverseModel {
             Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => true,
             Self::KimiK2Thinking | Self::KimiK2_5 => true,
             Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => true,
-            Self::Gpt6Astra => true,
+            Self::Gpt6Astra | Self::Gpt6_1Sol | Self::Gpt6Sol | Self::Gpt6Luna => true,
             Self::Custom {
                 supports_tool_use, ..
             } => supports_tool_use.unwrap_or(false),
@@ -642,7 +666,7 @@ impl ConverseModel {
             Self::PixtralLarge => true,
             Self::Qwen3VL235B => true,
             Self::KimiK2_5 => true,
-            Self::Gpt6Astra => true,
+            Self::Gpt6Astra | Self::Gpt6_1Sol | Self::Gpt6Sol | Self::Gpt6Luna => true,
             Self::Custom {
                 supports_images, ..
             } => supports_images.unwrap_or(false),
@@ -677,6 +701,9 @@ impl ConverseModel {
     pub fn supports_thinking(&self) -> bool {
         match self {
             Self::Gpt6Astra
+            | Self::Gpt6_1Sol
+            | Self::Gpt6Sol
+            | Self::Gpt6Luna
             | Self::ClaudeFable5_1
             | Self::ClaudeFable5
             | Self::ClaudeOpus5_5
@@ -729,6 +756,20 @@ impl ConverseModel {
         }
     }
 
+    pub fn is_gpt_6(&self) -> bool {
+        matches!(
+            self,
+            Self::Gpt6Astra | Self::Gpt6_1Sol | Self::Gpt6Sol | Self::Gpt6Luna
+        )
+    }
+
+    /// Whether the model accepts the `none` reasoning effort, which turns reasoning off.
+    /// GPT-6 Astra and GPT-6.1 Sol reject it.
+    /// <https://developers.openai.com/api/docs/models/gpt-6-sol>
+    pub fn supports_disabling_reasoning(&self) -> bool {
+        matches!(self, Self::Gpt6Sol | Self::Gpt6Luna)
+    }
+
     pub fn thinking_mode(&self) -> BedrockModelMode {
         if let Self::Custom {
             thinking: Some(thinking),
@@ -746,7 +787,7 @@ impl ConverseModel {
             };
         }
 
-        if matches!(self, Self::Gpt6Astra) {
+        if self.is_gpt_6() {
             BedrockModelMode::Reasoning {
                 effort: BedrockAdaptiveThinkingEffort::Medium,
             }
@@ -774,7 +815,7 @@ impl ConverseModel {
             return Ok(model_id.into());
         }
 
-        if matches!(self, Self::Gpt6Astra | Self::ClaudeFable5_1) {
+        if self.is_gpt_6() || matches!(self, Self::ClaudeFable5_1) {
             if matches!(self, Self::ClaudeFable5_1)
                 && matches!(region, "us-gov-east-1" | "us-gov-west-1")
             {
@@ -791,6 +832,8 @@ impl ConverseModel {
                     | "ca-west-1"
             );
             let supports_global = in_us_profile
+                // The GPT-6.1 Sol card does not list its global source Regions, so it gets
+                // only these Regions, where Bedrock lists its profile.
                 || matches!(
                     region,
                     "eu-central-1"
@@ -806,7 +849,7 @@ impl ConverseModel {
                         | "ap-southeast-2"
                         | "sa-east-1"
                 )
-                || matches!(self, Self::ClaudeFable5_1)
+                || matches!(self, Self::ClaudeFable5_1 | Self::Gpt6Sol | Self::Gpt6Luna)
                     && matches!(
                         region,
                         "eu-central-2"
@@ -820,11 +863,11 @@ impl ConverseModel {
                             | "ap-southeast-6"
                             | "ap-southeast-7"
                             | "il-central-1"
-                            | "me-central-1"
-                            | "me-south-1"
                             | "af-south-1"
                             | "mx-central-1"
-                    );
+                    )
+                || matches!(self, Self::ClaudeFable5_1)
+                    && matches!(region, "me-central-1" | "me-south-1");
             if !supports_global {
                 anyhow::bail!("Unsupported Region {region}");
             }
@@ -1198,13 +1241,37 @@ mod tests {
     use strum::IntoEnumIterator;
 
     #[test]
-    fn test_gpt_6_astra_and_fable_5_1_metadata() -> anyhow::Result<()> {
+    fn test_gpt_6_and_fable_5_1_metadata() -> anyhow::Result<()> {
         for (model, id, request_id, display_name, context_window, supports_caching) in [
             (
                 ConverseModel::Gpt6Astra,
                 "gpt-6-astra",
                 "openai.gpt-6-astra",
                 "GPT-6 Astra",
+                1_050_000,
+                false,
+            ),
+            (
+                ConverseModel::Gpt6_1Sol,
+                "gpt-6.1-sol",
+                "openai.gpt-6.1-sol",
+                "GPT-6.1 Sol",
+                1_050_000,
+                false,
+            ),
+            (
+                ConverseModel::Gpt6Sol,
+                "gpt-6-sol",
+                "openai.gpt-6-sol",
+                "GPT-6 Sol",
+                1_050_000,
+                false,
+            ),
+            (
+                ConverseModel::Gpt6Luna,
+                "gpt-6-luna",
+                "openai.gpt-6-luna",
+                "GPT-6 Luna",
                 1_050_000,
                 false,
             ),
@@ -1252,17 +1319,35 @@ mod tests {
             ConverseModel::ClaudeFable5_1.cross_region_inference_id("us-gov-west-1", true)?,
             "us-gov.anthropic.claude-fable-5-1"
         );
-        assert_eq!(
-            ConverseModel::ClaudeFable5_1.cross_region_inference_id("af-south-1", false)?,
-            "global.anthropic.claude-fable-5-1"
-        );
-        for region in ["af-south-1", "eu-central-2", "ap-east-2", "us-gov-west-1"] {
-            assert!(
-                ConverseModel::Gpt6Astra
-                    .cross_region_inference_id(region, true)
-                    .is_err(),
-                "Astra has no profile in {region}"
+        for region in ["af-south-1", "me-south-1"] {
+            assert_eq!(
+                ConverseModel::ClaudeFable5_1.cross_region_inference_id(region, false)?,
+                "global.anthropic.claude-fable-5-1"
             );
+        }
+        for region in ["af-south-1", "eu-central-2", "ap-east-2", "us-gov-west-1"] {
+            for model in [ConverseModel::Gpt6Astra, ConverseModel::Gpt6_1Sol] {
+                assert!(
+                    model.cross_region_inference_id(region, true).is_err(),
+                    "{} has no profile in {region}",
+                    model.id()
+                );
+            }
+        }
+        for model in [ConverseModel::Gpt6Sol, ConverseModel::Gpt6Luna] {
+            for region in ["af-south-1", "eu-central-2", "ap-east-2", "mx-central-1"] {
+                assert_eq!(
+                    model.cross_region_inference_id(region, false)?,
+                    format!("global.{}", model.request_id())
+                );
+            }
+            for region in ["me-central-1", "us-gov-west-1"] {
+                assert!(
+                    model.cross_region_inference_id(region, true).is_err(),
+                    "{} has no profile in {region}",
+                    model.id()
+                );
+            }
         }
         Ok(())
     }

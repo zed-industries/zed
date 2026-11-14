@@ -195,6 +195,8 @@ pub enum Thinking {
     Reasoning {
         effort: BedrockAdaptiveThinkingEffort,
     },
+    /// Sends the `none` reasoning effort, which turns reasoning off on GPT-6 Sol and Luna.
+    NoReasoning,
     /// Explicitly turns thinking off. Required by Claude Opus 5, where
     /// adaptive thinking runs by default when the `thinking` field is
     /// omitted; only accepted at effort `high` or below.
@@ -263,6 +265,12 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
             fields.insert(
                 "reasoning".to_string(),
                 value_to_aws_document(&serde_json::json!({"effort": effort.as_str()})),
+            );
+        }
+        Thinking::NoReasoning => {
+            fields.insert(
+                "reasoning".to_string(),
+                value_to_aws_document(&serde_json::json!({"effort": "none"})),
             );
         }
         Thinking::Disabled => {
@@ -387,14 +395,21 @@ mod tests {
     }
 
     #[test]
-    fn test_gpt_6_astra_uses_openai_reasoning_fields() {
-        let fields = thinking_request_fields(&Thinking::Reasoning {
-            effort: BedrockAdaptiveThinkingEffort::High,
-        });
-        assert_eq!(
-            aws_document_to_value(&Document::Object(fields)),
-            serde_json::json!({"reasoning": {"effort": "high"}})
-        );
+    fn test_gpt_6_uses_openai_reasoning_fields() {
+        for (thinking, effort) in [
+            (
+                Thinking::Reasoning {
+                    effort: BedrockAdaptiveThinkingEffort::High,
+                },
+                "high",
+            ),
+            (Thinking::NoReasoning, "none"),
+        ] {
+            assert_eq!(
+                aws_document_to_value(&Document::Object(thinking_request_fields(&thinking))),
+                serde_json::json!({"reasoning": {"effort": effort}})
+            );
+        }
     }
 
     #[test]
