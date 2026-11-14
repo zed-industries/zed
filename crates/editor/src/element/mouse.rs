@@ -56,9 +56,20 @@ impl EditorElement {
             .find(|(_, bounds)| bounds.contains(&event.position))
             .map(|(row, _)| *row);
 
+        // Compact controls live in the gutter, so hovering a hunk's gutter rows must keep
+        // them visible. The diff strip's hitboxes block the mouse, so they are checked
+        // alongside `gutter_hovered`.
+        let hunk_gutter_hovered = crate::git::compact_hunk_controls(cx)
+            && (gutter_hovered
+                || position_map.display_hunks.iter().any(|(_, hitbox)| {
+                    hitbox
+                        .as_ref()
+                        .is_some_and(|hitbox| hitbox.is_hovered(window))
+                }));
+
         let hovered_diff_hunk_row = if let Some(control_row) = hovered_diff_control {
             Some(control_row)
-        } else if text_hovered {
+        } else if text_hovered || hunk_gutter_hovered {
             let current_row = valid_point.row();
             position_map.display_hunks.iter().find_map(|(hunk, _)| {
                 if let DisplayDiffHunk::Unfolded {
