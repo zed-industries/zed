@@ -1,13 +1,17 @@
+use settings::Settings as _;
+use theme_settings::ThemeSettings;
 use ui::{SpinnerLabel, div, prelude::*};
 
-use crate::TableView;
+use crate::{
+    TableView,
+    table_view::{buffer_line_height, zoom_on_secondary_scroll},
+};
 
 use super::settings::settings_popover_menu;
 
 impl Render for TableView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let row_height = window.pixel_snap(window.line_height());
+        let row_height = buffer_line_height(window, cx);
         if row_height != self.row_height {
             self.row_height = row_height;
             // Font size (rem size, buffer font override, ...) changed since the list was last
@@ -16,12 +20,17 @@ impl Render for TableView {
             // item's prior size as a hint rather than dropping straight to a fresh guess.
             self.list_state.remeasure();
         }
+        if ThemeSettings::get_global(cx).buffer_font_size(cx) != self.column_widths_font_size {
+            self.sync_column_widths(cx);
+        }
+        let theme = cx.theme();
         let render_prep_start = std::time::Instant::now();
         let table_with_settings = v_flex()
             .key_context("TableView")
             .size_full()
             .bg(theme.colors().editor_background)
             .track_focus(&self.focus_handle)
+            .on_scroll(zoom_on_secondary_scroll)
             .on_action(cx.listener(Self::move_focused_cell))
             .on_action(cx.listener(Self::extend_selection))
             .on_action(cx.listener(Self::clear_selection))

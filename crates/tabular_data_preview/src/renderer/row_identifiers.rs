@@ -51,15 +51,15 @@ impl TableView {
     ///
     /// This ensures the column is wide enough to display the largest identifier comfortably,
     /// but not wastefully wide for small files.
-    pub(crate) fn calculate_row_identifier_column_width(&self) -> f32 {
+    pub(crate) fn calculate_row_identifier_column_width(&self, char_width_px: f32) -> f32 {
         match self.settings.numbering_type {
-            RowIdentifiers::SrcLines => self.calculate_line_number_width(),
-            RowIdentifiers::RowNum => self.calculate_row_number_width(),
+            RowIdentifiers::SrcLines => self.calculate_line_number_width(char_width_px),
+            RowIdentifiers::RowNum => self.calculate_row_number_width(char_width_px),
         }
     }
 
     /// Calculate width needed for line numbers (can be multi-line)
-    fn calculate_line_number_width(&self) -> f32 {
+    fn calculate_line_number_width(&self, char_width_px: f32) -> f32 {
         // Find the maximum line number that could be displayed
         let max_line_number = self
             .engine
@@ -79,7 +79,6 @@ impl TableView {
             (max_line_number as f32).log10().floor() as usize + 1
         };
 
-        let char_width_px = 9.0; // TODO: get real width of the characters
         let base_width = (digit_count as f32) * char_width_px;
         let padding = 20.0;
         let min_width = 60.0;
@@ -87,7 +86,7 @@ impl TableView {
     }
 
     /// Calculate width needed for sequential row numbers
-    fn calculate_row_number_width(&self) -> f32 {
+    fn calculate_row_number_width(&self, char_width_px: f32) -> f32 {
         let max_row_number = self.engine.contents.rows.len();
 
         let digit_count = if max_row_number == 0 {
@@ -96,7 +95,6 @@ impl TableView {
             (max_row_number as f32).log10().floor() as usize + 1
         };
 
-        let char_width_px = 9.0; // TODO: get real width of the characters
         let base_width = (digit_count as f32) * char_width_px;
         let padding = 20.0;
         let min_width = 60.0;
@@ -184,7 +182,7 @@ impl TableView {
             .justify_center()
             .items_center()
             .font_buffer(cx)
-            .text_ui(cx)
+            .text_buffer(cx)
             .child(row_identifier)
             .into_any_element();
         Some(value)

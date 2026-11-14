@@ -6,6 +6,7 @@ use ui::{ColumnWidthConfig, ResizableColumnsState, Table, UncheckedTableRow, div
 use crate::{
     TableView,
     settings::RowRenderMechanism,
+    table_view::zoom_on_secondary_scroll,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
 
@@ -43,6 +44,9 @@ impl TableView {
             .header(headers)
             .disable_base_style()
             .pin_cols(1)
+            // The row list scrolls before scroll events bubble up to the table, so zooming has to
+            // be handled on the rows to stop the list from scrolling too.
+            .map_row(|(_, row), _, _| row.on_scroll(zoom_on_secondary_scroll).into_any_element())
             .map(|table| {
                 let row_identifier_text_color = cx.theme().colors().editor_line_number;
                 match self.settings.rendering_with {
