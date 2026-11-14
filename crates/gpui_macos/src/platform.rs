@@ -1,7 +1,8 @@
 use crate::{
     AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
-    MacWindow, events::key_to_native, main_thread_marker, ns_string, pasteboard::Pasteboard,
-    renderer, set_active_window_cursor_style,
+    MacWindow, events::key_to_menu_equivalent, main_thread_marker, ns_string,
+    pasteboard::Pasteboard, renderer, set_active_window_cursor_style,
+    system_notifications::NotificationCommand,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -32,9 +33,10 @@ use objc2::{
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAppearanceNameVibrantDark,
     NSAppearanceNameVibrantLight, NSApplication, NSApplicationActivationPolicy,
-    NSControlStateValueOn, NSCursor, NSDocumentController, NSEventModifierFlags, NSMenu,
-    NSMenuItem, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSScroller,
-    NSScrollerStyle, NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceWillSleepNotification,
+    NSApplicationOcclusionState, NSControlStateValueOn, NSCursor, NSDocumentController,
+    NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSModalResponseOK, NSOpenPanel,
+    NSSavePanel, NSScroller, NSScrollerStyle, NSWorkspace, NSWorkspaceDidWakeNotification,
+    NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{
     NSActivityOptions, NSArray, NSBundle, NSError, NSInteger, NSProcessInfo, NSString, NSURL,
@@ -55,6 +57,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+use strum::IntoEnumIterator as _;
 
 const MAC_PLATFORM_IVAR: &CStr = c"platform";
 static mut APP_CLASS: *const AnyClass = ptr::null();
@@ -171,8 +174,8 @@ pub(crate) struct MacPlatformState {
     headless: bool,
     activation_policy: ActivationPolicy,
     application_created: bool,
-    general_pasteboard: Pasteboard,
-    find_pasteboard: Pasteboard,
+    general_pasteboard: Option<Pasteboard>,
+    find_pasteboard: Option<Pasteboard>,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     thermal_observer: Option<ProcessInfoObserver>,
@@ -401,7 +404,9 @@ impl MacPlatform {
                                 NSMenuItem::alloc(self.1),
                                 &NSString::from_str(name),
                                 Some(selector),
-                                &NSString::from_str(key_to_native(keystroke.key()).as_ref()),
+                                &NSString::from_str(
+                                    key_to_menu_equivalent(keystroke.key()).as_ref(),
+                                ),
                             );
                             if Self::os_version() >= Version::new(12, 0, 0) {
                                 item.setAllowsAutomaticKeyEquivalentLocalization(false);
@@ -1079,6 +1084,34 @@ impl Platform for MacPlatform {
         self.ensure_system_power_observers();
     }
 
+    fn debug_state(&self) -> serde_json::Value {
+        let app = NSApplication::sharedApplication(self.1);
+        let key_window: *mut AnyObject = unsafe { msg_send![&*app, keyWindow] };
+        let main_window: *mut AnyObject = unsafe { msg_send![&*app, mainWindow] };
+        let window_number = |window: *mut AnyObject| -> Option<isize> {
+            (!window.is_null()).then(|| unsafe { msg_send![window, windowNumber] })
+        };
+        // AppKit's cursor for this app, mapped back to the style GPUI would
+        // have set it from. `None` when it is not one GPUI sets.
+        let current_cursor = Retained::as_ptr(&NSCursor::currentCursor()).cast::<AnyObject>();
+        let current_cursor_style = CursorStyle::iter().find(|style| {
+            // SAFETY: The platform is only used on the main thread.
+            let cursor = unsafe { crate::window::native_cursor(*style) };
+            ptr::eq(cursor, current_cursor)
+        });
+        serde_json::json!({
+            "current_cursor_style": current_cursor_style,
+            "app_is_active": app.isActive(),
+            "app_is_hidden": app.isHidden(),
+            "app_occlusion_state_visible": app
+                .occlusionState()
+                .contains(NSApplicationOcclusionState::Visible),
+            "key_window_number": window_number(key_window),
+            "main_window_number": window_number(main_window),
+            "low_power_mode": NSProcessInfo::processInfo().isLowPowerModeEnabled(),
+        })
+    }
+
     fn thermal_state(&self) -> ThermalState {
         process_info::thermal_state()
     }
@@ -1096,14 +1129,27 @@ impl Platform for MacPlatform {
 
     fn show_system_notification(&self, notification: gpui::SystemNotification) {
         let mut state = self.0.lock();
-        let executor = state.foreground_executor.clone();
-        state.system_notifications.show(&executor, notification);
+        let foreground_executor = state.foreground_executor.clone();
+        let background_executor = state.background_executor.clone();
+        state
+            .system_notifications
+            .send(
+                &foreground_executor,
+                &background_executor,
+                NotificationCommand::Show(notification),
+            )
+            .detach();
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         let mut state = self.0.lock();
-        let executor = state.foreground_executor.clone();
-        state.system_notifications.dismiss(&executor, tag);
+        let foreground_executor = state.foreground_executor.clone();
+        let background_executor = state.background_executor.clone();
+        state.system_notifications.send(
+            &foreground_executor,
+            &background_executor,
+            NotificationCommand::Dismiss(gpui::SharedString::from(tag.to_owned())),
+        )
     }
 
     fn on_system_notification_response(
@@ -1203,22 +1249,26 @@ impl Platform for MacPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        state.general_pasteboard.read()
+        state.general_pasteboard.as_ref()?.read()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
-        state.general_pasteboard.write(item);
+        if let Some(pasteboard) = &state.general_pasteboard {
+            pasteboard.write(item);
+        }
     }
 
     fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        state.find_pasteboard.read()
+        state.find_pasteboard.as_ref()?.read()
     }
 
     fn write_to_find_pasteboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
-        state.find_pasteboard.write(item);
+        if let Some(pasteboard) = &state.find_pasteboard {
+            pasteboard.write(item);
+        }
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {

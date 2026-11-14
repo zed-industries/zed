@@ -66,6 +66,11 @@ impl ProjectEnvironment {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inherited_cli_environment(&self) -> Option<&HashMap<String, String>> {
+        self.cli_environment.as_ref()
+    }
+
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
     pub(crate) fn get_cli_environment(&self) -> Option<HashMap<String, String>> {
         if cfg!(any(test, feature = "test-support")) {

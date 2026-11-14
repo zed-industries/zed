@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "corgi-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1794574964,
+        "narHash": "sha256-7gH/NPJfa0wsUzGtio1D/8MbAdMJ2O83iCD2LrNmo8c=",
+        "owner": "ConradIrwin",
+        "repo": "corgi",
+        "rev": "0757f1e32f32a3fc3efe7b4e14d2489b6c995e7a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ConradIrwin",
+        "ref": "v0.1.106",
+        "repo": "corgi",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1761236834,
@@ -34,6 +51,7 @@
     },
     "root": {
       "inputs": {
+        "corgi-src": "corgi-src",
         "nixpkgs-mdbook": "nixpkgs-mdbook",
         "treefmt-nix": "treefmt-nix"
       }

@@ -5,12 +5,12 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
-use collections::IndexSet;
+use collections::{HashSet, IndexSet};
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
+use gpui::{AsyncWindowContext, Axis, Entity, WeakEntity, WindowId};
 
 use language::{Toolchain, ToolchainScope};
 use project::{
@@ -24,7 +24,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, path_list::SerializedPathList};
+use util::{ResultExt, path_list::SerializedPathList, paths::PathStyle};
 use uuid::Uuid;
 
 #[derive(
@@ -148,6 +148,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) recent_navigation_history: Vec<PathBuf>,
     pub(crate) window_id: Option<u64>,
+    pub(crate) path_style: PathStyle,
 }
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
@@ -239,6 +240,63 @@ pub(crate) enum SerializedPaneGroup {
         children: Vec<SerializedPaneGroup>,
     },
     Pane(SerializedPane),
+}
+
+impl SerializedPaneGroup {
+    pub(crate) fn with_panes_opened_while_restoring(mut self, mut opened: Self) -> Self {
+        let mut opened_item_ids = HashSet::default();
+        let mut opened_pane_is_active = false;
+        opened.for_each_pane(&mut |pane| {
+            opened_item_ids.extend(pane.children.iter().map(|item| item.item_id));
+            opened_pane_is_active |= pane.active;
+        });
+        if opened_item_ids.is_empty() {
+            return self;
+        }
+        self.for_each_pane(&mut |pane| {
+            let replaced_pinned_items = pane
+                .children
+                .iter()
+                .take(pane.pinned_count)
+                .filter(|item| opened_item_ids.contains(&item.item_id))
+                .count();
+            pane.children
+                .retain(|item| !opened_item_ids.contains(&item.item_id));
+            pane.pinned_count -= replaced_pinned_items;
+            pane.active &= !opened_pane_is_active;
+        });
+        Self::Group {
+            axis: SerializedAxis(Axis::Horizontal),
+            children: vec![self, opened],
+            flexes: None,
+        }
+    }
+
+    fn for_each_pane(&mut self, update: &mut impl FnMut(&mut SerializedPane)) {
+        match self {
+            Self::Pane(pane) => update(pane),
+            Self::Group { children, .. } => {
+                for child in children {
+                    child.for_each_pane(update);
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn add_saved_rows<T>(
+    rows: &mut BTreeMap<Arc<Path>, Vec<T>>,
+    saved_rows: BTreeMap<Arc<Path>, Vec<T>>,
+    row: impl Fn(&T) -> u32,
+) {
+    for (path, saved_rows) in saved_rows {
+        let rows = rows.entry(path).or_default();
+        for saved_row in saved_rows {
+            if !rows.iter().any(|existing| row(existing) == row(&saved_row)) {
+                rows.push(saved_row);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

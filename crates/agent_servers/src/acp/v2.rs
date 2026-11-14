@@ -20,6 +20,7 @@ use agent_client_protocol::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{
     FutureExt as _,
     channel::mpsc,
@@ -30,7 +31,7 @@ use project::{
     AgentId, AgentServerStore, Project,
     agent_server_store::{AgentServerCommand, AllAgentServersSettings},
 };
-use settings::SettingsStore;
+use settings::{AgentConfigOptionValue, SettingsStore};
 use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 use task::SpawnInTerminal;
 use util::ResultExt as _;
@@ -825,6 +826,45 @@ impl AcpV2Connection {
         Ok(())
     }
 
+    /// `session/options` is still a draft, so Zed only uses it with the ACP beta flag.
+    fn supports_initial_config_options(&self, cx: &App) -> bool {
+        cx.has_flag::<AcpBetaFeatureFlag>()
+            && self
+                .initialize_response
+                .capabilities
+                .session
+                .as_ref()
+                .is_some_and(|session| session.options.is_some())
+    }
+
+    fn initial_config_options(&self, cx: &App) -> Vec<acp::InitialSessionConfigOption> {
+        let Some(settings_store) = cx.try_global::<SettingsStore>() else {
+            return Vec::new();
+        };
+        let Some(defaults) = settings_store
+            .get::<AllAgentServersSettings>(None)
+            .get(self.id.as_ref())
+        else {
+            return Vec::new();
+        };
+        let mut entries = defaults.default_config_options().iter().collect::<Vec<_>>();
+        entries.sort_by_key(|(config_id, _)| *config_id);
+        entries
+            .into_iter()
+            .map(|(config_id, value)| {
+                let value = match value {
+                    AgentConfigOptionValue::ValueId(value_id) => {
+                        acp::SessionConfigOptionValue::id(value_id.clone())
+                    }
+                    AgentConfigOptionValue::Boolean(value) => {
+                        acp::SessionConfigOptionValue::boolean(*value)
+                    }
+                };
+                acp::InitialSessionConfigOption::new(config_id.clone(), value)
+            })
+            .collect()
+    }
+
     async fn apply_new_session_defaults(
         &self,
         thread: &Entity<AcpThread>,
@@ -1293,9 +1333,14 @@ impl AgentConnection for AcpV2Connection {
             Ok(context) => context,
             Err(error) => return Task::ready(Err(error)),
         };
-        let request = acp::NewSessionRequest::new(context.cwd.clone())
+        let mut request = acp::NewSessionRequest::new(context.cwd.clone())
             .additional_directories(context.additional_directories.clone())
             .mcp_servers(context.mcp_servers.clone());
+        if self.supports_initial_config_options(cx) {
+            // `apply_new_session_defaults` still runs after creation, so defaults the agent
+            // ignored here (for example, ones that depend on another option) get another chance.
+            request = request.config_options(self.initial_config_options(cx));
+        }
         let request = self.connection.prepare_request(request);
         let request_id = request.id().clone();
         let (response, applied) = Self::ordered_prepared_response(
@@ -1673,6 +1718,40 @@ impl AgentConnection for AcpV2Connection {
         self.connection
             .send_notification(acp::CancelSessionNotification::new(session_id.clone()))
             .map_err(map_acp_error)
+    }
+
+    fn cancel_tool_call(
+        &self,
+        session_id: &acp::SessionId,
+        tool_call_id: &acp::ToolCallId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let response = Self::scoped_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::CancelToolCallRequest::new(session_id.clone(), tool_call_id.clone()),
+        );
+        cx.foreground_executor().spawn(async move {
+            response.await?;
+            Ok(())
+        })
+    }
+
+    fn cancel_terminal(
+        &self,
+        session_id: &acp::SessionId,
+        terminal_id: &acp::TerminalId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let response = Self::scoped_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::CancelTerminalRequest::new(session_id.clone(), terminal_id.clone()),
+        );
+        cx.foreground_executor().spawn(async move {
+            response.await?;
+            Ok(())
+        })
     }
 
     fn request_elicitations(&self) -> Option<Entity<ElicitationStore>> {
@@ -2698,6 +2777,85 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_subagent_directories_inherit_through_nested_subagents(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::MaybeUndefined;
+
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let parent = harness.thread(cx).await;
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child")
+                    .cwd(acp::AbsolutePath::new(session_path("worktree"))),
+            ),
+        );
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("grandchild")),
+        );
+        harness.drain_updates(cx).await;
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("child");
+        let grandchild = child
+            .read_with(cx, |child, _| child.subagent(&"grandchild".into()).cloned())
+            .expect("grandchild");
+        let work_dirs = |thread: &Entity<AcpThread>, cx: &mut TestAppContext| {
+            thread.read_with(cx, |thread, _| {
+                thread
+                    .work_dirs()
+                    .expect("working directories")
+                    .ordered_paths()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+        };
+        let parent_dirs = work_dirs(&parent, cx);
+        let mut expected = parent_dirs.clone();
+        expected[0] = session_path("worktree");
+        assert_eq!(
+            work_dirs(&child, cx),
+            expected,
+            "the child keeps the parent's other dirs"
+        );
+        assert_eq!(
+            work_dirs(&grandchild, cx),
+            expected,
+            "the grandchild inherits the child's"
+        );
+
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child").additional_directories(Vec::new()),
+            ),
+        );
+        harness.drain_updates(cx).await;
+        assert_eq!(work_dirs(&child, cx), [session_path("worktree")]);
+        assert_eq!(
+            work_dirs(&grandchild, cx),
+            [session_path("worktree")],
+            "a change to the child's directories reaches the grandchild"
+        );
+
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child")
+                    .cwd(MaybeUndefined::Null)
+                    .additional_directories(MaybeUndefined::Null),
+            ),
+        );
+        harness.drain_updates(cx).await;
+        assert_eq!(
+            work_dirs(&child, cx),
+            parent_dirs,
+            "cleared fields inherit again"
+        );
+        assert_eq!(work_dirs(&grandchild, cx), parent_dirs);
+    }
+
+    #[gpui::test]
     async fn v2_subagent_updates_route_and_patch_child_sessions(cx: &mut TestAppContext) {
         use acp_thread::{ThreadStatus, subagents::SubagentAssociation};
         use agent_client_protocol::schema::MaybeUndefined;
@@ -2736,6 +2894,8 @@ mod tests {
                     title: Some("Investigator".into()),
                     description: None,
                     can_cancel: true,
+                    cwd: None,
+                    additional_directories: None,
                 })
             );
             assert_eq!(child.entries().len(), 1, "child traffic reaches the child");
@@ -2788,6 +2948,8 @@ mod tests {
                     title: None,
                     description: None,
                     can_cancel: true,
+                    cwd: None,
+                    additional_directories: None,
                 })
             );
             assert_eq!(child.subagents().count(), 0);
@@ -2868,6 +3030,81 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_new_session_sends_defaults_as_initial_config_options(cx: &mut TestAppContext) {
+        use settings::AgentConfigOptionValue::{Boolean, ValueId};
+
+        let harness = SessionHarness::new(
+            acp::AgentCapabilities::new().session(
+                acp::SessionCapabilities::new().options(acp::SessionOptionsCapabilities::new()),
+            ),
+            vec![],
+            vec![],
+            cx,
+        )
+        .await;
+        // Toggling the flag rewrites user settings, which drops the overridden defaults.
+        let set_beta_with_defaults = |enabled, cx: &mut TestAppContext| {
+            cx.update(|cx| crate::acp::set_acp_beta(enabled, cx));
+            set_startup_defaults(
+                HashMap::from_iter([
+                    ("model".into(), ValueId("large".into())),
+                    ("enabled".into(), Boolean(true)),
+                ]),
+                cx,
+            );
+        };
+        set_beta_with_defaults(false, cx);
+        let mut creation = harness.create(cx);
+        let (request, _) = harness.new_request(&mut creation, cx).await;
+        assert!(
+            request.config_options.is_empty(),
+            "initial config options require the ACP beta flag"
+        );
+        harness
+            .new_responses
+            .try_send(Ok(acp::NewSessionResponse::new("without-beta")))
+            .expect("new response");
+        bounded(creation, cx).await.expect("initialized");
+
+        set_beta_with_defaults(true, cx);
+        let mut creation = harness.create(cx);
+        let (request, _) = harness.new_request(&mut creation, cx).await;
+        assert_eq!(
+            request.config_options,
+            vec![
+                acp::InitialSessionConfigOption::new(
+                    "enabled",
+                    acp::SessionConfigOptionValue::boolean(true),
+                ),
+                acp::InitialSessionConfigOption::new(
+                    "model",
+                    acp::SessionConfigOptionValue::id("large"),
+                ),
+            ]
+        );
+        harness
+            .new_responses
+            .try_send(Ok(initial_response().config_options(vec![
+                acp::SessionConfigOption::select(
+                    "model",
+                    "Model",
+                    "large",
+                    vec![
+                        acp::SessionConfigSelectOption::new("small", "Small"),
+                        acp::SessionConfigSelectOption::new("large", "Large"),
+                    ],
+                ),
+                acp::SessionConfigOption::boolean("enabled", "Enabled", true),
+            ])))
+            .expect("new response");
+        bounded(creation, cx).await.expect("initialized");
+        assert!(
+            harness.config_requests.is_empty(),
+            "defaults the agent applied are not sent again"
+        );
+    }
+
+    #[gpui::test]
     async fn v2_new_session_applies_defaults_before_delivery(cx: &mut TestAppContext) {
         use settings::AgentConfigOptionValue::{Boolean, ValueId};
 
@@ -2903,7 +3140,11 @@ mod tests {
             ),
         ];
         let mut creation = harness.create(cx);
-        harness.new_request(&mut creation, cx).await;
+        let (request, _) = harness.new_request(&mut creation, cx).await;
+        assert!(
+            request.config_options.is_empty(),
+            "initial config options require the options capability"
+        );
         harness
             .new_responses
             .try_send(Ok(initial_response().config_options(offered.clone())))
@@ -3188,6 +3429,129 @@ mod tests {
             thread.read_with(cx, |thread, _| thread.pending_permission_requests().count()),
             0
         );
+    }
+
+    #[gpui::test]
+    async fn v2_background_work_is_tracked_and_stoppable(cx: &mut TestAppContext) {
+        use acp_thread::ToolCallStatus;
+
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("watcher")
+                    .status(acp::ToolCallStatus::Paused)
+                    .capabilities(
+                        acp::ToolCallCapabilities::new()
+                            .cancel(acp::ToolCallCancelCapabilities::new()),
+                    ),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("fixed").status(acp::ToolCallStatus::InProgress),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::TerminalUpdate(acp::TerminalUpdate::new("server").capabilities(
+                acp::TerminalCapabilities::new().cancel(acp::TerminalCancelCapabilities::new()),
+            )),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(
+                acp::IdleStateUpdate::new()
+                    .stop_reason(acp::StopReason::EndTurn)
+                    .background(vec![
+                        acp::BackgroundWork::Terminal(acp::BackgroundTerminal::new("server")),
+                        acp::BackgroundWork::ToolCall(acp::BackgroundToolCall::new("watcher")),
+                    ]),
+            )),
+        );
+        harness.drain_updates(cx).await;
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.background_work().map(<[_]>::len), Some(2));
+            let (_, watcher) = thread.tool_call(&"watcher".into()).expect("watcher");
+            assert_eq!(watcher.status(), ToolCallStatus::Paused);
+            assert!(
+                watcher.can_cancel(),
+                "paused tool calls can advertise cancel"
+            );
+            let (_, fixed) = thread.tool_call(&"fixed".into()).expect("fixed");
+            assert!(!fixed.can_cancel());
+            assert!(
+                thread
+                    .terminal("server".into())
+                    .expect("server")
+                    .read(cx)
+                    .can_cancel()
+            );
+        });
+
+        // The agent has no handler for these methods, so the SDK answers -32602 once a
+        // request reaches it. A local refusal never sends one.
+        let sent_code = |result: Result<()>| {
+            result
+                .expect_err("the harness agent rejects cancellation")
+                .downcast_ref::<agent_client_protocol::Error>()
+                .map(|error| error.code)
+        };
+        let invalid_params = Some(agent_client_protocol::ErrorCode::INVALID_PARAMS);
+        let stop_watcher = thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call(&"watcher".into(), cx)
+        });
+        assert_eq!(sent_code(bounded(stop_watcher, cx).await), invalid_params);
+        let stop_fixed = thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call(&"fixed".into(), cx)
+        });
+        assert_eq!(
+            sent_code(bounded(stop_fixed, cx).await),
+            None,
+            "an unadvertised tool call is never sent tool_call/cancel"
+        );
+        let stop_server = thread.update(cx, |thread, cx| {
+            thread.cancel_terminal(&"server".into(), cx)
+        });
+        assert_eq!(sent_code(bounded(stop_server, cx).await), invalid_params);
+
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::TerminalUpdate(
+                acp::TerminalUpdate::new("server").exit_status(acp::TerminalExitStatus::new()),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("watcher").status(acp::ToolCallStatus::Cancelled),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+        );
+        harness.drain_updates(cx).await;
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.background_work(),
+                None,
+                "an omitted list means background work is unknown"
+            );
+            let (_, watcher) = thread.tool_call(&"watcher".into()).expect("watcher");
+            assert!(!watcher.can_cancel(), "final tool calls can't be stopped");
+            assert!(
+                !thread
+                    .terminal("server".into())
+                    .expect("server")
+                    .read(cx)
+                    .can_cancel(),
+                "exited terminals can't be stopped"
+            );
+        });
     }
 
     #[gpui::test]

@@ -26,4 +26,6 @@ zed_actions.workspace = true
 [dev-dependencies]
 collections.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 theme.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

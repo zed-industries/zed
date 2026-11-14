@@ -80,6 +80,7 @@ use workspace::{
     Pane, SplitDirection, ToolbarItemLocation, ViewId, Workspace,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
+    security_modal::SecurityModal,
 };
 
 fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<DisplayPoint>> {
@@ -46900,6 +46901,80 @@ async fn test_tab_list_indent(cx: &mut TestAppContext) {
           ˇ- sub item
     "};
     cx.assert_editor_state(expected);
+}
+
+#[gpui::test]
+async fn test_stay_in_restricted_mode_is_remembered(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.set_global(db::AppDatabase::test_new());
+        project::trusted_worktrees::init(HashMap::default(), cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/projects"),
+        json!({
+            "declined": {"main.rs": "", "nested": {"lib.rs": ""}},
+            "other": {"main.rs": ""},
+        }),
+    )
+    .await;
+
+    for (project_path, expect_prompt) in [
+        (path!("/projects/declined"), true),
+        (path!("/projects/declined"), false),
+        (path!("/projects/declined/nested"), true),
+        (path!("/projects/other"), true),
+        (path!("/projects/other"), false),
+    ] {
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [project_path.as_ref()], cx).await;
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .id()
+        });
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should exist"));
+        assert!(!trusted_worktrees.update(cx, |store, cx| {
+            store.can_trust(&worktree_store, worktree_id, cx)
+        }));
+
+        let (multi_workspace, window_cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(window_cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+        let has_modal = |window_cx: &mut VisualTestContext| {
+            workspace.read_with(window_cx, |workspace, cx| {
+                workspace.active_modal::<SecurityModal>(cx).is_some()
+            })
+        };
+
+        workspace.update_in(window_cx, |workspace, window, cx| {
+            workspace.show_worktree_trust_security_modal(false, window, cx);
+        });
+        window_cx.run_until_parked();
+        assert_eq!(has_modal(window_cx), expect_prompt, "{project_path}");
+
+        if !expect_prompt {
+            window_cx.dispatch_action(workspace::ToggleWorktreeSecurity);
+            window_cx.run_until_parked();
+            assert!(has_modal(window_cx), "{project_path}");
+        }
+        window_cx.dispatch_action(workspace::ToggleWorktreeSecurity);
+        window_cx.run_until_parked();
+        assert!(!has_modal(window_cx), "{project_path}");
+
+        assert!(!trusted_worktrees.update(window_cx, |store, cx| {
+            store.can_trust(&worktree_store, worktree_id, cx)
+        }));
+    }
 }
 
 #[gpui::test]

@@ -14,17 +14,17 @@ use crate::{
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
     Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, PaintedPath, Path,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, Task, TextInputConfiguration, TextInputStateChange,
-    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
-    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style, SubpixelSprite, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, Task, TextInputConfiguration,
+    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
+    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -353,7 +353,7 @@ thread_local! {
 /// arrive re-entrantly while a draw is already on the stack (e.g. via nested
 /// message pumping in the Windows window procedure), instead of running a
 /// nested draw or panicking on the already-borrowed App.
-fn draw_in_progress() -> bool {
+pub(crate) fn draw_in_progress() -> bool {
     CURRENT_ELEMENT_ARENA.with(|current| current.get().is_some())
 }
 
@@ -631,6 +631,15 @@ impl FocusHandle {
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub fn contains(&self, other: &Self, window: &Window) -> bool {
         self.id.contains(other.id, window)
+    }
+
+    /// Obtains whether the element associated with this handle is part of the most recently rendered frame.
+    pub fn is_rendered(&self, window: &Window) -> bool {
+        window
+            .rendered_frame
+            .dispatch_tree
+            .focusable_node_id(self.id)
+            .is_some()
     }
 
     /// Dispatch an action on the element that rendered this focus handle
@@ -1226,6 +1235,7 @@ pub struct Window {
     pub(crate) display_observers: SingleSubscriberSet<AnyObserver>,
     is_resizable: bool,
     is_minimizable: bool,
+    last_window_bounds: WindowBounds,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Rc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
@@ -1277,6 +1287,9 @@ pub struct Window {
         SingleSubscriberSet<Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    /// The rendered scene's [`Scene::animation_frame_interval`]. While it is
+    /// `Some`, the scene must keep being presented even when nothing is redrawn.
+    scene_animation_interval: Rc<Cell<Option<Duration>>>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -1569,26 +1582,16 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
-fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
-    // TODO, BUG: if you open a window with the currently active window
-    // on the stack, this will erroneously fallback to `None`
-    //
-    // TODO these should be the initial window bounds not considering maximized/fullscreen
-    let active_window_bounds = cx
-        .active_window()
-        .and_then(|w| w.update(cx, |_, window, _| window.window_bounds()).ok());
-
+fn default_bounds(
+    active_window_bounds: Option<WindowBounds>,
+    display: Option<&dyn PlatformDisplay>,
+) -> WindowBounds {
     const CASCADE_OFFSET: f32 = 25.0;
-
-    let display = display_id
-        .map(|id| cx.find_display(id))
-        .unwrap_or_else(|| cx.primary_display());
 
     let default_placement = || Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE);
 
     // Use visible_bounds to exclude taskbar/dock areas
     let display_bounds = display
-        .as_ref()
         .map(|d| d.visible_bounds())
         .unwrap_or_else(default_placement);
 
@@ -1606,7 +1609,6 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
         },
         None => (
             display
-                .as_ref()
                 .map(|d| d.default_bounds())
                 .unwrap_or_else(default_placement),
             WindowBounds::Windowed,
@@ -1673,7 +1675,25 @@ impl Window {
             .as_ref()
             .and_then(|titlebar| titlebar.title.clone());
 
-        let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
+        let active_window_placement = cx.active_window_placement();
+        // Explicit bounds only make sense on the display they were computed for.
+        let target_display_id = display_id.or_else(|| {
+            active_window_placement
+                .filter(|_| window_bounds.is_none())
+                .and_then(|(display_id, _)| display_id)
+        });
+        let display = target_display_id
+            .and_then(|display_id| cx.find_display(display_id))
+            .or_else(|| cx.primary_display());
+        let display_id = display
+            .as_ref()
+            .map(|display| display.id())
+            .or(target_display_id);
+        let active_window_bounds = active_window_placement
+            .filter(|(active_display_id, _)| *active_display_id == display_id)
+            .map(|(_, bounds)| bounds);
+        let window_bounds = window_bounds
+            .unwrap_or_else(|| default_bounds(active_window_bounds, display.as_deref()));
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
@@ -1719,6 +1739,7 @@ impl Window {
         profiler::journal::record_window_visibility(handle.window_id(), visibility);
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
+        let scene_animation_interval = Rc::new(Cell::new(None::<Duration>));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
 
@@ -1884,6 +1905,7 @@ impl Window {
             let invalidator = invalidator.clone();
             let active = active.clone();
             let needs_present = needs_present.clone();
+            let scene_animation_interval = scene_animation_interval.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
             let mut deferred_force_render = false;
@@ -1943,12 +1965,14 @@ impl Window {
                 // underclocking, but subject to the same power limits as redraws.
                 let high_rate_input = input_rate_tracker.borrow_mut().is_high_rate();
                 let has_next_frame_callbacks = !next_frame_callbacks.borrow().is_empty();
-                let has_frame_demand = invalidator.is_dirty()
+                let has_demand_besides_animation = invalidator.is_dirty()
                     || force_render
                     || has_next_frame_callbacks
                     || request_frame_options.require_presentation
                     || needs_present.get()
                     || high_rate_input;
+                let has_frame_demand =
+                    has_demand_besides_animation || scene_animation_interval.get().is_some();
 
                 let should_throttle = !request_frame_options.require_presentation;
                 let inactive_without_high_rate_input =
@@ -1964,6 +1988,10 @@ impl Window {
                     thermal_state,
                     power_mode,
                 );
+                let animation_frame_interval = scene_animation_interval
+                    .get()
+                    .filter(|interval| !has_demand_besides_animation && !interval.is_zero());
+                let min_frame_interval = min_frame_interval.max(animation_frame_interval);
 
                 let now = Instant::now();
                 // Idle display-link ticks must neither consume a frame slot nor
@@ -1990,7 +2018,11 @@ impl Window {
                     profiler::journal::record_frame_skipped(
                         window_id,
                         Instant::now(),
-                        if inactive_without_high_rate_input
+                        if animation_frame_interval.is_some()
+                            && animation_frame_interval == min_frame_interval
+                        {
+                            profiler::journal::FrameSkipReason::AnimationFrameRateLimit
+                        } else if inactive_without_high_rate_input
                             && inactive_frame_interval == min_frame_interval
                         {
                             profiler::journal::FrameSkipReason::InactiveFrameRateLimit
@@ -2025,6 +2057,7 @@ impl Window {
                 let should_draw = invalidator.is_dirty() || force_render;
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
+                    || scene_animation_interval.get().is_some()
                     || high_rate_input;
                 if should_draw {
                     measure("frame duration", || {
@@ -2040,6 +2073,7 @@ impl Window {
                                     window.refresh();
                                 }
                                 let arena_clear_needed = window.draw(cx);
+                                window.advance_scene_animations(cx);
                                 window.present();
                                 arena_clear_needed.clear(cx);
                             })
@@ -2053,7 +2087,10 @@ impl Window {
                     })
                 } else if needs_present {
                     handle
-                        .update(&mut cx, |_, window, _| window.present())
+                        .update(&mut cx, |_, window, cx| {
+                            window.advance_scene_animations(cx);
+                            window.present();
+                        })
                         .with_context(|| {
                             format!("presenting frame for window {:?}", handle.window_id())
                         })
@@ -2064,6 +2101,7 @@ impl Window {
                     .update(&mut cx, |_, window, _| {
                         if window.invalidator.is_dirty()
                             || !window.next_frame_callbacks.borrow().is_empty()
+                            || window.scene_animation_interval.get().is_some()
                         {
                             window.platform_window.schedule_frame();
                         }
@@ -2081,7 +2119,10 @@ impl Window {
                 // after this frame (the window was re-invalidated mid-draw, or
                 // animations scheduled next-frame callbacks), re-arm the frame
                 // source explicitly.
-                if invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty() {
+                if invalidator.is_dirty()
+                    || !next_frame_callbacks.borrow().is_empty()
+                    || scene_animation_interval.get().is_some()
+                {
                     invalidator.wake_platform();
                 }
                 #[cfg(feature = "profiler")]
@@ -2357,6 +2398,7 @@ impl Window {
             display_observers: SingleSubscriberSet::new(),
             is_resizable,
             is_minimizable,
+            last_window_bounds: window_bounds,
             sprite_atlas,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
@@ -2399,6 +2441,7 @@ impl Window {
             visibility_observers: SingleSubscriberSet::new(),
             hovered,
             needs_present,
+            scene_animation_interval,
             input_rate_tracker,
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
@@ -2504,6 +2547,65 @@ impl Window {
         if self.invalidator.is_dirty() || self.needs_present.get() {
             profiler::journal::record_frame_pending(self.handle.window_id(), Instant::now());
         }
+    }
+
+    /// This window's part of [`App::debug_state`].
+    ///
+    /// Values GPUI caches are reported next to what the platform reports now,
+    /// so a stale cache shows up as a mismatch.
+    pub(crate) fn debug_state(&self) -> serde_json::Value {
+        let platform_window = &self.platform_window;
+        serde_json::json!({
+            "id": self.handle.window_id().as_u64(),
+            "title": platform_window.get_title(),
+            "bounds": platform_window.bounds(),
+            "window_bounds": format!("{:?}", platform_window.window_bounds()),
+            "content_size": platform_window.content_size(),
+            "viewport_size": self.viewport_size,
+            "scale_factor": {
+                "cached": self.scale_factor,
+                "platform": platform_window.scale_factor(),
+            },
+            "display_id": {
+                "cached": self.display_id.map(u64::from),
+                "platform": platform_window.display().map(|display| u64::from(display.id())),
+            },
+            "active": {
+                "cached": self.active.get(),
+                "platform": platform_window.is_active(),
+            },
+            "hovered": {
+                "cached": self.hovered.get(),
+                "platform": platform_window.is_hovered(),
+            },
+            "visibility": {
+                "cached": format!("{:?}", self.visibility),
+                "platform": format!("{:?}", platform_window.visibility()),
+            },
+            "appearance": {
+                "cached": format!("{:?}", self.appearance),
+                "platform": format!("{:?}", platform_window.appearance()),
+            },
+            "is_fullscreen": platform_window.is_fullscreen(),
+            "is_maximized": platform_window.is_maximized(),
+            "mouse_position": {
+                "cached": self.mouse_position,
+                "platform": platform_window.mouse_position(),
+            },
+            "modifiers": {
+                "cached": self.modifiers,
+                "platform": platform_window.modifiers(),
+            },
+            "cursor_style": self.rendered_frame.cursor_style(self),
+            "frame": {
+                "dirty": self.invalidator.is_dirty(),
+                "needs_present": self.needs_present.get(),
+                "refreshing": self.refreshing,
+                "next_frame_callbacks": self.next_frame_callbacks.borrow().len(),
+            },
+            "gpu": platform_window.gpu_specs(),
+            "platform": platform_window.debug_state(),
+        })
     }
 
     /// Whether the platform is presenting this window's frames (see
@@ -2740,6 +2842,14 @@ impl Window {
         self.platform_window.window_bounds()
     }
 
+    pub(crate) fn last_window_bounds(&self) -> WindowBounds {
+        self.last_window_bounds
+    }
+
+    pub(crate) fn display_id(&self) -> Option<DisplayId> {
+        self.display_id
+    }
+
     /// Return the `WindowBounds` excluding insets (Wayland and X11)
     pub fn inner_window_bounds(&self) -> WindowBounds {
         self.platform_window.inner_window_bounds()
@@ -2944,6 +3054,11 @@ impl Window {
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
 
+    pub(crate) fn advance_scene_animations(&mut self, cx: &App) {
+        let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
+        self.rendered_frame.scene.advance_animations(elapsed);
+    }
+
     /// Runs all callbacks scheduled via [`Self::on_next_frame`], returning how many ran.
     ///
     /// Tests have no platform frame loop, so this simulates the delivery of the
@@ -3003,6 +3118,8 @@ impl Window {
     pub fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
+        self.last_window_bounds = self.platform_window.window_bounds();
+        cx.sync_window_update_entry(self);
         self.mouse_position = self.platform_window.mouse_position();
 
         self.refresh();
@@ -3284,6 +3401,12 @@ impl Window {
     #[cfg(target_os = "macos")]
     pub fn set_traffic_light_position(&self, position: Point<Pixels>) {
         self.platform_window.set_traffic_light_position(position);
+    }
+
+    /// Shows or hides the native macOS titlebar, including the traffic light buttons.
+    #[cfg(target_os = "macos")]
+    pub fn set_native_titlebar_visibility(&self, visible: bool) {
+        self.platform_window.set_native_titlebar_visibility(visible);
     }
 
     /// Sets the application identifier.
@@ -3748,6 +3871,8 @@ impl Window {
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.scene_animation_interval
+            .set(self.rendered_frame.scene.animation_frame_interval());
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
@@ -4775,28 +4900,20 @@ impl Window {
         });
     }
 
-    /// Creates a new painting layer for the specified bounds. A "layer" is a batch
-    /// of geometry that are non-overlapping and have the same draw order. This is typically used
+    /// Creates a new painting layer. A "layer" is a batch of geometry that are
+    /// non-overlapping and have the same draw order. This is typically used
     /// for performance reasons.
     ///
+    /// Layers painted inside `f` are drawn above this layer, including above
+    /// what `f` paints after them.
+    ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn paint_layer<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         self.invalidator.debug_assert_paint();
 
-        let content_mask = self.content_mask();
-        let clipped_bounds = bounds.intersect(&content_mask.bounds);
-        if !clipped_bounds.is_empty() {
-            self.next_frame
-                .scene
-                .push_layer(self.cover_bounds(clipped_bounds));
-        }
-
+        self.next_frame.scene.push_layer();
         let result = f(self);
-
-        if !clipped_bounds.is_empty() {
-            self.next_frame.scene.pop_layer();
-        }
-
+        self.next_frame.scene.pop_layer();
         result
     }
 
@@ -4816,23 +4933,27 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
-        let element_bounds = self.cover_bounds(bounds);
-        let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
             if shadow.inset {
                 continue;
             }
-            let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
+            let shape_bounds =
+                self.cover_bounds((bounds + shadow.offset).dilate(shadow.spread_radius));
+            if shape_bounds.is_empty() {
+                continue;
+            }
+            let blur_radius = shadow.blur_radius.scale(scale_factor);
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
-                blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: self.cover_bounds(shadow_bounds),
+                blur_radius,
+                // Leave room for the tail of the blur.
+                bounds: shape_bounds.dilate(blur_radius * 3.),
                 content_mask,
-                corner_radii: corner_radii.scale(scale_factor),
+                corner_radii: Corners::default(),
                 color: shadow.color.opacity(opacity),
-                element_bounds,
-                element_corner_radii,
-                inset: 0,
+                shape_bounds,
+                shape_corner_radii: corner_radii.scale(scale_factor),
+                inset: false.into(),
                 pad: 0,
             });
         }
@@ -4871,55 +4992,58 @@ impl Window {
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: self.cover_bounds(hole),
+                bounds: element_bounds,
                 content_mask,
-                corner_radii: hole_corner_radii.scale(scale_factor),
+                corner_radii: element_corner_radii,
                 color: shadow.color.opacity(opacity),
-                element_bounds,
-                element_corner_radii,
-                inset: 1,
+                shape_bounds: self.cover_bounds(hole),
+                shape_corner_radii: hole_corner_radii.scale(scale_factor),
+                inset: true.into(),
                 pad: 0,
             });
         }
     }
 
     fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
-        let radii = &quad.corner_radii;
-        let widths = &quad.border_widths;
-        let edge_radii = Edges {
-            top: radii.top_left.max(radii.top_right),
-            right: radii.top_right.max(radii.bottom_right),
-            bottom: radii.bottom_left.max(radii.bottom_right),
-            left: radii.top_left.max(radii.bottom_left),
-        };
+        let size = quad.bounds.size;
+        let diagonal = (size.width.0 * size.width.0 + size.height.0 * size.height.0).sqrt();
+        if diagonal == 0. {
+            return Bounds::default();
+        }
+        // The interior's corners sit on the corner arcs. Taking the angle along
+        // the arc whose tangent is the quad's aspect ratio stays within 1% of
+        // the largest interior.
+        let cos = size.height.0 / diagonal;
+        let sin = size.width.0 / diagonal;
 
-        let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
-        let inset_bounds = |top_left_inset, bottom_right_inset| {
-            Bounds::from_corners(
-                quad.bounds.origin + top_left_inset + antialias_inset,
-                quad.bounds.bottom_right() - bottom_right_inset - antialias_inset,
+        // A corner's inner border edge is a quarter ellipse around the
+        // corner's center, with the border widths taken off its radius.
+        let corner_inset = |radius: ScaledPixels, width_x: ScaledPixels, width_y: ScaledPixels| {
+            point(
+                width_x.max(radius - (radius - width_x) * cos),
+                width_y.max(radius - (radius - width_y) * sin),
             )
         };
 
-        // Rounded corners need only be excluded on one axis. Either candidate
-        // is empty of border pixels, so use the larger interior.
-        let horizontal_band = inset_bounds(
-            point(widths.left, widths.top.max(edge_radii.top)),
-            point(widths.right, widths.bottom.max(edge_radii.bottom)),
-        );
-        let vertical_band = inset_bounds(
-            point(widths.left.max(edge_radii.left), widths.top),
-            point(widths.right.max(edge_radii.right), widths.bottom),
-        );
+        let radii = &quad.corner_radii;
+        let widths = &quad.border_widths;
+        let top_left = corner_inset(radii.top_left, widths.left, widths.top);
+        let top_right = corner_inset(radii.top_right, widths.right, widths.top);
+        let bottom_right = corner_inset(radii.bottom_right, widths.right, widths.bottom);
+        let bottom_left = corner_inset(radii.bottom_left, widths.left, widths.bottom);
 
-        let area = |bounds: &Bounds<ScaledPixels>| {
-            bounds.size.width.0.max(0.) * bounds.size.height.0.max(0.)
-        };
-        if area(&horizontal_band) >= area(&vertical_band) {
-            horizontal_band
-        } else {
-            vertical_band
-        }
+        let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
+        Bounds::from_corners(
+            quad.bounds.origin
+                + point(top_left.x.max(bottom_left.x), top_left.y.max(top_right.y))
+                + antialias_inset,
+            quad.bounds.bottom_right()
+                - point(
+                    top_right.x.max(bottom_right.x),
+                    bottom_left.y.max(bottom_right.y),
+                )
+                - antialias_inset,
+        )
     }
 
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
@@ -4947,20 +5071,64 @@ impl Window {
             border_widths: snapped_border_widths,
             border_style: quad.border_style,
         };
+        self.insert_quad(quad);
+    }
 
-        if !quad.background.is_transparent() {
+    fn insert_quad(&mut self, quad: Quad) {
+        let has_background = !quad.background.is_transparent();
+        let has_border =
+            quad.border_widths != Edges::default() && !quad.border_color.is_transparent();
+        if !has_background && !has_border {
+            return;
+        }
+
+        let is_rectangle =
+            quad.border_widths == Edges::default() && quad.corner_radii == Corners::default();
+        if has_background && is_rectangle {
             self.next_frame.scene.insert_primitive(quad);
             return;
         }
 
-        // Splitting a border-only quad around its empty interior avoids shading
-        // every transparent pixel inside large outlines.
+        let plain_border = quad.corner_radii == Corners::default()
+            && quad.border_style == BorderStyle::Solid
+            && (!has_background || quad.border_color.is_opaque());
+
+        // Splitting off the interior leaves only the strips around it for the
+        // border and corner shading.
         let outer_bounds = quad.bounds;
-        let inner_bounds = Self::largest_border_interior(&quad);
+        let inner_bounds = if plain_border {
+            quad.bounds.extend(quad.border_widths.map(|width| -*width))
+        } else {
+            Self::largest_border_interior(&quad)
+        };
+
+        // A plain border's strips can be plain rectangles of the border color.
+        // Otherwise, each strip is the whole quad masked to the strip, so the
+        // border, corners and gradients are still shaded relative to the full quad.
+        let strip_quad = if plain_border {
+            Quad {
+                background: quad.border_color.into(),
+                border_widths: Edges::default(),
+                ..quad
+            }
+        } else {
+            quad
+        };
 
         if inner_bounds.is_empty() {
-            self.next_frame.scene.insert_primitive(quad);
+            self.next_frame.scene.insert_primitive(strip_quad);
             return;
+        }
+
+        if has_background {
+            self.next_frame.scene.insert_primitive(Quad {
+                content_mask: ContentMask {
+                    bounds: quad.content_mask.bounds.intersect(&inner_bounds),
+                },
+                border_widths: Edges::default(),
+                corner_radii: Corners::default(),
+                ..quad
+            });
         }
 
         let strips = [
@@ -4987,33 +5155,31 @@ impl Window {
         ];
 
         for strip in strips {
-            let content_mask_bounds = quad.content_mask.bounds.intersect(&strip);
-            if !content_mask_bounds.is_empty() {
-                self.next_frame.scene.insert_primitive(Quad {
-                    content_mask: ContentMask {
-                        bounds: content_mask_bounds,
-                    },
-                    ..quad
-                });
-            }
+            self.next_frame.scene.insert_primitive(Quad {
+                content_mask: ContentMask {
+                    bounds: quad.content_mask.bounds.intersect(&strip),
+                },
+                ..strip_quad
+            });
         }
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
+    pub fn paint_path(&mut self, path: Path, color: impl Into<Background>) {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
-        path.content_mask = content_mask;
         let color: Background = color.into();
-        path.color = color.opacity(opacity);
-        self.next_frame
-            .scene
-            .insert_primitive(path.scale(scale_factor));
+        self.next_frame.scene.insert_primitive(PaintedPath::new(
+            path,
+            scale_factor,
+            content_mask,
+            color.opacity(opacity),
+        ));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -5134,7 +5300,7 @@ impl Window {
             } else {
                 self.next_frame.scene.insert_primitive(MonochromeSprite {
                     order: 0,
-                    pad: 0,
+                    animation: SpriteAnimationId::NONE,
                     bounds,
                     content_mask,
                     color: color.opacity(element_opacity),
@@ -5147,11 +5313,13 @@ impl Window {
     }
 
     fn should_use_subpixel_rendering(&self, font_id: FontId, font_size: Pixels) -> bool {
-        if self.platform_window.background_appearance() != WindowBackgroundAppearance::Opaque {
+        // Checked first because it's cheap, while some platforms lock the window to read its
+        // background appearance, and this runs for every glyph.
+        if !self.platform_window.is_subpixel_rendering_supported() {
             return false;
         }
 
-        if !self.platform_window.is_subpixel_rendering_supported() {
+        if self.platform_window.background_appearance() != WindowBackgroundAppearance::Opaque {
             return false;
         }
 
@@ -5239,6 +5407,21 @@ impl Window {
         color: Hsla,
         cx: &App,
     ) -> Result<()> {
+        self.paint_animated_svg(bounds, path, data, transformation, None, color, cx)
+    }
+
+    /// Like [`Self::paint_svg`], with an `animation` the window applies before every
+    /// present, so the view isn't re-rendered to advance it.
+    pub(crate) fn paint_animated_svg(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        path: SharedString,
+        data: Option<&[u8]>,
+        transformation: TransformationMatrix,
+        animation: Option<SpriteAnimation>,
+        color: Hsla,
+        cx: &App,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
@@ -5279,15 +5462,22 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| size.ceil());
 
-        self.next_frame.scene.insert_primitive(MonochromeSprite {
+        let sprite = MonochromeSprite {
             order: 0,
-            pad: 0,
+            animation: SpriteAnimationId::NONE,
             bounds: final_bounds,
             content_mask,
             color: color.opacity(element_opacity),
             tile,
             transformation,
-        });
+        };
+        match animation {
+            Some(animation) => self
+                .next_frame
+                .scene
+                .insert_animated_sprite(sprite, animation),
+            None => self.next_frame.scene.insert_primitive(sprite),
+        }
 
         Ok(())
     }
@@ -5429,7 +5619,7 @@ impl Window {
                 frame_index,
             };
 
-            self.sprite_atlas.remove(&params.clone().into());
+            self.sprite_atlas.remove(&params.into());
         }
 
         Ok(())
@@ -5810,9 +6000,10 @@ impl Window {
     fn reset_cursor_style(&self, cx: &mut App) {
         // Set the cursor only if we're the active window.
         if self.is_window_hovered() {
-            let style = self
-                .rendered_frame
-                .cursor_style(self)
+            // A drag can start before the next paint records its cursor in the frame.
+            let style = cx
+                .active_drag_cursor_style()
+                .or_else(|| self.rendered_frame.cursor_style(self))
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }
@@ -6210,14 +6401,11 @@ impl Window {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
-        let hit_test = self.rendered_frame.hit_test(self.mouse_position());
-        if hit_test != self.mouse_hit_test {
-            self.mouse_hit_test = hit_test;
-            self.reset_cursor_style(cx);
-        }
+        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position());
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         if self.is_inspector_picking(cx) {
+            self.reset_cursor_style(cx);
             self.handle_inspector_mouse_event(event, cx);
             // When inspector is picking, all other mouse handling is skipped.
             return;
@@ -6265,6 +6453,10 @@ impl Window {
         if event.is::<MouseUpEvent>() && self.captured_hitbox.is_some() {
             self.captured_hitbox = None;
         }
+
+        // Runs after the listeners so that a drag they start takes effect in this event. Resolving
+        // the cursor any earlier would briefly select whatever is under the pointer instead.
+        self.reset_cursor_style(cx);
     }
 
     // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
@@ -8172,13 +8364,14 @@ mod tests {
 
     use crate::{
         AnyWindowHandle, AppContext as _, BackGestureEvent, BackGesturePhase, Bounds, ContentMask,
-        Context, DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths,
-        FileDragPaths, FileDropEvent, FocusHandle, InputEvent as _, InteractiveElement as _,
-        IntoElement, KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent,
-        MouseMoveEvent, ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions,
-        ScaledPixels, StatefulInteractiveElement as _, Styled, TestAppContext, ThermalState,
-        TouchDragEvent, TouchEvent, TouchId, TouchPhase, Underline, UnderlineStyle, Window,
-        WindowAppearance, WindowOptions, canvas, div, hsla, point, px, size,
+        Context, CursorStyle, DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload,
+        ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle, InputEvent as _,
+        InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke, LongPressEvent, MouseButton,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PlatformInput, Point,
+        Render, RequestFrameOptions, ScaledPixels, StatefulInteractiveElement as _, Styled,
+        TestAppContext, ThermalState, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Underline,
+        UnderlineStyle, Window, WindowAppearance, WindowOptions, canvas, div, hsla, point, px,
+        size,
     };
 
     #[gpui::test]
@@ -8445,6 +8638,34 @@ mod tests {
         }
     }
 
+    /// A stale cache is only visible if the snapshot reports GPUI's cached
+    /// value separately from what the platform reports now.
+    #[gpui::test]
+    fn test_debug_state_reports_cached_and_platform_values(cx: &mut TestAppContext) {
+        use crate::WindowVisibility;
+
+        let window = cx.add_window(|_, _| EmptyView);
+        let window_id = window.window_id().as_u64();
+        let window_state = |cx: &mut TestAppContext| {
+            let state = cx.update(|cx| cx.debug_state());
+            state["windows"]
+                .as_array()
+                .and_then(|windows| windows.iter().find(|window| window["id"] == window_id))
+                .cloned()
+                .expect("the open window is listed")
+        };
+
+        let state = window_state(cx);
+        assert_eq!(state["visibility"]["cached"], "Visible");
+        assert_eq!(state["visibility"]["platform"], "Visible");
+
+        cx.test_window(window.into())
+            .simulate_visibility_change(WindowVisibility::Hidden);
+        let state = window_state(cx);
+        assert_eq!(state["visibility"]["cached"], "Hidden");
+        assert_eq!(state["visibility"]["platform"], "Hidden");
+    }
+
     /// Visibility transitions reach observers exactly once each, with the new
     /// state already stored on the window, and never wake the platform for a
     /// frame: the platform requests one itself when it resumes presenting.
@@ -8601,6 +8822,48 @@ mod tests {
                 Empty
             }
         }
+    }
+
+    #[gpui::test]
+    fn test_window_opened_from_bounds_observer_uses_new_bounds(cx: &mut TestAppContext) {
+        use crate::Subscription;
+
+        struct BoundsObserver {
+            _subscription: Subscription,
+        }
+
+        impl Render for BoundsObserver {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                Empty
+            }
+        }
+
+        let opened_window = Rc::new(Cell::new(None));
+        let window = cx.add_window({
+            let opened_window = opened_window.clone();
+            move |window, cx| BoundsObserver {
+                _subscription: cx.observe_window_bounds(window, move |_, _, cx| {
+                    let handle = cx
+                        .open_window(WindowOptions::default(), |_, cx| cx.new(|_| EmptyView))
+                        .unwrap();
+                    opened_window.set(Some(AnyWindowHandle::from(handle)));
+                }),
+            }
+        });
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+
+        let new_size = size(px(400.), px(300.));
+        cx.simulate_window_resize(window.into(), new_size);
+
+        let opened_window = opened_window
+            .take()
+            .expect("bounds observer should have opened a window");
+        let opened_size = opened_window
+            .update(cx, |_, window, _| window.bounds().size)
+            .unwrap();
+        assert_eq!(opened_size, new_size);
     }
 
     #[gpui::test]
@@ -8914,6 +9177,50 @@ mod tests {
                 (scale_factor, expected_bounds, resized_size)
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_fullscreen_toggle_reports_current_bounds(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let handle = AnyWindowHandle::from(window);
+        let notifications = Rc::new(Cell::new(0));
+        window
+            .update(cx, {
+                let notifications = notifications.clone();
+                |_, window, cx| {
+                    cx.observe_window_bounds(window, move |_, _, _| {
+                        notifications.set(notifications.get() + 1)
+                    })
+                    .detach();
+                }
+            })
+            .unwrap();
+        let window_state = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, _| {
+                (
+                    window.is_fullscreen(),
+                    window.bounds().size,
+                    window.viewport_size(),
+                )
+            })
+            .unwrap()
+        };
+        let initial_size = window_state(cx).1;
+
+        window
+            .update(cx, |_, window, _| window.toggle_fullscreen())
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(window_state(cx), (true, initial_size, initial_size));
+        assert_eq!(notifications.get(), 1);
+
+        let resized_size = size(px(800.), px(600.));
+        window
+            .update(cx, |_, window, _| window.toggle_fullscreen())
+            .unwrap();
+        cx.simulate_window_resize(handle, resized_size);
+        cx.run_until_parked();
+        assert_eq!(window_state(cx), (false, resized_size, resized_size));
     }
 
     /// Platforms that stop requesting frames for idle windows (currently web)
@@ -10430,6 +10737,87 @@ mod tests {
         // the hover.
         let widen = |root: &mut Root, _: &mut Window, _: &mut Context<Root>| root.width = px(300.);
         assert_eq!(update_and_draw(window, &child, cx, widen).0, 1.);
+    }
+
+    #[gpui::test]
+    fn test_drag_cursor_applies_before_next_paint(cx: &mut TestAppContext) {
+        struct ResizeHandle;
+
+        impl Render for ResizeHandle {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().cursor_text().child(
+                    div()
+                        .id("resize-handle")
+                        .w(px(4.))
+                        .h_full()
+                        .cursor_col_resize()
+                        .on_drag((), |_, _, _, cx| cx.new(|_| Empty)),
+                )
+            }
+        }
+
+        let window = cx.add_window(|_, _| ResizeHandle);
+        let handle_position = point(px(1.), px(10.));
+        let drag_position = point(px(20.), px(10.));
+        let cursor_observer = cx.clone();
+
+        let update_result = cx.update_window(window.into(), |_, window, cx| {
+            window.hovered.set(true);
+            window.active.set(true);
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: handle_position,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                MouseDownEvent {
+                    position: handle_position,
+                    button: MouseButton::Left,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: drag_position,
+                    pressed_button: Some(MouseButton::Left),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.has_active_drag());
+            // Asserted here because leaving this update flushes effects, which paints a frame.
+            assert_eq!(
+                cursor_observer.test_platform().cursor_style(),
+                CursorStyle::ResizeColumn
+            );
+
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                MouseUpEvent {
+                    position: drag_position,
+                    button: MouseButton::Left,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to run drag: {update_result:?}"
+        );
+        assert_eq!(
+            cursor_observer.test_platform().cursor_style(),
+            CursorStyle::IBeam
+        );
     }
 }
 

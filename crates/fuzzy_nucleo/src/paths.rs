@@ -14,7 +14,10 @@ use nucleo::pattern::Pattern;
 use fuzzy::CharBag;
 
 use crate::matcher::{self, LENGTH_PENALTY};
-use crate::{Cancelled, Case, Query, case_penalty, count_case_mismatches, positions_from_sorted};
+use crate::{
+    Cancelled, Case, MaxResults, Query, case_penalty, count_case_mismatches, is_cancelled,
+    positions_from_sorted,
+};
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
@@ -38,6 +41,27 @@ impl<'a> PathMatchCandidate<'a> {
             is_dir,
             path,
             char_bag,
+        }
+    }
+}
+
+/// Options for [`match_fixed_path_set`] and [`match_path_sets`].
+#[derive(Copy, Clone, Debug)]
+pub struct PathMatchOptions<'a> {
+    /// Defaults to all matches. Prefer a limit when matching whole worktrees.
+    pub max_results: MaxResults,
+    /// Return nothing if this gets set while matching.
+    pub cancel_flag: Option<&'a AtomicBool>,
+    /// Defaults to [`Case::Ignore`].
+    pub case: Case,
+}
+
+impl Default for PathMatchOptions<'_> {
+    fn default() -> Self {
+        Self {
+            max_results: MaxResults::All,
+            cancel_flag: None,
+            case: Case::Ignore,
         }
     }
 }
@@ -157,7 +181,7 @@ fn path_match_helper<'a>(
     root_is_file: bool,
     relative_to: &Option<Arc<RelPath>>,
     path_style: PathStyle,
-    cancel_flag: &AtomicBool,
+    cancel_flag: Option<&AtomicBool>,
 ) -> Result<(), Cancelled> {
     let mut candidate_buf = if !path_prefix.is_empty() && !root_is_file {
         let mut s = path_prefix.display(path_style).to_string();
@@ -173,7 +197,7 @@ fn path_match_helper<'a>(
     for candidate in candidates {
         buf.clear();
         matched_chars.clear();
-        if cancel_flag.load(atomic::Ordering::Relaxed) {
+        if is_cancelled(cancel_flag, atomic::Ordering::Relaxed) {
             return Err(Cancelled);
         }
 
@@ -240,10 +264,14 @@ pub fn match_fixed_path_set(
     worktree_id: usize,
     worktree_root_name: Option<Arc<RelPath>>,
     query: &str,
-    case: Case,
-    max_results: usize,
+    options: PathMatchOptions<'_>,
     path_style: PathStyle,
 ) -> Vec<PathMatch> {
+    let PathMatchOptions {
+        max_results,
+        cancel_flag,
+        case,
+    } = options;
     let Some(query) = Query::build(query, case) else {
         return Vec::new();
     };
@@ -252,13 +280,14 @@ pub fn match_fixed_path_set(
     config.set_match_paths();
     let mut matcher = matcher::get_matcher(config);
 
+    let max_results = max_results.resolve(candidates.len());
     let root_is_file = worktree_root_name.is_some() && candidates.iter().all(|c| c.path.is_empty());
 
     let path_prefix = worktree_root_name.unwrap_or_else(|| RelPath::empty_arc());
 
     let mut results = Vec::new();
 
-    path_match_helper(
+    let outcome = path_match_helper(
         &mut matcher,
         &query,
         candidates.into_iter(),
@@ -268,11 +297,13 @@ pub fn match_fixed_path_set(
         root_is_file,
         &None,
         path_style,
-        &AtomicBool::new(false),
-    )
-    .ok();
-    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+        cancel_flag,
+    );
     matcher::return_matcher(matcher);
+    if outcome.is_err() || is_cancelled(cancel_flag, atomic::Ordering::Acquire) {
+        return Vec::new();
+    }
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
@@ -280,11 +311,14 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     candidate_sets: &'a [Set],
     query: &str,
     relative_to: &Option<Arc<RelPath>>,
-    case: Case,
-    max_results: usize,
-    cancel_flag: &AtomicBool,
+    options: PathMatchOptions<'_>,
     executor: BackgroundExecutor,
 ) -> Vec<PathMatch> {
+    let PathMatchOptions {
+        max_results,
+        cancel_flag,
+        case,
+    } = options;
     let path_count: usize = candidate_sets.iter().map(|s| s.len()).sum();
     if path_count == 0 {
         return Vec::new();
@@ -302,10 +336,11 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         return Vec::new();
     };
 
+    let max_results = max_results.resolve(path_count);
     let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = path_count.div_ceil(num_cpus);
     let mut segment_results = (0..num_cpus)
-        .map(|_| Vec::with_capacity(max_results))
+        .map(|_| Vec::with_capacity(max_results.min(segment_size)))
         .collect::<Vec<_>>();
     let mut config = nucleo::Config::DEFAULT;
     config.set_match_paths();
@@ -361,11 +396,119 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         .await;
 
     matcher::return_matchers(matchers);
-    if cancel_flag.load(atomic::Ordering::Acquire) {
+    if is_cancelled(cancel_flag, atomic::Ordering::Acquire) {
         return Vec::new();
     }
 
     let mut results = segment_results.concat();
     gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestCandidateSet {
+        candidates: Vec<PathMatchCandidate<'static>>,
+    }
+
+    impl<'a> PathMatchCandidateSet<'a> for TestCandidateSet {
+        type Candidates = std::iter::Cloned<std::slice::Iter<'a, PathMatchCandidate<'a>>>;
+
+        fn id(&self) -> usize {
+            0
+        }
+
+        fn len(&self) -> usize {
+            self.candidates.len()
+        }
+
+        fn root_is_file(&self) -> bool {
+            false
+        }
+
+        fn prefix(&self) -> Arc<RelPath> {
+            RelPath::empty_arc()
+        }
+
+        fn candidates(&'a self, start: usize) -> Self::Candidates {
+            self.candidates
+                .get(start..)
+                .unwrap_or_default()
+                .iter()
+                .cloned()
+        }
+
+        fn path_style(&self) -> PathStyle {
+            PathStyle::Unix
+        }
+    }
+
+    fn candidates(paths: &[&'static str]) -> Vec<PathMatchCandidate<'static>> {
+        paths
+            .iter()
+            .map(|&path| {
+                PathMatchCandidate::new(RelPath::from_unix_str(path).unwrap(), false, None)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_fixed_path_set_cancellation() {
+        let paths = ["src/main.rs", "src/lib.rs"];
+        let uncancelled = match_fixed_path_set(
+            candidates(&paths),
+            0,
+            None,
+            "main",
+            Default::default(),
+            PathStyle::Unix,
+        );
+        assert_eq!(uncancelled.len(), 1);
+
+        let cancel = AtomicBool::new(true);
+        let cancelled = match_fixed_path_set(
+            candidates(&paths),
+            0,
+            None,
+            "main",
+            PathMatchOptions {
+                cancel_flag: Some(&cancel),
+                ..Default::default()
+            },
+            PathStyle::Unix,
+        );
+        assert!(cancelled.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_path_sets_cancellation(executor: BackgroundExecutor) {
+        let candidate_sets = [TestCandidateSet {
+            candidates: candidates(&["src/main.rs", "src/lib.rs"]),
+        }];
+        let uncancelled = match_path_sets(
+            &candidate_sets,
+            "main",
+            &None,
+            Default::default(),
+            executor.clone(),
+        )
+        .await;
+        assert_eq!(uncancelled.len(), 1);
+
+        let cancel = AtomicBool::new(true);
+        let cancelled = match_path_sets(
+            &candidate_sets,
+            "main",
+            &None,
+            PathMatchOptions {
+                cancel_flag: Some(&cancel),
+                ..Default::default()
+            },
+            executor,
+        )
+        .await;
+        assert!(cancelled.is_empty());
+    }
 }

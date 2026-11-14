@@ -580,6 +580,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
         .add_basic_renderer::<settings::SidebarDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
+        .add_basic_renderer::<settings::GitDateStyle>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitDiffBaseSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
@@ -669,6 +670,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::FullscreenMode>(render_dropdown)
+        .add_basic_renderer::<settings::TitleBarVisibility>(render_dropdown)
         .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::ScanSymlinksSetting>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
@@ -880,6 +882,7 @@ fn open_settings_editor_with(
         let default_rem_size = 16.0;
         let scale_factor = current_rem_size / default_rem_size;
         let scaled_bounds: gpui::Size<Pixels> = default_bounds.map(|axis| axis * scale_factor);
+        let display_id = cx.active_display().map(|display| display.id());
 
         let app_id = ReleaseChannel::global(cx).app_id();
         let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
@@ -913,7 +916,8 @@ fn open_settings_editor_with(
                     width: SIDEBAR_WIDTH + CONTENT_MIN_WIDTH,
                     height: px(240.0),
                 }),
-                window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
+                window_bounds: Some(WindowBounds::centered(display_id, scaled_bounds, cx)),
+                display_id,
                 ..Default::default()
             },
             |window, cx| {
@@ -2622,7 +2626,7 @@ impl SettingsWindow {
                     continue;
                 };
 
-                missing_worktrees.push((worktree_id, directory_name.clone()));
+                missing_worktrees.push((worktree_id, directory_name));
                 let path = RelPath::empty().to_owned().into_arc();
 
                 let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
