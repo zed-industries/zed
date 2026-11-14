@@ -48,9 +48,9 @@ pub fn register_component<T: Component>() {
     let id = T::id();
     let metadata = ComponentMetadata {
         id: id.clone(),
-        description: T::description().map(Into::into),
+        description: SharedString::new_static(T::description()),
         name: SharedString::new_static(T::name()),
-        preview: Some(T::preview),
+        preview: T::preview,
         scope: T::scope(),
         sort_name: SharedString::new_static(T::sort_name()),
         status: T::status(),
@@ -69,15 +69,12 @@ pub struct ComponentRegistry {
 }
 
 impl ComponentRegistry {
-    pub fn previews(&self) -> Vec<&ComponentMetadata> {
-        self.components
-            .values()
-            .filter(|c| c.preview.is_some())
-            .collect()
+    pub fn previews(&self) -> impl Iterator<Item = &ComponentMetadata> {
+        self.components.values()
     }
 
     pub fn sorted_previews(&self) -> Vec<ComponentMetadata> {
-        let mut previews: Vec<ComponentMetadata> = self.previews().into_iter().cloned().collect();
+        let mut previews: Vec<_> = self.previews().cloned().collect();
         previews.sort_by_key(|a| a.name());
         previews
     }
@@ -112,9 +109,9 @@ pub struct ComponentId(pub &'static str);
 #[derive(Clone)]
 pub struct ComponentMetadata {
     id: ComponentId,
-    description: Option<SharedString>,
+    description: SharedString,
     name: SharedString,
-    preview: Option<fn(&mut Window, &mut App) -> Option<AnyElement>>,
+    preview: fn(&mut Window, &mut App) -> AnyElement,
     scope: ComponentScope,
     sort_name: SharedString,
     status: ComponentStatus,
@@ -125,7 +122,7 @@ impl ComponentMetadata {
         self.id.clone()
     }
 
-    pub fn description(&self) -> Option<SharedString> {
+    pub fn description(&self) -> SharedString {
         self.description.clone()
     }
 
@@ -133,7 +130,7 @@ impl ComponentMetadata {
         self.name.clone()
     }
 
-    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> Option<AnyElement>> {
+    pub fn preview(&self) -> fn(&mut Window, &mut App) -> AnyElement {
         self.preview
     }
 
@@ -234,17 +231,15 @@ pub trait Component {
     /// struct MyComponent;
     ///
     /// impl MyComponent {
-    ///     fn description() -> Option<&'static str> {
-    ///         Some(Self::DOCS)
+    ///     fn description() -> &'static str {
+    ///         Self::DOCS
     ///     }
     /// }
     /// ```
     ///
     /// This will result in "This is a doc comment." being passed
     /// to the component's description.
-    fn description() -> Option<&'static str> {
-        None
-    }
+    fn description() -> &'static str;
     /// The component's preview.
     ///
     /// An element returned here will be shown in the component's preview.
@@ -259,9 +254,7 @@ pub trait Component {
     /// This is useful for displaying related UI to the component you are
     /// trying to preview, such as a button that opens a modal or shows a
     /// tooltip on hover, or a grid of icons showcasing all the icons available.
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        None
-    }
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement;
 }
 
 /// The ready status of this component.
@@ -286,14 +279,17 @@ impl ComponentStatus {
     pub fn description(&self) -> &str {
         match self {
             ComponentStatus::WorkInProgress => {
-                "These components are still being designed or refined. They shouldn't be used in the app yet."
+                "These components are still being designed or refined. \
+                They shouldn't be used in the app yet."
             }
             ComponentStatus::EngineeringReady => {
-                "These components are design complete or partially implemented, and are ready for an engineer to complete their implementation."
+                "These components are design complete or partially implemented, \
+                and are ready for an engineer to complete their implementation."
             }
             ComponentStatus::Live => "These components are ready for use in the app.",
             ComponentStatus::Deprecated => {
-                "These components are no longer recommended for use in the app, and may be removed in a future release."
+                "These components are no longer recommended for use in the app, \
+                and may be removed in a future release."
             }
         }
     }

@@ -1,17 +1,19 @@
-use std::{collections::hash_map, ops::Range, sync::Arc};
+use std::{collections::hash_map, ops::Range, slice, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::future::Shared;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task};
 use language::{
     Buffer,
+    proto::serialize_version,
     row_chunk::{RowChunk, RowChunks},
 };
 use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
 use settings::Settings as _;
-use text::{BufferId, Point};
+use text::{Anchor, BufferId, BufferSnapshot, Point, ToOffset as _};
+use util::ResultExt as _;
 
 use crate::{
     InlayHint, InlayId, LspStore, LspStoreEvent, ResolveState, lsp_command::InlayHints,
@@ -21,6 +23,32 @@ use crate::{
 pub type CacheInlayHints = HashMap<LanguageServerId, Vec<(InlayId, InlayHint)>>;
 pub type CacheInlayHintsTask = Shared<Task<Result<CacheInlayHints, Arc<anyhow::Error>>>>;
 
+pub(super) fn hints_in_range(
+    mut hints: Vec<InlayHint>,
+    range: &Range<Anchor>,
+    snapshot: &BufferSnapshot,
+) -> Vec<InlayHint> {
+    if !range.start.is_valid(snapshot) || !range.end.is_valid(snapshot) {
+        return Vec::new();
+    }
+    let start = range.start.to_offset(snapshot);
+    let end = range.end.to_offset(snapshot);
+    let inclusive_end = end == snapshot.len();
+    hints.retain(|hint| {
+        if !hint.position.is_valid(snapshot) {
+            return false;
+        }
+        let offset = hint.position.to_offset(snapshot);
+        let before_end = if inclusive_end {
+            offset <= end
+        } else {
+            offset < end
+        };
+        offset >= start && before_end
+    });
+    hints
+}
+
 /// A logic to apply when querying for new inlay hints and deciding what to do with the old entries in the cache in case of conflicts.
 #[derive(Debug, Clone, Copy)]
 pub enum InvalidationStrategy {
@@ -28,10 +56,7 @@ pub enum InvalidationStrategy {
     /// Demands to re-query all inlay hints needed and invalidate all cached entries, but does not require instant update with invalidation.
     ///
     /// Despite nothing forbids language server from sending this request on every edit, it is expected to be sent only when certain internal server state update, invisible for the editor otherwise.
-    RefreshRequested {
-        server_id: LanguageServerId,
-        request_id: Option<usize>,
-    },
+    RefreshRequested { server_id: LanguageServerId },
     /// Multibuffer excerpt(s) and/or singleton buffer(s) were edited at least on one place.
     /// Neither editor nor LSP is able to tell which open file hints' are not affected, so all of them have to be invalidated, re-queried and do that fast enough to avoid being slow, but also debounce to avoid loading hints on every fast keystroke sequence.
     BufferEdited,
@@ -58,8 +83,10 @@ pub struct BufferInlayHints {
     hints_by_chunks: Vec<Option<CacheInlayHints>>,
     fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
     hints_by_id: HashMap<InlayId, HintForId>,
-    latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
-    pub(super) hint_resolves: HashMap<InlayId, Shared<Task<()>>>,
+    pending_refreshes: HashSet<LanguageServerId>,
+    work_end_refreshes: HashSet<LanguageServerId>,
+    pub(super) fetched_servers: HashSet<LanguageServerId>,
+    pub(super) hint_resolves: HashMap<InlayId, Shared<Task<Option<InlayHint>>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,7 +116,9 @@ impl BufferInlayHints {
         Self {
             hints_by_chunks: vec![None; chunks.len()],
             fetches_by_chunks: vec![None; chunks.len()],
-            latest_invalidation_requests: HashMap::default(),
+            pending_refreshes: HashSet::default(),
+            work_end_refreshes: HashSet::default(),
+            fetched_servers: HashSet::default(),
             hints_by_id: HashMap::default(),
             hint_resolves: HashMap::default(),
             chunks,
@@ -128,12 +157,42 @@ impl BufferInlayHints {
     }
 
     pub fn remove_server_data(&mut self, for_server: LanguageServerId) {
-        for (chunk_index, hints) in self.hints_by_chunks.iter_mut().enumerate() {
-            if let Some(hints) = hints {
-                if hints.remove(&for_server).is_some() {
-                    self.fetches_by_chunks[chunk_index] = None;
-                }
-            }
+        self.remove_hints_for_server(for_server);
+        self.pending_refreshes.remove(&for_server);
+        self.work_end_refreshes.remove(&for_server);
+    }
+
+    pub fn cached_hint(&self, id: InlayId) -> Option<&InlayHint> {
+        let hint_for_id = self.hints_by_id.get(&id)?;
+        if self.pending_refreshes.contains(&hint_for_id.server_id) {
+            return None;
+        }
+        let (hint_id, hint) = self
+            .hints_by_chunks
+            .get(hint_for_id.chunk_id)?
+            .as_ref()?
+            .get(&hint_for_id.server_id)?
+            .get(hint_for_id.position)?;
+        debug_assert_eq!(*hint_id, id, "Invalid pointer {hint_for_id:?}");
+        Some(hint)
+    }
+
+    fn mark_refresh_pending(&mut self, server_id: LanguageServerId) {
+        self.pending_refreshes.insert(server_id);
+        self.work_end_refreshes.insert(server_id);
+    }
+
+    /// A server finishing a long-running operation may have produced new hints without
+    /// requesting an explicit refresh, but servers like rust-analyzer report work (e.g.
+    /// flycheck) after every save: refresh at most once per server until the buffer
+    /// changes. Explicit refresh requests also count against this limit, as they make a
+    /// subsequent work-end refresh redundant.
+    fn mark_refresh_pending_on_work_end(&mut self, server_id: LanguageServerId) -> bool {
+        if self.work_end_refreshes.insert(server_id) {
+            self.pending_refreshes.insert(server_id);
+            true
+        } else {
+            false
         }
     }
 
@@ -142,7 +201,9 @@ impl BufferInlayHints {
         self.fetches_by_chunks = vec![None; self.chunks.len()];
         self.hints_by_id.clear();
         self.hint_resolves.clear();
-        self.latest_invalidation_requests.clear();
+        self.pending_refreshes.clear();
+        self.work_end_refreshes.clear();
+        self.fetched_servers.clear();
     }
 
     pub fn insert_new_hints(
@@ -151,26 +212,28 @@ impl BufferInlayHints {
         server_id: LanguageServerId,
         new_hints: Vec<(InlayId, InlayHint)>,
     ) {
-        let existing_hints = self.hints_by_chunks[chunk.id]
-            .get_or_insert_default()
-            .entry(server_id)
-            .or_insert_with(Vec::new);
-        let existing_count = existing_hints.len();
-        existing_hints.extend(new_hints.into_iter().enumerate().filter_map(
-            |(i, (id, new_hint))| {
-                let new_hint_for_id = HintForId {
+        let chunk_hints = self.hints_by_chunks[chunk.id].get_or_insert_default();
+
+        // A response always covers the entire chunk, so it supersedes the server's previously
+        // cached hints for this chunk: a concurrent fetch for the same chunk and server
+        // (e.g. a server refresh arriving mid-fetch) would otherwise append the same hints
+        // again under fresh ids, duplicating them.
+        for (stale_id, _) in chunk_hints.remove(&server_id).into_iter().flatten() {
+            self.hints_by_id.remove(&stale_id);
+            self.hint_resolves.remove(&stale_id);
+        }
+        let mut inserted_hints = Vec::with_capacity(new_hints.len());
+        for (id, new_hint) in new_hints {
+            if let hash_map::Entry::Vacant(vacant_entry) = self.hints_by_id.entry(id) {
+                vacant_entry.insert(HintForId {
                     chunk_id: chunk.id,
                     server_id,
-                    position: existing_count + i,
-                };
-                if let hash_map::Entry::Vacant(vacant_entry) = self.hints_by_id.entry(id) {
-                    vacant_entry.insert(new_hint_for_id);
-                    Some((id, new_hint))
-                } else {
-                    None
-                }
-            },
-        ));
+                    position: inserted_hints.len(),
+                });
+                inserted_hints.push((id, new_hint));
+            }
+        }
+        chunk_hints.insert(server_id, inserted_hints);
         *self.fetched_hints(&chunk) = None;
     }
 
@@ -186,37 +249,15 @@ impl BufferInlayHints {
         Some(hint)
     }
 
-    pub(crate) fn invalidate_for_server_refresh(
-        &mut self,
-        for_server: LanguageServerId,
-        request_id: Option<usize>,
-    ) -> bool {
-        match self.latest_invalidation_requests.entry(for_server) {
-            hash_map::Entry::Occupied(mut o) => {
-                if request_id > *o.get() {
-                    o.insert(request_id);
-                } else {
-                    return false;
-                }
-            }
-            hash_map::Entry::Vacant(v) => {
-                v.insert(request_id);
-            }
+    /// Consumes a pending refresh for the given server, if any, invalidating its cached
+    /// hints: only the first query after [`LspStore::refresh_inlay_hints`] invalidates,
+    /// while concurrent queriers share the re-fetch it has started.
+    pub(crate) fn invalidate_for_server_refresh(&mut self, for_server: LanguageServerId) -> bool {
+        if !self.pending_refreshes.remove(&for_server) {
+            return false;
         }
 
-        for (chunk_id, chunk_data) in self.hints_by_chunks.iter_mut().enumerate() {
-            if let Some(removed_hints) = chunk_data
-                .as_mut()
-                .and_then(|chunk_data| chunk_data.remove(&for_server))
-            {
-                for (id, _) in removed_hints {
-                    self.hints_by_id.remove(&id);
-                    self.hint_resolves.remove(&id);
-                }
-                self.fetches_by_chunks[chunk_id] = None;
-            }
-        }
-
+        self.remove_hints_for_server(for_server);
         true
     }
 
@@ -229,6 +270,22 @@ impl BufferInlayHints {
             }
         }
     }
+
+    fn remove_hints_for_server(&mut self, for_server: LanguageServerId) {
+        for (chunk_id, chunk_data) in self.hints_by_chunks.iter_mut().enumerate() {
+            if let Some(removed_hints) = chunk_data
+                .as_mut()
+                .and_then(|chunk_data| chunk_data.remove(&for_server))
+            {
+                for (id, _) in removed_hints {
+                    self.hints_by_id.remove(&id);
+                    self.hint_resolves.remove(&id);
+                }
+                self.fetches_by_chunks[chunk_id] = None;
+            }
+        }
+        self.fetched_servers.remove(&for_server);
+    }
 }
 
 impl LspStore {
@@ -239,28 +296,42 @@ impl LspStore {
         server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
+        if !self.text_document_capability_matches_for_server(
+            &buffer,
+            server_id,
+            "textDocument/inlayHint",
+            |capabilities| InlayHints::can_resolve_inlays(capabilities.server_capabilities),
+            cx,
+        ) {
+            hint.resolve_state = ResolveState::Resolved;
+            return Task::ready(Ok(hint));
+        }
+
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            if !self.check_if_capable_for_proto_request(&buffer, InlayHints::can_resolve_inlays, cx)
-            {
-                hint.resolve_state = ResolveState::Resolved;
-                return Task::ready(Ok(hint));
-            }
             let request = proto::ResolveInlayHint {
                 project_id,
                 buffer_id: buffer.read(cx).remote_id().into(),
                 language_server_id: server_id.0 as u64,
                 hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
+                version: serialize_version(&buffer.read(cx).version()),
             };
-            cx.background_spawn(async move {
+            cx.spawn(async move |_, cx| {
                 let response = upstream_client
                     .request(request)
                     .await
                     .context("inlay hints proto request")?;
-                match response.hint {
-                    Some(resolved_hint) => InlayHints::proto_to_project_hint(resolved_hint)
-                        .context("inlay hints proto resolve response conversion"),
-                    None => Ok(hint),
-                }
+                let Some(resolved_hint) = response.hint else {
+                    return Ok(hint);
+                };
+                InlayHints::wait_for_hints_version(
+                    slice::from_ref(&resolved_hint),
+                    &response.version,
+                    &buffer,
+                    cx,
+                )
+                .await?;
+                InlayHints::proto_to_project_hint(resolved_hint)
+                    .context("inlay hints proto resolve response conversion")
             })
         } else {
             let Some(lang_server) = buffer.update(cx, |buffer, cx| {
@@ -269,33 +340,78 @@ impl LspStore {
             }) else {
                 return Task::ready(Ok(hint));
             };
-            if !InlayHints::can_resolve_inlays(&lang_server.capabilities()) {
-                return Task::ready(Ok(hint));
-            }
             let buffer_snapshot = buffer.read(cx).snapshot();
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();
-            cx.spawn(async move |_, cx| {
+            let origin_position = hint.position;
+            cx.background_spawn(async move {
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
-                    InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
+                    InlayHints::project_to_lsp_hint(hint, &buffer_snapshot)?,
                     request_timeout,
                 );
                 let resolved_hint = resolve_task
                     .await
                     .into_response()
                     .context("inlay hint resolve LSP request")?;
-                let resolved_hint = InlayHints::lsp_to_project_hint(
+                InlayHints::lsp_to_project_hint(
                     resolved_hint,
-                    &buffer,
+                    origin_position,
+                    &buffer_snapshot,
                     server_id,
                     ResolveState::Resolved,
                     false,
-                    cx,
                 )
-                .await?;
-                Ok(resolved_hint)
             })
+        }
+    }
+
+    /// Marks the server's inlay hints as refresh-pending in every buffer, to be
+    /// invalidated by the next query, and notifies the observers.
+    pub(super) fn refresh_inlay_hints(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        self.mark_inlay_hints_refresh_pending(server_id, cx);
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::RefreshInlayHints {
+                    project_id: *project_id,
+                    server_id: server_id.to_proto(),
+                    request_id: Some(super::next_wire_refresh_request_id()),
+                })
+                .context("sending refresh inlay hints downstream")
+                .log_err();
+        }
+    }
+
+    pub(super) fn mark_inlay_hints_refresh_pending(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        for lsp_data in self.lsp_data.values_mut() {
+            lsp_data.inlay_hints.mark_refresh_pending(server_id);
+        }
+        cx.emit(LspStoreEvent::RefreshInlayHints { server_id });
+    }
+
+    /// Same as [`Self::mark_inlay_hints_refresh_pending`], but rate-limited per server
+    /// via [`BufferInlayHints::mark_refresh_pending_on_work_end`].
+    pub(super) fn refresh_inlay_hints_on_work_end(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        let mut marked = false;
+        for lsp_data in self.lsp_data.values_mut() {
+            marked |= lsp_data
+                .inlay_hints
+                .mark_refresh_pending_on_work_end(server_id);
+        }
+        if marked {
+            cx.emit(LspStoreEvent::RefreshInlayHints { server_id });
         }
     }
 
@@ -304,11 +420,9 @@ impl LspStore {
         envelope: TypedEnvelope<proto::RefreshInlayHints>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        lsp_store.update(&mut cx, |_, cx| {
-            cx.emit(LspStoreEvent::RefreshInlayHints {
-                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
-                request_id: envelope.payload.request_id.map(|id| id as usize),
-            });
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store
+                .refresh_inlay_hints(LanguageServerId::from_proto(envelope.payload.server_id), cx);
         });
         Ok(proto::Ack {})
     }
@@ -322,17 +436,24 @@ impl LspStore {
             .payload
             .hint
             .expect("incorrect protobuf resolve inlay hint message: missing the inlay hint");
-        let hint = InlayHints::proto_to_project_hint(proto_hint)
-            .context("resolved proto inlay hint conversion")?;
         let buffer = lsp_store.update(&mut cx, |lsp_store, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             lsp_store.buffer_store.read(cx).get_existing(buffer_id)
         })?;
+        InlayHints::wait_for_hints_version(
+            slice::from_ref(&proto_hint),
+            &envelope.payload.version,
+            &buffer,
+            &mut cx,
+        )
+        .await?;
+        let hint = InlayHints::proto_to_project_hint(proto_hint)
+            .context("resolved proto inlay hint conversion")?;
         let response_hint = lsp_store
             .update(&mut cx, |lsp_store, cx| {
                 lsp_store.resolve_inlay_hint(
                     hint,
-                    buffer,
+                    buffer.clone(),
                     LanguageServerId(envelope.payload.language_server_id as usize),
                     cx,
                 )
@@ -341,6 +462,7 @@ impl LspStore {
             .context("inlay hints fetch")?;
         Ok(proto::ResolveInlayHintResponse {
             hint: Some(InlayHints::project_to_proto_hint(response_hint)),
+            version: buffer.read_with(&cx, |buffer, _| serialize_version(&buffer.version())),
         })
     }
 }

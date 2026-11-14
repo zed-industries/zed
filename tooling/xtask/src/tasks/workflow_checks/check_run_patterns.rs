@@ -1,72 +1,25 @@
 use annotate_snippets::{AnnotationKind, Group, Level, Snippet};
-use anyhow::{Result, anyhow};
 use regex::Regex;
-use serde_yaml::Value;
-use std::{
-    collections::HashMap,
-    fs,
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::LazyLock,
-};
+use std::{collections::HashMap, ops::Range, path::Path, sync::LazyLock};
 
 static GITHUB_INPUT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"\$\{\{[[:blank:]]*([[:alnum:]]|[[:punct:]])+?[[:blank:]]*\}\}"#)
         .expect("Should compile")
 });
 
-pub struct WorkflowFile {
-    raw_content: String,
-    pub parsed_content: Value,
+pub struct RunValidationError {
+    found_injection_patterns: Vec<(String, Range<usize>)>,
 }
 
-impl WorkflowFile {
-    pub fn load(workflow_file_path: &Path) -> Result<Self> {
-        fs::read_to_string(workflow_file_path)
-            .map_err(|_| {
-                anyhow!(
-                    "Could not read workflow file at {}",
-                    workflow_file_path.display()
-                )
-            })
-            .and_then(|file_content| {
-                serde_yaml::from_str(&file_content)
-                    .map(|parsed_content| Self {
-                        raw_content: file_content,
-                        parsed_content,
-                    })
-                    .map_err(|e| anyhow!("Failed to parse workflow file: {e:?}"))
-            })
-    }
-}
-
-pub struct WorkflowValidationError {
-    file_path: PathBuf,
-    contents: WorkflowFile,
-    errors: Vec<RunValidationError>,
-}
-
-impl WorkflowValidationError {
-    pub fn new(
-        errors: Vec<RunValidationError>,
-        contents: WorkflowFile,
-        file_path: PathBuf,
-    ) -> Self {
-        Self {
-            file_path,
-            contents,
-            errors,
-        }
-    }
-
-    pub fn annotation_group<'a>(&'a self) -> Group<'a> {
-        let raw_content = &self.contents.raw_content;
+impl RunValidationError {
+    /// Renders the GitHub input injection patterns found in a single `run:`
+    /// command as one diagnostic group.
+    pub fn annotation_group<'a>(&self, file_path: &Path, raw_content: &'a str) -> Group<'a> {
         let mut identical_lines = HashMap::new();
 
         let ranges = self
-            .errors
+            .found_injection_patterns
             .iter()
-            .flat_map(|error| error.found_injection_patterns.iter())
             .map(|(line, pattern_range)| {
                 let initial_offset = identical_lines
                     .get(&(line.as_str(), pattern_range.start))
@@ -89,8 +42,8 @@ impl WorkflowValidationError {
         Level::ERROR
             .primary_title("Found GitHub input injection in run command")
             .element(
-                Snippet::source(&self.contents.raw_content)
-                    .path(self.file_path.display().to_string())
+                Snippet::source(raw_content)
+                    .path(file_path.display().to_string())
                     .annotations(ranges.map(|range| {
                         AnnotationKind::Primary
                             .span(range)
@@ -98,10 +51,6 @@ impl WorkflowValidationError {
                     })),
             )
     }
-}
-
-pub struct RunValidationError {
-    found_injection_patterns: Vec<(String, Range<usize>)>,
 }
 
 pub fn validate_run_command(command: &str) -> Result<(), RunValidationError> {

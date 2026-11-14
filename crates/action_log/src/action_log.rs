@@ -160,19 +160,30 @@ impl ActionLog {
                 let language = buffer.read(cx).language().cloned();
                 let language_registry = buffer.read(cx).language_registry();
                 let diff = cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&text_snapshot, cx);
-                    diff.language_changed(language, language_registry, cx);
+                    let mut diff = BufferDiff::new(&text_snapshot, language, language_registry, cx);
+                    diff.set_operations(Arc::new(buffer_diff::RestoreDiffOperations));
                     diff
                 });
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
                 let unreviewed_edits;
                 if is_created {
-                    diff_base = Rope::default();
-                    unreviewed_edits = Patch::new(vec![Edit {
-                        old: 0..1,
-                        new: 0..text_snapshot.max_point().row + 1,
-                    }])
+                    if let TrackedBufferStatus::Created {
+                        existing_file_content: Some(existing_content),
+                    } = &status
+                    {
+                        diff_base = existing_content.clone();
+                        unreviewed_edits = Patch::new(vec![Edit {
+                            old: 0..existing_content.max_point().row + 1,
+                            new: 0..text_snapshot.max_point().row + 1,
+                        }]);
+                    } else {
+                        diff_base = Rope::default();
+                        unreviewed_edits = Patch::new(vec![Edit {
+                            old: 0..1,
+                            new: 0..text_snapshot.max_point().row + 1,
+                        }]);
+                    }
                 } else {
                     diff_base = buffer.read(cx).as_rope().clone();
                     unreviewed_edits = Patch::default();
@@ -387,6 +398,11 @@ impl ActionLog {
                 let git_diff_base = git_diff.read(cx).base_text(cx).as_rope().clone();
                 let buffer_text = tracked_buffer.snapshot.as_rope().clone();
                 anyhow::Ok(cx.background_spawn(async move {
+                    if buffer_text.len() == git_diff_base.len()
+                        && buffer_text.chars_at(0).eq(git_diff_base.chars_at(0))
+                    {
+                        return (Arc::<str>::from(git_diff_base.to_string()), git_diff_base);
+                    }
                     let mut old_unreviewed_edits = old_unreviewed_edits.into_iter().peekable();
                     let committed_edits = language::line_diff(
                         &agent_diff_base.to_string(),
@@ -460,29 +476,15 @@ impl ActionLog {
         new_diff_base: Rope,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (diff, language) = this.read_with(cx, |this, cx| {
+        let diff = this.read_with(cx, |this, _cx| {
             let tracked_buffer = this
                 .tracked_buffers
                 .get(buffer)
                 .context("buffer not tracked")?;
-            anyhow::Ok((
-                tracked_buffer.diff.clone(),
-                buffer.read(cx).language().cloned(),
-            ))
+            anyhow::Ok(tracked_buffer.diff.clone())
         })??;
-        let update = diff
-            .update(cx, |diff, cx| {
-                diff.update_diff(
-                    buffer_snapshot.clone(),
-                    Some(new_base_text),
-                    Some(true),
-                    language,
-                    cx,
-                )
-            })
-            .await;
         diff.update(cx, |diff, cx| {
-            diff.set_snapshot(update.clone(), &buffer_snapshot, cx)
+            diff.set_base_text(Some(new_base_text), buffer_snapshot.clone(), cx)
         })
         .await;
         let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
@@ -770,11 +772,10 @@ impl ActionLog {
                             .read(cx)
                             .entry_id(cx)
                             .and_then(|entry_id| {
-                                self.project.update(cx, |project, cx| {
-                                    project.delete_entry(entry_id, false, cx)
-                                })
+                                self.project
+                                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
                             })
-                            .unwrap_or_else(|| Task::ready(Ok(None)));
+                            .unwrap_or_else(|| Task::ready(Ok(())));
 
                         cx.background_spawn(async move {
                             task.await?;
@@ -931,7 +932,11 @@ impl ActionLog {
         let mut undo_buffers = Vec::new();
         let mut futures = Vec::new();
 
-        for buffer in self.changed_buffers(cx).into_keys() {
+        for buffer in self
+            .changed_buffers(cx)
+            .map(|(buffer, _)| buffer)
+            .collect::<Vec<_>>()
+        {
             let buffer_ranges = vec![Anchor::min_max_range_for_buffer(
                 buffer.read(cx).remote_id(),
             )];
@@ -1018,17 +1023,19 @@ impl ActionLog {
     }
 
     /// Returns the set of buffers that contain edits that haven't been reviewed by the user.
-    pub fn changed_buffers(&self, cx: &App) -> BTreeMap<Entity<Buffer>, Entity<BufferDiff>> {
+    pub fn changed_buffers(
+        &self,
+        cx: &App,
+    ) -> impl Iterator<Item = (Entity<Buffer>, Entity<BufferDiff>)> {
         self.tracked_buffers
             .iter()
             .filter(|(_, tracked)| tracked.has_edits(cx))
             .map(|(buffer, tracked)| (buffer.clone(), tracked.diff.clone()))
-            .collect()
     }
 
     /// Returns the total number of lines added and removed across all unreviewed buffers.
     pub fn diff_stats(&self, cx: &App) -> DiffStats {
-        DiffStats::all_files(&self.changed_buffers(cx), cx)
+        DiffStats::all_files(self.changed_buffers(cx), cx)
     }
 
     /// Iterate over buffers changed since last read or edited by the model
@@ -1047,39 +1054,28 @@ impl ActionLog {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiffStats {
     pub lines_added: u32,
     pub lines_removed: u32,
 }
 
 impl DiffStats {
-    pub fn single_file(buffer: &Buffer, diff: &BufferDiff, cx: &App) -> Self {
-        let mut stats = DiffStats::default();
-        let diff_snapshot = diff.snapshot(cx);
-        let buffer_snapshot = buffer.snapshot();
-        let base_text = diff_snapshot.base_text();
-
-        for hunk in diff_snapshot.hunks(&buffer_snapshot) {
-            let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
-            stats.lines_added += added_rows;
-
-            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
-            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
-            let removed_rows = base_end.saturating_sub(base_start);
-            stats.lines_removed += removed_rows;
+    pub fn single_file(diff: &BufferDiff) -> Self {
+        let (lines_added, lines_removed) = diff.changed_row_counts();
+        DiffStats {
+            lines_added,
+            lines_removed,
         }
-
-        stats
     }
 
     pub fn all_files(
-        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        changed_buffers: impl IntoIterator<Item = (Entity<Buffer>, Entity<BufferDiff>)>,
         cx: &App,
     ) -> Self {
         let mut total = DiffStats::default();
-        for (buffer, diff) in changed_buffers {
-            let stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+        for (_, diff) in changed_buffers {
+            let stats = DiffStats::single_file(diff.read(cx));
             total.lines_added += stats.lines_added;
             total.lines_removed += stats.lines_removed;
         }
@@ -1320,6 +1316,7 @@ mod tests {
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
+    use indoc::indoc;
     use language::Point;
     use project::{FakeFs, Fs, Project, RemoveOptions};
     use rand::prelude::*;
@@ -1328,7 +1325,7 @@ mod tests {
     use std::env;
     use util::{RandomCharIter, path};
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }
@@ -1697,8 +1694,8 @@ mod tests {
                 buffer.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 19),
-                    diff_status: DiffHunkStatusKind::Added,
-                    old_text: "".into(),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "Lorem ipsum dolor".into(),
                 }],
             )]
         );
@@ -1715,6 +1712,50 @@ mod tests {
         assert_eq!(
             buffer.read_with(cx, |buffer, _cx| buffer.text()),
             "Lorem ipsum dolor"
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_overwriting_file_counts_removed_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file1": "line1\nline2\nline3\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
+            .unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| buffer.set_text("new1\nnew2\n", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Overwriting an existing file must count the replaced lines as removed,
+        // not treat the whole file as added (+2 -0 would be the bug).
+        assert_eq!(
+            action_log.read_with(cx, |log, cx| log.diff_stats(cx)),
+            DiffStats {
+                lines_added: 2,
+                lines_removed: 3,
+            }
         );
     }
 
@@ -1778,8 +1819,8 @@ mod tests {
                 buffer.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 9),
-                    diff_status: DiffHunkStatusKind::Added,
-                    old_text: "".into(),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "Lorem ipsum dolor".into(),
                 }],
             )]
         );
@@ -1836,14 +1877,14 @@ mod tests {
         action_log.update(cx, |log, cx| log.will_delete_buffer(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| {
-                project.delete_file(file1_path.clone(), false, cx)
+                project.delete_file(file1_path.clone(), cx)
             })
             .unwrap()
             .await
             .unwrap();
         project
             .update(cx, |project, cx| {
-                project.delete_file(file2_path.clone(), false, cx)
+                project.delete_file(file2_path.clone(), cx)
             })
             .unwrap()
             .await
@@ -1895,8 +1936,8 @@ mod tests {
                 buffer2.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 5),
-                    diff_status: DiffHunkStatusKind::Added,
-                    old_text: "".into(),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "ipsum\n".into(),
                 }],
             )]
         );
@@ -2148,9 +2189,7 @@ mod tests {
             action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
         });
         project
-            .update(cx, |project, cx| {
-                project.delete_file(file_path.clone(), false, cx)
-            })
+            .update(cx, |project, cx| project.delete_file(file_path.clone(), cx))
             .unwrap()
             .await
             .unwrap();
@@ -2703,6 +2742,86 @@ mod tests {
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
+    #[gpui::test]
+    async fn test_keep_edits_on_commit_with_shifted_diff_boundaries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let initial_text = indoc! {"
+            use crate::{Alpha, Beta};
+
+            fn keep() {
+                work();
+            }
+
+            fn remove() {
+                work();
+            }
+
+            fn after() {
+                work();
+            }
+        "};
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.rs": initial_text,
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.rs", initial_text.into())],
+            "0000000",
+        );
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path(path!("/project/file.rs"), cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let final_text = indoc! {"
+            use crate::{Alpha};
+
+            fn keep() {
+                work();
+            }
+
+            fn after() {
+                work();
+            }
+        "};
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text(final_text, cx);
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+        assert!(!unreviewed_hunks(&action_log, cx).is_empty());
+
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.rs", final_text.into())],
+            "0000001",
+        );
+        cx.run_until_parked();
+
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
     /// Regression test: when head_commit updates before the BufferDiff's base
     /// text does, an intermediate DiffChanged (e.g. from a buffer-edit diff
     /// recalculation) must NOT consume the commit signal.  The subscription
@@ -3081,7 +3200,7 @@ mod tests {
             child_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
         });
         project
-            .update(cx, |project, cx| project.delete_file(file_path, false, cx))
+            .update(cx, |project, cx| project.delete_file(file_path, cx))
             .unwrap()
             .await
             .unwrap();
@@ -3168,21 +3287,21 @@ mod tests {
             child_log_1
                 .read(cx)
                 .changed_buffers(cx)
-                .into_keys()
+                .map(|(buffer, _)| buffer)
                 .collect()
         });
         let child_2_changed: Vec<_> = cx.read(|cx| {
             child_log_2
                 .read(cx)
                 .changed_buffers(cx)
-                .into_keys()
+                .map(|(buffer, _)| buffer)
                 .collect()
         });
         let parent_changed: Vec<_> = cx.read(|cx| {
             parent_log
                 .read(cx)
                 .changed_buffers(cx)
-                .into_keys()
+                .map(|(buffer, _)| buffer)
                 .collect()
         });
 
@@ -3408,7 +3527,6 @@ mod tests {
             action_log
                 .read(cx)
                 .changed_buffers(cx)
-                .into_iter()
                 .map(|(buffer, diff)| {
                     let snapshot = buffer.read(cx).snapshot();
                     (

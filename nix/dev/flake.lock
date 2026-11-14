@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "corgi-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1794574964,
+        "narHash": "sha256-7gH/NPJfa0wsUzGtio1D/8MbAdMJ2O83iCD2LrNmo8c=",
+        "owner": "ConradIrwin",
+        "repo": "corgi",
+        "rev": "0757f1e32f32a3fc3efe7b4e14d2489b6c995e7a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ConradIrwin",
+        "ref": "v0.1.106",
+        "repo": "corgi",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1761236834,
@@ -16,8 +33,26 @@
         "type": "github"
       }
     },
+    "nixpkgs-mdbook": {
+      "locked": {
+        "lastModified": 1721153957,
+        "narHash": "sha256-3xc3Tvk+AivI7TKctzgg3Q/4cLeqtarUuWLgTv2rPPM=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6ecabf9e3f617aeec1a23a27d0080cab066a9d5b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6ecabf9e3f617aeec1a23a27d0080cab066a9d5b",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
+        "corgi-src": "corgi-src",
+        "nixpkgs-mdbook": "nixpkgs-mdbook",
         "treefmt-nix": "treefmt-nix"
       }
     },

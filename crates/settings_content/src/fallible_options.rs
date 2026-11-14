@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, fmt::Display};
 
 use serde::Deserialize;
 
@@ -17,14 +17,14 @@ where
     });
 
     let mut deserializer = serde_json_lenient::Deserializer::from_str(json);
-    let value = T::deserialize(&mut deserializer);
+    let value = serde_path_to_error::deserialize::<_, T>(&mut deserializer);
     let value = match value {
         Ok(value) => value,
         Err(error) => {
             return (
                 None,
                 ParseStatus::Failed {
-                    error: error.to_string(),
+                    error: error.into_inner().to_string(),
                 },
             );
         }
@@ -50,19 +50,118 @@ where
 {
     match T::deserialize(deserializer) {
         Ok(value) => Ok(value),
-        Err(e) => ERRORS.with_borrow_mut(|errors| {
-            if let Some(errors) = errors {
-                errors.push(anyhow::anyhow!("{}", e));
-                Ok(Default::default())
-            } else {
-                Err(e)
+        Err(error) => {
+            let mut error = Some(error);
+            let mut fallback = None;
+            recover_deserialization_error(&mut |record_error| {
+                if let Some(error) = error.take() {
+                    record_error(&error);
+                    let value = T::default();
+                    drop(error);
+                    fallback = Some(value);
+                }
+            });
+            match error {
+                Some(error) => Err(error),
+                None => Ok(fallback.expect("recovery creates a fallback")),
             }
-        }),
+        }
     }
 }
 
 pub trait FallibleOption: Default {}
 impl<T> FallibleOption for Option<T> {}
+
+macro_rules! flattened_deserialize {
+    ($type_name:ty {
+        sections: { $($section:ident),* $(,)? },
+        options: { $($option_field:ident),* $(,)? },
+        defaults: { $($default_field:ident),* $(,)? } $(,)?
+    }) => {
+        impl $type_name {
+            #[doc(hidden)]
+            pub const NAMED_DESERIALIZE_KEYS: &'static [&'static str] = &[
+                $(stringify!($option_field),)*
+                $(stringify!($default_field),)*
+            ];
+        }
+
+        impl<'de> serde::Deserialize<'de> for $type_name {
+            fn deserialize<D: serde::Deserializer<'de>>(
+                deserializer: D,
+            ) -> Result<Self, D::Error> {
+                let mut object =
+                    serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+                (|| -> Result<Self, serde_json::Error> {
+                    $(
+                        let $option_field =
+                            $crate::fallible_options::take_option_field(
+                                &mut object,
+                                stringify!($option_field),
+                            )?;
+                    )*
+                    $(
+                        let $default_field =
+                            $crate::fallible_options::take_default_field(
+                                &mut object,
+                                stringify!($default_field),
+                            )?;
+                    )*
+                    let rest = serde_json::Value::Object(object);
+                    Ok(Self {
+                        $($section: $crate::fallible_options::section(&rest)?,)*
+                        $($option_field,)*
+                        $($default_field,)*
+                    })
+                })()
+                .map_err(serde::de::Error::custom)
+            }
+        }
+    };
+}
+pub(crate) use flattened_deserialize;
+
+pub(crate) fn take_option_field<T>(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<T, serde_json::Error>
+where
+    T: serde::de::DeserializeOwned + FallibleOption,
+{
+    match object.remove(key) {
+        None => Ok(T::default()),
+        Some(value) => deserialize(&value),
+    }
+}
+
+pub(crate) fn take_default_field<T>(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<T, serde_json::Error>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    match object.remove(key) {
+        None => Ok(T::default()),
+        Some(value) => T::deserialize(&value),
+    }
+}
+
+pub(crate) fn section<T>(rest: &serde_json::Value) -> Result<T, serde_json::Error>
+where
+    T: serde::de::DeserializeOwned,
+{
+    T::deserialize(rest)
+}
+
+#[inline(never)]
+fn recover_deserialization_error(recover: &mut dyn FnMut(&mut dyn FnMut(&dyn Display))) {
+    ERRORS.with_borrow_mut(|errors| {
+        if let Some(errors) = errors {
+            recover(&mut |error| errors.push(anyhow::anyhow!("{error}")));
+        }
+    });
+}
 
 #[cfg(test)]
 mod tests {

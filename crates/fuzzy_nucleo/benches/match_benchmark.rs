@@ -1,7 +1,7 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use fuzzy::CharBag;
+use path::{PathStyle, rel_path::RelPath};
 use std::sync::atomic::AtomicBool;
-use util::{paths::PathStyle, rel_path::RelPath};
 
 const DIRS: &[&str] = &[
     "src",
@@ -178,10 +178,11 @@ fn bench_string_matching(criterion: &mut Criterion) {
                         foreground_executor.block_on(fuzzy_nucleo::match_strings_async(
                             &candidates,
                             query,
-                            fuzzy_nucleo::Case::Ignore,
-                            fuzzy_nucleo::LengthPenalty::On,
-                            size,
-                            &cancel,
+                            fuzzy_nucleo::StringMatchOptions {
+                                cancel_flag: Some(&cancel),
+                                case: fuzzy_nucleo::Case::Ignore,
+                                ..Default::default()
+                            },
                             background_executor.clone(),
                         ))
                     },
@@ -233,7 +234,11 @@ fn generate_nucleo_path_candidates(
     paths
         .iter()
         .map(|path| {
-            fuzzy_nucleo::PathMatchCandidate::new(RelPath::unix(path).unwrap(), false, None)
+            fuzzy_nucleo::PathMatchCandidate::new(
+                RelPath::from_unix_str(path).unwrap(),
+                false,
+                None,
+            )
         })
         .collect()
 }
@@ -245,7 +250,7 @@ fn generate_fuzzy_path_candidates(
         .iter()
         .map(|path| fuzzy::PathMatchCandidate {
             is_dir: false,
-            path: RelPath::unix(path).unwrap(),
+            path: RelPath::from_unix_str(path).unwrap(),
             char_bag: CharBag::from(path.as_str()),
         })
         .collect()
@@ -300,9 +305,11 @@ fn bench_path_matching(criterion: &mut Criterion) {
                             0,
                             None,
                             query,
-                            case,
-                            size,
-                            PathStyle::Posix,
+                            fuzzy_nucleo::PathMatchOptions {
+                                case,
+                                ..Default::default()
+                            },
+                            PathStyle::Unix,
                         )
                     },
                     BatchSize::SmallInput,
@@ -325,7 +332,7 @@ fn bench_path_matching(criterion: &mut Criterion) {
                             query,
                             false,
                             size,
-                            PathStyle::Posix,
+                            PathStyle::Unix,
                         )
                     },
                     BatchSize::SmallInput,

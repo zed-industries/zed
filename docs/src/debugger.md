@@ -74,13 +74,13 @@ Populate this file with the same array of objects you would place in `.zed/debug
 
 ### Launching & Attaching
 
-Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
+The Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
 Which one you choose depends on what you are trying to achieve.
 
 When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program.
 Running unit tests or a debug build of your application is a good use case for launching.
 
-Compared to launching, attaching to an existing process might seem inferior, but that's far from truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
+Compared to launching, attaching to an existing process might seem inferior, but that's far from the truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
 
 ## Configuration
 
@@ -173,9 +173,14 @@ This ensures the debugger doesn't disrupt your workflow when stepping through co
 
 ## Settings
 
+In the Settings Editor, open **Panels → Debugger Panel** to configure the panel's
+dock position, default width, and default height.
+
 The settings for the debugger are grouped under the `debugger` key in `settings.json`:
 
 - `dock`: Determines the position of the debug panel in the UI.
+- `default_width`: Default width in pixels when docked to the left or right (default: `300`).
+- `default_height`: Default height in pixels when docked to the bottom (default: `300`).
 - `stepping_granularity`: Determines the stepping granularity.
 - `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
 - `button`: Whether to show the debug button in the status bar.

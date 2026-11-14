@@ -2,19 +2,27 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use fs::Fs;
-use futures::AsyncReadExt;
-use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task, TaskExt};
-use http_client::{AsyncBody, HttpClient};
+use futures::{AsyncReadExt, future::join_all};
+use gpui::{
+    App, AppContext as _, BackgroundExecutor, Context, Entity, FutureExt as _, Global,
+    SharedString, Task, TaskExt,
+};
+use http_client::{AsyncBody, HttpClient, StatusCode};
 use serde::Deserialize;
 use settings::Settings as _;
+use util::ResultExt;
 
 use crate::{AgentId, DisableAiSettings};
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
+// Bound the full request lifecycle, including response body reads; the shared
+// HTTP client only has a connect timeout.
+const REGISTRY_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+const REGISTRY_ICON_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub struct RegistryAgentMetadata {
@@ -24,6 +32,7 @@ pub struct RegistryAgentMetadata {
     pub version: SharedString,
     pub repository: Option<SharedString>,
     pub website: Option<SharedString>,
+    pub license_url: Option<SharedString>,
     pub icon_path: Option<SharedString>,
 }
 
@@ -78,6 +87,10 @@ impl RegistryAgent {
 
     pub fn website(&self) -> Option<&SharedString> {
         self.metadata().website.as_ref()
+    }
+
+    pub fn license_url(&self) -> Option<&SharedString> {
+        self.metadata().license_url.as_ref()
     }
 
     pub fn icon_path(&self) -> Option<&SharedString> {
@@ -209,12 +222,20 @@ impl AgentRegistryStore {
 
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
+        let executor = cx.background_executor().clone();
 
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
-            let result = match fetch_registry_index(http_client.clone()).await {
+            let result = match fetch_registry_index(http_client.clone(), &executor).await {
                 Ok(data) => {
-                    build_registry_agents(fs.clone(), http_client, data.index, data.raw_body, true)
-                        .await
+                    build_registry_agents(
+                        fs.clone(),
+                        http_client,
+                        data.index,
+                        data.raw_body,
+                        true,
+                        &executor,
+                    )
+                    .await
                 }
                 Err(error) => {
                     log::error!("AgentRegistryStore::refresh: fetch failed: {error:#}");
@@ -231,7 +252,7 @@ impl AgentRegistryStore {
                         this.fetch_error = None;
                     }
                     Err(error) => {
-                        this.fetch_error = Some(SharedString::from(error.to_string()));
+                        this.fetch_error = Some(SharedString::from(format!("{error:#}")));
                     }
                 }
                 cx.notify();
@@ -295,7 +316,9 @@ impl AgentRegistryStore {
             let index: RegistryIndex =
                 serde_json::from_slice(&bytes).context("parsing cached registry")?;
 
-            let agents = build_registry_agents(fs, http_client, index, bytes, false).await?;
+            let executor = cx.background_executor().clone();
+            let agents =
+                build_registry_agents(fs, http_client, index, bytes, false, &executor).await?;
 
             this.update(cx, |this, cx| {
                 this.agents = agents;
@@ -313,24 +336,20 @@ struct RegistryFetchResult {
     raw_body: Vec<u8>,
 }
 
-async fn fetch_registry_index(http_client: Arc<dyn HttpClient>) -> Result<RegistryFetchResult> {
-    let mut response = http_client
-        .get(REGISTRY_URL, AsyncBody::default(), true)
-        .await
-        .context("requesting ACP registry")?;
+async fn fetch_registry_index(
+    http_client: Arc<dyn HttpClient>,
+    executor: &BackgroundExecutor,
+) -> Result<RegistryFetchResult> {
+    let (status, body) =
+        fetch_url_body(http_client, REGISTRY_URL, REGISTRY_FETCH_TIMEOUT, executor)
+            .await
+            .context("fetching ACP registry")?;
 
-    let mut body = Vec::new();
-    response
-        .body_mut()
-        .read_to_end(&mut body)
-        .await
-        .context("reading ACP registry response")?;
-
-    if response.status().is_client_error() {
+    if status.is_client_error() {
         let text = String::from_utf8_lossy(body.as_slice());
         bail!(
             "registry status error {}, response: {text:?}",
-            response.status().as_u16()
+            status.as_u16()
         );
     }
 
@@ -347,6 +366,7 @@ async fn build_registry_agents(
     index: RegistryIndex,
     raw_body: Vec<u8>,
     update_cache: bool,
+    executor: &BackgroundExecutor,
 ) -> Result<Vec<RegistryAgent>> {
     let cache_dir = registry_cache_dir();
     fs.create_dir(&cache_dir).await?;
@@ -361,19 +381,19 @@ async fn build_registry_agents(
         fs.create_dir(&icons_dir).await?;
     }
 
-    let current_platform = current_platform_key();
+    let current_platform_keys = current_platform_keys().await;
+    let icon_paths = resolve_icon_paths(
+        &index.agents,
+        &icons_dir,
+        update_cache,
+        fs.clone(),
+        http_client.clone(),
+        executor,
+    )
+    .await;
 
     let mut agents = Vec::new();
-    for entry in index.agents {
-        let icon_path = resolve_icon_path(
-            &entry,
-            &icons_dir,
-            update_cache,
-            fs.clone(),
-            http_client.clone(),
-        )
-        .await?;
-
+    for (entry, icon_path) in index.agents.into_iter().zip(icon_paths) {
         let metadata = RegistryAgentMetadata {
             id: AgentId::new(entry.id),
             name: entry.name.into(),
@@ -381,6 +401,7 @@ async fn build_registry_agents(
             version: entry.version.into(),
             repository: entry.repository.map(Into::into),
             website: entry.website.map(Into::into),
+            license_url: entry.license_url.map(Into::into),
             icon_path,
         };
 
@@ -397,15 +418,15 @@ async fn build_registry_agents(
                         archive: target.archive.clone(),
                         cmd: target.cmd.clone(),
                         args: target.args.clone(),
-                        sha256: None,
+                        sha256: target.sha256.clone(),
                         env: target.env.clone(),
                     },
                 );
             }
 
-            let supports_current_platform = current_platform
-                .as_ref()
-                .is_some_and(|platform| targets.contains_key(*platform));
+            let supports_current_platform = current_platform_keys
+                .iter()
+                .any(|platform_key| targets.contains_key(*platform_key));
 
             Some(RegistryBinaryAgent {
                 metadata: metadata.clone(),
@@ -440,12 +461,34 @@ async fn build_registry_agents(
     Ok(agents)
 }
 
+async fn resolve_icon_paths(
+    entries: &[RegistryEntry],
+    icons_dir: &Path,
+    update_cache: bool,
+    fs: Arc<dyn Fs>,
+    http_client: Arc<dyn HttpClient>,
+    executor: &BackgroundExecutor,
+) -> Vec<Option<SharedString>> {
+    join_all(entries.iter().map(|entry| {
+        let fs = fs.clone();
+        let http_client = http_client.clone();
+        async move {
+            resolve_icon_path(entry, icons_dir, update_cache, fs, http_client, executor)
+                .await
+                .log_err()
+                .flatten()
+        }
+    }))
+    .await
+}
+
 async fn resolve_icon_path(
     entry: &RegistryEntry,
     icons_dir: &Path,
     update_cache: bool,
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
+    executor: &BackgroundExecutor,
 ) -> Result<Option<SharedString>> {
     let icon_url = resolve_icon_url(entry);
     let Some(icon_url) = icon_url else {
@@ -454,7 +497,8 @@ async fn resolve_icon_path(
 
     let icon_path = icons_dir.join(format!("{}.svg", entry.id));
     if update_cache && !fs.is_file(&icon_path).await {
-        if let Err(error) = download_icon(fs.clone(), http_client, &icon_url, entry).await {
+        if let Err(error) = download_icon(fs.clone(), http_client, &icon_url, entry, executor).await
+        {
             log::warn!(
                 "Failed to download ACP registry icon for {}: {error:#}",
                 entry.id
@@ -476,25 +520,16 @@ async fn download_icon(
     http_client: Arc<dyn HttpClient>,
     icon_url: &str,
     entry: &RegistryEntry,
+    executor: &BackgroundExecutor,
 ) -> Result<()> {
-    let mut response = http_client
-        .get(icon_url, AsyncBody::default(), true)
-        .await
-        .with_context(|| format!("requesting icon for {}", entry.id))?;
+    let (status, body) =
+        fetch_url_body(http_client, icon_url, REGISTRY_ICON_FETCH_TIMEOUT, executor)
+            .await
+            .with_context(|| format!("fetching icon for {}", entry.id))?;
 
-    let mut body = Vec::new();
-    response
-        .body_mut()
-        .read_to_end(&mut body)
-        .await
-        .with_context(|| format!("reading icon for {}", entry.id))?;
-
-    if response.status().is_client_error() {
+    if status.is_client_error() {
         let text = String::from_utf8_lossy(body.as_slice());
-        bail!(
-            "icon status error {}, response: {text:?}",
-            response.status().as_u16()
-        );
+        bail!("icon status error {}, response: {text:?}", status.as_u16());
     }
 
     let icon_path = registry_cache_dir()
@@ -502,6 +537,38 @@ async fn download_icon(
         .join(format!("{}.svg", entry.id));
     fs.write(&icon_path, &body).await?;
     Ok(())
+}
+
+async fn fetch_url_body(
+    http_client: Arc<dyn HttpClient>,
+    url: &str,
+    timeout: Duration,
+    executor: &BackgroundExecutor,
+) -> Result<(StatusCode, Vec<u8>)> {
+    async {
+        let mut response = http_client
+            .get(url, AsyncBody::default(), true)
+            .await
+            .with_context(|| format!("requesting {url}"))?;
+
+        let status = response.status();
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .with_context(|| format!("reading response from {url}"))?;
+
+        Ok((status, body))
+    }
+    .with_timeout(timeout, executor)
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "timed out after {}s while fetching {url}",
+            timeout.as_secs()
+        )
+    })?
 }
 
 fn resolve_icon_url(entry: &RegistryEntry) -> Option<String> {
@@ -517,43 +584,34 @@ fn resolve_icon_url(entry: &RegistryEntry) -> Option<String> {
     ))
 }
 
-fn current_platform_key() -> Option<&'static str> {
-    let os = if cfg!(target_os = "macos") {
-        "darwin"
-    } else if cfg!(target_os = "linux") {
-        "linux"
-    } else if cfg!(target_os = "windows") {
-        "windows"
-    } else {
-        return None;
+/// Registry platform keys for the current host, in order of preference.
+pub(crate) async fn current_platform_keys() -> &'static [&'static str] {
+    // The probe spawns a process and reads the real filesystem, which the
+    // deterministic test scheduler can't drive, so tests assume glibc.
+    let prefers_musl = cfg_select! {
+        all(target_os = "linux", not(any(test, feature = "test-support"))) => {
+            util::libc_type::host_libc_type().await == util::libc_type::LibcType::Musl
+        }
+        _ => false,
     };
 
-    let arch = if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else if cfg!(target_arch = "x86_64") {
-        "x86_64"
-    } else {
-        return None;
-    };
+    platform_keys(std::env::consts::OS, std::env::consts::ARCH, prefers_musl)
+}
 
-    Some(match os {
-        "darwin" => match arch {
-            "aarch64" => "darwin-aarch64",
-            "x86_64" => "darwin-x86_64",
-            _ => return None,
-        },
-        "linux" => match arch {
-            "aarch64" => "linux-aarch64",
-            "x86_64" => "linux-x86_64",
-            _ => return None,
-        },
-        "windows" => match arch {
-            "aarch64" => "windows-aarch64",
-            "x86_64" => "windows-x86_64",
-            _ => return None,
-        },
-        _ => return None,
-    })
+fn platform_keys(os: &str, arch: &str, prefers_musl: bool) -> &'static [&'static str] {
+    match (os, arch, prefers_musl) {
+        ("macos", "aarch64", _) => &["darwin-aarch64"],
+        ("macos", "x86_64", _) => &["darwin-x86_64"],
+        ("windows", "aarch64", _) => &["windows-aarch64"],
+        ("windows", "x86_64", _) => &["windows-x86_64"],
+        ("linux", "aarch64", false) => &["linux-aarch64"],
+        ("linux", "x86_64", false) => &["linux-x86_64"],
+        // Not every agent publishes a musl build, and the glibc one may still
+        // run through a compatibility layer, so keep it as a fallback.
+        ("linux", "aarch64", true) => &["linux-aarch64-musl", "linux-aarch64"],
+        ("linux", "x86_64", true) => &["linux-x86_64-musl", "linux-x86_64"],
+        _ => &[],
+    }
 }
 
 fn registry_cache_dir() -> PathBuf {
@@ -582,6 +640,8 @@ struct RegistryEntry {
     #[serde(default)]
     website: Option<String>,
     #[serde(default)]
+    license_url: Option<String>,
+    #[serde(default)]
     icon: Option<String>,
     distribution: RegistryDistribution,
 }
@@ -601,6 +661,8 @@ struct RegistryBinaryTarget {
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
+    sha256: Option<String>,
+    #[serde(default)]
     env: HashMap<String, String>,
 }
 
@@ -611,4 +673,26 @@ struct RegistryNpxDistribution {
     args: Vec<String>,
     #[serde(default)]
     env: HashMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_platform_keys() {
+        assert_eq!(platform_keys("macos", "aarch64", false), ["darwin-aarch64"]);
+        assert_eq!(
+            platform_keys("windows", "x86_64", false),
+            ["windows-x86_64"]
+        );
+        assert_eq!(platform_keys("linux", "x86_64", false), ["linux-x86_64"]);
+        assert_eq!(
+            platform_keys("linux", "aarch64", true),
+            ["linux-aarch64-musl", "linux-aarch64"]
+        );
+        assert_eq!(platform_keys("macos", "aarch64", true), ["darwin-aarch64"]);
+        assert!(platform_keys("freebsd", "x86_64", false).is_empty());
+        assert!(platform_keys("linux", "riscv64", false).is_empty());
+    }
 }

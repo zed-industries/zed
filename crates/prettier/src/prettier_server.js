@@ -172,7 +172,7 @@ async function handleMessage(message, prettier) {
 
     let resolvedConfig = {};
     if (params.options.filepath) {
-      resolvedConfig = (await prettier.prettier.resolveConfig(params.options.filepath)) || {};
+      resolvedConfig = (await prettier.prettier.resolveConfig(params.options.filepath, { editorconfig: true })) || {};
 
       if (params.options.ignorePath) {
         const fileInfo = await prettier.prettier.getFileInfo(params.options.filepath, {

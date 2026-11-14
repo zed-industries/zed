@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/feedback.rs"
+test = false
+doctest = false
 
 [features]
 test-support = []

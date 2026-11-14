@@ -1,0 +1,11 @@
+[package]
+name = "consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+gpui_shared_string = { path = "../gpui_shared_string" }

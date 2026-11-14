@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/edit_prediction.rs"
+doctest = false
 
 [features]
 cli-support = []
@@ -35,6 +36,7 @@ edit_prediction_metrics.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
+git.workspace = true
 gpui.workspace = true
 indoc.workspace = true
 itertools.workspace = true
@@ -43,9 +45,9 @@ language_model.workspace = true
 log.workspace = true
 lsp.workspace = true
 menu.workspace = true
+ollama.workspace = true
 open_ai.workspace = true
 postage.workspace = true
-pretty_assertions.workspace = true
 project.workspace = true
 pulldown-cmark.workspace = true
 rand.workspace = true
@@ -60,8 +62,7 @@ telemetry.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
-time.workspace = true
-toml.workspace = true
+toml = { workspace = true, features = ["display"] }
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -86,6 +87,7 @@ language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 lsp.workspace = true
 parking_lot.workspace = true
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

@@ -65,7 +65,7 @@ impl ChannelModal {
                 window,
                 cx,
             )
-            .modal(false)
+            .embedded()
         });
 
         Self {
@@ -146,7 +146,6 @@ impl Render for ChannelModal {
             .on_action(cx.listener(Self::toggle_mode))
             .on_action(cx.listener(Self::dismiss))
             .elevation_3(cx)
-            .w(rems(34.))
             .child(
                 v_flex()
                     .px_2()
@@ -163,7 +162,7 @@ impl Render for ChannelModal {
                     .child(
                         h_flex()
                             .w_full()
-                            .h(rems_from_px(22.))
+                            .h(rems_from_px(22_f32))
                             .justify_between()
                             .line_height(rems(1.25))
                             .child(
@@ -179,7 +178,7 @@ impl Render for ChannelModal {
                                 .on_click(cx.listener(Self::set_channel_visibility)),
                             )
                             .children(
-                                Some(
+                                (visibility == ChannelVisibility::Public).then_some(
                                     Button::new("copy-link", "Copy Link")
                                         .label_size(LabelSize::Small)
                                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -193,8 +192,7 @@ impl Render for ChannelModal {
                                                 cx.write_to_clipboard(item);
                                             }
                                         })),
-                                )
-                                .filter(|_| visibility == ChannelVisibility::Public),
+                                ),
                             ),
                     )
                     .child(
@@ -259,6 +257,10 @@ pub struct ChannelModalDelegate {
 impl PickerDelegate for ChannelModalDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "channel modal"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search collaborator by username...".into()
     }
@@ -293,10 +295,11 @@ impl PickerDelegate for ChannelModalDelegate {
             Mode::ManageMembers => {
                 if self.has_all_members {
                     self.match_candidates.clear();
-                    self.match_candidates
-                        .extend(self.members.iter().enumerate().map(|(id, member)| {
-                            StringMatchCandidate::new(id, &member.user.github_login)
-                        }));
+                    self.match_candidates.extend(
+                        self.members.iter().enumerate().map(|(id, member)| {
+                            StringMatchCandidate::new(id, &member.user.username)
+                        }),
+                    );
 
                     let matches = cx.foreground_executor().block_on(match_strings(
                         &self.match_candidates,
@@ -419,7 +422,7 @@ impl PickerDelegate for ChannelModalDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
-                .child(Label::new(user.github_login.clone()))
+                .child(Label::new(user.username.clone()))
                 .end_slot(h_flex().gap_2().map(|slot| {
                     match self.mode {
                         Mode::ManageMembers => slot

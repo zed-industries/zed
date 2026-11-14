@@ -3,20 +3,40 @@ name = "ztracing"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 
 [lints]
 workspace = true
 
+[lib]
+doctest = false
+
 [features]
+tracing-tracy = ["dep:tracing-tracy", "dep:tracing-subscriber", "dep:zlog"]
 tracy = ["tracing-tracy", "tracy-client"]
+web = [
+    "dep:async-channel",
+    "dep:js-sys",
+    "dep:tracing-subscriber",
+    "dep:wasm-bindgen",
+    "dep:web-sys",
+    "dep:zlog",
+]
 
 [dependencies]
-zlog.workspace = true
+zlog = { workspace = true, optional = true }
 tracing.workspace = true
 
-tracing-subscriber = "0.3.22"
-tracing-tracy = { version = "0.11.4", optional = true, features = ["enable", "ondemand"] }
-tracy-client = { version = "0.18.2", optional = true, features = ["enable", "ondemand"] }
+tracing-subscriber = { workspace = true, optional = true }
 
 ztracing_macro.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tracing-tracy = { version = "0.11", optional = true, features = ["ondemand"] }
+tracy-client = { version = "0.18", optional = true, features = ["ondemand"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+async-channel = { workspace = true, features = ["std"], optional = true }
+js-sys = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, features = ["console", "Performance"], optional = true }

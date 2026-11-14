@@ -1,7 +1,7 @@
 use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::{App, Pixels};
-use settings::RegisterSetting;
-pub use settings::{DockSide, Settings, ShowIndentGuides};
+pub use settings::{DockSide, FolderIndicator, Settings, ShowIndentGuides};
+use settings::{IntoGpui, RegisterSetting};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 #[derive(Debug, Clone, Copy, PartialEq, RegisterSetting)]
@@ -10,7 +10,7 @@ pub struct OutlinePanelSettings {
     pub default_width: Pixels,
     pub dock: DockSide,
     pub file_icons: bool,
-    pub folder_icons: bool,
+    pub folder_indicator: FolderIndicator,
     pub git_status: bool,
     pub indent_size: f32,
     pub indent_guides: IndentGuidesSettings,
@@ -18,6 +18,7 @@ pub struct OutlinePanelSettings {
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
     pub expand_outlines_with_depth: usize,
+    pub multi_buffer_hide_symbols: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -50,10 +51,10 @@ impl Settings for OutlinePanelSettings {
         let panel = content.outline_panel.as_ref().unwrap();
         Self {
             button: panel.button.unwrap(),
-            default_width: panel.default_width.map(gpui::px).unwrap(),
+            default_width: panel.default_width.unwrap().into_gpui(),
             dock: panel.dock.unwrap(),
             file_icons: panel.file_icons.unwrap(),
-            folder_icons: panel.folder_icons.unwrap(),
+            folder_indicator: panel.folder_indicator.unwrap(),
             git_status: panel.git_status.unwrap()
                 && content
                     .git
@@ -62,7 +63,7 @@ impl Settings for OutlinePanelSettings {
                     .enabled
                     .unwrap()
                     .is_git_status_enabled(),
-            indent_size: panel.indent_size.unwrap(),
+            indent_size: *panel.indent_size.unwrap(),
             indent_guides: IndentGuidesSettings {
                 show: panel.indent_guides.unwrap().show.unwrap(),
             },
@@ -76,6 +77,7 @@ impl Settings for OutlinePanelSettings {
                     .map(ui_scrollbar_settings_from_raw),
             },
             expand_outlines_with_depth: panel.expand_outlines_with_depth.unwrap(),
+            multi_buffer_hide_symbols: panel.multi_buffer_hide_symbols.unwrap(),
         }
     }
 }

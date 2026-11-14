@@ -15,18 +15,23 @@ To let users choose based on their own threat model and risk tolerance, all work
 
 Zed still trusts tools it installs globally. Global MCP servers and global language servers such as Prettier and Copilot are installed and started as usual, independent of worktree trust.
 
-If a worktree is not trusted, Zed will indicate this with an exclamation mark icon in the title bar. Clicking this icon or using `workspace::ToggleWorktreeSecurity` action will bring up the security modal that allows the user to trust the worktree.
+If a worktree is not trusted, Zed will indicate this with an exclamation mark icon in the title bar. Clicking this icon or using the `workspace::ToggleWorktreeSecurity` action will bring up the security modal that allows the user to trust the worktree.
 
 Trusting a worktree persists that decision between restarts. You can clear all trusted worktrees with the `workspace::ClearTrustedWorktrees` command.
 This command will restart Zed, to ensure no untrusted settings, language servers or MCP servers persist.
 
-This feature works locally and on SSH and WSL remote hosts. Zed tracks trust information per host in these cases.
+Choosing "Stay in Restricted Mode" also persists between restarts, per worktree path and remote connection, so the security modal does not open automatically for that worktree again.
+The title bar icon and the `workspace::ToggleWorktreeSecurity` action still open it, and `workspace::ClearTrustedWorktrees` also clears these choices.
+
+This feature works locally and on SSH and WSL remote hosts. Zed tracks trust information per remote connection in these cases, so the same host on a different SSH port or with a different user is trusted separately.
 
 ## What is restricted
 
 Restricted Mode prevents:
 
 - Project settings (`.zed/settings.json`) from being parsed and applied
+- Project tasks (`.zed/tasks.json`, `.vscode/tasks.json`) and debug configurations (`.zed/debug.json`, `.vscode/launch.json`) from being applied
+- Automatic task hooks from running, including hooks defined in global tasks
 - Language servers from being installed and spawned
 - MCP servers from being installed and spawned
 

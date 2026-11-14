@@ -27,10 +27,7 @@ actions!(
 
 fn should_replay(action: &dyn Action) -> bool {
     // skip so that we don't leave the character palette open
-    if editor::actions::ShowCharacterPalette.partial_eq(action) {
-        return false;
-    }
-    true
+    !editor::actions::ShowCharacterPalette.partial_eq(action)
 }
 
 fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
@@ -457,6 +454,34 @@ mod test {
         cx.run_until_parked();
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("THE QUICK ˇbrown fox");
+
+        // "q l" (note after macro should be used last change made by macro)
+        cx.set_shared_state("ˇ").await;
+        cx.simulate_shared_keystrokes("q l shift-o h e l l o space w o r l d escape q")
+            .await;
+        cx.simulate_shared_keystrokes("@ l").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello worlˇd\nhello world\n");
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello worlˇd\nhello world\nhello world\n");
+    }
+
+    #[gpui::test]
+    async fn test_dot_repeat_after_macro_change_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇfoo foo", Mode::Normal);
+        cx.simulate_keystrokes("q l c f o x escape q");
+        cx.assert_state("ˇxo foo", Mode::Normal);
+
+        cx.simulate_keystrokes("w @ l");
+        cx.assert_state("xo ˇxo", Mode::Normal);
+
+        cx.simulate_keystrokes(".");
+        cx.assert_state("xo ˇx", Mode::Normal);
     }
 
     #[gpui::test]

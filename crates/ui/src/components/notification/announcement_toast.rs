@@ -160,11 +160,11 @@ impl Component for AnnouncementToast {
         ComponentScope::Notification
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A special toast for announcing new and exciting features.")
+    fn description() -> &'static str {
+        "A special toast for announcing new and exciting features."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let examples = vec![single_example(
             "Basic",
             div()
@@ -188,11 +188,9 @@ impl Component for AnnouncementToast {
                 .into_any_element(),
         )];
 
-        Some(
-            v_flex()
-                .gap_6()
-                .child(example_group(examples).vertical())
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .child(example_group(examples).vertical())
+            .into_any_element()
     }
 }

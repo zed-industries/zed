@@ -1,8 +1,8 @@
 use audio::{AudioSettings, CHANNEL_COUNT, RodioExt, SAMPLE_RATE};
 use cpal::DeviceId;
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, Render, Size, Tiling, Window, WindowBounds,
-    WindowKind, WindowOptions, prelude::*, px,
+    App, Context, Entity, FocusHandle, Focusable, Render, Size, Window, WindowBounds, WindowKind,
+    WindowOptions, prelude::*, px,
 };
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
@@ -171,6 +171,8 @@ impl Render for AudioTestWindow {
                     )
                     .log_err();
                 },
+                None,
+                None,
                 window,
                 cx,
             )
@@ -200,6 +202,8 @@ impl Render for AudioTestWindow {
                 )
                 .log_err();
             },
+            None,
+            None,
             window,
             cx,
         );
@@ -240,7 +244,6 @@ impl Render for AudioTestWindow {
                 .child(content),
             window,
             cx,
-            Tiling::default(),
         )
     }
 }
@@ -279,6 +282,7 @@ pub fn open_audio_test_window(_window: &mut Window, cx: &mut App) {
         width: px(400.0),
         height: px(240.0),
     };
+    let display_id = cx.active_display().map(|display| display.id());
 
     cx.open_window(
         WindowOptions {
@@ -294,7 +298,8 @@ pub fn open_audio_test_window(_window: &mut Window, cx: &mut App) {
             window_background: cx.theme().window_background_appearance(),
             app_id: Some(app_id.to_owned()),
             window_decorations: Some(gpui::WindowDecorations::Client),
-            window_bounds: Some(WindowBounds::centered(window_size, cx)),
+            window_bounds: Some(WindowBounds::centered(display_id, window_size, cx)),
+            display_id,
             window_min_size: Some(window_min_size),
             ..Default::default()
         },

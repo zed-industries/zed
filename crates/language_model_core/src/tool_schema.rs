@@ -1,313 +1,206 @@
-use anyhow::Result;
-use schemars::{
-    JsonSchema, Schema,
-    generate::SchemaSettings,
-    transform::{Transform, transform_subschemas},
-};
-use serde_json::Value;
+use anyhow::{Context as _, Result, bail};
+use schemars::{JsonSchema, Schema, generate::SchemaSettings};
+use serde_json::{Map, Value};
 
-/// Indicates the format used to define the input schema for a language model tool.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum LanguageModelToolSchemaFormat {
-    /// A JSON schema, see https://json-schema.org
-    JsonSchema,
-    /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
-    JsonSchemaSubset,
+pub fn root_schema_for<T: JsonSchema>() -> Schema {
+    SchemaSettings::draft07()
+        .with(|settings| {
+            settings.meta_schema = None;
+            settings.inline_subschemas = true;
+        })
+        .into_generator()
+        .root_schema_for::<T>()
 }
 
-pub fn root_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> Schema {
-    let mut generator = match format {
-        LanguageModelToolSchemaFormat::JsonSchema => SchemaSettings::draft07()
-            .with(|settings| {
-                settings.meta_schema = None;
-                settings.inline_subschemas = true;
-            })
-            .into_generator(),
-        LanguageModelToolSchemaFormat::JsonSchemaSubset => SchemaSettings::openapi3()
-            .with(|settings| {
-                settings.meta_schema = None;
-                settings.inline_subschemas = true;
-            })
-            .with_transform(ToJsonSchemaSubsetTransform)
-            .into_generator(),
+/// Removes redundant root metadata, inlines same-document references, and makes
+/// empty object inputs explicit.
+pub fn normalize_tool_schema(schema: &mut Value) {
+    inline_refs(schema);
+
+    let Value::Object(object) = schema else {
+        return;
     };
-    generator.root_schema_for::<T>()
-}
 
-#[derive(Debug, Clone)]
-struct ToJsonSchemaSubsetTransform;
+    object.remove("$schema");
+    object.remove("title");
+    object.remove("description");
 
-impl Transform for ToJsonSchemaSubsetTransform {
-    fn transform(&mut self, schema: &mut Schema) {
-        // Ensure that the type field is not an array, this happens when we use
-        // Option<T>, the type will be [T, "null"].
-        if let Some(type_field) = schema.get_mut("type")
-            && let Some(types) = type_field.as_array()
-            && let Some(first_type) = types.first()
-        {
-            *type_field = first_type.clone();
-        }
-
-        // oneOf is not supported, use anyOf instead
-        if let Some(one_of) = schema.remove("oneOf") {
-            schema.insert("anyOf".to_string(), one_of);
-        }
-
-        transform_subschemas(self, schema);
+    if object.get("type").and_then(Value::as_str) == Some("object") {
+        object
+            .entry("properties")
+            .or_insert_with(|| Value::Object(Default::default()));
     }
 }
 
-/// Tries to adapt a JSON schema representation to be compatible with the specified format.
+/// Inlines same-document `$ref`s and drops the definitions they came from.
 ///
-/// If the json cannot be made compatible with the specified format, an error is returned.
-pub fn adapt_schema_to_format(
-    json: &mut Value,
-    format: LanguageModelToolSchemaFormat,
+/// Providers disagree about references and Google rejects them outright, while
+/// context servers routinely ship them: pydantic emits `$defs` for any nested
+/// model or enum, and `zod-to-json-schema` emits `definitions` for reused
+/// shapes. Schemas built by [`root_schema_for`] never contain references,
+/// because it inlines subschemas during generation.
+///
+/// A schema whose references cannot all be resolved is left exactly as it
+/// arrived, so a provider rejects it with a description of what is wrong
+/// instead of receiving something half-rewritten.
+fn inline_refs(schema: &mut Value) {
+    let Some(root) = schema.as_object() else {
+        return;
+    };
+    if !root.contains_key("$defs") && !root.contains_key("definitions") {
+        return;
+    }
+
+    let mut inlined = schema.clone();
+    match inline_refs_fallibly(&mut inlined) {
+        Ok(()) => *schema = inlined,
+        Err(error) => log::warn!("leaving tool schema references unresolved: {error:#}"),
+    }
+}
+
+fn inline_refs_fallibly(schema: &mut Value) -> Result<()> {
+    let Some(root) = schema.as_object_mut() else {
+        return Ok(());
+    };
+    let defs = root.remove("$defs");
+    let legacy_defs = root.remove("definitions");
+
+    inline_refs_recursive(schema, defs.as_ref(), legacy_defs.as_ref(), &mut Vec::new())
+}
+
+fn inline_refs_recursive(
+    value: &mut Value,
+    defs: Option<&Value>,
+    legacy_defs: Option<&Value>,
+    visiting: &mut Vec<String>,
 ) -> Result<()> {
-    if let Value::Object(obj) = json {
-        obj.remove("$schema");
-        obj.remove("title");
-        obj.remove("description");
-    }
+    match value {
+        Value::Object(object) => {
+            if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+                // A self-referential schema, such as a tree node whose children
+                // are trees, cannot be inlined to any finite depth; an empty
+                // schema accepts anything, which is the closest available
+                // approximation.
+                if visiting.iter().any(|visited| visited == reference) {
+                    *object = Map::new();
+                    return Ok(());
+                }
 
-    match format {
-        LanguageModelToolSchemaFormat::JsonSchema => preprocess_json_schema(json),
-        LanguageModelToolSchemaFormat::JsonSchemaSubset => adapt_to_json_schema_subset(json),
-    }
-}
+                let reference = reference.to_string();
+                let (definitions_key, name) = parse_ref(&reference)?;
+                let definition = match definitions_key {
+                    "$defs" => defs,
+                    _ => legacy_defs,
+                }
+                .and_then(|definitions| definitions.get(name))
+                .with_context(|| format!("no {definitions_key} entry for {reference}"))?;
 
-fn preprocess_json_schema(json: &mut Value) -> Result<()> {
-    if let Value::Object(obj) = json
-        && matches!(obj.get("type"), Some(Value::String(s)) if s == "object")
-    {
-        if !obj.contains_key("additionalProperties") {
-            obj.insert("additionalProperties".to_string(), Value::Bool(false));
+                let mut resolved = definition.clone();
+                if let Value::Object(resolved) = &mut resolved {
+                    for (key, sibling) in object.iter() {
+                        if key != "$ref" {
+                            resolved.insert(key.clone(), sibling.clone());
+                        }
+                    }
+                }
+                *value = resolved;
+
+                visiting.push(reference);
+                let result = inline_refs_recursive(value, defs, legacy_defs, visiting);
+                visiting.pop();
+                return result;
+            }
+
+            for child in object.values_mut() {
+                inline_refs_recursive(child, defs, legacy_defs, visiting)?;
+            }
         }
-
-        if !obj.contains_key("properties") {
-            obj.insert("properties".to_string(), Value::Object(Default::default()));
+        Value::Array(items) => {
+            for item in items {
+                inline_refs_recursive(item, defs, legacy_defs, visiting)?;
+            }
         }
+        _ => {}
     }
     Ok(())
 }
 
-fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
-    if let Value::Object(obj) = json {
-        const UNSUPPORTED_KEYS: [&str; 4] = ["if", "then", "else", "$ref"];
-
-        for key in UNSUPPORTED_KEYS {
-            anyhow::ensure!(
-                !obj.contains_key(key),
-                "Schema cannot be made compatible because it contains \"{key}\""
-            );
-        }
-
-        const KEYS_TO_REMOVE: [(&str, fn(&Value) -> bool); 6] = [
-            ("format", |value| value.is_string()),
-            ("additionalProperties", |_| true),
-            ("propertyNames", |_| true),
-            ("exclusiveMinimum", |value| value.is_number()),
-            ("exclusiveMaximum", |value| value.is_number()),
-            ("optional", |value| value.is_boolean()),
-        ];
-        for (key, predicate) in KEYS_TO_REMOVE {
-            if let Some(value) = obj.get(key)
-                && predicate(value)
-            {
-                obj.remove(key);
-            }
-        }
-
-        // Ensure that the type field is not an array. This can happen with MCP tool
-        // schemas that use multiple types (e.g. `["string", "number"]` or `["string", "null"]`).
-        if let Some(type_value) = obj.get_mut("type")
-            && let Some(types) = type_value.as_array()
-            && let Some(first_type) = types.first().cloned()
-        {
-            *type_value = first_type;
-        }
-
-        if matches!(obj.get("description"), Some(Value::String(_)))
-            && !obj.contains_key("type")
-            && !(obj.contains_key("anyOf")
-                || obj.contains_key("oneOf")
-                || obj.contains_key("allOf"))
-        {
-            obj.insert("type".to_string(), Value::String("string".to_string()));
-        }
-
-        if let Some(subschemas) = obj.get_mut("oneOf")
-            && subschemas.is_array()
-        {
-            let subschemas_clone = subschemas.clone();
-            obj.remove("oneOf");
-            obj.insert("anyOf".to_string(), subschemas_clone);
-        }
-
-        for (_, value) in obj.iter_mut() {
-            if let Value::Object(_) | Value::Array(_) = value {
-                adapt_to_json_schema_subset(value)?;
-            }
-        }
-    } else if let Value::Array(arr) = json {
-        for item in arr.iter_mut() {
-            adapt_to_json_schema_subset(item)?;
-        }
+fn parse_ref(reference: &str) -> Result<(&'static str, &str)> {
+    if let Some(name) = reference.strip_prefix("#/$defs/") {
+        return Ok(("$defs", name));
     }
-    Ok(())
+    if let Some(name) = reference.strip_prefix("#/definitions/") {
+        return Ok(("definitions", name));
+    }
+    bail!("only `#/$defs/<name>` and `#/definitions/<name>` are supported, got {reference}")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
+    use super::*;
+
     #[test]
-    fn test_transform_adds_type_when_missing() {
-        let mut json = json!({
-            "description": "A test field without type"
+    fn normalizes_tool_schema_without_changing_validation_keywords() {
+        let mut schema = json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Search input",
+            "description": "Searches files",
+            "type": "object",
+            "additionalProperties": true,
+            "if": { "required": ["query"] },
+            "then": { "required": ["limit"] }
         });
 
-        adapt_to_json_schema_subset(&mut json).unwrap();
+        normalize_tool_schema(&mut schema);
 
         assert_eq!(
-            json,
+            schema,
             json!({
-                "description": "A test field without type",
-                "type": "string"
-            })
-        );
-
-        let mut json = json!({
-            "description": {
-                "value": "abc",
-                "type": "string"
-            }
-        });
-
-        adapt_to_json_schema_subset(&mut json).unwrap();
-
-        assert_eq!(
-            json,
-            json!({
-                "description": {
-                    "value": "abc",
-                    "type": "string"
-                }
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true,
+                "if": { "required": ["query"] },
+                "then": { "required": ["limit"] }
             })
         );
     }
 
     #[test]
-    fn test_transform_removes_unsupported_keys() {
-        let mut json = json!({
-            "description": "A test field",
-            "type": "integer",
-            "format": "uint32",
-            "exclusiveMinimum": 0,
-            "exclusiveMaximum": 100,
-            "additionalProperties": false,
-            "optional": true
-        });
-
-        adapt_to_json_schema_subset(&mut json).unwrap();
-
-        assert_eq!(
-            json,
-            json!({
-                "description": "A test field",
-                "type": "integer"
-            })
-        );
-
-        let mut json = json!({
-            "description": "A test field",
-            "type": "integer",
-            "format": {},
-        });
-
-        adapt_to_json_schema_subset(&mut json).unwrap();
-
-        assert_eq!(
-            json,
-            json!({
-                "description": "A test field",
-                "type": "integer",
-                "format": {},
-            })
-        );
-
-        let mut json = json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" }
+    fn inlines_the_references_context_servers_generate() {
+        // The shape pydantic produces for a tool taking a nested model with an
+        // enum field, which the MCP Python SDK derives from a typed handler.
+        let mut schema = json!({
+            "$defs": {
+                "Filter": {
+                    "type": "object",
+                    "properties": { "severity": { "$ref": "#/$defs/Severity" } }
+                },
+                "Severity": { "type": "string", "enum": ["low", "high"] }
             },
-            "additionalProperties": { "type": "string" },
-            "propertyNames": { "pattern": "^[A-Za-z]+$" }
-        });
-
-        adapt_to_json_schema_subset(&mut json).unwrap();
-
-        assert_eq!(
-            json,
-            json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string" }
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn test_transform_one_of_to_any_of() {
-        let mut json = json!({
-            "description": "A test field",
-            "oneOf": [
-                { "type": "string" },
-                { "type": "integer" }
-            ]
-        });
-
-        adapt_to_json_schema_subset(&mut json).unwrap();
-
-        assert_eq!(
-            json,
-            json!({
-                "description": "A test field",
-                "anyOf": [
-                    { "type": "string" },
-                    { "type": "integer" }
-                ]
-            })
-        );
-    }
-
-    #[test]
-    fn test_transform_nested_objects() {
-        let mut json = json!({
             "type": "object",
             "properties": {
-                "nested": {
-                    "oneOf": [
-                        { "type": "string" },
-                        { "type": "null" }
-                    ],
-                    "format": "email"
-                }
+                "filter": { "anyOf": [{ "$ref": "#/$defs/Filter" }, { "type": "null" }] }
             }
         });
 
-        adapt_to_json_schema_subset(&mut json).unwrap();
+        normalize_tool_schema(&mut schema);
 
         assert_eq!(
-            json,
+            schema,
             json!({
                 "type": "object",
                 "properties": {
-                    "nested": {
+                    "filter": {
                         "anyOf": [
-                            { "type": "string" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "severity": { "type": "string", "enum": ["low", "high"] }
+                                }
+                            },
                             { "type": "null" }
                         ]
                     }
@@ -317,132 +210,83 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_array_type_to_single_type() {
-        let mut json = json!({
+    fn inlines_legacy_definitions_and_keeps_sibling_keywords() {
+        let mut schema = json!({
+            "definitions": { "Glob": { "type": "string" } },
             "type": "object",
             "properties": {
-                "projectSlugOrId": {
-                    "type": ["string", "number"],
-                    "description": "Project slug or numeric ID"
-                },
-                "optionalName": {
-                    "type": ["string", "null"],
-                    "description": "An optional name"
-                }
+                "glob": { "$ref": "#/definitions/Glob", "description": "a pattern" }
             }
         });
 
-        adapt_to_json_schema_subset(&mut json).unwrap();
+        normalize_tool_schema(&mut schema);
 
         assert_eq!(
-            json,
-            json!({
-                "type": "object",
-                "properties": {
-                    "projectSlugOrId": {
-                        "type": "string",
-                        "description": "Project slug or numeric ID"
-                    },
-                    "optionalName": {
-                        "type": "string",
-                        "description": "An optional name"
-                    }
-                }
-            })
+            schema["properties"]["glob"],
+            json!({ "type": "string", "description": "a pattern" })
         );
+        assert_eq!(schema.get("definitions"), None);
     }
 
     #[test]
-    fn test_transform_fails_if_unsupported_keys_exist() {
-        let mut json = json!({
-            "type": "object",
-            "properties": {
-                "$ref": "#/definitions/User",
-            }
-        });
-
-        assert!(adapt_to_json_schema_subset(&mut json).is_err());
-
-        let mut json = json!({
-            "type": "object",
-            "properties": {
-                "if": "...",
-            }
-        });
-
-        assert!(adapt_to_json_schema_subset(&mut json).is_err());
-
-        let mut json = json!({
-            "type": "object",
-            "properties": {
-                "then": "...",
-            }
-        });
-
-        assert!(adapt_to_json_schema_subset(&mut json).is_err());
-
-        let mut json = json!({
-            "type": "object",
-            "properties": {
-                "else": "...",
-            }
-        });
-
-        assert!(adapt_to_json_schema_subset(&mut json).is_err());
-    }
-
-    #[test]
-    fn test_preprocess_json_schema_adds_additional_properties() {
-        let mut json = json!({
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string"
-                }
-            }
-        });
-
-        preprocess_json_schema(&mut json).unwrap();
-
-        assert_eq!(
-            json,
-            json!({
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string"
-                    }
-                },
-                "additionalProperties": false
-            })
-        );
-    }
-
-    #[test]
-    fn test_preprocess_json_schema_preserves_additional_properties() {
-        let mut json = json!({
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string"
+    fn replaces_a_recursive_reference_with_an_unconstrained_schema() {
+        let mut schema = json!({
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": { "child": { "$ref": "#/$defs/Node" } }
                 }
             },
-            "additionalProperties": true
+            "type": "object",
+            "properties": { "root": { "$ref": "#/$defs/Node" } }
         });
 
-        preprocess_json_schema(&mut json).unwrap();
+        normalize_tool_schema(&mut schema);
 
         assert_eq!(
-            json,
-            json!({
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string"
-                    }
-                },
-                "additionalProperties": true
-            })
+            schema["properties"]["root"],
+            json!({ "type": "object", "properties": { "child": {} } })
         );
+    }
+
+    #[test]
+    fn leaves_a_schema_untouched_when_a_reference_cannot_be_resolved() {
+        let unresolvable = json!({
+            "$defs": { "Known": { "type": "string" } },
+            "type": "object",
+            "properties": { "value": { "$ref": "#/$defs/Missing" } }
+        });
+        let mut schema = unresolvable.clone();
+
+        normalize_tool_schema(&mut schema);
+
+        assert_eq!(schema, unresolvable);
+    }
+
+    #[test]
+    fn normalization_is_idempotent() {
+        let mut schema = json!({
+            "title": "Empty input",
+            "type": "object"
+        });
+
+        normalize_tool_schema(&mut schema);
+        let normalized = schema.clone();
+        normalize_tool_schema(&mut schema);
+
+        assert_eq!(schema, normalized);
+    }
+
+    #[test]
+    fn normalization_leaves_non_object_schemas_unchanged_except_for_metadata() {
+        let mut schema = json!({
+            "title": "Text input",
+            "description": "Accepts text",
+            "type": "string"
+        });
+
+        normalize_tool_schema(&mut schema);
+
+        assert_eq!(schema, json!({ "type": "string" }));
     }
 }

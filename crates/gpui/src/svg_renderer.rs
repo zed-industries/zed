@@ -2,11 +2,14 @@ use crate::{
     AssetSource, DevicePixels, IsZero, RenderImage, Result, SharedString, Size,
     swap_rgba_pa_to_bgra,
 };
+use collections::HashMap;
 use image::Frame;
+use parking_lot::Mutex;
 use resvg::tiny_skia::Pixmap;
 use smallvec::SmallVec;
 use std::{
     hash::Hash,
+    path::Path,
     sync::{Arc, LazyLock, OnceLock},
 };
 
@@ -94,12 +97,42 @@ pub struct SvgRenderer {
     usvg_options: Arc<usvg::Options<'static>>,
 }
 
-/// The size in which to render the SVG.
+/// A parsed SVG document that can be rasterized at any scale.
+///
+/// Produced by [`SvgRenderer::parse_svg`] and rasterized by
+/// [`SvgRenderer::render_parsed`]. Parsing resolves fonts and converts text
+/// to paths, so callers that need to rasterize the same SVG at multiple
+/// scales should retain this value to avoid re-paying the parse cost.
+pub struct ParsedSvg(usvg::Tree);
+
+/// The font of an SVG `<text>` element, as the values of its presentation attributes.
+#[derive(Clone, Copy, Debug)]
+pub struct SvgTextFont<'a> {
+    /// The `font-family` list.
+    pub family: &'a str,
+    /// The `font-size`, in pixels.
+    pub size: f32,
+    /// The `font-weight`.
+    pub weight: &'a str,
+    /// The `font-style`.
+    pub style: &'a str,
+}
+
+/// The size in which to rasterize the SVG.
+#[derive(Clone, Copy)]
 pub enum SvgSize {
-    /// An absolute size in device pixels.
+    /// A width in device pixels. The SVG retains its aspect ratio.
     Size(Size<DevicePixels>),
-    /// A scaling factor to apply to the size provided by the SVG.
+    /// An exact width and height in device pixels.
+    ExactSize(Size<DevicePixels>),
+    /// A logical scaling factor to apply to the size provided by the SVG.
     ScaleFactor(f32),
+}
+
+impl From<f32> for SvgSize {
+    fn from(scale_factor: f32) -> Self {
+        Self::ScaleFactor(scale_factor)
+    }
 }
 
 impl SvgRenderer {
@@ -115,45 +148,64 @@ impl SvgRenderer {
         // eagerly at construction time. This avoids the expensive deep-clone
         // of the system font database for code paths that never render SVGs
         // (e.g. tests).
-        let enriched_fontdb: Arc<OnceLock<Arc<usvg::fontdb::Database>>> = Arc::new(OnceLock::new());
+        let enriched_fontdb = Arc::new(OnceLock::<Mutex<FontDatabase>>::new());
 
         let default_font_resolver = usvg::FontResolver::default_font_selector();
         let font_resolver = Box::new({
             let asset_source = asset_source.clone();
+            let enriched_fontdb = enriched_fontdb.clone();
             move |font: &usvg::Font, db: &mut Arc<usvg::fontdb::Database>| {
+                let fontdb = enriched_fontdb.get_or_init(|| {
+                    let mut db = (**SYSTEM_FONT_DB).clone();
+                    load_bundled_fonts(&*asset_source, &mut db);
+                    fix_generic_font_families(&mut db);
+                    Mutex::new(FontDatabase {
+                        database: Arc::new(db),
+                        owned_faces: HashMap::default(),
+                        remaining_owned_bytes: MAX_OWNED_FONT_BYTES,
+                        fallback_faces: HashMap::default(),
+                    })
+                });
                 if db.is_empty() {
-                    let fontdb = enriched_fontdb.get_or_init(|| {
-                        let mut db = (**SYSTEM_FONT_DB).clone();
-                        load_bundled_fonts(&*asset_source, &mut db);
-                        fix_generic_font_families(&mut db);
-                        Arc::new(db)
-                    });
-                    *db = fontdb.clone();
+                    *db = fontdb.lock().database.clone();
                 }
-                if let Some(id) = default_font_resolver(font, db) {
-                    return Some(id);
-                }
-                // fontdb doesn't recognize CSS system font keywords like "system-ui"
-                // or "ui-sans-serif", so fall back to sans-serif before any face.
-                let sans_query = usvg::fontdb::Query {
-                    families: &[usvg::fontdb::Family::SansSerif],
-                    ..Default::default()
-                };
-                db.query(&sans_query)
-                    .or_else(|| db.faces().next().map(|f| f.id))
+                let id = default_font_resolver(font, db).or_else(|| {
+                    // fontdb doesn't recognize CSS system font keywords like "system-ui"
+                    // or "ui-sans-serif", so fall back to sans-serif before any face.
+                    let sans_query = usvg::fontdb::Query {
+                        families: &[usvg::fontdb::Family::SansSerif],
+                        ..Default::default()
+                    };
+                    db.query(&sans_query)
+                        .or_else(|| db.faces().next().map(|f| f.id))
+                })?;
+                Some(fontdb.lock().owned_face(db, id))
             }
         });
         let default_fallback_selection = usvg::FontResolver::default_fallback_selector();
         let fallback_selection = Box::new(
             move |ch: char, fonts: &[usvg::fontdb::ID], db: &mut Arc<usvg::fontdb::Database>| {
-                if is_emoji_presentation(ch) {
-                    if let Some(id) = select_emoji_font(ch, fonts, db.as_ref(), EMOJI_FONT_FAMILIES)
-                    {
-                        return Some(id);
+                let mut select = |fonts: &[usvg::fontdb::ID]| {
+                    if is_emoji_presentation(ch) {
+                        if let Some(id) =
+                            select_emoji_font(ch, fonts, db.as_ref(), EMOJI_FONT_FAMILIES)
+                        {
+                            return Some(id);
+                        }
                     }
-                }
 
-                default_fallback_selection(ch, fonts, db)
+                    default_fallback_selection(ch, fonts, db)
+                };
+                let Some(fontdb) = enriched_fontdb.get() else {
+                    return select(fonts);
+                };
+                let face = cached_fallback_face(fontdb, ch, fonts, select)?;
+                let owned_face = fontdb.lock().owned_face(db, face);
+                Some(if fonts.contains(&owned_face) {
+                    face
+                } else {
+                    owned_face
+                })
             },
         );
         let options = usvg::Options {
@@ -169,29 +221,69 @@ impl SvgRenderer {
         }
     }
 
+    /// Parses SVG data into a [`ParsedSvg`] that can be rasterized at any scale.
+    pub fn parse_svg(&self, bytes: &[u8]) -> Result<ParsedSvg, usvg::Error> {
+        usvg::Tree::from_data(bytes, &self.usvg_options).map(ParsedSvg)
+    }
+
+    /// Returns the advance of `text` drawn by this renderer as a single line of SVG `<text>`.
+    pub fn measure_text_width(
+        &self,
+        text: &str,
+        font: &SvgTextFont<'_>,
+    ) -> Result<f32, usvg::Error> {
+        let mut svg = String::from(
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><text xml:space="preserve" text-decoration="underline" font-family=""#,
+        );
+        push_xml_escaped(&mut svg, font.family);
+        svg.push_str(r#"" font-weight=""#);
+        push_xml_escaped(&mut svg, font.weight);
+        svg.push_str(r#"" font-style=""#);
+        push_xml_escaped(&mut svg, font.style);
+        let size = font.size;
+        svg.push_str(&format!(r#"" font-size="{size}">"#));
+        push_xml_escaped(&mut svg, text);
+        svg.push_str("</text></svg>");
+
+        let tree = usvg::Tree::from_str(&svg, &self.usvg_options)?;
+        Ok(underline_width(tree.root()))
+    }
+
+    /// Rasterizes a previously parsed SVG into an image buffer.
+    pub fn render_parsed(
+        &self,
+        svg: &ParsedSvg,
+        size: impl Into<SvgSize>,
+    ) -> Result<Arc<RenderImage>, usvg::Error> {
+        let (size, image_scale_factor) = match size.into() {
+            SvgSize::Size(size) => (SvgSize::Size(size), 1.0),
+            SvgSize::ExactSize(size) => (SvgSize::ExactSize(size), 1.0),
+            SvgSize::ScaleFactor(scale_factor) => (
+                SvgSize::ScaleFactor(scale_factor * SMOOTH_SVG_SCALE_FACTOR),
+                SMOOTH_SVG_SCALE_FACTOR,
+            ),
+        };
+        let pixmap = rasterize_tree(&svg.0, size)?;
+        let mut buffer =
+            image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
+
+        for pixel in buffer.chunks_exact_mut(4) {
+            swap_rgba_pa_to_bgra(pixel);
+        }
+
+        let mut image = RenderImage::new(SmallVec::from_const([Frame::new(buffer)]));
+        image.scale_factor = image_scale_factor;
+        Ok(Arc::new(image))
+    }
+
     /// Renders the given bytes into an image buffer.
     pub fn render_single_frame(
         &self,
         bytes: &[u8],
         scale_factor: f32,
     ) -> Result<Arc<RenderImage>, usvg::Error> {
-        self.render_pixmap(
-            bytes,
-            SvgSize::ScaleFactor(scale_factor * SMOOTH_SVG_SCALE_FACTOR),
-        )
-        .map(|pixmap| {
-            let mut buffer =
-                image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
-                    .unwrap();
-
-            for pixel in buffer.chunks_exact_mut(4) {
-                swap_rgba_pa_to_bgra(pixel);
-            }
-
-            let mut image = RenderImage::new(SmallVec::from_const([Frame::new(buffer)]));
-            image.scale_factor = SMOOTH_SVG_SCALE_FACTOR;
-            Arc::new(image)
-        })
+        let svg = self.parse_svg(bytes)?;
+        self.render_parsed(&svg, scale_factor)
     }
 
     pub(crate) fn render_alpha_mask(
@@ -229,24 +321,179 @@ impl SvgRenderer {
 
     fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
         let tree = usvg::Tree::from_data(bytes, &self.usvg_options)?;
-        let svg_size = tree.size();
-        let scale = match size {
-            SvgSize::Size(size) => size.width.0 as f32 / svg_size.width(),
-            SvgSize::ScaleFactor(scale) => scale,
-        };
+        rasterize_tree(&tree, size)
+    }
+}
 
-        // Render the SVG to a pixmap with the specified width and height.
-        let mut pixmap = resvg::tiny_skia::Pixmap::new(
-            (svg_size.width() * scale) as u32,
-            (svg_size.height() * scale) as u32,
-        )
+fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Error> {
+    // Cap the size of the rendered pixmap to avoid texture allocation panics
+    // Related issue: #56466
+    const MAX_SIZE: f32 = 8192.0;
+
+    let svg_size = tree.size();
+    let (mut width, mut height) = match size {
+        SvgSize::Size(size) => {
+            let scale = i32::from(size.width) as f32 / svg_size.width();
+            (svg_size.width() * scale, svg_size.height() * scale)
+        }
+        SvgSize::ExactSize(size) => (i32::from(size.width) as f32, i32::from(size.height) as f32),
+        SvgSize::ScaleFactor(scale) => (svg_size.width() * scale, svg_size.height() * scale),
+    };
+
+    if width > MAX_SIZE {
+        log::warn!("Attempted to render pixmap where width ({width}) > MAX_SIZE ({MAX_SIZE})");
+    }
+    if height > MAX_SIZE {
+        log::warn!("Attempted to render pixmap where height ({height}) > MAX_SIZE ({MAX_SIZE})");
+    }
+    let scale = (MAX_SIZE / width).min(MAX_SIZE / height).min(1.0);
+    width *= scale;
+    height *= scale;
+
+    // Render the SVG to a pixmap with the specified width and height.
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width as u32, height as u32)
         .ok_or(usvg::Error::InvalidSize)?;
 
-        let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+    let transform = resvg::tiny_skia::Transform::from_scale(
+        width / svg_size.width(),
+        height / svg_size.height(),
+    );
 
-        resvg::render(&tree, transform, &mut pixmap.as_mut());
+    resvg::render(tree, transform, &mut pixmap.as_mut());
 
-        Ok(pixmap)
+    Ok(pixmap)
+}
+
+const MAX_OWNED_FONT_BYTES: u64 = 64 * 1024 * 1024;
+
+struct FontDatabase {
+    database: Arc<usvg::fontdb::Database>,
+    owned_faces: HashMap<usvg::fontdb::ID, usvg::fontdb::ID>,
+    remaining_owned_bytes: u64,
+    fallback_faces: HashMap<(usvg::fontdb::ID, char), Option<usvg::fontdb::ID>>,
+}
+
+impl FontDatabase {
+    fn owned_face(
+        &mut self,
+        db: &mut Arc<usvg::fontdb::Database>,
+        id: usvg::fontdb::ID,
+    ) -> usvg::fontdb::ID {
+        let Some(usvg::fontdb::Source::File(path)) = db.face(id).map(|face| face.source.clone())
+        else {
+            return id;
+        };
+        if !self.owned_faces.contains_key(&id) {
+            self.own_font_file(&path);
+        }
+        *db = self.database.clone();
+        self.owned_faces.get(&id).copied().unwrap_or(id)
+    }
+
+    fn own_font_file(&mut self, path: &Path) {
+        let file_faces = self
+            .database
+            .faces()
+            .filter(|face| {
+                matches!(&face.source, usvg::fontdb::Source::File(face_path) if face_path == path)
+            })
+            .map(|face| (face.id, face.index))
+            .collect::<Vec<_>>();
+        let remaining_owned_bytes = self.remaining_owned_bytes;
+        let data = std::fs::metadata(path).and_then(|metadata| {
+            (metadata.len() <= remaining_owned_bytes)
+                .then(|| std::fs::read(path))
+                .transpose()
+        });
+        let owned_ids = match data {
+            Ok(Some(data)) if data.len() as u64 <= remaining_owned_bytes => {
+                let size = data.len() as u64;
+                let owned_ids = Arc::make_mut(&mut self.database)
+                    .load_font_source(usvg::fontdb::Source::Binary(Arc::new(data)));
+                if !owned_ids.is_empty() {
+                    self.remaining_owned_bytes -= size;
+                }
+                owned_ids
+            }
+            Ok(_) => Default::default(),
+            Err(error) => {
+                log::warn!("Failed to read font {path:?}: {error}");
+                Default::default()
+            }
+        };
+        for (id, index) in file_faces {
+            let owned_id = owned_ids
+                .iter()
+                .copied()
+                .find(|owned_id| {
+                    self.database
+                        .face(*owned_id)
+                        .is_some_and(|face| face.index == index)
+                })
+                .unwrap_or(id);
+            self.owned_faces.insert(id, owned_id);
+        }
+    }
+}
+
+const MAX_CACHED_FALLBACK_FACES: usize = 16 * 1024;
+
+fn cached_fallback_face(
+    fontdb: &Mutex<FontDatabase>,
+    ch: char,
+    fonts: &[usvg::fontdb::ID],
+    mut select: impl FnMut(&[usvg::fontdb::ID]) -> Option<usvg::fontdb::ID>,
+) -> Option<usvg::fontdb::ID> {
+    let Some(base) = fonts.first() else {
+        return select(fonts);
+    };
+    let key = (*base, ch);
+    let cached_face = fontdb.lock().fallback_faces.get(&key).copied();
+    let face = match cached_face {
+        Some(face) => face,
+        None => {
+            let face = select(&fonts[..1]);
+            let fallback_faces = &mut fontdb.lock().fallback_faces;
+            if fallback_faces.len() < MAX_CACHED_FALLBACK_FACES {
+                fallback_faces.insert(key, face);
+            }
+            face
+        }
+    };
+    match face {
+        Some(face) if fonts.contains(&face) => select(fonts),
+        face => face,
+    }
+}
+
+fn underline_width(group: &usvg::Group) -> f32 {
+    group.children().iter().fold(0., |width, node| {
+        width
+            + match node {
+                usvg::Node::Text(text) => text
+                    .layouted()
+                    .iter()
+                    .filter_map(|span| span.underline.as_ref())
+                    .fold(0., |width, underline| {
+                        width + underline.data().bounds().width()
+                    }),
+                usvg::Node::Group(group) => underline_width(group),
+                usvg::Node::Path(_) | usvg::Node::Image(_) => 0.,
+            }
+    })
+}
+
+fn push_xml_escaped(xml: &mut String, text: &str) {
+    for character in text.chars() {
+        match character {
+            '&' => xml.push_str("&amp;"),
+            '<' => xml.push_str("&lt;"),
+            '>' => xml.push_str("&gt;"),
+            '"' => xml.push_str("&quot;"),
+            '\t' | '\n' | '\r' => xml.push(character),
+            '\u{0}'..='\u{1f}' | '\u{fffe}' | '\u{ffff}' => {}
+            _ => xml.push(character),
+        }
     }
 }
 
@@ -300,17 +547,168 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{borrow::Cow, cell::Cell};
     use usvg::fontdb::{Database, Family, Query};
 
     const IBM_PLEX_REGULAR: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
     const LILEX_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
 
+    #[test]
+    fn renders_parsed_svg_at_requested_size() -> Result<()> {
+        let renderer = SvgRenderer::new(Arc::new(()));
+        let svg = renderer.parse_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="24pt" height="12pt"></svg>"#,
+        )?;
+        let requested_size = Size::new(DevicePixels(24), DevicePixels(12));
+        let image = renderer.render_parsed(&svg, SvgSize::ExactSize(requested_size))?;
+
+        assert_eq!(image.size(0), requested_size);
+        Ok(())
+    }
+
+    #[test]
+    fn preserves_aspect_ratio_for_width_constrained_size() -> Result<()> {
+        let renderer = SvgRenderer::new(Arc::new(()));
+        let svg = renderer.parse_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="24pt" height="12pt"></svg>"#,
+        )?;
+        let image = renderer.render_parsed(
+            &svg,
+            SvgSize::Size(Size::new(DevicePixels(24), DevicePixels(24))),
+        )?;
+
+        assert_eq!(image.size(0), Size::new(DevicePixels(24), DevicePixels(12)));
+        Ok(())
+    }
+
+    #[test]
+    fn measured_text_width_matches_rasterized_advance() -> Result<()> {
+        let renderer = SvgRenderer::new(Arc::new(BundledFonts));
+        let font = SvgTextFont {
+            family: "IBM Plex Sans",
+            size: 40.,
+            weight: "normal",
+            style: "normal",
+        };
+        let frame_width = rasterized_text_width(&renderer, "MM")?;
+        assert!(frame_width > 0.);
+
+        for text in ["MMMM", " ", "   ", "\u{a0}", "\u{200b}", "M\u{200b}"] {
+            let measured = renderer.measure_text_width(text, &font)?;
+            let rasterized = rasterized_text_width(&renderer, &format!("M{text}M"))? - frame_width;
+            assert!(
+                (measured - rasterized).abs() <= 1.,
+                "{text:?} measured {measured}px, rasterized {rasterized}px"
+            );
+        }
+        assert_eq!(
+            renderer.measure_text_width("M\u{200b}", &font)?,
+            renderer.measure_text_width("M", &font)?
+        );
+        assert!(renderer.measure_text_width("<&\"\u{1}>", &font)? > 0.);
+        Ok(())
+    }
+
+    #[test]
+    fn owns_font_bytes_within_budget() -> Result<()> {
+        let font_path = |name| {
+            std::env::temp_dir().join(format!(
+                "gpui-svg-renderer-{}-{name}.ttf",
+                std::process::id()
+            ))
+        };
+        let (plex_path, lilex_path) = (font_path("plex"), font_path("lilex"));
+        std::fs::write(&plex_path, IBM_PLEX_REGULAR)?;
+        std::fs::write(&lilex_path, LILEX_REGULAR)?;
+        let mut database = Database::new();
+        database.load_font_file(&plex_path)?;
+        database.load_font_file(&lilex_path)?;
+        let mut fonts = FontDatabase {
+            database: Arc::new(database),
+            owned_faces: HashMap::default(),
+            remaining_owned_bytes: IBM_PLEX_REGULAR.len() as u64,
+            fallback_faces: HashMap::default(),
+        };
+        let mut db = fonts.database.clone();
+        let face_ids = db.faces().map(|face| face.id).collect::<Vec<_>>();
+        let (plex_id, lilex_id) = (face_ids[0], face_ids[1]);
+
+        let owned_plex_id = fonts.owned_face(&mut db, plex_id);
+        let owned_lilex_id = fonts.owned_face(&mut db, lilex_id);
+        std::fs::write(&plex_path, b"changed")?;
+        let data_len = |id| db.with_face_data(id, |data, _| data.len());
+        let data_lens = (data_len(plex_id), data_len(owned_plex_id));
+        std::fs::remove_file(&plex_path)?;
+        std::fs::remove_file(&lilex_path)?;
+
+        assert_eq!(data_lens, (Some(7), Some(IBM_PLEX_REGULAR.len())));
+        assert_eq!(owned_lilex_id, lilex_id);
+        assert_eq!(fonts.remaining_owned_bytes, 0);
+        assert_eq!(fonts.owned_face(&mut db, plex_id), owned_plex_id);
+        Ok(())
+    }
+
+    #[test]
+    fn fallback_faces_are_remembered_until_excluded() {
+        let database = db_with_bundled_fonts();
+        let face_ids = database.faces().map(|face| face.id).collect::<Vec<_>>();
+        let (base, fallback) = (face_ids[0], face_ids[1]);
+        let fontdb = Mutex::new(FontDatabase {
+            database: Arc::new(database),
+            owned_faces: HashMap::default(),
+            remaining_owned_bytes: 0,
+            fallback_faces: HashMap::default(),
+        });
+        let selections = Cell::new(0);
+        let fallback_face = |ch, fonts: &[usvg::fontdb::ID]| {
+            cached_fallback_face(&fontdb, ch, fonts, |excluded| {
+                selections.set(selections.get() + 1);
+                (!excluded.contains(&fallback)).then_some(fallback)
+            })
+        };
+
+        assert_eq!(fallback_face('x', &[base]), Some(fallback));
+        assert_eq!(fallback_face('x', &[base]), Some(fallback));
+        assert_eq!(selections.get(), 1);
+        assert_eq!(fallback_face('x', &[base, fallback]), None);
+        assert_eq!(selections.get(), 2);
+        assert_eq!(fallback_face('y', &[base, fallback]), None);
+        assert_eq!(selections.get(), 4);
+        assert_eq!(fallback_face('y', &[base]), Some(fallback));
+        assert_eq!(selections.get(), 4);
+    }
+
     fn db_with_bundled_fonts() -> Database {
         let mut db = Database::new();
         db.load_font_data(IBM_PLEX_REGULAR.to_vec());
         db.load_font_data(LILEX_REGULAR.to_vec());
         db
+    }
+
+    #[test]
+    fn text_with_split_glyph_clusters_in_mixed_fonts_does_not_panic() {
+        let mut db = Database::new();
+        db.load_font_data(IBM_PLEX_REGULAR.to_vec());
+        db.load_font_data(LILEX_REGULAR.to_vec());
+        let options = usvg::Options {
+            fontdb: std::sync::Arc::new(db),
+            ..Default::default()
+        };
+
+        // A base letter followed by a stack of combining marks. Under HarfBuzz's
+        // default cluster merging every mark glyph shares the base's byte index,
+        // which is the "glyph splitting" condition that triggered the panic. The
+        // chunk must use two different fonts so the buggy merge path runs.
+        let zalgo = "e\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030a}";
+        let svg = format!(
+            r#"<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><text font-family="Lilex" font-size="32">{zalgo}<tspan font-family="IBM Plex Sans">{zalgo}</tspan></text></svg>"#
+        );
+
+        // Before the fix this aborts via panic with a message like
+        // "removal index (is 5) should be < len (is 5)".
+        usvg::Tree::from_data(svg.as_bytes(), &options)
+            .expect("SVG with mixed-font text should parse");
     }
 
     #[test]
@@ -371,7 +769,7 @@ mod tests {
 
     #[test]
     fn test_select_emoji_font_skips_family_without_glyph() {
-        let mut db = db_with_bundled_fonts();
+        let db = db_with_bundled_fonts();
 
         let ibm_plex_sans = db
             .query(&usvg::fontdb::Query {
@@ -412,5 +810,45 @@ mod tests {
             "Monospace should map to Lilex, got {:?}",
             face.families
         );
+    }
+
+    struct BundledFonts;
+
+    impl AssetSource for BundledFonts {
+        fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+            Ok(match path {
+                "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf" => {
+                    Some(Cow::Borrowed(IBM_PLEX_REGULAR))
+                }
+                "fonts/lilex/Lilex-Regular.ttf" => Some(Cow::Borrowed(LILEX_REGULAR)),
+                _ => None,
+            })
+        }
+
+        fn list(&self, _path: &str) -> Result<Vec<SharedString>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn rasterized_text_width(renderer: &SvgRenderer, text: &str) -> Result<f32> {
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="60"><text xml:space="preserve" x="10" y="45" font-family="IBM Plex Sans" font-size="40">{text}</text></svg>"#
+        );
+        let pixmap = renderer.render_pixmap(svg.as_bytes(), SvgSize::ScaleFactor(1.))?;
+        let width = pixmap.width() as usize;
+        let inked_columns = (0..width)
+            .filter(|column| {
+                pixmap
+                    .pixels()
+                    .iter()
+                    .skip(*column)
+                    .step_by(width)
+                    .any(|pixel| pixel.alpha() > 0)
+            })
+            .collect::<Vec<_>>();
+        Ok(match (inked_columns.first(), inked_columns.last()) {
+            (Some(first), Some(last)) => (last - first + 1) as f32,
+            _ => 0.,
+        })
     }
 }

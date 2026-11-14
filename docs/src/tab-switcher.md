@@ -26,14 +26,14 @@ the switcher is closed.
 ## Opening the Tab Switcher
 
 The Tab Switcher can also be opened with either {#action tab_switcher::Toggle} ({#kb tab_switcher::Toggle})
-or {#action tab_switcher::ToggleAll}.
+or {#action tab_switcher::ToggleAll} ({#kb tab_switcher::ToggleAll}).
 
 While the Tab Switcher is open, you can:
 
 - Press {#kb menu::SelectNext} to move to the next tab in the list
 - Press {#kb menu::SelectPrevious} to move to the previous tab
-- Press <kbd class="keybinding">enter</kbd> to confirm the selected tab and close the switcher
-- Press <kbd class="keybinding">escape</kbd> to close the switcher and return to the original tab from which
+- Press {#kb menu::Confirm} to confirm the selected tab and close the switcher
+- Press {#kb menu::Cancel} to close the switcher and return to the original tab from which
   the switcher was opened
 - Press {#kb tab_switcher::CloseSelectedItem} to close the currently selected tab
 

@@ -282,6 +282,16 @@ Common formats recognized:
 - `src/main.rs:42:10` — Opens at line 42, column 10
 - `File "script.py", line 10` — Python tracebacks
 
+By default, `Cmd+Click`/`Ctrl+Click` opens links even when the running application has enabled mouse reporting (e.g. vim with `mouse=a`, htop). If you prefer those clicks to be forwarded to the application instead, disable `open_links_in_mouse_mode`; links can then still be opened with `Shift+Cmd+Click` (`Shift+Ctrl+Click`):
+
+```json
+{
+  "terminal": {
+    "open_links_in_mouse_mode": false
+  }
+}
+```
+
 ## Panel Configuration
 
 ### Dock Position

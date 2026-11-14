@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/bedrock.rs"
+doctest = false
 
 [features]
 default = []
@@ -17,10 +18,11 @@ schemars = ["dep:schemars"]
 
 [dependencies]
 anyhow.workspace = true
-aws-sdk-bedrockruntime = { workspace = true, features = ["behavior-version-latest"] }
-aws-smithy-types = {workspace = true}
+aws-sdk-bedrockruntime.workspace = true
+aws-smithy-types.workspace = true
 futures.workspace = true
-schemars = { workspace = true, optional = true }
+http_client.workspace = true
+schemars = { workspace = true, features = ["derive"], optional = true }
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true

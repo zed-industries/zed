@@ -14,9 +14,9 @@ Zed uses two different rust crates for matching glob patterns:
 - [ignore crate](https://docs.rs/ignore/latest/ignore/) for matching glob patterns stored in `.gitignore` files
 - [glob crate](https://docs.rs/glob/latest/glob/) for matching file paths in Zed
 
-While simple expressions are portable across environments (e.g. running `ls *.py` or `*.tmp` in a gitignore) there is significant divergence in the support for and syntax of more advanced features varies (character classes, exclusions, `**`, etc) across implementations. For the rest of this document we will be describing globs as supported in Zed via the `glob` crate implementation. Please see [References](#references) below for documentation links for glob pattern syntax for `.gitignore`, shells and other programming languages.
+While simple expressions are portable across environments (e.g. running `ls *.py` or `*.tmp` in a gitignore) there is significant divergence in the support for and syntax of more advanced features (character classes, exclusions, `**`, etc) across implementations. For the rest of this document we will be describing globs as supported in Zed via the `glob` crate implementation. Please see [References](#references) below for documentation links for glob pattern syntax for `.gitignore`, shells and other programming languages.
 
-The `glob` crate is implemented entirely in rust and does not rely on the `glob` / `fnmatch` interfaces provided by your platforms libc. This means that globs in Zed should behave similarly with across platforms.
+The `glob` crate is implemented entirely in rust and does not rely on the `glob` / `fnmatch` interfaces provided by your platform's libc. This means that globs in Zed should behave similarly across platforms.
 
 ## Introduction
 
@@ -71,7 +71,7 @@ If instead you wanted to restrict yourself only to [Zed Language-Specific Docume
 
 When using the "Include" / "Exclude" filters on a Project Search each glob is wrapped in implicit wildcards. For example to exclude any files with license in the path or filename from your search just type `license` in the exclude box. Behind the scenes Zed transforms `license` to `**license**`. This means that files named `license.*`, `*.license` or inside a `license` subdirectory will all be filtered out. This enables users to easily filter for `*.ts` without having to remember to type `**/*.ts` every time.
 
-Alternatively, if in your Zed settings you wanted a [`file_types`](./reference/all-settings.md#file-types) override which only applied to a certain directory you must explicitly include the wildcard globs. For example, if you had a directory of template files with the `html` extension that you wanted to recognize as Jinja2 template you could use the following:
+Alternatively, if in your Zed settings you wanted a [`file_types`](./reference/all-settings.md#file-types) override which only applied to a certain directory you must explicitly include the wildcard globs. For example, if you had a directory of template files with the `html` extension that you wanted to recognize as a Jinja2 template you could use the following:
 
 ```json [settings]
 {

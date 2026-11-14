@@ -87,6 +87,7 @@ pub struct Button {
     end_icon: Option<Icon>,
     key_binding: Option<KeyBinding>,
     key_binding_position: KeybindingPosition,
+    wrap_key_binding: bool,
     alpha: Option<f32>,
     truncate: bool,
     loading: bool,
@@ -111,6 +112,7 @@ impl Button {
             end_icon: None,
             key_binding: None,
             key_binding_position: KeybindingPosition::default(),
+            wrap_key_binding: false,
             alpha: None,
             truncate: false,
             loading: false,
@@ -120,6 +122,53 @@ impl Button {
     /// Sets the color of the button's label.
     pub fn color(mut self, label_color: impl Into<Option<Color>>) -> Self {
         self.label_color = label_color.into();
+        self
+    }
+
+    /// Sets the label announced by assistive technology.
+    /// Defaults to the button's visible label.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.base = self.base.aria_label(label);
+        self
+    }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the button's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.base = self.base.aria_description(description);
+        self
+    }
+
+    /// Sets the current value reported to assistive technology. Use this when
+    /// the button represents a control with a value, such as a combobox
+    /// trigger whose value is the current selection.
+    pub fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
+        self.base = self.base.aria_value(value);
+        self
+    }
+
+    /// Overrides the role reported to assistive technology.
+    /// Defaults to [`gpui::Role::Button`].
+    pub fn aria_role(mut self, role: gpui::Role) -> Self {
+        self.base = self.base.aria_role(role);
+        self
+    }
+
+    /// Sets the expanded state reported to assistive technology, for buttons
+    /// that control a popup (e.g. dropdown or disclosure triggers).
+    pub fn aria_expanded(mut self, expanded: bool) -> Self {
+        self.base = self.base.aria_expanded(expanded);
+        self
+    }
+
+    /// Registers a handler for an accessibility action (e.g.
+    /// [`gpui::accesskit::Action::Expand`]) dispatched by assistive technology.
+    pub fn on_a11y_action(
+        mut self,
+        action: gpui::accesskit::Action,
+        listener: impl FnMut(Option<&gpui::accesskit::ActionData>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.base = self.base.on_a11y_action(action, listener);
         self
     }
 
@@ -163,6 +212,13 @@ impl Button {
         self
     }
 
+    /// Lets the keybinding wrap onto its own line when the button is too narrow
+    /// to fit it next to the label, growing the button to fit both lines.
+    pub fn wrap_key_binding(mut self, wrap: bool) -> Self {
+        self.wrap_key_binding = wrap;
+        self
+    }
+
     /// Sets the position of the keybinding relative to the button label.
     ///
     /// This method allows you to specify where the keybinding should be displayed
@@ -190,6 +246,7 @@ impl Button {
     /// Displays a rotating loading spinner in place of the `start_icon`.
     ///
     /// When `loading` is `true`, any `start_icon` is ignored. and a rotating
+    /// loading spinner is shown instead.
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
         self
@@ -266,6 +323,7 @@ impl Disableable for Button {
 }
 
 impl Clickable for Button {
+    #[inline(always)]
     fn on_click(
         mut self,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
@@ -345,6 +403,7 @@ impl ButtonCommon for Button {
     /// Button::new("tooltip_button", "Hover Me")
     ///     .tooltip(Tooltip::text("This is a tooltip"));
     /// ```
+    #[inline(always)]
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
@@ -368,7 +427,7 @@ impl ButtonCommon for Button {
 
 impl RenderOnce for Button {
     #[allow(refining_impl_trait)]
-    fn render(self, _window: &mut Window, cx: &mut App) -> ButtonLike {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
@@ -377,6 +436,35 @@ impl RenderOnce for Button {
             .filter(|_| is_selected)
             .unwrap_or(self.label);
 
+        if self.base.aria_label.is_none() {
+            self.base.aria_label = Some(label.clone());
+        }
+
+        let keyshortcuts = self
+            .key_binding
+            .as_ref()
+            .and_then(|key_binding| key_binding.keyboard_shortcut_text(window, cx));
+        let wrap_key_binding =
+            self.wrap_key_binding && keyshortcuts.is_some() && KeyBinding::default_visibility(cx);
+
+        // Announce the displayed keybinding to assistive technology via
+        // `aria-keyshortcuts` so screen-reader users hear the same shortcut
+        // sighted users see next to the button.
+        if self.base.aria_keyshortcuts.is_none()
+            && let Some(keyshortcuts) = keyshortcuts
+        {
+            self.base.aria_keyshortcuts = Some(keyshortcuts);
+        }
+
+        // A combobox's value is its visible text, so expose it as the
+        // accessible value by default. This lets combobox triggers announce
+        // their current selection without each caller wiring it up.
+        if matches!(self.base.aria_role, Some(gpui::Role::ComboBox))
+            && self.base.aria_value.is_none()
+        {
+            self.base.aria_value = Some(label.clone());
+        }
+
         let label_color = if is_disabled {
             Color::Disabled
         } else if is_selected {
@@ -384,20 +472,26 @@ impl RenderOnce for Button {
         } else {
             self.label_color.unwrap_or_default()
         };
+        let wrapped_key_binding = if wrap_key_binding {
+            self.key_binding.take()
+        } else {
+            None
+        };
 
-        self.base.child(
-            h_flex()
-                .when(self.truncate, |this| this.min_w_0().overflow_hidden())
-                .gap(DynamicSpacing::Base04.rems(cx))
-                .when(self.loading, |this| {
+        let content = h_flex()
+            .when(self.truncate, |this| this.min_w_0().overflow_hidden())
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .when_else(
+                self.loading,
+                |this| {
                     this.child(
                         Icon::new(IconName::LoadCircle)
                             .size(IconSize::Small)
                             .color(Color::Muted)
                             .with_rotate_animation(2),
                     )
-                })
-                .when(!self.loading, |this| {
+                },
+                |this| {
                     this.when_some(self.start_icon, |this, icon| {
                         this.child(if is_disabled {
                             icon.color(Color::Disabled)
@@ -405,33 +499,57 @@ impl RenderOnce for Button {
                             icon
                         })
                     })
+                },
+            )
+            .child(
+                h_flex()
+                    .when(self.truncate, |this| this.min_w_0().overflow_hidden())
+                    .when(
+                        self.key_binding_position == KeybindingPosition::Start,
+                        |this| this.flex_row_reverse(),
+                    )
+                    .gap(DynamicSpacing::Base06.rems(cx))
+                    .justify_between()
+                    .child(
+                        Label::new(label)
+                            .color(label_color)
+                            .size(self.label_size.unwrap_or_default())
+                            .when_some(self.alpha, |this, alpha| this.alpha(alpha))
+                            .when(self.truncate, |this| this.truncate()),
+                    )
+                    .children(self.key_binding),
+            )
+            .when_some(self.end_icon, |this, icon| {
+                this.child(if is_disabled {
+                    icon.color(Color::Disabled)
+                } else {
+                    icon
                 })
-                .child(
-                    h_flex()
-                        .when(self.truncate, |this| this.min_w_0().overflow_hidden())
-                        .when(
-                            self.key_binding_position == KeybindingPosition::Start,
-                            |this| this.flex_row_reverse(),
-                        )
-                        .gap(DynamicSpacing::Base06.rems(cx))
-                        .justify_between()
-                        .child(
-                            Label::new(label)
-                                .color(label_color)
-                                .size(self.label_size.unwrap_or_default())
-                                .when_some(self.alpha, |this, alpha| this.alpha(alpha))
-                                .when(self.truncate, |this| this.truncate()),
-                        )
-                        .children(self.key_binding),
-                )
-                .when_some(self.end_icon, |this, icon| {
-                    this.child(if is_disabled {
-                        icon.color(Color::Disabled)
-                    } else {
-                        icon
-                    })
-                }),
-        )
+            });
+
+        if let Some(key_binding) = wrapped_key_binding {
+            let row_height = self.base.size.rems();
+            let content = content
+                .flex_none()
+                .min_h(row_height)
+                .when(self.truncate, |this| this.max_w_full());
+            let key_binding = h_flex().flex_none().min_h(row_height).child(key_binding);
+            // Wrapping follows child order even in a reversed row, so order the
+            // children instead to keep a `Start` keybinding on the first line.
+            self.base.auto_height().child(
+                h_flex()
+                    .w_full()
+                    .flex_wrap()
+                    .justify_center()
+                    .gap_x(DynamicSpacing::Base06.rems(cx))
+                    .map(|this| match self.key_binding_position {
+                        KeybindingPosition::Start => this.child(key_binding).child(content),
+                        KeybindingPosition::End => this.child(content).child(key_binding),
+                    }),
+            )
+        } else {
+            self.base.child(content)
+        }
     }
 }
 
@@ -444,130 +562,128 @@ impl Component for Button {
         "ButtonA"
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A button triggers an event or action.")
+    fn description() -> &'static str {
+        "A button triggers an event or action."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Button Styles",
-                        vec![
-                            single_example(
-                                "Default",
-                                Button::new("default", "Default").into_any_element(),
-                            ),
-                            single_example(
-                                "Filled",
-                                Button::new("filled", "Filled")
-                                    .style(ButtonStyle::Filled)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Subtle",
-                                Button::new("outline", "Subtle")
-                                    .style(ButtonStyle::Subtle)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Tinted",
-                                Button::new("tinted_accent_style", "Accent")
-                                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Transparent",
-                                Button::new("transparent", "Transparent")
-                                    .style(ButtonStyle::Transparent)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Tint Styles",
-                        vec![
-                            single_example(
-                                "Accent",
-                                Button::new("tinted_accent", "Accent")
-                                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Error",
-                                Button::new("tinted_negative", "Error")
-                                    .style(ButtonStyle::Tinted(TintColor::Error))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Warning",
-                                Button::new("tinted_warning", "Warning")
-                                    .style(ButtonStyle::Tinted(TintColor::Warning))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Success",
-                                Button::new("tinted_positive", "Success")
-                                    .style(ButtonStyle::Tinted(TintColor::Success))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Special States",
-                        vec![
-                            single_example(
-                                "Default",
-                                Button::new("default_state", "Default").into_any_element(),
-                            ),
-                            single_example(
-                                "Disabled",
-                                Button::new("disabled", "Disabled")
-                                    .disabled(true)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Selected",
-                                Button::new("selected", "Selected")
-                                    .toggle_state(true)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Buttons with Icons",
-                        vec![
-                            single_example(
-                                "Start Icon",
-                                Button::new("icon_start", "Start Icon")
-                                    .start_icon(Icon::new(IconName::Check))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "End Icon",
-                                Button::new("icon_end", "End Icon")
-                                    .end_icon(Icon::new(IconName::Check))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Both Icons",
-                                Button::new("both_icons", "Both Icons")
-                                    .start_icon(Icon::new(IconName::Check))
-                                    .end_icon(Icon::new(IconName::ChevronDown))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Icon Color",
-                                Button::new("icon_color", "Icon Color")
-                                    .start_icon(Icon::new(IconName::Check).color(Color::Accent))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Button Styles",
+                    vec![
+                        single_example(
+                            "Default",
+                            Button::new("default", "Default").into_any_element(),
+                        ),
+                        single_example(
+                            "Filled",
+                            Button::new("filled", "Filled")
+                                .style(ButtonStyle::Filled)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Subtle",
+                            Button::new("outline", "Subtle")
+                                .style(ButtonStyle::Subtle)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Tinted",
+                            Button::new("tinted_accent_style", "Accent")
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Transparent",
+                            Button::new("transparent", "Transparent")
+                                .style(ButtonStyle::Transparent)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Tint Styles",
+                    vec![
+                        single_example(
+                            "Accent",
+                            Button::new("tinted_accent", "Accent")
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Error",
+                            Button::new("tinted_negative", "Error")
+                                .style(ButtonStyle::Tinted(TintColor::Error))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Warning",
+                            Button::new("tinted_warning", "Warning")
+                                .style(ButtonStyle::Tinted(TintColor::Warning))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Success",
+                            Button::new("tinted_positive", "Success")
+                                .style(ButtonStyle::Tinted(TintColor::Success))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Special States",
+                    vec![
+                        single_example(
+                            "Default",
+                            Button::new("default_state", "Default").into_any_element(),
+                        ),
+                        single_example(
+                            "Disabled",
+                            Button::new("disabled", "Disabled")
+                                .disabled(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            Button::new("selected", "Selected")
+                                .toggle_state(true)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Buttons with Icons",
+                    vec![
+                        single_example(
+                            "Start Icon",
+                            Button::new("icon_start", "Start Icon")
+                                .start_icon(Icon::new(IconName::Check))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "End Icon",
+                            Button::new("icon_end", "End Icon")
+                                .end_icon(Icon::new(IconName::Check))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Both Icons",
+                            Button::new("both_icons", "Both Icons")
+                                .start_icon(Icon::new(IconName::Check))
+                                .end_icon(Icon::new(IconName::ChevronDown))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Icon Color",
+                            Button::new("icon_color", "Icon Color")
+                                .start_icon(Icon::new(IconName::Check).color(Color::Accent))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

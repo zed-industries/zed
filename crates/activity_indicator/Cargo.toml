@@ -11,6 +11,10 @@ workspace = true
 [lib]
 path = "src/activity_indicator.rs"
 doctest = false
+test = false
+
+[features]
+test-support = []
 
 [dependencies]
 anyhow.workspace = true

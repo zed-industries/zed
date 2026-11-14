@@ -1,0 +1,606 @@
+//! The editor-backed implementation of [`picker::PreviewBackend`].
+
+use std::sync::Arc;
+
+use gpui::{
+    AnyElement, App, AppContext as _, Context, Entity, IntoElement, Pixels, StyledText,
+    Subscription, Task, Window, px,
+};
+use language::{Bias, Buffer, HighlightedText, HighlightedTextBuilder, ToPoint};
+use picker::{MatchLocation, PreviewBackend, PreviewLayout, PreviewSource, PreviewUpdate};
+use project::{Project, ProjectPath, Symbol, Worktree};
+use rope::Point;
+use settings::Settings;
+use ui::{ActiveTheme, Color, div, prelude::*, v_flex};
+use util::ResultExt as _;
+use util::rel_path::RelPath;
+
+use editor::{Editor, EditorSettings, RowHighlightOptions, display_map::HighlightKey};
+use multi_buffer::{
+    Anchor, Event as MultiBufferEvent, MultiBuffer, MultiBufferOffset, ToPoint as _,
+};
+
+pub fn editor_preview(
+    project: Entity<Project>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Arc<dyn PreviewBackend> {
+    Arc::new(EditorPreviewHandle(
+        cx.new(|cx| EditorPreview::new(project, window, cx)),
+    ))
+}
+
+struct EditorPreviewHandle(Entity<EditorPreview>);
+
+impl PreviewBackend for EditorPreviewHandle {
+    fn update(&self, update: PreviewUpdate, window: &mut Window, cx: &mut App) {
+        self.0
+            .update(cx, |content, cx| content.update(update, window, cx));
+    }
+
+    fn render(&self, layout: PreviewLayout, cx: &mut App) -> AnyElement {
+        self.0.update(cx, |content, cx| {
+            content.render(layout, cx).into_any_element()
+        })
+    }
+
+    fn adjust_to_new_size(&self, window: &mut Window, cx: &mut App) {
+        self.0
+            .update(cx, |content, cx| content.scroll_to_focus_match(window, cx));
+    }
+
+    fn clear(&self, cx: &mut App) {
+        self.0.update(cx, |content, _| content.clear());
+    }
+}
+
+struct SearchMatchLineHighlight;
+
+struct EditorPreview {
+    project: Entity<Project>,
+    current_path: Option<Arc<RelPath>>,
+    _worktree: Option<Entity<Worktree>>,
+    /// When set show a text message instead of a preview
+    message: Option<HighlightedText>,
+    preview_editor: Entity<Editor>,
+    // An empty-EOF match should keep highlighting one row even after it gains text.
+    single_row_highlight_anchor: Option<Anchor>,
+    /// Store the load preview task so we have only one at the time
+    pending_update: Task<()>,
+    _multibuffer_subscription: Subscription,
+}
+
+impl EditorPreview {
+    fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let preview_editor = cx.new(|cx: &mut Context<Editor>| {
+            let capability = language::Capability::ReadWrite; // Later narrowed per buffer
+            let multi_buffer = cx.new(|_| MultiBuffer::without_headers(capability));
+            let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
+            let editor_settings = EditorSettings::get_global(cx).clone();
+
+            // We want editing to happen in the multibuffer not in the modal. The editor acts
+            // as one big <send to multibuffer> button.
+            editor.set_read_only(true);
+            editor.set_input_enabled(false);
+            editor.scroll_manager.set_forbid_vertical_scroll(true);
+            editor.disable_scrollbars_and_minimap(window, cx);
+            editor.disable_inline_diagnostics();
+            editor.disable_diagnostics(cx);
+            editor.disable_expand_excerpt_buttons(cx);
+            editor.disable_mouse_wheel_zoom();
+            editor.set_show_gutter(editor_settings.gutter.line_numbers, cx); // needed for line numbers
+            editor.set_show_line_numbers(editor_settings.gutter.line_numbers, cx);
+            editor.set_show_breakpoints(false, cx);
+            editor.set_show_bookmarks(false, cx);
+            editor.set_show_code_actions(false, cx);
+            editor.set_show_runnables(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
+            editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
+            editor.set_show_cursor_when_unfocused(true, cx);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+            editor
+        });
+
+        let multi_buffer = preview_editor.read(cx).buffer().clone();
+        let multibuffer_subscription = cx.subscribe(&multi_buffer, |this, _, event, cx| {
+            if let MultiBufferEvent::Edited { .. } = event {
+                this.refresh_single_row_highlight(cx);
+            }
+        });
+
+        let mut this = Self {
+            project,
+            preview_editor,
+            current_path: None,
+            _worktree: None,
+            message: None,
+            single_row_highlight_anchor: None,
+            pending_update: Task::ready(()),
+            _multibuffer_subscription: multibuffer_subscription,
+        };
+        this.clear(); // picker starts with no results.
+        this
+    }
+
+    fn clear(&mut self) {
+        self.pending_update = Task::ready(());
+        self.single_row_highlight_anchor = None;
+        self._worktree = None;
+        let mut message = HighlightedTextBuilder::default();
+        message.push_plain("No results to preview");
+        self.message = Some(message.build());
+    }
+
+    fn update(&mut self, update: PreviewUpdate, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_update = Task::ready(());
+        self.single_row_highlight_anchor = None;
+        let PreviewUpdate {
+            source,
+            match_location: highlight,
+        } = update;
+        if !matches!(&source, PreviewSource::Path(_)) {
+            self._worktree = None;
+        }
+
+        match source {
+            PreviewSource::Path(abs_path) => {
+                self.update_from_path(abs_path, highlight, window, cx);
+            }
+            PreviewSource::Buffer(buffer) => {
+                self.update_from_buffer(buffer, highlight, window, cx);
+                cx.notify();
+            }
+            PreviewSource::Symbol(symbol) => {
+                self.update_from_symbol(symbol, window, cx);
+            }
+            PreviewSource::Message(message) => {
+                self.message = Some(message);
+                cx.notify();
+            }
+        }
+    }
+
+    fn update_from_path(
+        &mut self,
+        abs_path: std::path::PathBuf,
+        highlight: Option<MatchLocation>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let worktree_task = self.project.update(cx, |project, cx| {
+            project.find_or_create_worktree(&abs_path, false, cx)
+        });
+
+        self.pending_update = cx.spawn_in(window, async move |preview, cx| {
+            let result = async {
+                let (worktree, path) = worktree_task.await?;
+                preview
+                    .update(cx, |preview, cx| {
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path,
+                        };
+                        preview._worktree = Some(worktree);
+                        preview.project.update(cx, |project, cx| {
+                            if let Some(buffer) = project.get_open_buffer(&project_path, cx) {
+                                Task::ready(Ok(buffer))
+                            } else {
+                                project.open_buffer(project_path, cx)
+                            }
+                        })
+                    })?
+                    .await
+            }
+            .await;
+            preview
+                .update_in(cx, |preview, window, cx| {
+                    match result {
+                        Ok(buffer) => preview.update_from_buffer(buffer, highlight, window, cx),
+                        Err(error) => {
+                            let mut message = HighlightedTextBuilder::default();
+                            message.push_plain(error.root_cause().to_string());
+                            preview.message = Some(message.build());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+        });
+    }
+
+    fn update_from_symbol(&mut self, symbol: Symbol, window: &mut Window, cx: &mut Context<Self>) {
+        let open_task = self.project.update(cx, |project, cx| {
+            project.open_buffer_for_symbol(&symbol, cx)
+        });
+
+        self.pending_update = cx.spawn_in(window, async move |this, cx| {
+            let Some(buffer) = open_task.await.log_err() else {
+                return;
+            };
+            this.update_in(cx, |this, window, cx| {
+                let snapshot = buffer.read(cx).text_snapshot();
+                let start = snapshot.clip_point_utf16(symbol.range.start, Bias::Left);
+                let end = snapshot.clip_point_utf16(symbol.range.end, Bias::Left);
+                let highlight = MatchLocation {
+                    anchor_range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                    range: snapshot.point_utf16_to_offset(start)
+                        ..snapshot.point_utf16_to_offset(end),
+                };
+                this.update_from_buffer(buffer, Some(highlight), window, cx);
+                cx.notify();
+            })
+            .ok();
+        });
+    }
+
+    fn update_from_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        highlight: Option<MatchLocation>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.message = None; // show the preview editor
+        self.current_path = buffer.read(cx).file().map(|file| file.path().clone());
+
+        const MIN_LINE_HEIGHT_PX: Pixels = px(6.0);
+        const MARGIN: u32 = 2; // scrolling can offset things;
+        let max_visible_rows =
+            (window.viewport_size().height / MIN_LINE_HEIGHT_PX).ceil() as u32 + MARGIN;
+
+        self.single_row_highlight_anchor = self.preview_editor.update(cx, |editor, cx| {
+            let snapshot = buffer.read(cx).text_snapshot();
+            let focus_row = highlight
+                .as_ref()
+                .map(|highlight| highlight.anchor_range.start.to_point(&snapshot).row)
+                .unwrap_or_default();
+            let highlight_empty_last_line = highlight.as_ref().is_some_and(|highlight| {
+                let max_point = snapshot.max_point();
+                max_point.column == 0
+                    && highlight.anchor_range.start.to_point(&snapshot) == max_point
+                    && highlight.anchor_range.end.to_point(&snapshot) == max_point
+            });
+
+            let multi_buffer = editor.buffer().clone();
+            multi_buffer.update(cx, |multi_buffer, cx| {
+                multi_buffer.clear(cx);
+                multi_buffer.set_excerpts_for_buffer(
+                    buffer,
+                    [Point::new(focus_row, 0)..Point::new(focus_row, 0)],
+                    max_visible_rows,
+                    cx,
+                );
+            });
+
+            editor.clear_row_highlights::<SearchMatchLineHighlight>();
+            editor.clear_background_highlights(HighlightKey::PickerPreview, cx);
+
+            let highlight = highlight?;
+
+            let multibuffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+            let range = multibuffer_snapshot
+                .anchor_in_excerpt(highlight.anchor_range.start)
+                .zip(multibuffer_snapshot.anchor_in_excerpt(highlight.anchor_range.end))
+                .map(|(start, end)| start..end)?;
+            let single_row_highlight_anchor = highlight_empty_last_line.then_some(range.start);
+
+            if !highlight_empty_last_line {
+                editor.highlight_rows::<SearchMatchLineHighlight>(
+                    range.clone(),
+                    |cx| cx.theme().colors().editor_active_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+            }
+
+            editor.highlight_background(
+                HighlightKey::PickerPreview,
+                &[range],
+                |_, theme| theme.colors().search_match_background,
+                cx,
+            );
+            single_row_highlight_anchor
+        });
+        self.refresh_single_row_highlight(cx);
+        self.scroll_to_focus_match(window, cx);
+    }
+
+    fn refresh_single_row_highlight(&self, cx: &mut Context<Self>) {
+        let Some(anchor) = self.single_row_highlight_anchor else {
+            return;
+        };
+
+        self.preview_editor.update(cx, |editor, cx| {
+            editor.clear_row_highlights::<SearchMatchLineHighlight>();
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            if snapshot.can_resolve(&anchor) {
+                let row = anchor.to_point(&snapshot).row;
+                let start = snapshot.anchor_before(Point::new(row, 0));
+                let max_point = snapshot.max_point();
+                let end = if row < max_point.row {
+                    snapshot.anchor_before(Point::new(row + 1, 0))
+                } else if max_point.column == 0 {
+                    // A zero-column endpoint excludes its row unless it is Max.
+                    Anchor::Max
+                } else {
+                    snapshot.anchor_before(max_point)
+                };
+
+                editor.highlight_rows::<SearchMatchLineHighlight>(
+                    start..end,
+                    |cx| cx.theme().colors().editor_active_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+            }
+            cx.notify();
+        });
+    }
+
+    /// Keep the scroll as far left as possible while showing the match.
+    /// Vertically center the match as much as possible
+    fn scroll_to_focus_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview_editor.update(cx, |editor, cx| {
+            let display_snapshot = editor.display_snapshot(cx);
+            let buffer_snapshot = display_snapshot.buffer_snapshot();
+            let search_range = buffer_snapshot.anchor_before(MultiBufferOffset(0))
+                ..buffer_snapshot.anchor_after(buffer_snapshot.len());
+
+            // There is at most one highlighted match in the preview, so take the
+            // first background highlight range as the match to focus.
+            let Some((range, _)) = editor
+                .background_highlights_in_range(search_range, &display_snapshot, cx.theme())
+                .into_iter()
+                .next()
+            else {
+                return;
+            };
+
+            let target_row = range.start.row().0 as f64;
+            let centered_y = editor
+                .visible_line_count()
+                .map_or(target_row, |visible_lines| {
+                    (target_row - (visible_lines - 1.) / 2.).max(0.)
+                });
+
+            let start_column = range.start.column() as f64;
+            let end_column = range.end.column() as f64;
+            let centered_x = editor.visible_column_count().map_or(0., |visible_columns| {
+                let min_x_for_end = (end_column - visible_columns + 1.).max(0.);
+                min_x_for_end.min(start_column)
+            });
+
+            editor.scroll_manager.set_forbid_vertical_scroll(false);
+            editor.set_scroll_position(gpui::Point::new(centered_x, centered_y), window, cx);
+            editor.scroll_manager.set_forbid_vertical_scroll(true);
+        })
+    }
+
+    fn render(&self, layout: PreviewLayout, cx: &App) -> impl IntoElement {
+        match layout {
+            PreviewLayout::Below => self.render_preview_below(cx).into_any_element(),
+            PreviewLayout::Right => self.render_preview_right(cx).into_any_element(),
+            PreviewLayout::Hidden => gpui::Empty.into_any_element(),
+        }
+    }
+
+    fn render_preview_right(&self, cx: &App) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .rounded_t_md()
+            .rounded_b_md()
+            .child(self.render_message_or_editor(cx))
+    }
+
+    fn render_preview_below(&self, cx: &App) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .rounded_b_md()
+            .child(self.render_message_or_editor(cx))
+    }
+
+    fn render_message_or_editor(&self, cx: &App) -> impl IntoElement {
+        if let Some(message) = &self.message {
+            self.render_message(message, cx).into_any_element()
+        } else {
+            div()
+                .flex_1()
+                .overflow_hidden()
+                .child(self.occluded_editor())
+                .into_any_element()
+        }
+    }
+
+    fn render_message(&self, message: &HighlightedText, cx: &App) -> impl IntoElement {
+        // `with_highlights` inherits the container's text style (set below),
+        // while keeping the message's own highlights (e.g. the file path in
+        // the file finder's "Create new file" entry).
+        let content = StyledText::new(message.text.clone())
+            .with_highlights(message.highlights.iter().cloned())
+            .into_any_element();
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .font_ui(cx)
+            .text_ui(cx)
+            .text_color(Color::Muted.color(cx))
+            .child(content)
+    }
+
+    fn occluded_editor(&self) -> impl IntoElement {
+        div()
+            .relative()
+            .size_full()
+            .child(self.preview_editor.clone())
+            .child(
+                div()
+                    .id("picker-preview-editor")
+                    .absolute()
+                    .inset_0()
+                    .occlude(),
+            )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::display_map::DisplayRow;
+    use gpui::{TestAppContext, VisualTestContext};
+    use std::ops::Range;
+    use workspace::AppState;
+
+    async fn init_preview(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<EditorPreview>,
+        Entity<Buffer>,
+        &mut VisualTestContext,
+    ) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            app_state
+        });
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let buffer = cx.new(|cx| Buffer::local("header\n", cx));
+        let cx = cx.add_empty_window();
+        let preview = cx.update(|window, cx| cx.new(|cx| EditorPreview::new(project, window, cx)));
+        (preview, buffer, cx)
+    }
+
+    fn show_match(
+        preview: &Entity<EditorPreview>,
+        buffer: &Entity<Buffer>,
+        range: Range<Point>,
+        cx: &mut VisualTestContext,
+    ) {
+        let location = buffer.read_with(cx, |buffer, _| {
+            let snapshot = buffer.text_snapshot();
+            // The bookmark picker uses left-biased endpoints, including at EOF.
+            let start = snapshot.anchor_before(range.start);
+            let end = snapshot.anchor_before(range.end);
+            MatchLocation {
+                anchor_range: start..end,
+                range: snapshot.offset_for_anchor(&start)..snapshot.offset_for_anchor(&end),
+            }
+        });
+        preview.update_in(cx, |preview, window, cx| {
+            preview.update(
+                PreviewUpdate::from_buffer(buffer.clone(), location),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+    }
+
+    fn append_text(buffer: &Entity<Buffer>, text: &str, cx: &mut VisualTestContext) {
+        buffer.update(cx, |buffer, cx| {
+            let end = buffer.len();
+            buffer.edit([(end..end, text)], None, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn highlighted_rows(
+        preview: &Entity<EditorPreview>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<DisplayRow> {
+        let editor = preview.read_with(cx, |preview, _| preview.preview_editor.clone());
+        editor.update_in(cx, |editor, window, cx| {
+            editor
+                .highlighted_display_rows(window, cx)
+                .into_keys()
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_preview_highlights_empty_eof_row(cx: &mut TestAppContext) {
+        let (preview, buffer, cx) = init_preview(cx).await;
+        show_match(&preview, &buffer, Point::new(1, 0)..Point::new(1, 0), cx);
+
+        assert_eq!(
+            highlighted_rows(&preview, cx),
+            vec![DisplayRow(1)],
+            "a match on the empty EOF row should highlight that row",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_preview_empty_eof_highlight_stays_on_one_row_after_edits(
+        cx: &mut TestAppContext,
+    ) {
+        let (preview, buffer, cx) = init_preview(cx).await;
+        show_match(&preview, &buffer, Point::new(1, 0)..Point::new(1, 0), cx);
+
+        append_text(&buffer, "one\ntwo\n", cx);
+        assert_eq!(
+            highlighted_rows(&preview, cx),
+            vec![DisplayRow(1)],
+            "appending text without updating the preview must not extend the row highlight",
+        );
+
+        append_text(&buffer, "three\n", cx);
+        assert_eq!(highlighted_rows(&preview, cx), vec![DisplayRow(1)]);
+
+        buffer.update(cx, |buffer, cx| {
+            let end = buffer.len();
+            buffer.edit([("header\n".len()..end, "")], None, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(highlighted_rows(&preview, cx), vec![DisplayRow(1)]);
+
+        append_text(&buffer, "last", cx);
+        assert_eq!(highlighted_rows(&preview, cx), vec![DisplayRow(1)]);
+    }
+
+    #[gpui::test]
+    async fn test_preview_ordinary_match_replaces_single_row_highlight(cx: &mut TestAppContext) {
+        let (preview, buffer, cx) = init_preview(cx).await;
+        show_match(&preview, &buffer, Point::new(1, 0)..Point::new(1, 0), cx);
+        show_match(&preview, &buffer, Point::new(0, 0)..Point::new(0, 6), cx);
+        assert_eq!(highlighted_rows(&preview, cx), vec![DisplayRow(0)]);
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(3..3, "\n")], None, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            highlighted_rows(&preview, cx),
+            vec![DisplayRow(0), DisplayRow(1)],
+            "an ordinary match should retain its range semantics after switching from an EOF match",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_preview_clear_stops_single_row_highlight_updates(cx: &mut TestAppContext) {
+        let (preview, buffer, cx) = init_preview(cx).await;
+        show_match(&preview, &buffer, Point::new(1, 0)..Point::new(1, 0), cx);
+        let editor = preview.read_with(cx, |preview, _| preview.preview_editor.clone());
+        let ranges_before_clear = editor.read_with(cx, |editor, cx| {
+            editor
+                .highlighted_rows::<SearchMatchLineHighlight>(cx)
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>()
+        });
+
+        preview.update(cx, |preview, _| preview.clear());
+        append_text(&buffer, "one\ntwo\n", cx);
+        assert!(preview.read_with(cx, |preview, _| preview.message.is_some()));
+
+        // Clearing hides the editor rather than removing its highlights. Subsequent edits
+        // must not recompute the hidden editor's single-row highlight.
+        let ranges_after_edit = editor.read_with(cx, |editor, cx| {
+            editor
+                .highlighted_rows::<SearchMatchLineHighlight>(cx)
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(ranges_after_edit, ranges_before_clear);
+    }
+}

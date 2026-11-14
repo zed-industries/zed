@@ -7,7 +7,6 @@ use crate::{
     },
 };
 use collections::{FxHashMap, FxHashSet};
-use stacksafe::{StackSafe, stacksafe};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
@@ -17,16 +16,14 @@ use taffy::{
     tree::NodeId,
 };
 
-type NodeMeasureFn = StackSafe<
-    Box<
-        dyn FnMut(
-            Size<Option<Pixels>>,
-            Size<AvailableSpace>,
-            &mut Window,
-            &mut App,
-        ) -> Size<Pixels>,
-    >,
->;
+#[cfg(feature = "stacker")]
+type StackSafe<T> = stacksafe::StackSafe<T>;
+#[cfg(not(feature = "stacker"))]
+type StackSafe<T> = T;
+
+type MeasureFn =
+    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>;
+type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
 
 struct NodeContext {
     measure: NodeMeasureFn,
@@ -99,16 +96,44 @@ impl TaffyLayoutEngine {
         + 'static,
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
+        let measure = Box::new(measure) as Box<MeasureFn>;
+        #[cfg(feature = "stacker")]
+        let measure = StackSafe::new(measure);
 
         self.taffy
-            .new_leaf_with_context(
-                taffy_style,
-                NodeContext {
-                    measure: StackSafe::new(Box::new(measure)),
-                },
-            )
+            .new_leaf_with_context(taffy_style, NodeContext { measure })
             .expect(EXPECT_MESSAGE)
             .into()
+    }
+
+    /// Treats any `auto` dimension of the given node's style as filling `size`.
+    ///
+    /// This is applied to window roots before layout so they behave like the
+    /// root element on the web, which stretches to fill the initial containing
+    /// block (the viewport) unless given an explicit size. Explicitly styled
+    /// dimensions are preserved.
+    pub fn stretch_auto_size_to_fill(
+        &mut self,
+        id: LayoutId,
+        size: Size<Pixels>,
+        scale_factor: f32,
+    ) {
+        let style = self.taffy.style(id.0).expect(EXPECT_MESSAGE);
+        let stretch_width = style.size.width.is_auto();
+        let stretch_height = style.size.height.is_auto();
+        if !stretch_width && !stretch_height {
+            return;
+        }
+        let mut style = style.clone();
+        if stretch_width {
+            style.size.width =
+                taffy::style::Dimension::length(round_to_device_pixel(size.width.0, scale_factor));
+        }
+        if stretch_height {
+            style.size.height =
+                taffy::style::Dimension::length(round_to_device_pixel(size.height.0, scale_factor));
+        }
+        self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
     }
 
     // Used to understand performance
@@ -158,7 +183,7 @@ impl TaffyLayoutEngine {
         Ok(edges)
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     pub fn compute_layout(
         &mut self,
         id: LayoutId,
@@ -211,32 +236,43 @@ impl TaffyLayoutEngine {
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |known_dimensions, available_space, _id, node_context, _style| {
-                    let Some(node_context) = node_context else {
-                        return taffy::geometry::Size::default();
-                    };
+                |input, _id, node_context, style| {
+                    taffy::compute_leaf_layout(
+                        input,
+                        style,
+                        |_, _| 0.0,
+                        |known_dimensions, available_space| {
+                            let Some(node_context) = node_context else {
+                                return taffy::geometry::Size::default();
+                            };
 
-                    let known_dimensions = Size {
-                        width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
-                        height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
-                    };
+                            let known_dimensions = Size {
+                                width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
+                                height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
+                            };
 
-                    let available_space: Size<AvailableSpace> = available_space.into();
-                    let untransform = |ev: AvailableSpace| match ev {
-                        AvailableSpace::Definite(pixels) => {
-                            AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
-                        }
-                        AvailableSpace::MinContent => AvailableSpace::MinContent,
-                        AvailableSpace::MaxContent => AvailableSpace::MaxContent,
-                    };
-                    let available_space = size(
-                        untransform(available_space.width),
-                        untransform(available_space.height),
-                    );
+                            let available_space: Size<AvailableSpace> = available_space.into();
+                            let untransform = |ev: AvailableSpace| match ev {
+                                AvailableSpace::Definite(pixels) => {
+                                    AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
+                                }
+                                AvailableSpace::MinContent => AvailableSpace::MinContent,
+                                AvailableSpace::MaxContent => AvailableSpace::MaxContent,
+                            };
+                            let available_space = size(
+                                untransform(available_space.width),
+                                untransform(available_space.height),
+                            );
 
-                    let measured_size: Size<Pixels> =
-                        (node_context.measure)(known_dimensions, available_space, window, cx);
-                    snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
+                            let measured_size: Size<Pixels> = (node_context.measure)(
+                                known_dimensions,
+                                available_space,
+                                window,
+                                cx,
+                            );
+                            snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
+                        },
+                    )
                 },
             )
             .expect(EXPECT_MESSAGE);
@@ -430,21 +466,21 @@ impl ToTaffy<taffy::style::Style> for Style {
             unit.map(|template| {
                 match template.min_size {
                     // grid-template-*: repeat(<number>, minmax(0, 1fr));
-                    crate::TemplateColumnMinSize::Zero => {
+                    crate::GridTemplateMinSize::Zero => {
                         vec![repeat(
                             template.repeat,
                             vec![minmax(length(0.0_f32), fr(1.0_f32))],
                         )]
                     }
                     // grid-template-*: repeat(<number>, minmax(min-content, 1fr));
-                    crate::TemplateColumnMinSize::MinContent => {
+                    crate::GridTemplateMinSize::MinContent => {
                         vec![repeat(
                             template.repeat,
                             vec![minmax(min_content(), fr(1.0_f32))],
                         )]
                     }
                     // grid-template-*: repeat(<number>, minmax(0, max-content))
-                    crate::TemplateColumnMinSize::MaxContent => {
+                    crate::GridTemplateMinSize::MaxContent => {
                         vec![repeat(
                             template.repeat,
                             vec![minmax(length(0.0_f32), max_content())],
@@ -468,10 +504,10 @@ impl ToTaffy<taffy::style::Style> for Style {
             margin: self.margin.to_taffy(rem_size, scale_factor),
             padding: self.padding.to_taffy(rem_size, scale_factor),
             border: border_widths_to_taffy(&self.border_widths, rem_size, scale_factor),
-            align_items: self.align_items.map(|x| x.into()),
+            align_items: self.align_items.map(Into::into).unwrap_or_default(),
             align_self: self.align_self.map(|x| x.into()),
-            align_content: self.align_content.map(|x| x.into()),
-            justify_content: self.justify_content.map(|x| x.into()),
+            align_content: self.align_content.map(Into::into).unwrap_or_default(),
+            justify_content: self.justify_content.map(Into::into).unwrap_or_default(),
             gap: self.gap.to_taffy(rem_size, scale_factor),
             flex_direction: self.flex_direction.into(),
             flex_wrap: self.flex_wrap.into(),

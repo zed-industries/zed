@@ -425,6 +425,7 @@ impl Render for SystemWindowTabs {
         }
 
         h_flex()
+            .debug_selector(|| "system-window-tabs".into())
             .w_full()
             .h(Tab::container_height(cx))
             .bg(inactive_background_color)
@@ -484,7 +485,7 @@ impl Render for SystemWindowTabs {
                             .on_click(|_event, window, cx| {
                                 window.dispatch_action(
                                     Box::new(zed_actions::OpenRecent {
-                                        create_new_window: true,
+                                        create_new_window: Some(true),
                                     }),
                                     cx,
                                 );

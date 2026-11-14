@@ -367,7 +367,7 @@ pub async fn run_repair(
                     _ => None,
                 })
                 .collect::<Vec<_>>()
-                .join("")
+                .concat()
         }
         BatchProvider::Openai => {
             let client = if args.no_batch {
@@ -389,6 +389,7 @@ pub async fn run_repair(
                     content: Some(open_ai::MessageContent::Plain(teacher_response.clone())),
                     tool_calls: vec![],
                     reasoning_content: None,
+                    reasoning_details: None,
                 },
                 // Turn 3: Repair critique and instructions
                 open_ai::RequestMessage::User {
@@ -414,13 +415,13 @@ pub async fn run_repair(
                                     _ => None,
                                 })
                                 .collect::<Vec<_>>()
-                                .join(""),
+                                .concat(),
                         })
                     }
                     _ => None,
                 })
                 .collect::<Vec<_>>()
-                .join("")
+                .concat()
         }
     };
 
@@ -549,6 +550,9 @@ mod tests {
                 tags: Vec::new(),
                 reasoning: None,
                 uncommitted_diff: String::new(),
+                recently_opened_files: Vec::new(),
+                recently_viewed_files: Vec::new(),
+                uncommitted_diff_contains_edit_history: false,
                 cursor_path: Arc::from(Path::new("src/main.rs")),
                 cursor_position: "0:0".to_string(),
                 edit_history: String::new(),

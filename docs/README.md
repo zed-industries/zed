@@ -13,6 +13,17 @@ mdbook serve docs
 
 The first command dumps an action manifest to `crates/docs_preprocessor/actions.json`. Without it, the preprocessor cannot validate keybinding and action references in the docs and will report errors. You only need to re-run it when actions change.
 
+If you use Nix, the development shell provides a pinned `mdbook` (0.4.40) and a
+prebuilt docs preprocessor, so you can build the docs without installing anything
+or compiling the preprocessor on every run:
+
+```sh
+nix develop -c mdbook build docs
+```
+
+(When `actions.json` has not been generated, action/keybinding validation is
+skipped with a warning rather than failing the build.)
+
 It's important to note the version number above. For an unknown reason, as of 2025-04-23, running 0.4.48 will cause odd URL behavior that breaks things.
 
 Before committing, verify that the docs are formatted in the way Prettier expects with:
@@ -25,7 +36,7 @@ cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
 
 We have a custom mdBook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
 
-If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed_docs_preprocessor]` from the `book.toml`.
+If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed-docs-preprocessor]` from the `book.toml`.
 
 ## Images and videos
 
@@ -77,19 +88,7 @@ You can see how the actions and keybindings are templated in `crates/docs_prepro
 
 ## Consent Banner
 
-We pre-bundle the `c15t` package because the docs pipeline does not include a JS bundler. If you need to update `c15t` and rebuild the bundle, use:
-
-```
-mkdir c15t-bundle && cd c15t-bundle
-npm init -y
-npm install c15t@<version> esbuild
-echo "import { getOrCreateConsentRuntime } from 'c15t'; window.c15t = { getOrCreateConsentRuntime };" > entry.js
-npx esbuild entry.js --bundle --format=iife --minify --outfile=c15t@<version>.js
-cp c15t@<version>.js ../theme/c15t@<version>.js
-cd .. && rm -rf c15t-bundle
-```
-
-Replace `<version>` with the new version of `c15t` you are installing. Then update `book.toml` to reference the new bundle filename.
+The consent banner is the markup in `theme/index.hbs`, driven by `theme/analytics.js`. That script loads `c15t.js` from our Inth backend (`DOCS_CONSENT_IO_INSTANCE`) with c15t's stock UI turned off. Inth serves the c15t version our hosted backend runs, so there is no bundle to update in this repo. The banner only appears when `DOCS_CONSENT_IO_INSTANCE` is set.
 
 ### References
 
@@ -99,7 +98,7 @@ Replace `<version>` with the new version of `c15t` you are installing. Then upda
 
 ## Postprocessor
 
-A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, to add support for page-specific title and `meta` tag description values.
+A postprocessor is implemented as a sub-command of `docs-preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, to add support for page-specific title and `meta` tag description values.
 
 An example of the syntax can be found in `git.md`, as well as below:
 
@@ -129,7 +128,7 @@ If no front matter is provided, or if one or both keys aren't provided, the `tit
 ### Implementation details
 
 Unfortunately, mdBook does not support post-processing like it does pre-processing, and only supports defining one description to put in the `meta` tag per book rather than per file.
-So in order to apply post-processing (necessary to modify the HTML `head` tags) the global book description is set to a marker value `#description#` and the HTML renderer is replaced with a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front matter if there is one.
+So in order to apply post-processing (necessary to modify the HTML `head` tags) the global book description is set to a marker value `#description#` and the HTML renderer is replaced with a sub-command of `docs-preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front matter if there is one.
 
 ### Known limitations
 

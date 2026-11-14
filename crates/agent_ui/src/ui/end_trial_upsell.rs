@@ -103,13 +103,16 @@ impl Component for EndTrialUpsell {
         "End of Trial Upsell Banner"
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .child(EndTrialUpsell {
-                    dismiss_upsell: Arc::new(|_, _| {}),
-                })
-                .into_any_element(),
-        )
+    fn description() -> &'static str {
+        "A banner shown in the agent panel when a user's trial has ended, \
+        inviting them to upgrade to a paid plan to continue using the agent."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .child(EndTrialUpsell {
+                dismiss_upsell: Arc::new(|_, _| {}),
+            })
+            .into_any_element()
     }
 }

@@ -66,7 +66,7 @@ pub struct IconDefinition {
 }
 
 const FILE_STEMS_BY_ICON_KEY: &[(&str, &[&str])] = &[
-    ("docker", &["Containerfile", "Dockerfile"]),
+    ("docker", &["Containerfile", "Dockerfile", ".dockerignore"]),
     ("ruby", &["Podfile"]),
     ("heroku", &["Procfile"]),
 ];
@@ -80,6 +80,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
         ],
     ),
     ("backup", &["bak"]),
+    ("ballerina", &["bal"]),
     ("bicep", &["bicep"]),
     ("bun", &["lockb"]),
     ("c", &["c", "h"]),
@@ -229,8 +230,8 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
         "storage",
         &[
             "accdb", "csv", "dat", "db", "dbf", "dll", "fmp", "fp7", "frm", "gdb", "ib", "ldf",
-            "mdb", "mdf", "myd", "myi", "pdb", "RData", "rdata", "sav", "sdf", "sql", "sqlite",
-            "tsv",
+            "mdb", "mdf", "myd", "myi", "pdb", "psv", "RData", "rdata", "sav", "sdf", "sql",
+            "sqlite", "ssv", "tsv",
         ],
     ),
     (
@@ -263,6 +264,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "bash_logout",
             "bash_profile",
             "bashrc",
+            "brushrc",
             "fish",
             "nu",
             "profile",
@@ -312,6 +314,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
 const FILE_ICONS: &[(&str, &str)] = &[
     ("astro", "icons/file_icons/astro.svg"),
     ("audio", "icons/file_icons/audio.svg"),
+    ("ballerina", "icons/file_icons/ballerina.svg"),
     ("bicep", "icons/file_icons/file.svg"),
     ("bun", "icons/file_icons/bun.svg"),
     ("c", "icons/file_icons/c.svg"),

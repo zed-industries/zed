@@ -1,31 +1,28 @@
-use std::sync::Arc;
-
-use agent_settings::{AgentSettings, WindowLayout};
 use auto_update::{AutoUpdater, release_notes_url};
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
-use fs::Fs;
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TaskExt, Window, actions,
     prelude::*,
 };
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
-use notifications::status_toast::StatusToast;
+use project::DisableAiSettings;
 use release_channel::{AppVersion, ReleaseChannel};
 use semver::Version;
 use serde::Deserialize;
 use settings::Settings as _;
 use smol::io::AsyncReadExt;
-use ui::{AnnouncementToast, ListBulletItem, ParallelAgentsIllustration, prelude::*};
+use ui::{AnnouncementToast, DeltaIllustration, ListBulletItem, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{
-    FocusWorkspaceSidebar, Workspace,
+    Workspace,
     notifications::{
-        ErrorMessagePrompt, Notification, NotificationId, SuppressEvent, show_app_notification,
+        Notification, NotificationId, SuppressEvent, show_app_notification,
         simple_message_notification::MessageNotification,
     },
+    workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
-use zed_actions::{ShowUpdateNotification, assistant::FocusAgent};
+use zed_actions::ShowUpdateNotification;
 
 actions!(
     auto_update,
@@ -65,21 +62,28 @@ fn notify_release_notes_failed_to_show(
     _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    struct ViewReleaseNotesError;
-    workspace.show_notification(
-        NotificationId::unique::<ViewReleaseNotesError>(),
-        cx,
-        |cx| {
-            cx.new(move |cx| {
-                let url = release_notes_url(cx);
-                let mut prompt = ErrorMessagePrompt::new("Couldn't load release notes", cx);
-                if let Some(url) = url {
-                    prompt = prompt.with_link_button("View in Browser".to_string(), url);
-                }
-                prompt
-            })
-        },
-    );
+    let url = release_notes_url(cx);
+
+    struct ReleaseNotesError {
+        url: Option<String>,
+    }
+
+    impl WorkspaceError for ReleaseNotesError {
+        fn primary_message(&self) -> SharedString {
+            "Couldn't load release notes".into()
+        }
+        fn severity(&self) -> ErrorSeverity {
+            ErrorSeverity::Error
+        }
+        fn primary_action(&self) -> ErrorAction {
+            self.url
+                .clone()
+                .map(|url| ErrorAction::link("View in Browser", url))
+                .unwrap_or_else(ErrorAction::dismiss)
+        }
+    }
+
+    workspace.show_error(ReleaseNotesError { url }, cx);
 }
 
 fn view_release_notes_locally(
@@ -186,107 +190,41 @@ struct AnnouncementContent {
     description: SharedString,
     bullet_items: Vec<SharedString>,
     primary_action_label: SharedString,
-    primary_action_url: Option<SharedString>,
-    primary_action_callback: Option<Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>>,
-    secondary_action_url: Option<SharedString>,
-    on_dismiss: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
+    secondary_action_label: SharedString,
+    primary_action_url: SharedString,
+    secondary_action_url: SharedString,
 }
 
-struct ParallelAgentAnnouncement;
+struct DeltaAnnouncement;
 
-impl Dismissable for ParallelAgentAnnouncement {
-    const KEY: &'static str = "parallel-agent-announcement";
+impl Dismissable for DeltaAnnouncement {
+    const KEY: &'static str = "delta_announcement_dismissed";
 }
 
 fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementContent> {
-    let version_with_parallel_agents = match ReleaseChannel::global(cx) {
-        ReleaseChannel::Stable => Version::new(0, 233, 0),
-        ReleaseChannel::Dev | ReleaseChannel::Nightly | ReleaseChannel::Preview => {
-            Version::new(0, 232, 0)
-        }
-    };
-
-    if *version >= version_with_parallel_agents
-        && !ParallelAgentAnnouncement::dismissed(cx)
-        && !project::DisableAiSettings::get_global(cx).disable_ai
+    let version_with_delta = Version::new(1, 22, 0);
+    if *version < version_with_delta
+        || DisableAiSettings::get_global(cx).disable_ai
+        || DeltaAnnouncement::dismissed(cx)
     {
-        let fs = <dyn Fs>::global(cx);
-        Some(AnnouncementContent {
-            heading: "Introducing Parallel Agents".into(),
-            description: "Run multiple threads of your favorite agents simultaneously across projects in a new workspace layout, tailored for agentic workflows.".into(),
-            bullet_items: vec![
-                "Use your favorite agents in parallel".into(),
-                "Optionally isolate agents using worktrees".into(),
-                "Combine multiple projects in one window".into(),
-            ],
-            primary_action_label: "Try Agentic Layout".into(),
-            primary_action_url: None,
-            primary_action_callback: Some(Arc::new(move |window, cx| {
-                let get_layout = AgentSettings::get_layout(cx);
-                let already_agent_layout = matches!(get_layout, WindowLayout::Agent(_));
-
-                let update;
-                if !already_agent_layout {
-                    update = Some(AgentSettings::set_layout(
-                        WindowLayout::Agent(None),
-                        fs.clone(),
-                        cx,
-                    ));
-                } else {
-                    update = None;
-                }
-
-                let revert_fs = fs.clone();
-                window
-                    .spawn(cx, async move |cx| {
-                        if let Some(update) = update {
-                            update.await.ok();
-                        }
-
-                        cx.update(|window, cx| {
-                            if !already_agent_layout {
-                                if let Some(workspace) = Workspace::for_window(window, cx) {
-                                    let toast = StatusToast::new(
-                                        "You are in the new agentic layout!",
-                                        cx,
-                                        move |this, _cx| {
-                                            this.icon(
-                                                Icon::new(IconName::Check)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Success),
-                                            )
-                                            .action("Revert", move |_window, cx| {
-                                                let _ = AgentSettings::set_layout(
-                                                    get_layout.clone(),
-                                                    revert_fs.clone(),
-                                                    cx,
-                                                );
-                                            })
-                                            .auto_dismiss(false)
-                                            .dismiss_button(true)
-                                        },
-                                    );
-
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace.toggle_status_toast(toast, cx);
-                                    });
-                                }
-                            }
-
-                            window.dispatch_action(Box::new(FocusWorkspaceSidebar), cx);
-                            window.dispatch_action(Box::new(FocusAgent), cx);
-                        })
-                    })
-                    .detach();
-            })),
-            on_dismiss: Some(Arc::new(|cx| {
-                ParallelAgentAnnouncement::set_dismissed(true, cx)
-            })),
-            secondary_action_url: Some("https://zed.dev/blog/".into()),
-        })
-    } else {
-        None
+        return None;
     }
+
+    Some(AnnouncementContent {
+        heading: "Introducing Delta".into(),
+        description:
+            "Built on DeltaDB, so your threads and code stay in sync across machines and teammates."
+                .into(),
+        bullet_items: vec![
+            "Made by the Zed team, with the same quality and performance".into(),
+            "Work with teammates and agents in the same thread, live or later".into(),
+            "Pick up your thread on the web or your phone, without committing or pushing".into(),
+        ],
+        primary_action_label: "Try Delta".into(),
+        secondary_action_label: "Learn More".into(),
+        primary_action_url: "https://delta.dev/".into(),
+        secondary_action_url: "https://delta.dev/docs/getting-started".into(),
+    })
 }
 
 struct AnnouncementToastNotification {
@@ -304,9 +242,7 @@ impl AnnouncementToastNotification {
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
-        if let Some(on_dismiss) = &self.content.on_dismiss {
-            on_dismiss(cx);
-        }
+        DeltaAnnouncement::set_dismissed(true, cx);
     }
 }
 
@@ -321,9 +257,9 @@ impl EventEmitter<SuppressEvent> for AnnouncementToastNotification {}
 impl Notification for AnnouncementToastNotification {}
 
 impl Render for AnnouncementToastNotification {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        AnnouncementToast::new()
-            .illustration(ParallelAgentsIllustration::new())
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let toast = AnnouncementToast::new()
+            .illustration(DeltaIllustration::new())
             .heading(self.content.heading.clone())
             .description(self.content.description.clone())
             .bullet_items(
@@ -333,33 +269,33 @@ impl Render for AnnouncementToastNotification {
                     .map(|item| ListBulletItem::new(item.clone())),
             )
             .primary_action_label(self.content.primary_action_label.clone())
+            .secondary_action_label(self.content.secondary_action_label.clone())
             .primary_on_click(cx.listener({
                 let url = self.content.primary_action_url.clone();
-                let callback = self.content.primary_action_callback.clone();
-                move |this, _, window, cx| {
-                    telemetry::event!("Parallel Agent Announcement Main Click");
-                    if let Some(callback) = &callback {
-                        callback(window, cx);
-                    }
-                    if let Some(url) = &url {
-                        cx.open_url(url);
-                    }
+                move |this, _, _window, cx| {
+                    telemetry::event!("Delta Announcement Main Click");
+                    cx.open_url(&url);
                     this.dismiss(cx);
                 }
             }))
             .secondary_on_click(cx.listener({
                 let url = self.content.secondary_action_url.clone();
                 move |_, _, _window, cx| {
-                    telemetry::event!("Parallel Agent Announcement Secondary Click");
-                    if let Some(url) = &url {
-                        cx.open_url(url);
-                    }
+                    telemetry::event!("Delta Announcement Secondary Click");
+                    cx.open_url(&url);
                 }
             }))
             .dismiss_on_click(cx.listener(|this, _, _window, cx| {
-                telemetry::event!("Parallel Agent Announcement Dismiss");
+                telemetry::event!("Delta Announcement Dismiss");
                 this.dismiss(cx);
-            }))
+            }));
+
+        div()
+            .self_end()
+            .flex_none()
+            .w(rems_from_px(400_f32))
+            .max_w((window.viewport_size().width - window.rem_size() * 1.5).max(px(0.)))
+            .child(toast)
     }
 }
 

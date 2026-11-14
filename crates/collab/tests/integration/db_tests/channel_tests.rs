@@ -1,6 +1,6 @@
 use super::{assert_channel_tree_matches, channel_tree, new_test_user};
 use crate::test_both_dbs;
-use collab::db::{Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId};
+use collab::db::{Channel, ChannelId, ChannelRole, Database, RoomId};
 use rpc::{
     ConnectionId,
     proto::{self, reorder_channel},
@@ -10,8 +10,8 @@ use std::{collections::HashSet, sync::Arc};
 test_both_dbs!(test_channels, test_channels_postgres, test_channels_sqlite);
 
 async fn test_channels(db: &Arc<Database>) {
-    let a_id = new_test_user(db, "user1@example.com").await;
-    let b_id = new_test_user(db, "user2@example.com").await;
+    let a_id = new_test_user(db).await;
+    let b_id = new_test_user(db).await;
 
     let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
@@ -37,10 +37,7 @@ async fn test_channels(db: &Arc<Database>) {
         .unwrap();
 
     let replace_channel = db.get_channel(replace_id, a_id).await.unwrap();
-    let (members, _) = db
-        .get_channel_participant_details(&replace_channel, "", 10)
-        .await
-        .unwrap();
+    let members = db.get_channel_members(&replace_channel, 10).await.unwrap();
     let ids = members.into_iter().map(|m| m.user_id).collect::<Vec<_>>();
     assert_eq!(ids, &[a_id, b_id]);
 
@@ -121,8 +118,8 @@ test_both_dbs!(
 async fn test_joining_channels(db: &Arc<Database>) {
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
 
-    let user_1 = new_test_user(db, "user1@example.com").await;
-    let user_2 = new_test_user(db, "user2@example.com").await;
+    let user_1 = new_test_user(db).await;
+    let user_2 = new_test_user(db).await;
 
     let channel_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
 
@@ -152,9 +149,9 @@ test_both_dbs!(
 async fn test_channel_invites(db: &Arc<Database>) {
     db.create_server("test").await.unwrap();
 
-    let user_1 = new_test_user(db, "user1@example.com").await;
-    let user_2 = new_test_user(db, "user2@example.com").await;
-    let user_3 = new_test_user(db, "user3@example.com").await;
+    let user_1 = new_test_user(db).await;
+    let user_2 = new_test_user(db).await;
+    let user_3 = new_test_user(db).await;
 
     let channel_1_1_id = db.create_root_channel("channel_1", user_1).await.unwrap();
 
@@ -191,10 +188,7 @@ async fn test_channel_invites(db: &Arc<Database>) {
     assert_eq!(user_3_invites, &[channel_1_1_id]);
 
     let channel_1_1 = db.get_channel(channel_1_1_id, user_1).await.unwrap();
-    let (members, _) = db
-        .get_channel_participant_details(&channel_1_1, "", 100)
-        .await
-        .unwrap();
+    let members = db.get_channel_members(&channel_1_1, 100).await.unwrap();
     let mut members = members
         .into_iter()
         .map(proto::ChannelMember::from)
@@ -231,10 +225,7 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .unwrap();
 
     let channel_1_3 = db.get_channel(channel_1_3_id, user_1).await.unwrap();
-    let (members, _) = db
-        .get_channel_participant_details(&channel_1_3, "", 100)
-        .await
-        .unwrap();
+    let members = db.get_channel_members(&channel_1_3, 100).await.unwrap();
     let members = members
         .into_iter()
         .map(proto::ChannelMember::from)
@@ -270,33 +261,9 @@ test_both_dbs!(
 async fn test_channel_renames(db: &Arc<Database>) {
     db.create_server("test").await.unwrap();
 
-    let user_1 = db
-        .create_user(
-            "user1@example.com",
-            None,
-            false,
-            NewUserParams {
-                github_login: "user1".into(),
-                github_user_id: 5,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_1 = db.create_user(false).await.unwrap().user_id;
 
-    let user_2 = db
-        .create_user(
-            "user2@example.com",
-            None,
-            false,
-            NewUserParams {
-                github_login: "user2".into(),
-                github_user_id: 6,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_2 = db.create_user(false).await.unwrap().user_id;
 
     let zed_id = db.create_root_channel("zed", user_1).await.unwrap();
 
@@ -321,19 +288,7 @@ test_both_dbs!(
 );
 
 async fn test_db_channel_moving(db: &Arc<Database>) {
-    let a_id = db
-        .create_user(
-            "user1@example.com",
-            None,
-            false,
-            NewUserParams {
-                github_login: "user1".into(),
-                github_user_id: 5,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let a_id = db.create_user(false).await.unwrap().user_id;
 
     let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
@@ -411,33 +366,9 @@ test_both_dbs!(
 );
 
 async fn test_channel_reordering(db: &Arc<Database>) {
-    let admin_id = db
-        .create_user(
-            "admin@example.com",
-            None,
-            false,
-            NewUserParams {
-                github_login: "admin".into(),
-                github_user_id: 1,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let admin_id = db.create_user(false).await.unwrap().user_id;
 
-    let user_id = db
-        .create_user(
-            "user@example.com",
-            None,
-            false,
-            NewUserParams {
-                github_login: "user".into(),
-                github_user_id: 2,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_id = db.create_user(false).await.unwrap().user_id;
 
     // Create a root channel with some sub-channels
     let root_id = db.create_root_channel("root", admin_id).await.unwrap();
@@ -606,19 +537,7 @@ test_both_dbs!(
 );
 
 async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
-    let user_id = db
-        .create_user(
-            "user1@example.com",
-            None,
-            false,
-            NewUserParams {
-                github_login: "user1".into(),
-                github_user_id: 5,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_id = db.create_user(false).await.unwrap().user_id;
 
     let zed_id = db.create_root_channel("zed", user_id).await.unwrap();
 
@@ -678,9 +597,9 @@ test_both_dbs!(
 );
 
 async fn test_user_is_channel_participant(db: &Arc<Database>) {
-    let admin = new_test_user(db, "admin@example.com").await;
-    let member = new_test_user(db, "member@example.com").await;
-    let guest = new_test_user(db, "guest@example.com").await;
+    let admin = new_test_user(db).await;
+    let member = new_test_user(db).await;
+    let guest = new_test_user(db).await;
 
     let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
     let internal_channel_id = db
@@ -735,10 +654,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .unwrap();
 
     let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
-    let (members, _) = db
-        .get_channel_participant_details(&public_channel, "", 100)
-        .await
-        .unwrap();
+    let members = db.get_channel_members(&public_channel, 100).await.unwrap();
     let mut members = members
         .into_iter()
         .map(proto::ChannelMember::from)
@@ -814,10 +730,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     );
 
     let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
-    let (members, _) = db
-        .get_channel_participant_details(&public_channel, "", 100)
-        .await
-        .unwrap();
+    let members = db.get_channel_members(&public_channel, 100).await.unwrap();
     let mut members = members
         .into_iter()
         .map(proto::ChannelMember::from)
@@ -854,10 +767,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
 
     // currently people invited to parent channels are not shown here
     let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
-    let (members, _) = db
-        .get_channel_participant_details(&public_channel, "", 100)
-        .await
-        .unwrap();
+    let members = db.get_channel_members(&public_channel, 100).await.unwrap();
     let mut members = members
         .into_iter()
         .map(proto::ChannelMember::from)
@@ -927,10 +837,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .unwrap();
 
     let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
-    let (members, _) = db
-        .get_channel_participant_details(&public_channel, "", 100)
-        .await
-        .unwrap();
+    let members = db.get_channel_members(&public_channel, 100).await.unwrap();
     let mut members = members
         .into_iter()
         .map(proto::ChannelMember::from)
@@ -1005,8 +912,8 @@ test_both_dbs!(
 async fn test_delete_channel_with_active_call(db: &Arc<Database>) {
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
 
-    let user_1 = new_test_user(db, "user1@example.com").await;
-    let user_2 = new_test_user(db, "user2@example.com").await;
+    let user_1 = new_test_user(db).await;
+    let user_2 = new_test_user(db).await;
 
     let parent_channel_id = db
         .create_root_channel("parent_channel", user_1)

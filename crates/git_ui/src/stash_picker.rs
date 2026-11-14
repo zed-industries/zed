@@ -1,3 +1,4 @@
+use crate::git_timestamp::format_git_timestamp;
 use fuzzy::StringMatchCandidate;
 
 use git::stash::StashEntry;
@@ -8,15 +9,16 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::git_store::{Repository, RepositoryEvent};
+use settings::Settings;
 use std::sync::Arc;
-use time::{OffsetDateTime, UtcOffset};
+use time::OffsetDateTime;
 use time_format;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::commit_view::CommitView;
+use crate::commit_view::{CommitView, CommitViewOptions};
 use crate::stash_picker;
 
 actions!(
@@ -128,8 +130,9 @@ impl StashList {
         let delegate = StashListDelegate::new(repository, workspace, window, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
+                .initial_width(width)
                 .show_scrollbar(true)
-                .modal(!embedded)
+                .when(embedded, |picker| picker.embedded())
         });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
@@ -228,8 +231,6 @@ impl Render for StashList {
 struct StashEntryMatch {
     entry: StashEntry,
     positions: Vec<usize>,
-    formatted_timestamp: String,
-    formatted_absolute_timestamp: String,
 }
 
 pub struct StashListDelegate {
@@ -241,7 +242,6 @@ pub struct StashListDelegate {
     last_query: String,
     modifiers: Modifiers,
     focus_handle: FocusHandle,
-    timezone: UtcOffset,
     show_footer: bool,
 }
 
@@ -252,8 +252,6 @@ impl StashListDelegate {
         _window: &mut Window,
         cx: &mut Context<StashList>,
     ) -> Self {
-        let timezone = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-
         Self {
             matches: vec![],
             repo,
@@ -263,35 +261,12 @@ impl StashListDelegate {
             last_query: Default::default(),
             modifiers: Default::default(),
             focus_handle: cx.focus_handle(),
-            timezone,
             show_footer: false,
         }
     }
 
     fn format_message(ix: usize, message: &String) -> String {
         format!("#{}: {}", ix, message)
-    }
-
-    fn format_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
-        let timestamp =
-            OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
-        time_format::format_localized_timestamp(
-            timestamp,
-            OffsetDateTime::now_utc(),
-            timezone,
-            time_format::TimestampFormat::Relative,
-        )
-    }
-
-    fn format_absolute_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
-        let timestamp =
-            OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
-        time_format::format_localized_timestamp(
-            timestamp,
-            OffsetDateTime::now_utc(),
-            timezone,
-            time_format::TimestampFormat::EnhancedAbsolute,
-        )
     }
 
     fn drop_stash_at(&self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -326,8 +301,10 @@ impl StashListDelegate {
             stash_sha,
             repo.downgrade(),
             self.workspace.clone(),
-            Some(stash_index),
-            None,
+            CommitViewOptions {
+                stash: Some(stash_index),
+                ..Default::default()
+            },
             window,
             cx,
         );
@@ -369,6 +346,10 @@ impl StashListDelegate {
 impl PickerDelegate for StashListDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "stash picker"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a stash…".into()
     }
@@ -400,23 +381,13 @@ impl PickerDelegate for StashListDelegate {
             return Task::ready(());
         };
 
-        let timezone = self.timezone;
-
         cx.spawn_in(window, async move |picker, cx| {
             let matches: Vec<StashEntryMatch> = if query.is_empty() {
                 all_stash_entries
                     .into_iter()
-                    .map(|entry| {
-                        let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
-                        let formatted_absolute_timestamp =
-                            Self::format_absolute_timestamp(entry.timestamp, timezone);
-
-                        StashEntryMatch {
-                            entry,
-                            positions: Vec::new(),
-                            formatted_timestamp,
-                            formatted_absolute_timestamp,
-                        }
+                    .map(|entry| StashEntryMatch {
+                        entry,
+                        positions: Vec::new(),
                     })
                     .collect()
             } else {
@@ -443,15 +414,9 @@ impl PickerDelegate for StashListDelegate {
                 .into_iter()
                 .map(|candidate| {
                     let entry = all_stash_entries[candidate.candidate_id].clone();
-                    let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
-                    let formatted_absolute_timestamp =
-                        Self::format_absolute_timestamp(entry.timestamp, timezone);
-
                     StashEntryMatch {
                         entry,
                         positions: candidate.positions,
-                        formatted_timestamp,
-                        formatted_absolute_timestamp,
                     }
                 })
                 .collect()
@@ -497,6 +462,8 @@ impl PickerDelegate for StashListDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry_match = &self.matches[ix];
+        let timestamp = OffsetDateTime::from_unix_timestamp(entry_match.entry.timestamp)
+            .unwrap_or_else(|_| OffsetDateTime::now_utc());
 
         let stash_message =
             Self::format_message(entry_match.entry.index, &entry_match.entry.message);
@@ -522,9 +489,16 @@ impl PickerDelegate for StashListDelegate {
                     .size(LabelSize::Small),
             )
             .child(
-                Label::new(entry_match.formatted_timestamp.clone())
-                    .color(Color::Muted)
-                    .size(LabelSize::Small),
+                Label::new(crate::git_timestamp::format_git_date(
+                    timestamp,
+                    project::project_settings::ProjectSettings::get_global(cx)
+                        .git
+                        .stash_picker
+                        .date_style,
+                    cx,
+                ))
+                .color(Color::Muted)
+                .size(LabelSize::Small),
             );
 
         let view_button = {
@@ -590,16 +564,17 @@ impl PickerDelegate for StashListDelegate {
                                         entry_match.entry.index,
                                         &entry_match.entry.message,
                                     );
-                                    let absolute_timestamp =
-                                        entry_match.formatted_absolute_timestamp.clone();
-
-                                    Tooltip::element(move |_, _| {
+                                    Tooltip::element(move |_, cx| {
                                         v_flex()
                                             .child(Label::new(stash_message.clone()))
                                             .child(
-                                                Label::new(absolute_timestamp.clone())
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
+                                                Label::new(format_git_timestamp(
+                                                    timestamp,
+                                                    time_format::TimestampFormat::EnhancedAbsolute,
+                                                    cx,
+                                                ))
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
                                             )
                                             .into_any_element()
                                     })
@@ -645,7 +620,7 @@ impl PickerDelegate for StashListDelegate {
                                 &focus_handle,
                                 cx,
                             )
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            .map(|kb| kb.size(rems_from_px(12_f32))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(stash_picker::DropStashItem.boxed_clone(), cx)
@@ -659,7 +634,7 @@ impl PickerDelegate for StashListDelegate {
                                 &focus_handle,
                                 cx,
                             )
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            .map(|kb| kb.size(rems_from_px(12_f32))),
                         )
                         .on_click(cx.listener(move |picker, _, window, cx| {
                             cx.stop_propagation();
@@ -671,7 +646,7 @@ impl PickerDelegate for StashListDelegate {
                     Button::new("pop-stash", "Pop")
                         .key_binding(
                             KeyBinding::for_action_in(&menu::SecondaryConfirm, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
@@ -681,7 +656,7 @@ impl PickerDelegate for StashListDelegate {
                     Button::new("apply-stash", "Apply")
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::Confirm.boxed_clone(), cx)

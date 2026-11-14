@@ -43,6 +43,43 @@ where
     })
 }
 
+pub(crate) async fn evaluate_yaml_command<T>(
+    mut command: Command,
+) -> Result<Option<T>, DevContainerError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let output = command.output().await.map_err(|e| {
+        log::error!("Error running command {:?}: {e}", command);
+        DevContainerError::CommandFailed(command.get_program().display().to_string())
+    })?;
+
+    deserialize_yaml_output(output).map_err(|e| {
+        log::error!("Error running command {:?}: {e}", command);
+        DevContainerError::CommandFailed(command.get_program().display().to_string())
+    })
+}
+
+pub(crate) fn deserialize_yaml_output<T>(output: Output) -> Result<Option<T>, String>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    if output.status.success() {
+        let raw = String::from_utf8_lossy(&output.stdout);
+        if raw.is_empty() || raw.trim() == "[]" || raw.trim() == "{}" {
+            return Ok(None);
+        }
+        serde_yaml::from_str(&raw)
+            .map(Some)
+            .map_err(|e| format!("Error deserializing from raw yaml: {e}"))
+    } else {
+        let std_err = String::from_utf8_lossy(&output.stderr);
+        Err(format!(
+            "Sent non-successful output; cannot deserialize. StdErr: {std_err}"
+        ))
+    }
+}
+
 pub(crate) fn deserialize_json_output<T>(output: Output) -> Result<Option<T>, String>
 where
     T: for<'de> Deserialize<'de>,
@@ -65,6 +102,8 @@ where
 #[cfg(test)]
 mod tests {
     use std::process::ExitStatus;
+
+    use crate::docker::{DockerComposeConfig, DockerComposeServiceBuild};
 
     use super::*;
 
@@ -102,6 +141,67 @@ mod tests {
     fn test_deserialize_empty_object() {
         let output = success_output("{}");
         let result: Option<TestItem> = deserialize_json_output(output).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_deserialize_yaml_docker_compose_config() {
+        let yaml = indoc::indoc! {"
+            name: my-project
+            services:
+              app:
+                image: node:18
+                command:
+                  - sleep
+                  - infinity
+                build:
+                  context: .
+                  dockerfile: Dockerfile
+              db:
+                image: postgres:15
+            volumes: {}
+        "};
+        let output = success_output(yaml);
+        let result: DockerComposeConfig = deserialize_yaml_output(output)
+            .expect("deserialization should succeed")
+            .expect("result should not be None");
+
+        assert_eq!(result.name, Some("my-project".to_string()));
+        assert_eq!(result.services.len(), 2);
+
+        let app = result
+            .services
+            .get("app")
+            .expect("app service should exist");
+        assert_eq!(app.image, Some("node:18".to_string()));
+        assert_eq!(
+            app.command,
+            vec!["sleep".to_string(), "infinity".to_string()]
+        );
+        assert_eq!(
+            app.build,
+            Some(DockerComposeServiceBuild {
+                context: Some(".".to_string()),
+                dockerfile: Some("Dockerfile".to_string()),
+                ..Default::default()
+            })
+        );
+
+        let db = result.services.get("db").expect("db service should exist");
+        assert_eq!(db.image, Some("postgres:15".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_yaml_empty_output() {
+        let output = success_output("");
+        let result: Option<DockerComposeConfig> = deserialize_yaml_output(output).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_deserialize_yaml_empty_object() {
+        let output = success_output("{}");
+        let result: Option<DockerComposeConfig> = deserialize_yaml_output(output).unwrap();
         assert_eq!(result, None);
     }
 }

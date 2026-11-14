@@ -7,10 +7,11 @@ use file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use futures::channel::oneshot;
 use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
-use gpui::{HighlightStyle, StyledText, Task};
+use gpui::{Action, HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
-use settings::Settings;
+use settings::SettingsStore;
+use settings::{ProjectPanelSortMode, Settings};
 use std::{
     path::{self, Path, PathBuf},
     sync::{
@@ -18,18 +19,19 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use ui::{Context, LabelLike, ListItem, Window};
+use ui::{Context, KeyBinding, LabelLike, ListItem, Window};
 use ui::{HighlightedLabel, ListItemSpacing, prelude::*};
 use util::{
     maybe,
     paths::{PathStyle, compare_paths},
 };
-use workspace::Workspace;
+use workspace::{OpenPathPromptMode, OpenPathPromptResult, Workspace};
 
 pub struct OpenPathPrompt;
 
 pub struct OpenPathDelegate {
-    tx: Option<oneshot::Sender<Option<Vec<PathBuf>>>>,
+    on_confirm: Option<Box<dyn FnOnce(Option<OpenPathPromptResult>)>>,
+    mode: OpenPathPromptMode,
     lister: DirectoryLister,
     selected_index: usize,
     directory_state: DirectoryState,
@@ -42,6 +44,7 @@ pub struct OpenPathDelegate {
     render_footer:
         Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
     hidden_entries: bool,
+    sort_mode: ProjectPanelSortMode,
 }
 
 impl OpenPathDelegate {
@@ -51,26 +54,15 @@ impl OpenPathDelegate {
         creating_path: bool,
         cx: &App,
     ) -> Self {
-        let path_style = lister.path_style(cx);
-        Self {
-            tx: Some(tx),
+        Self::with_confirmation(
+            Box::new(move |result| {
+                tx.send(result.map(|result| result.paths)).ok();
+            }),
             lister,
-            selected_index: 0,
-            directory_state: DirectoryState::None {
-                create: creating_path,
-            },
-            string_matches: Vec::new(),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
-            should_dismiss: true,
-            prompt_root: match path_style {
-                PathStyle::Posix => "/".to_string(),
-                PathStyle::Windows => "C:\\".to_string(),
-            },
-            path_style,
-            replace_prompt: Task::ready(()),
-            render_footer: Arc::new(|_, _| None),
-            hidden_entries: false,
-        }
+            creating_path,
+            OpenPathPromptMode::SelectPath,
+            cx,
+        )
     }
 
     pub fn with_footer(
@@ -150,9 +142,95 @@ impl OpenPathDelegate {
         }
     }
 
+    fn for_open(
+        tx: oneshot::Sender<Option<OpenPathPromptResult>>,
+        lister: DirectoryLister,
+        mode: OpenPathPromptMode,
+        cx: &App,
+    ) -> Self {
+        let delegate = Self::with_confirmation(
+            Box::new(move |result| {
+                tx.send(result).ok();
+            }),
+            lister,
+            false,
+            mode,
+            cx,
+        );
+        if mode == OpenPathPromptMode::SelectPath {
+            return delegate;
+        }
+        delegate.with_footer(Arc::new(move |_, cx| {
+            let (primary_label, secondary_label) = if mode == OpenPathPromptMode::NewWindow {
+                ("New Window", "This Window")
+            } else {
+                ("This Window", "New Window")
+            };
+            Some(
+                h_flex()
+                    .flex_1()
+                    .p_1p5()
+                    .gap_1()
+                    .justify_end()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        Button::new("open_secondary", secondary_label)
+                            .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                            }),
+                    )
+                    .child(
+                        Button::new("open_primary", primary_label)
+                            .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                            }),
+                    )
+                    .into_any_element(),
+            )
+        }))
+    }
+
+    fn with_confirmation(
+        on_confirm: Box<dyn FnOnce(Option<OpenPathPromptResult>)>,
+        lister: DirectoryLister,
+        creating_path: bool,
+        mode: OpenPathPromptMode,
+        cx: &App,
+    ) -> Self {
+        let path_style = lister.path_style(cx);
+        let sort_mode = cx
+            .try_global::<SettingsStore>()
+            .and_then(|store| store.merged_settings().project_panel.as_ref()?.sort_mode)
+            .unwrap_or_default();
+        Self {
+            on_confirm: Some(on_confirm),
+            mode,
+            lister,
+            selected_index: 0,
+            directory_state: DirectoryState::None {
+                create: creating_path,
+            },
+            string_matches: Vec::new(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            should_dismiss: true,
+            prompt_root: match path_style {
+                PathStyle::Unix => "/".to_string(),
+                PathStyle::Windows => "C:\\".to_string(),
+            },
+            path_style,
+            replace_prompt: Task::ready(()),
+            render_footer: Arc::new(|_, _| None),
+            hidden_entries: false,
+            sort_mode,
+        }
+    }
+
     fn current_dir(&self) -> &'static str {
         match self.path_style {
-            PathStyle::Posix => "./",
+            PathStyle::Unix => "./",
             PathStyle::Windows => ".\\",
         }
     }
@@ -194,9 +272,10 @@ impl OpenPathPrompt {
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
     ) {
-        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {
-            let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, false, None, tx, window, cx);
+        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, mode, window, cx| {
+            let (tx, rx) = oneshot::channel();
+            let delegate = OpenPathDelegate::for_open(tx, lister, mode, cx);
+            Self::prompt_for_path(workspace, delegate, None, window, cx);
             rx
         }));
     }
@@ -208,27 +287,24 @@ impl OpenPathPrompt {
     ) {
         workspace.set_prompt_for_new_path(Box::new(
             |workspace, lister, suggested_name, window, cx| {
-                let (tx, rx) = futures::channel::oneshot::channel();
-                Self::prompt_for_new_path(workspace, lister, suggested_name, tx, window, cx);
+                let (tx, rx) = oneshot::channel();
+                let delegate = OpenPathDelegate::new(tx, lister, true, cx);
+                Self::prompt_for_path(workspace, delegate, suggested_name, window, cx);
                 rx
             },
         ));
     }
 
-    fn prompt_for_open_path(
+    fn prompt_for_path(
         workspace: &mut Workspace,
-        lister: DirectoryLister,
-        creating_path: bool,
+        delegate: OpenPathDelegate,
         suggested_name: Option<String>,
-        tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate =
-                OpenPathDelegate::new(tx, lister.clone(), creating_path, cx).show_hidden();
-            let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
-            let mut query = lister.default_query(cx);
+            let mut query = delegate.lister.default_query(cx);
+            let picker = Picker::uniform_list(delegate.show_hidden(), window, cx);
             if let Some(suggested_name) = suggested_name {
                 query.push_str(&suggested_name);
             }
@@ -236,21 +312,14 @@ impl OpenPathPrompt {
             picker
         });
     }
-
-    fn prompt_for_new_path(
-        workspace: &mut Workspace,
-        lister: DirectoryLister,
-        suggested_name: Option<String>,
-        tx: oneshot::Sender<Option<Vec<PathBuf>>>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        Self::prompt_for_open_path(workspace, lister, true, suggested_name, tx, window, cx);
-    }
 }
 
 impl PickerDelegate for OpenPathDelegate {
     type ListItem = ui::ListItem;
+
+    fn name() -> &'static str {
+        "open path prompt"
+    }
 
     fn match_count(&self) -> usize {
         let user_input = if let DirectoryState::Create { user_input, .. } = &self.directory_state {
@@ -313,6 +382,7 @@ impl PickerDelegate for OpenPathDelegate {
         let hidden_entries = self.hidden_entries;
         let parent_path_is_root = self.prompt_root == dir;
         let current_dir = self.current_dir();
+        let sort_mode = self.sort_mode;
         cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
                 let paths = query.await;
@@ -326,7 +396,7 @@ impl PickerDelegate for OpenPathDelegate {
                             DirectoryState::None { create: false }
                             | DirectoryState::List { .. } => match paths {
                                 Ok(paths) => DirectoryState::List {
-                                    entries: path_candidates(parent_path_is_root, paths),
+                                    entries: path_candidates(parent_path_is_root, paths, sort_mode),
                                     parent_path: dir.clone(),
                                     error: None,
                                 },
@@ -339,7 +409,8 @@ impl PickerDelegate for OpenPathDelegate {
                             DirectoryState::None { create: true }
                             | DirectoryState::Create { .. } => match paths {
                                 Ok(paths) => {
-                                    let mut entries = path_candidates(parent_path_is_root, paths);
+                                    let mut entries =
+                                        path_candidates(parent_path_is_root, paths, sort_mode);
                                     let mut exists = false;
                                     let mut is_dir = false;
                                     let mut new_id = None;
@@ -565,7 +636,45 @@ impl PickerDelegate for OpenPathDelegate {
             .ok();
         })
     }
+    fn select_child(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        let candidate = self.get_entry(self.selected_index)?;
+        if candidate.path.string.is_empty() || !candidate.is_dir {
+            return None;
+        }
+        let path_style = self.path_style;
+        match &self.directory_state {
+            DirectoryState::List { parent_path, .. }
+            | DirectoryState::Create { parent_path, .. } => Some(format!(
+                "{}{}{}",
+                parent_path,
+                candidate.path.string,
+                path_style.primary_separator()
+            )),
+            DirectoryState::None { .. } => None,
+        }
+    }
 
+    fn select_parent(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        let parent_path = match &self.directory_state {
+            DirectoryState::List { parent_path, .. }
+            | DirectoryState::Create { parent_path, .. } => parent_path,
+            DirectoryState::None { .. } => return None,
+        };
+        if parent_path == &self.prompt_root {
+            return None;
+        }
+        let trimmed = parent_path.trim_end_matches(['/', '\\']);
+        let (dir, _) = get_dir_and_suffix(trimmed.to_string(), self.path_style);
+        Some(dir)
+    }
     fn confirm_completion(
         &mut self,
         query: String,
@@ -608,9 +717,14 @@ impl PickerDelegate for OpenPathDelegate {
         )
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(candidate) = self.get_entry(self.selected_index) else {
             return;
+        };
+        let open_in_new_window = match self.mode {
+            OpenPathPromptMode::SelectPath => false,
+            OpenPathPromptMode::CurrentWindow => secondary,
+            OpenPathPromptMode::NewWindow => !secondary,
         };
 
         match &self.directory_state {
@@ -620,11 +734,16 @@ impl PickerDelegate for OpenPathDelegate {
                     if parent_path == &self.prompt_root && candidate.path.string.is_empty() {
                         PathBuf::from(&self.prompt_root)
                     } else {
-                        Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
-                            .join(&candidate.path.string)
+                        self.path_style.normalize_separators(self.path_style.join(
+                            Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref()),
+                            &candidate.path.string,
+                        ))
                     };
-                if let Some(tx) = self.tx.take() {
-                    tx.send(Some(vec![confirmed_path])).ok();
+                if let Some(on_confirm) = self.on_confirm.take() {
+                    on_confirm(Some(OpenPathPromptResult {
+                        paths: vec![confirmed_path],
+                        open_in_new_window,
+                    }));
                 }
             }
             DirectoryState::Create {
@@ -641,8 +760,8 @@ impl PickerDelegate for OpenPathDelegate {
                         if parent_path == &self.prompt_root && user_input.file.string.is_empty() {
                             PathBuf::from(&self.prompt_root)
                         } else {
-                            Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
-                                .join(&user_input.file.string)
+                            let parent_path = self.lister.resolve_tilde(parent_path, cx);
+                            PathBuf::from(format!("{parent_path}{}", user_input.file.string))
                         };
                     if user_input.exists {
                         self.should_dismiss = false;
@@ -663,16 +782,22 @@ impl PickerDelegate for OpenPathDelegate {
                                     if answer != Some(0) {
                                         return;
                                     }
-                                    if let Some(tx) = picker.delegate.tx.take() {
-                                        tx.send(Some(vec![prompted_path])).ok();
+                                    if let Some(on_confirm) = picker.delegate.on_confirm.take() {
+                                        on_confirm(Some(OpenPathPromptResult {
+                                            paths: vec![prompted_path],
+                                            open_in_new_window,
+                                        }));
                                     }
                                     cx.emit(gpui::DismissEvent);
                                 })
                                 .ok();
                         });
                         return;
-                    } else if let Some(tx) = self.tx.take() {
-                        tx.send(Some(vec![prompted_path])).ok();
+                    } else if let Some(on_confirm) = self.on_confirm.take() {
+                        on_confirm(Some(OpenPathPromptResult {
+                            paths: vec![prompted_path],
+                            open_in_new_window,
+                        }));
                     }
                 }
             },
@@ -686,8 +811,9 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let Some(tx) = self.tx.take() {
-            tx.send(None).ok();
+        self.cancel_flag.store(true, atomic::Ordering::Release);
+        if let Some(on_confirm) = self.on_confirm.take() {
+            on_confirm(None);
         }
         cx.emit(gpui::DismissEvent)
     }
@@ -701,25 +827,35 @@ impl PickerDelegate for OpenPathDelegate {
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
         let candidate = self.get_entry(ix)?;
-        let mut match_positions = match &self.directory_state {
-            DirectoryState::List { .. } => self.string_matches.get(ix)?.positions.clone(),
+        let string_match = match &self.directory_state {
+            DirectoryState::List { .. } => self.string_matches.get(ix),
             DirectoryState::Create { user_input, .. } => {
                 if let Some(user_input) = user_input {
                     if !user_input.exists || !user_input.is_dir {
                         if ix == 0 {
-                            Vec::new()
+                            None
                         } else {
-                            self.string_matches.get(ix - 1)?.positions.clone()
+                            self.string_matches.get(ix - 1)
                         }
                     } else {
-                        self.string_matches.get(ix)?.positions.clone()
+                        self.string_matches.get(ix)
                     }
                 } else {
-                    self.string_matches.get(ix)?.positions.clone()
+                    self.string_matches.get(ix)
                 }
             }
-            DirectoryState::None { .. } => Vec::new(),
+            DirectoryState::None { .. } => None,
         };
+
+        // Directory entries and string matches can briefly go out of sync during
+        // async updates. When that happens, render the row without highlights.
+        let mut match_positions = string_match
+            .filter(|string_match| {
+                string_match.candidate_id == candidate.path.id
+                    && string_match.string == candidate.path.string
+            })
+            .map(|string_match| string_match.positions.clone())
+            .unwrap_or_default();
 
         let is_current_dir_candidate = candidate.path.string == self.current_dir();
 
@@ -877,6 +1013,7 @@ impl PickerDelegate for OpenPathDelegate {
 fn path_candidates(
     parent_path_is_root: bool,
     mut children: Vec<DirectoryItem>,
+    sort_mode: ProjectPanelSortMode,
 ) -> Vec<CandidateInfo> {
     if parent_path_is_root {
         children.push(DirectoryItem {
@@ -885,7 +1022,14 @@ fn path_candidates(
         });
     }
 
-    children.sort_by(|a, b| compare_paths((&a.path, true), (&b.path, true)));
+    children.sort_by(|a, b| {
+        let (a_is_file, b_is_file) = match sort_mode {
+            ProjectPanelSortMode::DirectoriesFirst => (!a.is_dir, !b.is_dir),
+            ProjectPanelSortMode::FilesFirst => (a.is_dir, b.is_dir),
+            ProjectPanelSortMode::Mixed => (true, true),
+        };
+        compare_paths((&a.path, a_is_file), (&b.path, b_is_file))
+    });
     children
         .iter()
         .enumerate()
@@ -898,7 +1042,7 @@ fn path_candidates(
 
 fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) {
     match path_style {
-        PathStyle::Posix => {
+        PathStyle::Unix => {
             let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
                 (query[..index].to_string(), query[index + 1..].to_string())
             } else {
@@ -997,39 +1141,39 @@ mod tests {
 
     #[test]
     fn test_get_dir_and_suffix_with_posix_style() {
-        let (dir, suffix) = get_dir_and_suffix("".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("".into(), PathStyle::Unix);
         assert_eq!(dir, "/");
         assert_eq!(suffix, "");
 
-        let (dir, suffix) = get_dir_and_suffix("/".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/".into(), PathStyle::Unix);
         assert_eq!(dir, "/");
         assert_eq!(suffix, "");
 
-        let (dir, suffix) = get_dir_and_suffix("/Use".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/Use".into(), PathStyle::Unix);
         assert_eq!(dir, "/");
         assert_eq!(suffix, "Use");
 
-        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Docum".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Docum".into(), PathStyle::Unix);
         assert_eq!(dir, "/Users/Junkui/");
         assert_eq!(suffix, "Docum");
 
-        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents".into(), PathStyle::Unix);
         assert_eq!(dir, "/Users/Junkui/");
         assert_eq!(suffix, "Documents");
 
-        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents/".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents/".into(), PathStyle::Unix);
         assert_eq!(dir, "/Users/Junkui/Documents/");
         assert_eq!(suffix, "");
 
-        let (dir, suffix) = get_dir_and_suffix("/root/.".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/root/.".into(), PathStyle::Unix);
         assert_eq!(dir, "/root/");
         assert_eq!(suffix, ".");
 
-        let (dir, suffix) = get_dir_and_suffix("/root/..".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/root/..".into(), PathStyle::Unix);
         assert_eq!(dir, "/root/");
         assert_eq!(suffix, "..");
 
-        let (dir, suffix) = get_dir_and_suffix("/root/.hidden".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/root/.hidden".into(), PathStyle::Unix);
         assert_eq!(dir, "/root/");
         assert_eq!(suffix, ".hidden");
     }

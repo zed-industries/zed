@@ -28,6 +28,7 @@ pub struct RemoteConnectionPrompt {
     is_devcontainer: bool,
     status_message: Option<SharedString>,
     prompt: Option<(Entity<Markdown>, oneshot::Sender<EncryptedPassword>)>,
+    prompt_cancellation_task: Option<Task<()>>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: Arc<dyn ErasedEditor>,
     is_password_prompt: bool,
@@ -72,6 +73,7 @@ impl RemoteConnectionPrompt {
             status_message: None,
             cancellation: None,
             prompt: None,
+            prompt_cancellation_task: None,
             is_password_prompt: false,
             is_masked: true,
         }
@@ -85,6 +87,7 @@ impl RemoteConnectionPrompt {
         &mut self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        cancellation: oneshot::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -95,6 +98,14 @@ impl RemoteConnectionPrompt {
 
         let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
+        self.prompt_cancellation_task = Some(cx.spawn(async move |this, cx| {
+            cancellation.await.ok();
+            this.update(cx, |this, cx| {
+                this.prompt.take();
+                cx.notify();
+            })
+            .ok();
+        }));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx), cx);
         cx.notify();
@@ -107,6 +118,7 @@ impl RemoteConnectionPrompt {
 
     pub fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
+            self.prompt_cancellation_task.take();
             self.status_message = Some("Connecting".into());
 
             let pw = self.editor.text(cx);
@@ -241,7 +253,7 @@ impl RemoteConnectionModal {
                 (options.distro_name.clone(), None, true, false)
             }
             RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
-            #[cfg(any(test, feature = "test-support"))]
+            #[cfg(feature = "test-support")]
             RemoteConnectionOptions::Mock(options) => {
                 (format!("mock-{}", options.id), None, false, false)
             }
@@ -394,7 +406,7 @@ impl Render for RemoteConnectionModal {
                         .child(Label::new("Cancel"))
                         .end_slot(
                             KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle(cx), cx)
-                                .size(rems_from_px(12.)),
+                                .size(rems_from_px(12_f32)),
                         )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.dismiss(&menu::Cancel, window, cx);
@@ -452,6 +464,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         &self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        cancellation: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
     ) {
         let mut known_password = self.known_password.clone();
@@ -461,7 +474,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
             self.window
                 .update(cx, |_, window, cx| {
                     self.ui.update(cx, |modal, cx| {
-                        modal.set_prompt(prompt, tx, window, cx);
+                        modal.set_prompt(prompt, tx, cancellation, window, cx);
                     })
                 })
                 .ok();
@@ -628,6 +641,7 @@ impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
         &self,
         prompt: String,
         _tx: oneshot::Sender<EncryptedPassword>,
+        _cancellation: oneshot::Receiver<()>,
         _cx: &mut AsyncApp,
     ) {
         log::warn!(
@@ -726,3 +740,114 @@ pub fn connect(
 }
 
 use anyhow::Context as _;
+
+#[cfg(test)]
+mod tests {
+    use editor::Editor;
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+
+    use super::*;
+
+    #[gpui::test]
+    fn clears_prompt_when_password_request_is_cancelled(cx: &mut TestAppContext) {
+        initialize_test(cx);
+
+        let window = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        let prompt = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    RemoteConnectionPrompt::new(
+                        "example.com".to_string(),
+                        None,
+                        false,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .expect("test window should remain open");
+
+        let (response_sender, _response_receiver) = oneshot::channel();
+        let (cancellation_sender, cancellation) = oneshot::channel();
+        window
+            .update(cx, |_, window, cx| {
+                prompt.update(cx, |prompt, cx| {
+                    prompt.set_prompt(
+                        "Confirm user presence".to_string(),
+                        response_sender,
+                        cancellation,
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("test window should remain open");
+
+        drop(cancellation_sender);
+        cx.run_until_parked();
+
+        assert!(prompt.read_with(cx, |prompt, _| prompt.prompt.is_none()));
+    }
+
+    #[gpui::test]
+    fn stale_cancellation_does_not_clear_replacement_prompt(cx: &mut TestAppContext) {
+        initialize_test(cx);
+
+        let window = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        let prompt = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    RemoteConnectionPrompt::new(
+                        "example.com".to_string(),
+                        None,
+                        false,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .expect("test window should remain open");
+
+        let (first_response_sender, _first_response_receiver) = oneshot::channel();
+        let (first_cancellation_sender, first_cancellation) = oneshot::channel();
+        let (second_response_sender, _second_response_receiver) = oneshot::channel();
+        let (_second_cancellation_sender, second_cancellation) = oneshot::channel();
+        window
+            .update(cx, |_, window, cx| {
+                prompt.update(cx, |prompt, cx| {
+                    prompt.set_prompt(
+                        "First prompt".to_string(),
+                        first_response_sender,
+                        first_cancellation,
+                        window,
+                        cx,
+                    );
+                    prompt.set_prompt(
+                        "Second prompt".to_string(),
+                        second_response_sender,
+                        second_cancellation,
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("test window should remain open");
+
+        drop(first_cancellation_sender);
+        cx.run_until_parked();
+
+        assert!(prompt.read_with(cx, |prompt, _| prompt.prompt.is_some()));
+    }
+
+    fn initialize_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+    }
+}

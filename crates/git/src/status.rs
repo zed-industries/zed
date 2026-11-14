@@ -118,8 +118,8 @@ impl FileStatus {
             }
             .into(),
             [b'D', b'D'] => UnmergedStatus {
-                first_head: UnmergedStatusCode::Added,
-                second_head: UnmergedStatusCode::Added,
+                first_head: UnmergedStatusCode::Deleted,
+                second_head: UnmergedStatusCode::Deleted,
             }
             .into(),
             [x, b'U'] => UnmergedStatus {
@@ -454,7 +454,7 @@ impl FromStr for GitStatus {
                 let status = entry.as_bytes()[0..2].try_into().unwrap();
                 let status = FileStatus::from_bytes(status).log_err()?;
                 // git-status outputs `/`-delimited repo paths, even on Windows.
-                let path = RepoPath::from_rel_path(RelPath::unix(path).log_err()?);
+                let path = RepoPath::from_rel_path(RelPath::from_unix_str(path).log_err()?);
                 Some((path, status))
             })
             .collect::<Vec<_>>();
@@ -503,26 +503,13 @@ pub enum DiffTreeType {
         base: SharedString,
         head: SharedString,
     },
+    MergeBaseWithWorktree {
+        base: SharedString,
+    },
     Since {
         base: SharedString,
         head: SharedString,
     },
-}
-
-impl DiffTreeType {
-    pub fn base(&self) -> &SharedString {
-        match self {
-            DiffTreeType::MergeBase { base, .. } => base,
-            DiffTreeType::Since { base, .. } => base,
-        }
-    }
-
-    pub fn head(&self) -> &SharedString {
-        match self {
-            DiffTreeType::MergeBase { head, .. } => head,
-            DiffTreeType::Since { head, .. } => head,
-        }
-    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -544,7 +531,7 @@ impl FromStr for TreeDiff {
         let mut fields = s.split('\0');
         let mut parsed = HashMap::default();
         while let Some((status, path)) = fields.next().zip(fields.next()) {
-            let path = RepoPath::from_rel_path(RelPath::unix(path)?);
+            let path = RepoPath::from_rel_path(RelPath::from_unix_str(path)?);
 
             let mut fields = status.split(" ").skip(2);
             let old_sha = fields
@@ -586,7 +573,7 @@ pub struct DiffStat {
     pub deleted: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct GitDiffStat {
     pub entries: Arc<[(RepoPath, DiffStat)]>,
 }
@@ -620,7 +607,7 @@ pub fn parse_numstat(output: &str) -> GitDiffStat {
         };
         entries.push((path, DiffStat { added, deleted }));
     }
-    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
     entries.dedup_by(|(a, _), (b, _)| a == b);
 
     GitDiffStat {
@@ -633,7 +620,9 @@ mod tests {
 
     use crate::{
         repository::RepoPath,
-        status::{FileStatus, GitStatus, TreeDiff, TreeDiffStatus},
+        status::{
+            FileStatus, GitStatus, TreeDiff, TreeDiffStatus, UnmergedStatus, UnmergedStatusCode,
+        },
     };
 
     use super::{DiffStat, parse_numstat};
@@ -727,6 +716,34 @@ mod tests {
                 deleted: 0
             })
         );
+    }
+
+    #[test]
+    fn test_parse_unmerged_status_codes() {
+        use UnmergedStatusCode::{Added, Deleted, Updated};
+
+        let cases = [
+            ("DD", Deleted, Deleted),
+            ("AU", Added, Updated),
+            ("UD", Updated, Deleted),
+            ("UA", Updated, Added),
+            ("DU", Deleted, Updated),
+            ("AA", Added, Added),
+            ("UU", Updated, Updated),
+        ];
+
+        for (code, first_head, second_head) in cases {
+            let status: GitStatus = format!("{code} conflicted.txt\0").parse().unwrap();
+            assert_eq!(status.entries.len(), 1, "{code}");
+            assert_eq!(
+                status.entries[0].1,
+                FileStatus::Unmerged(UnmergedStatus {
+                    first_head,
+                    second_head,
+                }),
+                "{code}"
+            );
+        }
     }
 
     #[test]

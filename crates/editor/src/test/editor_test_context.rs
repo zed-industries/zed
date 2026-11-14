@@ -264,7 +264,8 @@ impl EditorTestContext {
     // unlike cx.simulate_keystrokes(), this does not run_until_parked
     // so you can use it to test detailed timing
     pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
-        let keystroke = Keystroke::parse(keystroke_text).unwrap();
+        let os = self.cx.read(|cx| cx.platform_info().os);
+        let keystroke = Keystroke::parse_with_os(keystroke_text, os).unwrap();
         self.cx.dispatch_keystroke(self.window, keystroke);
     }
 
@@ -374,7 +375,7 @@ impl EditorTestContext {
                 .cloned();
         })
         .unwrap();
-        assert_eq!(expected, found.as_deref());
+        assert_eq!(expected.map(str::as_bytes), found.as_deref());
     }
 
     /// Change the editor's text and selections using a string containing

@@ -7,7 +7,7 @@ use fs::Fs;
 use gpui::{App, SharedString};
 use settings::{
     AgentProfileContent, ContextServerPresetContent, LanguageModelSelection, Settings as _,
-    SettingsContent, update_settings_file,
+    SettingsContent, SettingsStore, update_settings_file,
 };
 use util::ResultExt as _;
 
@@ -114,6 +114,32 @@ pub struct AgentProfileSettings {
 impl AgentProfileSettings {
     pub fn is_tool_enabled(&self, tool_name: &str) -> bool {
         self.tools.get(tool_name) == Some(&true)
+    }
+
+    /// Whether the built-in profile with the given id still matches the shipped
+    /// default — i.e. the user has neither customized the built-in profile nor
+    /// shadowed it with a custom profile of the same id. Custom profile ids are
+    /// never considered unmodified defaults.
+    pub fn is_unmodified_default(profile_id: &AgentProfileId, cx: &App) -> bool {
+        if !builtin_profiles::is_builtin(profile_id) {
+            return false;
+        }
+        let store = cx.global::<SettingsStore>();
+        let profile_in = |content: &SettingsContent| {
+            content
+                .agent
+                .as_ref()
+                .and_then(|agent| agent.profiles.as_ref())
+                .and_then(|profiles| profiles.get(profile_id.as_str()))
+                .cloned()
+        };
+        match (
+            profile_in(store.merged_settings()),
+            profile_in(store.raw_default_settings()),
+        ) {
+            (Some(merged), Some(default)) => merged == default,
+            _ => false,
+        }
     }
 
     pub fn is_context_server_tool_enabled(&self, server_id: &str, tool_name: &str) -> bool {
@@ -246,5 +272,38 @@ mod tests {
         assert!(profile.is_context_server_tool_enabled("server", "enabled_tool"));
         assert!(!profile.is_context_server_tool_enabled("server", "other_tool"));
         assert!(!profile.is_context_server_tool_enabled("other_server", "any_tool"));
+    }
+
+    #[gpui::test]
+    fn unmodified_default_detection(cx: &mut gpui::App) {
+        use gpui::UpdateGlobal as _;
+
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        let write = AgentProfileId(builtin_profiles::WRITE.into());
+        let minimal = AgentProfileId(builtin_profiles::MINIMAL.into());
+        let custom = AgentProfileId("custom".into());
+
+        // Fresh defaults: the shipped built-in profiles are unmodified.
+        assert!(AgentProfileSettings::is_unmodified_default(&write, cx));
+        assert!(AgentProfileSettings::is_unmodified_default(&minimal, cx));
+        // Custom (non-built-in) ids are never considered unmodified defaults.
+        assert!(!AgentProfileSettings::is_unmodified_default(&custom, cx));
+
+        // The user customizes the `write` profile; `minimal` stays untouched.
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "profiles": { "write": { "name": "Write", "tools": { "fetch": false } } } } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        assert!(!AgentProfileSettings::is_unmodified_default(&write, cx));
+        assert!(AgentProfileSettings::is_unmodified_default(&minimal, cx));
     }
 }

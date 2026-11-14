@@ -68,7 +68,7 @@ static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_server").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed_server").unwrap());
     *CACHED
 }
 
@@ -76,7 +76,7 @@ pub fn remote_server_dir_relative() -> &'static RelPath {
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_wsl_server").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed_wsl_server").unwrap());
     *CACHED
 }
 
@@ -316,6 +316,32 @@ pub fn debug_scenarios_file() -> &'static PathBuf {
     DEBUG_SCENARIOS_FILE.get_or_init(|| config_dir().join("debug.json"))
 }
 
+/// Returns the path to the user-global `AGENTS.md` file.
+///
+/// This file holds personal agent instructions that apply to every project the
+/// user opens, and is loaded into the native Zed agent's system prompt.
+pub fn agents_file() -> &'static PathBuf {
+    static AGENTS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    AGENTS_FILE.get_or_init(|| config_dir().join("AGENTS.md"))
+}
+
+/// User-facing display form of the user-global `AGENTS.md` file path —
+/// i.e. what a human should see in messages and prompts, with the
+/// platform's native path separator and home/config directory shorthand.
+///
+/// Windows doesn't recognize `~` as the home directory, so the env-var
+/// form (`%APPDATA%`) is used there instead. Note that this is the
+/// *typical* location: a user with `XDG_CONFIG_HOME` set or running in a
+/// Flatpak sandbox would see a different `agents_file()` at runtime than
+/// this displays. The display string trades that precision for
+/// readability in announcement copy.
+#[cfg(target_os = "windows")]
+pub const GLOBAL_AGENTS_FILE_DISPLAY: &str =
+    const_format::concatcp!("%APPDATA%\\", APP_NAME, "\\AGENTS.md");
+#[cfg(not(target_os = "windows"))]
+pub const GLOBAL_AGENTS_FILE_DISPLAY: &str =
+    const_format::concatcp!("~/.config/", APP_NAME_LOWERCASE, "/AGENTS.md");
+
 /// Returns the path to the extensions directory.
 ///
 /// This is where installed extensions are stored.
@@ -470,21 +496,21 @@ pub fn local_vscode_folder_name() -> &'static str {
 /// Returns the relative path to a `settings.json` file within a project.
 pub fn local_settings_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/settings.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed/settings.json").unwrap());
     *CACHED
 }
 
 /// Returns the relative path to a `tasks.json` file within a project.
 pub fn local_tasks_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/tasks.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed/tasks.json").unwrap());
     *CACHED
 }
 
 /// Returns the relative path to a `.vscode/tasks.json` file within a project.
 pub fn local_vscode_tasks_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".vscode/tasks.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".vscode/tasks.json").unwrap());
     *CACHED
 }
 
@@ -500,14 +526,14 @@ pub fn task_file_name() -> &'static str {
 /// .zed/debug.json
 pub fn local_debug_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/debug.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed/debug.json").unwrap());
     *CACHED
 }
 
 /// Returns the relative path to a `.vscode/launch.json` file within a project.
 pub fn local_vscode_launch_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".vscode/launch.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".vscode/launch.json").unwrap());
     *CACHED
 }
 

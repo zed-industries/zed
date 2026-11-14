@@ -14,7 +14,7 @@ pub enum SelectionGoal {
     WrappedHorizontalPosition((u32, f32)),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Selection<T> {
     pub id: usize,
     pub start: T,

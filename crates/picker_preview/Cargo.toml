@@ -1,0 +1,33 @@
+[package]
+name = "picker_preview"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/picker_preview.rs"
+doctest = false
+
+[dependencies]
+
+editor.workspace = true
+gpui.workspace = true
+language.workspace = true
+multi_buffer.workspace = true
+picker.workspace = true
+project.workspace = true
+rope.workspace = true
+settings.workspace = true
+ui.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+theme_settings = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

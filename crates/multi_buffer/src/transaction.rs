@@ -1,5 +1,5 @@
 use gpui::{App, Context, Entity};
-use language::{self, Buffer, TransactionId};
+use language::{self, Buffer, BufferEditSource, TransactionId};
 use std::{
     collections::HashMap,
     ops::Range,
@@ -286,6 +286,35 @@ impl MultiBuffer {
 
     pub fn end_transaction(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
         self.end_transaction_at(Instant::now(), cx)
+    }
+
+    pub fn end_transaction_with_source(
+        &mut self,
+        source: BufferEditSource,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
+        let now = Instant::now();
+        if let Some(buffer) = self.as_singleton() {
+            return buffer.update(cx, |buffer, cx| {
+                buffer.end_transaction_with_source(source, cx)
+            });
+        }
+
+        let mut buffer_transactions = HashMap::default();
+        for BufferState { buffer, .. } in self.buffers.values() {
+            if let Some(transaction_id) = buffer.update(cx, |buffer, cx| {
+                buffer.end_transaction_with_source(source, cx)
+            }) {
+                buffer_transactions.insert(buffer.read(cx).remote_id(), transaction_id);
+            }
+        }
+
+        if self.history.end_transaction(now, buffer_transactions) {
+            let transaction_id = self.history.group().unwrap();
+            Some(transaction_id)
+        } else {
+            None
+        }
     }
 
     pub fn end_transaction_at(

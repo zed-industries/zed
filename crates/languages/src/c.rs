@@ -1,9 +1,11 @@
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
+use github_releases::{
+    AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
+    latest_github_release,
+};
 use gpui::{App, AsyncApp};
-use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
@@ -23,7 +25,7 @@ impl LspInstaller for CLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         pre_release: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
@@ -54,7 +56,7 @@ impl LspInstaller for CLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -129,7 +131,8 @@ impl LspInstaller for CLspAdapter {
                 }
             }
             download_server_binary(
-                &*delegate.http_client(),
+                &delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &container_dir,
@@ -211,8 +214,10 @@ impl super::LspAdapter for CLspAdapter {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
-                let runs = language.highlight_text(&source, 11..11 + text.len());
+                let source = format!("struct S {{ {} }}", text);
+                let runs = language
+                    .highlight_text(source.as_str(), 11..11 + text.len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -228,7 +233,9 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs = language
+                    .highlight_text(text.as_str(), 0..text.len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -244,7 +251,9 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs = language
+                    .highlight_text(text.as_str(), 0..text.len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -300,43 +309,43 @@ impl super::LspAdapter for CLspAdapter {
     ) -> Option<CodeLabel> {
         let name = &symbol.name;
         let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+            language::SymbolKind::Method | language::SymbolKind::Function => {
                 let text = format!("void {} () {{}}", name);
                 let filter_range = 0..name.len();
                 let display_range = 5..5 + name.len();
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::STRUCT => {
+            language::SymbolKind::Struct => {
                 let text = format!("struct {} {{}}", name);
                 let filter_range = 7..7 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::ENUM => {
+            language::SymbolKind::Enum => {
                 let text = format!("enum {} {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::INTERFACE | lsp::SymbolKind::CLASS => {
+            language::SymbolKind::Interface | language::SymbolKind::Class => {
                 let text = format!("class {} {{}}", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::CONSTANT => {
+            language::SymbolKind::Constant => {
                 let text = format!("const int {} = 0;", name);
                 let filter_range = 10..10 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::MODULE => {
+            language::SymbolKind::Module => {
                 let text = format!("namespace {} {{}}", name);
                 let filter_range = 10..10 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::TYPE_PARAMETER => {
+            language::SymbolKind::TypeParameter => {
                 let text = format!("typename {} {{}};", name);
                 let filter_range = 9..9 + name.len();
                 let display_range = 0..filter_range.end;
@@ -348,7 +357,9 @@ impl super::LspAdapter for CLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language
+                .highlight_text(text.as_str(), display_range)
+                .collect(),
         ))
     }
 
@@ -416,9 +427,11 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
+    use indoc::indoc;
     use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
+    use tree_sitter::StreamingIterator;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -445,6 +458,70 @@ mod tests {
                 buffer.text(),
                 "int main() {\n  \n}",
                 "content inside braces should be indented"
+            );
+
+            buffer
+        });
+    }
+
+    #[gpui::test]
+    async fn test_c_autoindent_switch_case(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
+                });
+            });
+        });
+        let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
+
+        cx.new(|cx| {
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    switch (a) {
+                    case 1:
+                    b++;
+                    break;
+                    case 2:
+                    case 3:
+                    c++;
+                    break;
+                    default:
+                    d++;
+                    }
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  switch (a) {
+                    case 1:
+                      b++;
+                      break;
+                    case 2:
+                    case 3:
+                      c++;
+                      break;
+                    default:
+                      d++;
+                  }
+                }
+                "#
+                .unindent(),
+                "statements under a case label should be indented, and the next label outdented"
             );
 
             buffer
@@ -663,5 +740,44 @@ mod tests {
 
             buffer
         });
+    }
+
+    #[test]
+    fn test_c_highlights_query_captures_preproc_call_arguments() {
+        let language: tree_sitter::Language = tree_sitter_c::LANGUAGE.into();
+        let query_source = include_str!("../../grammars/src/c/highlights.scm");
+
+        let query = tree_sitter::Query::new(&language, query_source)
+            .expect("C highlights query should compile");
+
+        let source = indoc! {"
+            #pragma pack(push, 4)
+            #undef FOO
+            #define BAR 42
+        "};
+
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(source, None).expect("C source should parse");
+
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+        let mut captures = Vec::new();
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures() {
+                let capture_name = query.capture_names()[capture.index as usize];
+                let captured_text = &source[capture.node.byte_range()];
+
+                captures.push((captured_text.to_owned(), capture_name.to_owned()));
+            }
+        }
+
+        assert!(captures.contains(&("#pragma".into(), "preproc".into())));
+        assert!(captures.contains(&("pack(push, 4)".into(), "preproc".into())));
+        assert!(captures.contains(&("FOO".into(), "preproc".into())));
+        assert!(!captures.contains(&("42".into(), "preproc".into())));
     }
 }

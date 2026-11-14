@@ -1,12 +1,19 @@
-Self-Review Checklist:
+## Summary
 
-- [ ] I've reviewed my own diff for quality, security, and reliability
-- [ ] Unsafe blocks (if any) have justifying comments
-- [ ] The content is consistent with the [UI/UX checklist](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md#uiux-checklist)
-- [ ] Tests cover the new/changed behavior
-- [ ] Performance impact has been considered and is acceptable
+What problem does this solve, how, and why does this change matter?
+Use "Closes #123" for each issue resolved.
+Include artifacts produced when testing: before/after screenshots, GIFs, videos, benchmarks.
 
-Closes #ISSUE
+## Testing
+
+Manually test your changes; report results, mention platforms if relevant.
+How can reviewers test this easily? Include setup and steps.
+
+## Self-review
+
+- [ ] I've reviewed my diff for quality, security, reliability, and performance.
+- [ ] UI changes follow the [checklist](https://zed.dev/docs/development/ui-checklist).
+- [ ] Tests cover the new or changed behavior.
 
 Release Notes:
 

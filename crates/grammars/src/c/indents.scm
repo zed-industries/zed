@@ -9,9 +9,22 @@
   (else_clause)
 ] @indent
 
+(expression_statement
+  (_) @indent
+  ";" @end)
+
 (_
   "{"
   "}" @end) @indent
+
+(compound_statement
+  (case_statement
+    ":" @start)
+  "}" @end) @indent
+
+(compound_statement
+  (case_statement)
+  (case_statement) @outdent)
 
 (_
   "("

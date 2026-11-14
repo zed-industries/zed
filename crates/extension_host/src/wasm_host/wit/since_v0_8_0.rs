@@ -1,17 +1,19 @@
 use crate::wasm_host::wit::since_v0_6_0::slash_command::SlashCommandOutputSection;
 use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
-use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
+use crate::wasm_host::{
+    WasmState,
+    wit::{IntoWasmtimeResult, ToWasmtimeResult},
+};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{Context as _, Result, bail};
-use async_compression::futures::bufread::GzipDecoder;
+use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
 use async_tar::Archive;
 use async_trait::async_trait;
 use extension::{
     ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
-use futures::{AsyncReadExt, lock::Mutex};
-use futures::{FutureExt as _, io::BufReader};
+use futures::{AsyncReadExt, io::BufReader, lock::Mutex};
 use gpui::{BackgroundExecutor, SharedString};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
@@ -45,7 +47,7 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
+         "zed:extension/http-client.http-response-stream": ExtensionHttpResponseStream
     },
 });
 
@@ -553,7 +555,7 @@ impl HostKeyValueStore for WasmState {
         kv_store.insert(key, value).await.to_wasmtime_result()
     }
 
-    async fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of key-value stores.
         Ok(())
     }
@@ -568,7 +570,7 @@ impl HostProject for WasmState {
         Ok(project.worktree_ids())
     }
 
-    async fn drop(&mut self, _project: Resource<Project>) -> Result<()> {
+    async fn drop(&mut self, _project: Resource<Project>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of projects.
         Ok(())
     }
@@ -595,7 +597,9 @@ impl HostWorktree for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         let delegate = self.table.get(&delegate)?;
         Ok(delegate
-            .read_text_file(&RelPath::new(Path::new(&path), PathStyle::Posix)?)
+            .read_text_file(
+                &RelPath::new(Path::new(&path), PathStyle::Unix).into_wasmtime_result()?,
+            )
             .await
             .map_err(|error| error.to_string()))
     }
@@ -617,7 +621,7 @@ impl HostWorktree for WasmState {
         Ok(delegate.which(binary_name).await)
     }
 
-    async fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<Worktree>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of worktrees.
         Ok(())
     }
@@ -648,7 +652,7 @@ impl http_client::Host for WasmState {
         &mut self,
         request: http_client::HttpRequest,
     ) -> wasmtime::Result<Result<Resource<ExtensionHttpResponseStream>, String>> {
-        let request = convert_request(&request)?;
+        let request = convert_request(&request).into_wasmtime_result()?;
         let response = self.host.http_client.send(request);
         maybe!(async {
             let response = response.await?;
@@ -682,7 +686,10 @@ impl http_client::HostHttpResponseStream for WasmState {
         .to_wasmtime_result()
     }
 
-    async fn drop(&mut self, _resource: Resource<ExtensionHttpResponseStream>) -> Result<()> {
+    async fn drop(
+        &mut self,
+        _resource: Resource<ExtensionHttpResponseStream>,
+    ) -> wasmtime::Result<()> {
         Ok(())
     }
 }
@@ -787,7 +794,8 @@ impl nodejs::Host for WasmState {
         version: String,
     ) -> wasmtime::Result<Result<(), String>> {
         self.capability_granter
-            .grant_npm_install_package(&package_name)?;
+            .grant_npm_install_package(&package_name)
+            .into_wasmtime_result()?;
 
         self.host
             .node_runtime
@@ -800,8 +808,8 @@ impl nodejs::Host for WasmState {
 #[async_trait]
 impl lsp::Host for WasmState {}
 
-impl From<::http_client::github::GithubRelease> for github::GithubRelease {
-    fn from(value: ::http_client::github::GithubRelease) -> Self {
+impl From<::github_releases::GithubRelease> for github::GithubRelease {
+    fn from(value: ::github_releases::GithubRelease) -> Self {
         Self {
             version: value.tag_name,
             assets: value.assets.into_iter().map(Into::into).collect(),
@@ -809,8 +817,8 @@ impl From<::http_client::github::GithubRelease> for github::GithubRelease {
     }
 }
 
-impl From<::http_client::github::GithubReleaseAsset> for github::GithubReleaseAsset {
-    fn from(value: ::http_client::github::GithubReleaseAsset) -> Self {
+impl From<::github_releases::GithubReleaseAsset> for github::GithubReleaseAsset {
+    fn from(value: ::github_releases::GithubReleaseAsset) -> Self {
         Self {
             name: value.name,
             download_url: value.browser_download_url,
@@ -826,7 +834,7 @@ impl github::Host for WasmState {
         options: github::GithubReleaseOptions,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
-            let release = ::http_client::github::latest_github_release(
+            let release = ::github_releases::latest_github_release(
                 &repo,
                 options.require_assets,
                 options.pre_release,
@@ -845,7 +853,7 @@ impl github::Host for WasmState {
         tag: String,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
-            let release = ::http_client::github::get_release_by_tag_name(
+            let release = ::github_releases::get_release_by_tag_name(
                 &repo,
                 &tag,
                 self.host.http_client.clone(),
@@ -859,19 +867,20 @@ impl github::Host for WasmState {
 }
 
 impl platform::Host for WasmState {
-    async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
+    async fn current_platform(
+        &mut self,
+    ) -> wasmtime::Result<(platform::Os, platform::Architecture)> {
         Ok((
             match env::consts::OS {
                 "macos" => platform::Os::Mac,
                 "linux" => platform::Os::Linux,
                 "windows" => platform::Os::Windows,
-                _ => panic!("unsupported os"),
+                _ => return Err(wasmtime::Error::msg("unsupported os")),
             },
             match env::consts::ARCH {
                 "aarch64" => platform::Architecture::Aarch64,
-                "x86" => platform::Architecture::X86,
                 "x86_64" => platform::Architecture::X8664,
-                _ => panic!("unsupported architecture"),
+                _ => return Err(wasmtime::Error::msg("unsupported architecture")),
             },
         ))
     }
@@ -946,96 +955,90 @@ impl ExtensionImports for WasmState {
         category: String,
         key: Option<String>,
     ) -> wasmtime::Result<Result<String, String>> {
-        self.on_main_thread(|cx| {
-            async move {
-                let path = location.as_ref().and_then(|location| {
-                    RelPath::new(Path::new(&location.path), PathStyle::Posix).ok()
+        self.on_main_thread(async move |cx| {
+            let path = location
+                .as_ref()
+                .and_then(|location| RelPath::new(Path::new(&location.path), PathStyle::Unix).ok());
+            let location = path
+                .as_ref()
+                .zip(location.as_ref())
+                .map(|(path, location)| ::settings::SettingsLocation {
+                    worktree_id: WorktreeId::from_proto(location.worktree_id),
+                    path,
                 });
-                let location = path
-                    .as_ref()
-                    .zip(location.as_ref())
-                    .map(|(path, location)| ::settings::SettingsLocation {
-                        worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path,
-                    });
 
-                cx.update(|cx| match category.as_str() {
-                    "language" => {
-                        let key = key.map(|k| LanguageName::new(&k));
-                        let settings = AllLanguageSettings::get(location, cx).language(
-                            location,
-                            key.as_ref(),
-                            cx,
-                        );
-                        Ok(serde_json::to_string(&settings::LanguageSettings {
-                            tab_size: settings.tab_size,
-                            preferred_line_length: settings.preferred_line_length,
-                        })?)
-                    }
-                    "lsp" => {
-                        let settings = key
-                            .and_then(|key| {
-                                ProjectSettings::get(location, cx)
-                                    .lsp
-                                    .get(&::lsp::LanguageServerName::from_proto(key))
-                            })
-                            .cloned()
-                            .unwrap_or_default();
-                        Ok(serde_json::to_string(&settings::LspSettings {
-                            binary: settings.binary.map(|binary| settings::CommandSettings {
-                                path: binary.path,
-                                arguments: binary.arguments,
-                                env: binary.env.map(|env| env.into_iter().collect()),
+            cx.update(|cx| match category.as_str() {
+                "language" => {
+                    let key = key.map(|k| LanguageName::new(&k));
+                    let settings =
+                        AllLanguageSettings::get(location, cx).language(location, key.as_ref(), cx);
+                    Ok(serde_json::to_string(&settings::LanguageSettings {
+                        tab_size: settings.tab_size,
+                        hard_tabs: settings.hard_tabs,
+                        preferred_line_length: settings.preferred_line_length,
+                    })?)
+                }
+                "lsp" => {
+                    let settings = key
+                        .and_then(|key| {
+                            ProjectSettings::get(location, cx)
+                                .lsp
+                                .get(&::lsp::LanguageServerName::from_proto(key))
+                        })
+                        .cloned()
+                        .unwrap_or_default();
+                    Ok(serde_json::to_string(&settings::LspSettings {
+                        binary: settings.binary.map(|binary| settings::CommandSettings {
+                            path: binary.path,
+                            arguments: binary.arguments,
+                            env: binary.env.map(|env| env.into_iter().collect()),
+                        }),
+                        settings: settings.settings,
+                        initialization_options: settings.initialization_options,
+                    })?)
+                }
+                "context_servers" => {
+                    let settings = key
+                        .and_then(|key| {
+                            ProjectSettings::get(location, cx)
+                                .context_servers
+                                .get(key.as_str())
+                        })
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            project::project_settings::ContextServerSettings::default_extension()
+                        });
+
+                    match settings {
+                        project::project_settings::ContextServerSettings::Stdio {
+                            enabled: _,
+                            command,
+                            ..
+                        } => Ok(serde_json::to_string(&settings::ContextServerSettings {
+                            command: Some(settings::CommandSettings {
+                                path: command.path.to_str().map(|path| path.to_string()),
+                                arguments: Some(command.args),
+                                env: command.env.map(|env| env.into_iter().collect()),
                             }),
-                            settings: settings.settings,
-                            initialization_options: settings.initialization_options,
-                        })?)
-                    }
-                    "context_servers" => {
-                        let settings = key
-                            .and_then(|key| {
-                                ProjectSettings::get(location, cx)
-                                    .context_servers
-                                    .get(key.as_str())
-                            })
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                project::project_settings::ContextServerSettings::default_extension(
-                                )
-                            });
-
-                        match settings {
-                            project::project_settings::ContextServerSettings::Stdio {
-                                enabled: _,
-                                command,
-                                ..
-                            } => Ok(serde_json::to_string(&settings::ContextServerSettings {
-                                command: Some(settings::CommandSettings {
-                                    path: command.path.to_str().map(|path| path.to_string()),
-                                    arguments: Some(command.args),
-                                    env: command.env.map(|env| env.into_iter().collect()),
-                                }),
-                                settings: None,
-                            })?),
-                            project::project_settings::ContextServerSettings::Extension {
-                                enabled: _,
-                                settings,
-                                ..
-                            } => Ok(serde_json::to_string(&settings::ContextServerSettings {
-                                command: None,
-                                settings: Some(settings),
-                            })?),
-                            project::project_settings::ContextServerSettings::Http { .. } => {
-                                bail!("remote context server settings not supported in 0.6.0")
-                            }
+                            settings: None,
+                        })?),
+                        project::project_settings::ContextServerSettings::Extension {
+                            enabled: _,
+                            settings,
+                            ..
+                        } => Ok(serde_json::to_string(&settings::ContextServerSettings {
+                            command: None,
+                            settings: Some(settings),
+                        })?),
+                        project::project_settings::ContextServerSettings::Http { .. } => {
+                            bail!("remote context server settings not supported in 0.6.0")
                         }
                     }
-                    _ => {
-                        bail!("Unknown settings category: {}", category);
-                    }
-                })
-            }
-            .boxed_local()
+                }
+                _ => {
+                    bail!("Unknown settings category: {}", category);
+                }
+            })
         })
         .await
         .to_wasmtime_result()
@@ -1053,9 +1056,11 @@ impl ExtensionImports for WasmState {
             LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
-        self.host
-            .proxy
-            .update_language_server_status(::lsp::LanguageServerName(server_name.into()), status);
+        self.host.proxy.update_language_server_status(
+            self.language_server_status_source,
+            ::lsp::LanguageServerName(server_name.into()),
+            status,
+        );
 
         Ok(())
     }
@@ -1127,6 +1132,25 @@ impl ExtensionImports for WasmState {
                         .await
                         .with_context(|| format!("unzipping {path:?} archive"))?;
                 }
+                DownloadedFileType::Bzip2 => {
+                    let body = BzDecoder::new(body);
+                    futures::pin_mut!(body);
+                    self.host
+                        .fs
+                        .create_file_with(&destination_path, body)
+                        .await?;
+                }
+                DownloadedFileType::Bzip2Tar => {
+                    let mut tar_bz2_bytes = Vec::new();
+                    body.read_to_end(&mut tar_bz2_bytes).await?;
+                    let decompressed_bytes =
+                        BzDecoder::new(BufReader::new(tar_bz2_bytes.as_slice()));
+                    futures::pin_mut!(decompressed_bytes);
+                    self.host
+                        .fs
+                        .extract_tar_file(&destination_path, Archive::new(decompressed_bytes))
+                        .await?;
+                }
             }
 
             Ok(())
@@ -1139,7 +1163,8 @@ impl ExtensionImports for WasmState {
         let path = self
             .host
             .writeable_path_from_extension(&self.manifest.id, Path::new(&path))
-            .await?;
+            .await
+            .into_wasmtime_result()?;
 
         make_file_executable(&path)
             .await

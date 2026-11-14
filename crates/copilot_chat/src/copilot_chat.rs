@@ -1,25 +1,29 @@
+pub mod copilot_oauth;
+mod model;
 pub mod responses;
 
-use std::path::PathBuf;
+pub use model::{PROVIDER_ID, PROVIDER_NAME, language_model, stream_completion};
+
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
-use collections::HashSet;
-use fs::Fs;
+use credentials_provider::CredentialsProvider;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use gpui::TaskExt;
 use gpui::WeakEntity;
-use gpui::{App, AsyncApp, Global, prelude::*};
+use gpui::{App, AsyncApp, Entity, Global, Task, prelude::*};
 use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
-use settings::watch_config_dir;
+pub use copilot_oauth::DeviceFlow;
 
+// The Copilot language server unofficially supports both token env vars:
+// https://github.com/github/copilot-language-server-release/issues/3#issuecomment-2699433055
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
+pub const GITHUB_COPILOT_OAUTH_ENV_VAR: &str = "GITHUB_COPILOT_TOKEN";
+const CENTS_PER_DOLLAR: f64 = 100.0;
+const COPILOT_API_VERSION: &str = "2026-08-01";
 const DEFAULT_COPILOT_API_ENDPOINT: &str = "https://api.githubcopilot.com";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -39,10 +43,14 @@ impl CopilotChatConfiguration {
     pub fn graphql_url(&self) -> String {
         if let Some(enterprise_uri) = &self.enterprise_uri {
             let domain = Self::parse_domain(enterprise_uri);
-            format!("https://{}/api/graphql", domain)
+            format!("https://api.{domain}/graphql")
         } else {
             "https://api.github.com/graphql".to_string()
         }
+    }
+
+    fn credentials_url(&self) -> String {
+        format!("https://{}/copilot-agent", self.oauth_domain())
     }
 
     pub fn chat_completions_url(&self, api_endpoint: &str) -> String {
@@ -59,6 +67,14 @@ impl CopilotChatConfiguration {
 
     pub fn models_url(&self, api_endpoint: &str) -> String {
         format!("{}/models", api_endpoint)
+    }
+
+    pub fn device_code_url(&self) -> String {
+        format!("https://{}/login/device/code", self.oauth_domain())
+    }
+
+    pub fn access_token_url(&self) -> String {
+        format!("https://{}/login/oauth/access_token", self.oauth_domain())
     }
 
     fn parse_domain(enterprise_uri: &str) -> String {
@@ -163,12 +179,56 @@ pub struct Model {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 struct ModelBilling {
+    #[serde(default)]
     is_premium: bool,
-    multiplier: f64,
+    #[serde(default)]
+    multiplier: Option<f64>,
     // List of plans a model is restricted to
     // Field is not present if a model is available for all plans
     #[serde(default)]
     restricted_to: Option<Vec<String>>,
+    #[serde(default)]
+    token_prices: Option<ModelTokenPrices>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+struct ModelTokenPrices {
+    default: ModelContextTier,
+    #[serde(default)]
+    long_context: Option<ModelContextTier>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+struct ModelContextTier {
+    #[serde(default)]
+    max_prompt_tokens: u64,
+    #[serde(default, rename = "input_price")]
+    input_cents_per_1m: f64,
+    #[serde(default, rename = "output_price")]
+    output_cents_per_1m: f64,
+    #[serde(default, rename = "cache_read_price")]
+    cache_read_cents_per_1m: f64,
+    #[serde(default, rename = "cache_write_price")]
+    cache_write_cents_per_1m: f64,
+}
+
+impl ModelBilling {
+    fn max_prompt_tokens_before_surcharge(&self) -> Option<u64> {
+        let prices = self.token_prices.as_ref()?;
+        let long_context = prices.long_context.as_ref()?;
+        let default = &prices.default;
+        let has_surcharge = long_context.input_cents_per_1m > default.input_cents_per_1m
+            || long_context.output_cents_per_1m > default.output_cents_per_1m
+            || long_context.cache_read_cents_per_1m > default.cache_read_cents_per_1m
+            || long_context.cache_write_cents_per_1m > default.cache_write_cents_per_1m;
+        (has_surcharge && default.max_prompt_tokens > 0).then_some(default.max_prompt_tokens)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModelTokenCost {
+    pub input_dollars_per_1m: f64,
+    pub output_dollars_per_1m: f64,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -262,11 +322,32 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> u64 {
-        self.capabilities.limits.max_context_window_tokens as u64
+        let full_window = self.capabilities.limits.max_context_window_tokens as u64;
+        self.billing
+            .max_prompt_tokens_before_surcharge()
+            .map(|max_prompt_tokens| {
+                max_prompt_tokens
+                    .saturating_add(self.capabilities.limits.max_output_tokens as u64)
+                    .min(full_window)
+            })
+            .unwrap_or(full_window)
     }
 
-    pub fn max_output_tokens(&self) -> usize {
-        self.capabilities.limits.max_output_tokens
+    pub fn max_prompt_tokens(&self) -> Option<u64> {
+        let limit = self.capabilities.limits.max_prompt_tokens;
+        let limit = (limit > 0).then_some(limit);
+        // Under the tiered API, `capabilities.limits.max_prompt_tokens` describes the
+        // long-context tier, so keep surcharged models within the standard tier.
+        match (limit, self.billing.max_prompt_tokens_before_surcharge()) {
+            (Some(limit), Some(standard)) => Some(limit.min(standard)),
+            (None, Some(standard)) => Some(standard),
+            (limit, None) => limit,
+        }
+    }
+
+    pub fn max_output_tokens(&self) -> Option<u64> {
+        let limit = self.capabilities.limits.max_output_tokens as u64;
+        (limit > 0).then_some(limit)
     }
 
     pub fn supports_tools(&self) -> bool {
@@ -330,8 +411,16 @@ impl Model {
         &self.capabilities.family
     }
 
-    pub fn multiplier(&self) -> f64 {
+    pub fn multiplier(&self) -> Option<f64> {
         self.billing.multiplier
+    }
+
+    pub fn token_cost(&self) -> Option<ModelTokenCost> {
+        let prices = self.billing.token_prices.as_ref()?;
+        Some(ModelTokenCost {
+            input_dollars_per_1m: prices.default.input_cents_per_1m / CENTS_PER_DOLLAR,
+            output_dollars_per_1m: prices.default.output_cents_per_1m / CENTS_PER_DOLLAR,
+        })
     }
 }
 
@@ -342,6 +431,8 @@ pub struct Request {
     pub temperature: f32,
     pub model: String,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -495,43 +586,62 @@ struct GlobalCopilotChat(gpui::Entity<CopilotChat>);
 
 impl Global for GlobalCopilotChat {}
 
+/// Authentication state for the Copilot agent (chat) provider.
+#[derive(Clone, Debug)]
+pub enum CopilotChatStatus {
+    /// Still loading a previously-stored token from the keychain.
+    Starting,
+    SignedOut,
+    SigningIn {
+        device_flow: DeviceFlow,
+    },
+    Authorized,
+    Error(Arc<str>),
+}
+
 pub struct CopilotChat {
+    status: CopilotChatStatus,
     oauth_token: Option<String>,
     api_endpoint: Option<String>,
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
+    credentials_provider: Arc<dyn CredentialsProvider>,
+    load_task: Option<Task<Result<()>>>,
+    sign_in_task: Option<Task<()>>,
 }
 
 pub fn init(
-    fs: Arc<dyn Fs>,
     client: Arc<dyn HttpClient>,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     configuration: CopilotChatConfiguration,
     cx: &mut App,
 ) {
-    let copilot_chat = cx.new(|cx| CopilotChat::new(fs, client, configuration, cx));
+    let copilot_chat =
+        cx.new(|cx| CopilotChat::new(client, credentials_provider, configuration, cx));
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
-pub fn copilot_chat_config_dir() -> &'static PathBuf {
-    static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-    COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        let config_dir = if cfg!(target_os = "windows") {
-            dirs::data_local_dir().expect("failed to determine LocalAppData directory")
-        } else {
-            std::env::var("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home_dir().join(".config"))
-        };
-
-        config_dir.join("github-copilot")
-    })
+fn oauth_token_from_env() -> Option<String> {
+    std::env::var(COPILOT_OAUTH_ENV_VAR)
+        .ok()
+        .or_else(|| std::env::var(GITHUB_COPILOT_OAUTH_ENV_VAR).ok())
 }
 
-fn copilot_chat_config_paths() -> [PathBuf; 2] {
-    let base_dir = copilot_chat_config_dir();
-    [base_dir.join("hosts.json"), base_dir.join("apps.json")]
+async fn load_stored_token(
+    credentials_provider: &Arc<dyn CredentialsProvider>,
+    configuration: &CopilotChatConfiguration,
+    cx: &AsyncApp,
+) -> Option<String> {
+    let (_, token) = language_model::read_credentials(
+        credentials_provider.as_ref(),
+        &configuration.credentials_url(),
+        cx,
+    )
+    .await
+    .ok()
+    .flatten()?;
+    String::from_utf8(token).ok()
 }
 
 impl CopilotChat {
@@ -540,54 +650,153 @@ impl CopilotChat {
             .map(|model| model.0.clone())
     }
 
-    fn new(
-        fs: Arc<dyn Fs>,
+    pub fn new(
         client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
         configuration: CopilotChatConfiguration,
         cx: &mut Context<Self>,
     ) -> Self {
-        let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
-        let dir_path = copilot_chat_config_dir();
+        let env_token = oauth_token_from_env();
 
-        cx.spawn(async move |this, cx| {
-            let mut parent_watch_rx = watch_config_dir(
-                cx.background_executor(),
-                fs.clone(),
-                dir_path.clone(),
-                config_paths,
-            );
-            while let Some(contents) = parent_watch_rx.next().await {
-                let oauth_domain =
-                    this.read_with(cx, |this, _| this.configuration.oauth_domain())?;
-                let oauth_token = extract_oauth_token(contents, &oauth_domain);
-
-                this.update(cx, |this, cx| {
-                    this.oauth_token = oauth_token.clone();
-                    cx.notify();
+        // Load a previously-stored token (or the one from the environment) and
+        // fetch models if we end up authenticated.
+        let load_task = cx.spawn(async move |this, cx| {
+            let (env_token, credentials_provider, configuration) =
+                this.read_with(cx, |this, _| {
+                    (
+                        this.oauth_token.clone(),
+                        this.credentials_provider.clone(),
+                        this.configuration.clone(),
+                    )
                 })?;
 
-                if oauth_token.is_some() {
-                    Self::update_models(&this, cx).await?;
+            let token = match env_token {
+                Some(token) => Some(token),
+                None => load_stored_token(&credentials_provider, &configuration, cx).await,
+            };
+
+            let configuration_is_current = this.update(cx, |this, cx| {
+                if this.configuration != configuration {
+                    return false;
                 }
+                this.oauth_token = token.clone();
+                this.status = if token.is_some() {
+                    CopilotChatStatus::Authorized
+                } else {
+                    CopilotChatStatus::SignedOut
+                };
+                cx.notify();
+                true
+            })?;
+
+            if configuration_is_current && token.is_some() {
+                Self::update_models(&this, cx).await?;
             }
             anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        });
 
-        let this = Self {
-            oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
+        Self {
+            status: CopilotChatStatus::Starting,
+            oauth_token: env_token,
             api_endpoint: None,
             models: None,
             configuration,
             client,
-        };
+            credentials_provider,
+            load_task: Some(load_task),
+            sign_in_task: None,
+        }
+    }
 
-        if this.oauth_token.is_some() {
-            cx.spawn(async move |this, cx| Self::update_models(&this, cx).await)
-                .detach_and_log_err(cx);
+    pub fn status(&self) -> CopilotChatStatus {
+        self.status.clone()
+    }
+
+    /// Begins the GitHub OAuth device-code flow. Progress is reported through
+    /// [`Self::status`]; observe this entity to react to state changes.
+    pub fn sign_in(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.status,
+            CopilotChatStatus::SigningIn { .. } | CopilotChatStatus::Authorized
+        ) {
+            return;
         }
 
-        this
+        self.load_task = None;
+        let client = self.client.clone();
+        let configuration = self.configuration.clone();
+        let credentials_url = configuration.credentials_url();
+        let credentials_provider = self.credentials_provider.clone();
+        let executor = cx.background_executor().clone();
+
+        let task = cx.spawn(async move |this, cx| {
+            let result = async {
+                let device_flow =
+                    copilot_oauth::request_device_code(&client, &configuration).await?;
+                this.update(cx, |this, cx| {
+                    this.status = CopilotChatStatus::SigningIn {
+                        device_flow: device_flow.clone(),
+                    };
+                    cx.notify();
+                })?;
+
+                let token = copilot_oauth::poll_for_access_token(
+                    &client,
+                    &configuration,
+                    &device_flow,
+                    &executor,
+                )
+                .await?;
+
+                credentials_provider
+                    .write_credentials(&credentials_url, "Bearer", token.as_bytes(), cx)
+                    .await
+                    .context("writing Copilot agent credentials to the keychain")?;
+
+                this.update(cx, |this, cx| {
+                    this.oauth_token = Some(token);
+                    this.api_endpoint = None;
+                    this.status = CopilotChatStatus::Authorized;
+                    cx.notify();
+                })?;
+
+                Self::update_models(&this, cx).await?;
+                anyhow::Ok(())
+            }
+            .await;
+
+            if let Err(error) = result {
+                log::error!("Copilot agent sign-in failed: {error:#}");
+                this.update(cx, |this, cx| {
+                    this.status = CopilotChatStatus::Error(error.to_string().into());
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
+
+        self.sign_in_task = Some(task);
+        cx.notify();
+    }
+
+    pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
+        let credentials_url = self.configuration.credentials_url();
+        self.oauth_token = None;
+        self.api_endpoint = None;
+        self.models = None;
+        self.load_task = None;
+        self.sign_in_task = None;
+        self.status = CopilotChatStatus::SignedOut;
+        cx.notify();
+
+        cx.spawn(async move |_, cx| {
+            credentials_provider
+                .delete_credentials(&credentials_url, cx)
+                .await
+                .context("deleting Copilot agent credentials from the keychain")?;
+            anyhow::Ok(())
+        })
     }
 
     async fn update_models(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
@@ -624,16 +833,17 @@ impl CopilotChat {
     }
 
     pub async fn stream_completion(
+        copilot_chat: Entity<Self>,
         request: Request,
         location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let (client, oauth_token, api_endpoint, configuration) =
-            Self::get_auth_details(&mut cx).await?;
+            Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.chat_completions_url(&api_endpoint);
-        stream_completion(
+        stream_chat_completion(
             client.clone(),
             oauth_token,
             api_url.into(),
@@ -645,13 +855,14 @@ impl CopilotChat {
     }
 
     pub async fn stream_response(
+        copilot_chat: Entity<Self>,
         request: responses::Request,
         location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
         let (client, oauth_token, api_endpoint, configuration) =
-            Self::get_auth_details(&mut cx).await?;
+            Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.responses_url(&api_endpoint);
         responses::stream_response(
@@ -666,6 +877,7 @@ impl CopilotChat {
     }
 
     pub async fn stream_messages(
+        copilot_chat: Entity<Self>,
         body: String,
         location: ChatLocation,
         is_user_initiated: bool,
@@ -673,7 +885,7 @@ impl CopilotChat {
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>> {
         let (client, oauth_token, api_endpoint, configuration) =
-            Self::get_auth_details(&mut cx).await?;
+            Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.messages_url(&api_endpoint);
         stream_messages(
@@ -689,6 +901,7 @@ impl CopilotChat {
     }
 
     async fn get_auth_details(
+        copilot_chat: &Entity<Self>,
         cx: &mut AsyncApp,
     ) -> Result<(
         Arc<dyn HttpClient>,
@@ -696,25 +909,22 @@ impl CopilotChat {
         String,
         CopilotChatConfiguration,
     )> {
-        let this = cx
-            .update(|cx| Self::global(cx))
-            .context("Copilot chat is not enabled")?;
-
-        let (oauth_token, api_endpoint, client, configuration) = this.read_with(cx, |this, _| {
-            (
-                this.oauth_token.clone(),
-                this.api_endpoint.clone(),
-                this.client.clone(),
-                this.configuration.clone(),
-            )
-        });
+        let (oauth_token, api_endpoint, client, configuration) =
+            copilot_chat.read_with(cx, |copilot_chat, _| {
+                (
+                    copilot_chat.oauth_token.clone(),
+                    copilot_chat.api_endpoint.clone(),
+                    copilot_chat.client.clone(),
+                    copilot_chat.configuration.clone(),
+                )
+            });
 
         let oauth_token = oauth_token.context("No OAuth token available")?;
 
         let api_endpoint = match api_endpoint {
             Some(endpoint) => endpoint,
             None => {
-                let weak = this.downgrade();
+                let weak = copilot_chat.downgrade();
                 Self::resolve_api_endpoint(&weak, &oauth_token, &configuration, &client, cx).await?
             }
         };
@@ -731,6 +941,7 @@ impl CopilotChat {
     ) -> Result<String> {
         let api_endpoint = match discover_api_endpoint(oauth_token, configuration, client).await {
             Ok(endpoint) => endpoint,
+            Err(error) if configuration.enterprise_uri.is_some() => return Err(error),
             Err(error) => {
                 log::warn!(
                     "Failed to discover Copilot API endpoint via GraphQL, \
@@ -756,12 +967,41 @@ impl CopilotChat {
         let same_configuration = self.configuration == configuration;
         self.configuration = configuration;
         if !same_configuration {
+            self.oauth_token = None;
             self.api_endpoint = None;
-            cx.spawn(async move |this, cx| {
-                Self::update_models(&this, cx).await?;
+            self.models = None;
+            self.sign_in_task = None;
+            self.status = CopilotChatStatus::Starting;
+            cx.notify();
+
+            let credentials_provider = self.credentials_provider.clone();
+            let configuration = self.configuration.clone();
+            self.load_task = Some(cx.spawn(async move |this, cx| {
+                let token = load_stored_token(&credentials_provider, &configuration, cx).await;
+                let configuration_is_current = this.update(cx, |this, cx| {
+                    if this.configuration != configuration {
+                        return false;
+                    }
+                    this.oauth_token = token.clone();
+                    this.status = if token.is_some() {
+                        CopilotChatStatus::Authorized
+                    } else {
+                        CopilotChatStatus::SignedOut
+                    };
+                    cx.notify();
+                    true
+                })?;
+
+                if configuration_is_current && token.is_some() {
+                    if let Err(error) = Self::update_models(&this, cx).await {
+                        this.update(cx, |this, cx| {
+                            this.status = CopilotChatStatus::Error(error.to_string().into());
+                            cx.notify();
+                        })?;
+                    }
+                }
                 Ok::<_, anyhow::Error>(())
-            })
-            .detach();
+            }));
         }
     }
 }
@@ -869,7 +1109,7 @@ pub(crate) fn copilot_request_headers(
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )
-        .header("X-GitHub-Api-Version", "2025-10-01")
+        .header("X-GitHub-Api-Version", COPILOT_API_VERSION)
         .when_some(is_user_initiated, |builder, is_user_initiated| {
             builder.header(
                 "X-Initiator",
@@ -917,24 +1157,7 @@ async fn request_models(
     Ok(models)
 }
 
-fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(&contents)
-        .map(|v| {
-            v.as_object().and_then(|obj| {
-                obj.iter().find_map(|(key, value)| {
-                    if key.starts_with(domain) {
-                        value["oauth_token"].as_str().map(|v| v.to_string())
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-        .ok()
-        .flatten()
-}
-
-async fn stream_completion(
+async fn stream_chat_completion(
     client: Arc<dyn HttpClient>,
     oauth_token: String,
     completion_url: Arc<str>,
@@ -1079,6 +1302,37 @@ async fn stream_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+
+    #[test]
+    fn test_github_urls() {
+        let configuration = CopilotChatConfiguration::default();
+        assert_eq!(
+            configuration.graphql_url(),
+            "https://api.github.com/graphql"
+        );
+        assert_eq!(
+            configuration.credentials_url(),
+            "https://github.com/copilot-agent"
+        );
+    }
+
+    #[test]
+    fn test_ghe_data_residency_urls() {
+        let configuration = CopilotChatConfiguration {
+            enterprise_uri: Some("https://acme.ghe.com/".to_string()),
+        };
+        assert_eq!(
+            configuration.graphql_url(),
+            "https://api.acme.ghe.com/graphql"
+        );
+        assert_eq!(
+            configuration.credentials_url(),
+            "https://acme.ghe.com/copilot-agent"
+        );
+    }
 
     #[test]
     fn test_resilient_model_schema_deserialize() {
@@ -1266,6 +1520,90 @@ mod tests {
 
         // GPT-4o should return 128000 (context window), not 110000 (prompt tokens)
         assert_eq!(schema.data[1].max_token_count(), 128000);
+    }
+
+    #[test]
+    fn test_long_context_tier_limits() {
+        let json = r#"{
+              "data": [
+                {
+                  "billing": {
+                    "token_prices": {
+                      "batch_size": 1000000,
+                      "default": { "input_price": 1000, "output_price": 5000, "max_prompt_tokens": 200000 },
+                      "long_context": { "input_price": 1000, "output_price": 5000, "max_prompt_tokens": 936000 }
+                    }
+                  },
+                  "capabilities": {
+                    "family": "claude-opus-5",
+                    "limits": { "max_context_window_tokens": 1000000, "max_output_tokens": 64000, "max_prompt_tokens": 936000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-opus-5",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Opus 5",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-opus-5"
+                },
+                {
+                  "billing": {
+                    "token_prices": {
+                      "batch_size": 1000000,
+                      "default": { "input_price": 250, "output_price": 1500, "max_prompt_tokens": 272000 },
+                      "long_context": { "input_price": 500, "output_price": 2250, "max_prompt_tokens": 872000 }
+                    }
+                  },
+                  "capabilities": {
+                    "family": "gpt-6-sol",
+                    "limits": { "max_context_window_tokens": 1000000, "max_output_tokens": 128000, "max_prompt_tokens": 872000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "gpt-6-sol",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "GPT-6 Sol",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "OpenAI",
+                  "version": "gpt-6-sol"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        let free_long_context = &schema.data[0];
+        assert_eq!(free_long_context.max_token_count(), 1_000_000);
+        assert_eq!(free_long_context.max_prompt_tokens(), Some(936_000));
+        assert_eq!(free_long_context.multiplier(), None);
+
+        let surcharged_long_context = &schema.data[1];
+        assert_eq!(surcharged_long_context.max_token_count(), 400_000);
+        assert_eq!(surcharged_long_context.max_prompt_tokens(), Some(272_000));
+    }
+
+    #[test]
+    fn test_long_context_cache_only_surcharge() {
+        let billing: ModelBilling = serde_json::from_str(
+            r#"{
+                "token_prices": {
+                    "default": { "input_price": 200, "output_price": 1000, "cache_read_price": 20, "cache_write_price": 250, "max_prompt_tokens": 272000 },
+                    "long_context": { "input_price": 200, "output_price": 1000, "cache_read_price": 40, "cache_write_price": 250, "max_prompt_tokens": 872000 }
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(billing.max_prompt_tokens_before_surcharge(), Some(272_000));
     }
 
     #[test]
@@ -1673,8 +2011,9 @@ mod tests {
         let model_with_responses_only = Model {
             billing: ModelBilling {
                 is_premium: false,
-                multiplier: 1.0,
+                multiplier: Some(1.0),
                 restricted_to: None,
+                token_prices: None,
             },
             capabilities: ModelCapabilities {
                 family: "test".to_string(),
@@ -1751,4 +2090,44 @@ mod tests {
             "\"none\""
         );
     }
+
+    #[gpui::test]
+    async fn test_disabled_credential_load_configuration_and_signout(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            language_model::set_credentials_read_gate::<DisabledAi>(
+                |cx| cx.global::<DisabledAi>().0,
+                cx,
+            );
+        });
+        for sign_out in [false, true] {
+            cx.update(|cx| cx.set_global(DisabledAi(true)));
+            let credentials = Arc::new(FakeCredentialsProvider::default());
+            let client = FakeHttpClient::create(|_| async { panic!("unexpected HTTP request") });
+            let mut configuration = CopilotChatConfiguration::default();
+            let chat = cx.new(|cx| {
+                let mut chat =
+                    CopilotChat::new(client, credentials.clone(), configuration.clone(), cx);
+                chat.oauth_token = None;
+                chat
+            });
+            cx.run_until_parked();
+            configuration.enterprise_uri = Some("https://enterprise.example".to_string());
+            chat.update(cx, |chat, cx| chat.set_configuration(configuration, cx));
+            cx.run_until_parked();
+            assert_eq!(credentials.take_reads(), Vec::<String>::new());
+            if sign_out {
+                chat.update(cx, |chat, cx| chat.sign_out(cx))
+                    .await
+                    .expect("sign out");
+            }
+            cx.update(|cx| cx.set_global(DisabledAi(false)));
+            cx.run_until_parked();
+            let expected = vec!["https://enterprise.example/copilot-agent"; usize::from(!sign_out)];
+            assert_eq!(credentials.take_reads(), expected);
+        }
+    }
+
+    struct DisabledAi(bool);
+
+    impl Global for DisabledAi {}
 }

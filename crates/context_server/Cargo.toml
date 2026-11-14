@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/context_server.rs"
+doctest = false
 
 [features]
 test-support = ["gpui/test-support"]
@@ -23,9 +24,10 @@ collections.workspace = true
 futures.workspace = true
 futures-lite.workspace = true
 gpui.workspace = true
-http_client = { workspace = true, features = ["test-support"] }
+http_client.workspace = true
 log.workspace = true
 net.workspace = true
+oauth_callback_server.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 postage.workspace = true
@@ -36,10 +38,9 @@ settings.workspace = true
 sha2.workspace = true
 slotmap.workspace = true
 tempfile.workspace = true
-tiny_http.workspace = true
 url = { workspace = true, features = ["serde"] }
 util.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-pollster.workspace = true
+http_client = { workspace = true, features = ["test-support"] }

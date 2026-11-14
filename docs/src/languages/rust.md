@@ -70,7 +70,7 @@ You can configure which `rust-analyzer` binary Zed should use.
 
 By default, Zed will try to find a `rust-analyzer` in your `$PATH` and try to use that. If that binary successfully executes `rust-analyzer --help`, it's used. Otherwise, Zed will fall back to installing its own stable `rust-analyzer` version and use that.
 
-If you want to install pre-release `rust-analyzer` version instead you can instruct Zed to do so by setting `pre_release` to `true` in your `settings.json`:
+If you want to install a pre-release `rust-analyzer` version instead, you can instruct Zed to do so by setting `pre_release` to `true` in your `settings.json`:
 
 ```json [settings]
 {
@@ -163,7 +163,7 @@ If disabled with `checkOnSave: false` (see the example of the server configurati
 TBD: Is it possible to specify RUSTFLAGS? https://github.com/zed-industries/zed/issues/14334
 -->
 
-Rust-analyzer [manual](https://rust-analyzer.github.io/book/) describes various features and configuration options for rust-analyzer language server.
+The Rust-analyzer [manual](https://rust-analyzer.github.io/book/) describes various features and configuration options for the rust-analyzer language server.
 Rust-analyzer in Zed runs with the default parameters.
 
 ### Large projects and performance

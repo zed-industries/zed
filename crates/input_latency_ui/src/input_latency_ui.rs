@@ -1,7 +1,13 @@
-use collections::HashMap;
-use gpui::{App, Global, InputLatencySnapshot, Window, WindowId, actions};
+use collections::{HashMap, HashSet};
+use gpui::{
+    App, FRAME_DURATION_BUCKETS_MS, FRAME_WORK_BUCKETS_PERCENT, Global, InputLatencySnapshot,
+    RefreshIntervalFrames, Window, WindowId, actions, histogram_bucket_counts,
+};
 use hdrhistogram::Histogram;
-use std::time::Instant;
+use std::{
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 
 actions!(
     dev,
@@ -11,19 +17,52 @@ actions!(
     ]
 );
 
-/// Generates a formatted text report of the input-to-frame latency histogram
-/// for the given window. If a previous report was generated (tracked via a
-/// global on the `App`), includes a delta section showing changes since that
-/// report.
-pub fn format_input_latency_report(window: &Window, cx: &mut App) -> String {
+/// The data needed to format an input-latency report, captured synchronously
+/// by [`snapshot_input_latency_report`]. Formatting via
+/// [`format_input_latency_report`] is pure computation and can happen on a
+/// background thread.
+pub struct InputLatencyReportData {
+    snapshot: InputLatencySnapshot,
+    previous_snapshot: Option<InputLatencySnapshot>,
+    previous_timestamp: Option<chrono::DateTime<chrono::Local>>,
+    timestamp: chrono::DateTime<chrono::Local>,
+    /// The collab username of the user whose machine produced the data.
+    /// Set when the report will be placed in a buffer visible to other
+    /// collaborators, so it's clear whose latency was measured.
+    reported_by: Option<String>,
+}
+
+/// Captures the input-to-frame latency histogram for the given window, along
+/// with the previous report's baseline (tracked via a global on the `App`) for
+/// delta computation. Advances the baseline to this snapshot.
+pub fn snapshot_input_latency_report(
+    window: &Window,
+    reported_by: Option<String>,
+    cx: &mut App,
+) -> InputLatencyReportData {
     let snapshot = window.input_latency_snapshot();
+    let timestamp = chrono::Local::now();
     let state = cx.default_global::<ReporterState>();
-    let report = format_report(&snapshot, state);
+
+    let data = InputLatencyReportData {
+        snapshot: snapshot.clone(),
+        previous_snapshot: state.previous_snapshot.take(),
+        previous_timestamp: state.previous_timestamp.take(),
+        timestamp,
+        reported_by,
+    };
 
     state.previous_snapshot = Some(snapshot);
-    state.previous_timestamp = Some(chrono::Local::now());
+    state.previous_timestamp = Some(timestamp);
 
-    report
+    data
+}
+
+/// Generates a formatted text report from a previously captured
+/// [`InputLatencyReportData`]. If the capture included a previous snapshot,
+/// includes a delta section showing changes since that report.
+pub fn format_input_latency_report(data: &InputLatencyReportData) -> String {
+    format_report(data)
 }
 
 #[derive(Default)]
@@ -69,7 +108,11 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
     let current = window.input_latency_snapshot();
     let window_id = window.window_handle().window_id();
 
+    let open_window_ids = open_window_ids(cx);
     let state = cx.default_global::<TelemetryReporterState>();
+    state
+        .previous
+        .retain(|window_id, _| open_window_ids.contains(window_id));
     let now = Instant::now();
 
     let (delta_latency, delta_coalesce, report_window_seconds) =
@@ -103,42 +146,224 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
 
     state.previous.insert(window_id, (now, current));
 
-    let frames_sub4 = count_frames_in_range(&delta_latency, 0, MS4_NS);
-    let frames_4to8 = count_frames_in_range(&delta_latency, MS4_NS, MS8_NS);
-    let frames_8to16 = count_frames_in_range(&delta_latency, MS8_NS, MS16_NS);
-    let frames_16to33 = count_frames_in_range(&delta_latency, MS16_NS, MS33_NS);
-    let frames_33to100 = count_frames_in_range(&delta_latency, MS33_NS, MS100_NS);
-    // frames > 100 ms are implicitly total_frames - (sub4 + 4to8 + 8to16 + 16to33 + 33to100)
-
-    let frames_with_1_event = count_frames_in_range(&delta_coalesce, 1, 2);
-    let frames_with_2_events = count_frames_in_range(&delta_coalesce, 2, 3);
-    let frames_with_3_events = count_frames_in_range(&delta_coalesce, 3, 4);
-    // frames with 4+ events are implicitly total_frames - (1 + 2 + 3)
+    // Frames over 100 ms, or with 4+ events, are implied by total_frames.
+    let latency_counts =
+        histogram_bucket_counts(&delta_latency, [MS4_NS, MS8_NS, MS16_NS, MS33_NS, MS100_NS]);
+    let coalesce_counts = histogram_bucket_counts(&delta_coalesce, [1, 2, 3]);
+    let latency = |index: usize| latency_counts.get(index).copied().unwrap_or_default();
+    let coalesce = |index: usize| coalesce_counts.get(index).copied().unwrap_or_default();
 
     telemetry::event!(
         "Latency Report",
-        frames_sub4 = frames_sub4,
-        frames_4to8 = frames_4to8,
-        frames_8to16 = frames_8to16,
-        frames_16to33 = frames_16to33,
-        frames_33to100 = frames_33to100,
+        frames_sub4 = latency(0),
+        frames_4to8 = latency(1),
+        frames_8to16 = latency(2),
+        frames_16to33 = latency(3),
+        frames_33to100 = latency(4),
         total_frames = total_frames,
-        frames_with_1_event = frames_with_1_event,
-        frames_with_2_events = frames_with_2_events,
-        frames_with_3_events = frames_with_3_events,
+        frames_with_1_event = coalesce(0),
+        frames_with_2_events = coalesce(1),
+        frames_with_3_events = coalesce(2),
         report_window_seconds = report_window_seconds,
+        measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
     );
 }
 
-fn count_frames_in_range(histogram: &Histogram<u64>, low_ns: u64, high_ns: u64) -> u64 {
-    histogram
-        .iter_recorded()
-        .filter(|v| v.value_iterated_to() >= low_ns && v.value_iterated_to() < high_ns)
-        .map(|v| v.count_at_value())
-        .sum()
+/// Per-window, per-refresh-interval baselines for frame-duration telemetry.
+/// Kept separate from the input-latency baselines so the two reports never
+/// share state.
+#[derive(Default)]
+struct FrameDurationTelemetryState {
+    previous: HashMap<(WindowId, Option<Duration>), (Instant, RefreshIntervalFrames)>,
 }
 
-fn format_report(snapshot: &InputLatencySnapshot, previous: &ReporterState) -> String {
+impl Global for FrameDurationTelemetryState {}
+
+/// Minimum number of draws at one refresh interval since its last report for
+/// a frame-duration report to be sent. Avoids sending noise for windows that
+/// are mostly idle.
+const MIN_DRAWS_TO_REPORT: u64 = 1_000;
+
+/// Sends a `Frame Duration Report` telemetry event for each refresh interval
+/// the given window drew enough frames at since its last report, so every
+/// report describes frames on displays with one refresh rate.
+///
+/// Each report contains frame pacing (frames on time and late, missed
+/// refreshes, and work per frame as a percentage of the refresh interval), the
+/// same for frames that responded to input, and bucketed draw durations.
+/// Buckets rather than percentiles, so reports can be summed.
+///
+/// Call this periodically from a spawned task.
+pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
+    let snapshot = window.frame_duration_snapshot();
+    let window_handle = window.window_handle();
+    let window_id = window_handle.window_id();
+    let gpu = window.gpu_specs();
+
+    let open_window_ids = open_window_ids(cx);
+    let state = cx.default_global::<FrameDurationTelemetryState>();
+    state
+        .previous
+        .retain(|(window_id, _), _| open_window_ids.contains(window_id));
+    let now = Instant::now();
+
+    for current in snapshot.by_refresh_interval {
+        let key = (window_id, current.refresh_interval);
+        let (frames, report_window_seconds) = match state.previous.get(&key) {
+            Some((previous_instant, previous)) => (
+                current.since(previous),
+                now.duration_since(*previous_instant).as_secs(),
+            ),
+            // First report for this window and refresh interval: we don't know
+            // how long it has been accumulating, so record 0 to signal that
+            // this isn't a fixed-width window.
+            None => (current.clone(), 0),
+        };
+        if frames.frames_drawn < MIN_DRAWS_TO_REPORT {
+            continue;
+        }
+        state.previous.insert(key, (now, current));
+
+        let mut properties = std::collections::HashMap::from_iter([
+            (
+                "refresh_interval_ms".to_string(),
+                serde_json::json!(
+                    frames
+                        .refresh_interval
+                        .map(|interval| interval.as_secs_f64() * 1000.0)
+                ),
+            ),
+            (
+                "refresh_rate_hz".to_string(),
+                serde_json::json!(
+                    frames
+                        .refresh_interval
+                        .map(|interval| (1.0 / interval.as_secs_f64()).round() as u64)
+                ),
+            ),
+            ("frames_drawn".to_string(), frames.frames_drawn.into()),
+            (
+                "input_frames_on_time".to_string(),
+                frames.input_frames_on_time.into(),
+            ),
+            (
+                "input_frames_late".to_string(),
+                frames.input_frames_late.into(),
+            ),
+            ("frames_on_time".to_string(), frames.frames_on_time.into()),
+            ("frames_late".to_string(), frames.frames_late.into()),
+            (
+                "missed_refreshes".to_string(),
+                frames.missed_refreshes.into(),
+            ),
+            (
+                "frames_unmeasured".to_string(),
+                frames.frames_unmeasured.into(),
+            ),
+            (
+                "gpu_name".to_string(),
+                serde_json::json!(gpu.as_ref().map(|gpu| gpu.device_name.clone())),
+            ),
+            (
+                "gpu_is_software_emulated".to_string(),
+                serde_json::json!(gpu.as_ref().map(|gpu| gpu.is_software_emulated)),
+            ),
+            ("cpu_name".to_string(), serde_json::json!(cpu_name())),
+            (
+                "root_entity_type_name".to_string(),
+                serde_json::json!(window_handle.root_entity_type_name()),
+            ),
+            (
+                "report_window_seconds".to_string(),
+                report_window_seconds.into(),
+            ),
+            (
+                "measurement_version".to_string(),
+                gpui::profiler::hang::MEASUREMENT_VERSION.into(),
+            ),
+        ]);
+        // Work buckets are relative to the refresh interval, so frames on
+        // displays with an unknown interval have none.
+        if let Some(refresh_interval) = frames.refresh_interval {
+            let work_bounds = FRAME_WORK_BUCKETS_PERCENT.map(|percent| {
+                u64::try_from(refresh_interval.as_nanos() * u128::from(percent) / 100)
+                    .unwrap_or(u64::MAX)
+            });
+            for (prefix, work) in [
+                ("work_pct", &frames.work),
+                ("input_work_pct", &frames.input_work),
+            ] {
+                let counts = histogram_bucket_counts(work, work_bounds);
+                insert_buckets(
+                    &mut properties,
+                    prefix,
+                    &FRAME_WORK_BUCKETS_PERCENT,
+                    &counts,
+                );
+            }
+        }
+        let draw_counts = histogram_bucket_counts(
+            &frames.draw_duration,
+            FRAME_DURATION_BUCKETS_MS.map(|milliseconds| milliseconds * 1_000_000),
+        );
+        insert_buckets(
+            &mut properties,
+            "draw_ms",
+            &FRAME_DURATION_BUCKETS_MS,
+            &draw_counts,
+        );
+        telemetry::send_event(telemetry::Event {
+            event_type: "Frame Duration Report".to_string(),
+            event_properties: properties,
+        });
+    }
+}
+
+/// Inserts bucket counts as `{prefix}_le_{bound}` properties, plus
+/// `{prefix}_gt_{last bound}` for the final, unbounded bucket.
+fn insert_buckets(
+    properties: &mut std::collections::HashMap<String, serde_json::Value>,
+    prefix: &str,
+    upper_bounds: &[u64],
+    counts: &[u64],
+) {
+    for (index, count) in counts.iter().enumerate() {
+        let name = match upper_bounds.get(index) {
+            Some(bound) => format!("{prefix}_le_{bound}"),
+            None => format!(
+                "{prefix}_gt_{}",
+                upper_bounds.last().copied().unwrap_or_default()
+            ),
+        };
+        properties.insert(name, (*count).into());
+    }
+}
+
+fn cpu_name() -> Option<&'static str> {
+    static CPU_NAME: OnceLock<Option<String>> = OnceLock::new();
+    CPU_NAME
+        .get_or_init(|| {
+            let system = sysinfo::System::new_with_specifics(
+                sysinfo::RefreshKind::nothing().with_cpu(sysinfo::CpuRefreshKind::nothing()),
+            );
+            system
+                .cpus()
+                .first()
+                .map(|cpu| cpu.brand().trim().to_string())
+                .filter(|brand| !brand.is_empty())
+        })
+        .as_deref()
+}
+
+fn open_window_ids(cx: &App) -> HashSet<WindowId> {
+    cx.windows()
+        .into_iter()
+        .map(|window| window.window_id())
+        .collect()
+}
+
+fn format_report(data: &InputLatencyReportData) -> String {
+    let snapshot = &data.snapshot;
     let histogram = &snapshot.latency_histogram;
     let total = histogram.len();
 
@@ -157,7 +382,7 @@ fn format_report(snapshot: &InputLatencySnapshot, previous: &ReporterState) -> S
         ("max  ", 1.0),
     ];
 
-    let now = chrono::Local::now();
+    let now = data.timestamp;
 
     let mut report = String::new();
     report.push_str("Input Latency Histogram\n");
@@ -165,6 +390,9 @@ fn format_report(snapshot: &InputLatencySnapshot, previous: &ReporterState) -> S
 
     let timestamp = now.format("%Y-%m-%d %H:%M:%S %Z");
     report.push_str(&format!("Timestamp: {timestamp}\n"));
+    if let Some(reported_by) = &data.reported_by {
+        report.push_str(&format!("Reported from {reported_by}'s machine\n"));
+    }
     report.push_str(&format!("Samples: {total}\n"));
     if snapshot.mid_draw_events_dropped > 0 {
         report.push_str(&format!(
@@ -217,7 +445,7 @@ fn format_report(snapshot: &InputLatencySnapshot, previous: &ReporterState) -> S
 
     // Delta section: compare against the previous report's snapshot.
     if let (Some(prev_snapshot), Some(prev_timestamp)) =
-        (&previous.previous_snapshot, &previous.previous_timestamp)
+        (&data.previous_snapshot, &data.previous_timestamp)
     {
         let prev_latency = &prev_snapshot.latency_histogram;
         let prev_total = prev_latency.len();

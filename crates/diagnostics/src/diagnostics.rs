@@ -478,10 +478,13 @@ impl ProjectDiagnosticsEditor {
             return false;
         }
         existing.iter().zip(new.iter()).all(|(existing, new)| {
-            existing.diagnostic.message == new.diagnostic.message
-                && existing.diagnostic.severity == new.diagnostic.severity
+            existing.diagnostic.severity == new.diagnostic.severity
                 && existing.diagnostic.is_primary == new.diagnostic.is_primary
                 && existing.range.to_offset(snapshot) == new.range.to_offset(snapshot)
+                && existing
+                    .diagnostic
+                    .message
+                    .rendered_eq(&new.diagnostic.message)
         })
     }
 
@@ -692,7 +695,7 @@ impl ProjectDiagnosticsEditor {
                     for (block_id, block) in
                         block_ids.iter().zip(cloned_blocks.into_iter().flatten())
                     {
-                        let markdown = block.markdown.clone();
+                        let markdown = block.markdown;
                         editor::test::set_block_content_for_tests(
                             &this.editor,
                             *block_id,
@@ -805,6 +808,10 @@ impl Item for ProjectDiagnosticsEditor {
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(

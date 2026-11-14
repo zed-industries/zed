@@ -30,7 +30,7 @@ impl Focusable for ExtensionVersionSelector {
 
 impl Render for ExtensionVersionSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 
@@ -91,6 +91,10 @@ impl ExtensionVersionSelectorDelegate {
 
 impl PickerDelegate for ExtensionVersionSelectorDelegate {
     type ListItem = ui::ListItem;
+
+    fn name() -> &'static str {
+        "extension version selector"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select extension version...".into()
@@ -198,9 +202,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.selector
-            .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+        self.selector.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
     }
 
     fn render_match(

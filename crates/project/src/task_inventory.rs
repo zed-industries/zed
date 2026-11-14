@@ -30,6 +30,8 @@ use worktree::WorktreeId;
 
 use crate::{git_store::GitStore, task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
+pub const GIT_COMMAND_TASK_TAG: &str = "git-command";
+
 #[derive(Clone, Debug, Default)]
 pub struct DebugScenarioContext {
     pub task_context: SharedTaskContext,
@@ -40,6 +42,7 @@ pub struct DebugScenarioContext {
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
+    last_scheduled_task_id: Option<TaskId>,
     last_scheduled_scenarios: VecDeque<(DebugScenario, DebugScenarioContext)>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
@@ -49,6 +52,7 @@ impl std::fmt::Debug for Inventory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Inventory")
             .field("last_scheduled_tasks", &self.last_scheduled_tasks)
+            .field("last_scheduled_task_id", &self.last_scheduled_task_id)
             .field("last_scheduled_scenarios", &self.last_scheduled_scenarios)
             .field("templates_from_settings", &self.templates_from_settings)
             .field("scenarios_from_settings", &self.scenarios_from_settings)
@@ -192,6 +196,54 @@ impl TaskContexts {
             })
     }
 
+    /// Returns the first context, in the task picker's order of preference, in which the task resolves.
+    pub fn context_for_task(
+        &self,
+        kind: &TaskSourceKind,
+        template: &TaskTemplate,
+    ) -> Option<&TaskContext> {
+        let id_base = kind.to_id_base();
+        self.contexts_for_source(kind)
+            .find(|&context| template.resolve_task(&id_base, context).is_some())
+    }
+
+    pub fn resolve_task(
+        &self,
+        kind: &TaskSourceKind,
+        template: &TaskTemplate,
+    ) -> Option<ResolvedTask> {
+        let id_base = kind.to_id_base();
+        self.contexts_for_source(kind)
+            .find_map(|context| template.resolve_task(&id_base, context))
+            .or_else(|| template.resolve_task(&id_base, &TaskContext::default()))
+    }
+
+    /// Worktree tasks are only resolved with contexts of their own worktree, so that an active item
+    /// from an unrelated (e.g. invisible or single-file) worktree does not affect their variables.
+    fn contexts_for_source(&self, kind: &TaskSourceKind) -> impl Iterator<Item = &TaskContext> {
+        let source_worktree = match kind {
+            TaskSourceKind::Worktree { id, .. } => Some(*id),
+            _ => None,
+        };
+
+        let item_context = self
+            .active_item_context
+            .as_ref()
+            .filter(|(worktree_id, _, _)| {
+                source_worktree.is_none() || *worktree_id == source_worktree
+            })
+            .map(|(_, _, context)| context);
+
+        let worktree_context = match source_worktree {
+            Some(worktree_id) => self.task_context_for_worktree_id(worktree_id),
+            None => self
+                .active_worktree_context
+                .as_ref()
+                .map(|(_, context)| context),
+        };
+        item_context.into_iter().chain(worktree_context)
+    }
+
     pub fn location(&self) -> Option<&Location> {
         self.active_item_context
             .as_ref()
@@ -224,6 +276,15 @@ impl TaskContexts {
             .find(|(id, _)| *id == worktree_id)
             .map(|(_, context)| context)
     }
+
+    /// Re-resolves a previously resolved task against the current contexts, so that
+    /// any context-dependent variables (e.g. the active file or selection) reflect the
+    /// editor's current state rather than the state from when the task was first run.
+    /// If none of the contexts resolve, the original `resolved_task` is returned unchanged.
+    fn reresolve_task(&self, kind: &TaskSourceKind, resolved_task: &ResolvedTask) -> ResolvedTask {
+        self.resolve_task(kind, resolved_task.original_task())
+            .unwrap_or_else(|| resolved_task.clone())
+    }
 }
 
 impl TaskSourceKind {
@@ -253,6 +314,7 @@ impl Inventory {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|_| Self {
             last_scheduled_tasks: VecDeque::default(),
+            last_scheduled_task_id: None,
             last_scheduled_scenarios: VecDeque::default(),
             templates_from_settings: InventoryFor::default(),
             scenarios_from_settings: InventoryFor::default(),
@@ -282,7 +344,7 @@ impl Inventory {
     }
 
     pub fn last_scheduled_scenario(&self) -> Option<&(DebugScenario, DebugScenarioContext)> {
-        self.last_scheduled_scenarios.back()
+        self.last_scheduled_scenarios.front()
     }
 
     pub fn list_debug_scenarios(
@@ -480,12 +542,20 @@ impl Inventory {
                     true
                 }
             })
+            .map(|(task_source_kind, resolved_task)| {
+                let reresolved = task_contexts.reresolve_task(task_source_kind, resolved_task);
+                let task = if reresolved.resolved_label == resolved_task.resolved_label {
+                    reresolved
+                } else {
+                    resolved_task.clone()
+                };
+                (task_source_kind.clone(), task)
+            })
             .filter(|(_, resolved_task)| {
                 match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
                     hash_map::Entry::Occupied(mut o) => {
-                        o.get_mut().insert(resolved_task.id.clone());
-                        // Neber allow duplicate reused tasks with the same labels
-                        false
+                        // Allow distinct re-resolved tasks that share a label but differ by context.
+                        o.get_mut().insert(resolved_task.id.clone())
                     }
                     hash_map::Entry::Vacant(v) => {
                         v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
@@ -493,13 +563,7 @@ impl Inventory {
                     }
                 }
             })
-            .map(|(task_source_kind, resolved_task)| {
-                (
-                    task_source_kind.clone(),
-                    resolved_task.clone(),
-                    post_inc(&mut lru_score),
-                )
-            })
+            .map(|(kind, task)| (kind, task, post_inc(&mut lru_score)))
             .sorted_unstable_by(task_lru_comparator)
             .map(|(kind, task, _)| (kind, task))
             .collect::<Vec<_>>();
@@ -544,50 +608,10 @@ impl Inventory {
                 .chain(global_tasks);
 
             let new_resolved_tasks = worktree_tasks
-                .flat_map(|(kind, task)| {
-                    let id_base = kind.to_id_base();
-
-                    if let TaskSourceKind::Worktree { id, .. } = &kind {
-                        None.or_else(|| {
-                            let (_, _, item_context) =
-                                task_contexts.active_item_context.as_ref().filter(
-                                    |(worktree_id, _, _)| Some(id) == worktree_id.as_ref(),
-                                )?;
-                            task.resolve_task(&id_base, item_context)
-                        })
-                        .or_else(|| {
-                            let (_, worktree_context) = task_contexts
-                                .active_worktree_context
-                                .as_ref()
-                                .filter(|(worktree_id, _)| id == worktree_id)?;
-                            task.resolve_task(&id_base, worktree_context)
-                        })
-                        .or_else(|| {
-                            if let TaskSourceKind::Worktree { id, .. } = &kind {
-                                let worktree_context = task_contexts
-                                    .other_worktree_contexts
-                                    .iter()
-                                    .find(|(worktree_id, _)| worktree_id == id)
-                                    .map(|(_, context)| context)?;
-                                task.resolve_task(&id_base, worktree_context)
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None.or_else(|| {
-                            let (_, _, item_context) =
-                                task_contexts.active_item_context.as_ref()?;
-                            task.resolve_task(&id_base, item_context)
-                        })
-                        .or_else(|| {
-                            let (_, worktree_context) =
-                                task_contexts.active_worktree_context.as_ref()?;
-                            task.resolve_task(&id_base, worktree_context)
-                        })
-                    }
-                    .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
-                    .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
+                .filter_map(|(kind, task)| {
+                    task_contexts
+                        .resolve_task(&kind, &task)
+                        .map(move |resolved_task| (kind, resolved_task, not_used_score))
                 })
                 .filter(|(_, resolved_task, _)| {
                     match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
@@ -621,7 +645,10 @@ impl Inventory {
                 .find(|(_, task)| &task.id == task_id)
                 .cloned()
         } else {
-            self.last_scheduled_tasks.back().cloned()
+            self.last_scheduled_tasks
+                .back()
+                .filter(|(_, task)| Some(&task.id) == self.last_scheduled_task_id.as_ref())
+                .cloned()
         }
     }
 
@@ -631,6 +658,7 @@ impl Inventory {
         task_source_kind: TaskSourceKind,
         resolved_task: ResolvedTask,
     ) {
+        self.last_scheduled_task_id = Some(resolved_task.id.clone());
         self.last_scheduled_tasks
             .push_back((task_source_kind, resolved_task));
         if self.last_scheduled_tasks.len() > 5_000 {
@@ -641,7 +669,40 @@ impl Inventory {
     /// Deletes a resolved task from history, using its id.
     /// A similar may still resurface in `used_and_current_resolved_tasks` when its [`TaskTemplate`] is resolved again.
     pub fn delete_previously_used(&mut self, id: &TaskId) {
+        let deleted_rerun_target = self
+            .last_scheduled_task(None)
+            .is_some_and(|(_, task)| &task.id == id);
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
+        if deleted_rerun_target {
+            self.last_scheduled_task_id = self
+                .last_scheduled_tasks
+                .back()
+                .map(|(_, task)| task.id.clone());
+        }
+    }
+
+    /// Returns global task templates with the provided tag.
+    pub fn global_templates_with_tag(&self, tag: &str) -> Vec<(TaskSourceKind, TaskTemplate)> {
+        self.global_templates_from_settings()
+            .filter(|(_, template)| template.tags.iter().any(|template_tag| template_tag == tag))
+            .collect()
+    }
+
+    /// Resolves global task templates with the provided tag against the provided task context.
+    pub fn resolve_global_tasks_with_tag(
+        &self,
+        tag: &str,
+        task_context: &TaskContext,
+    ) -> Vec<(TaskSourceKind, ResolvedTask)> {
+        self.global_templates_with_tag(tag)
+            .into_iter()
+            .filter_map(|(task_source_kind, task_template)| {
+                let id_base = task_source_kind.to_id_base();
+                task_template
+                    .resolve_task(&id_base, task_context)
+                    .map(|resolved_task| (task_source_kind, resolved_task))
+            })
+            .collect()
     }
 
     /// Returns all task templates (worktree and global) that have at least one
@@ -655,6 +716,16 @@ impl Inventory {
             .chain(self.global_templates_from_settings())
             .filter(|(_, template)| !template.hooks.is_disjoint(hooks))
             .collect()
+    }
+
+    fn retain_unchanged_tasks(
+        &mut self,
+        is_updated_source: impl Fn(&TaskSourceKind) -> bool,
+        new_templates: &[TaskTemplate],
+    ) {
+        self.last_scheduled_tasks.retain(|(kind, task)| {
+            !is_updated_source(kind) || new_templates.contains(task.original_task())
+        });
     }
 
     fn global_templates_from_settings(
@@ -735,23 +806,42 @@ impl Inventory {
             Some(template)
         });
 
-        let parsed_templates = &mut self.templates_from_settings;
+        let new_templates = new_templates.collect::<Vec<_>>();
         match location {
             TaskSettingsLocation::Global(path) => {
-                parsed_templates
+                self.retain_unchanged_tasks(
+                    |kind| {
+                        if let TaskSourceKind::AbsPath { abs_path, .. } = kind {
+                            abs_path == path
+                        } else {
+                            false
+                        }
+                    },
+                    &new_templates,
+                );
+                self.templates_from_settings
                     .global
                     .entry(path.to_owned())
-                    .insert_entry(new_templates.collect());
-                self.last_scheduled_tasks.retain(|(kind, _)| {
-                    if let TaskSourceKind::AbsPath { abs_path, .. } = kind {
-                        abs_path != path
-                    } else {
-                        true
-                    }
-                });
+                    .insert_entry(new_templates);
             }
             TaskSettingsLocation::Worktree(location) => {
-                let new_templates = new_templates.collect::<Vec<_>>();
+                self.retain_unchanged_tasks(
+                    |kind| {
+                        if let TaskSourceKind::Worktree {
+                            directory_in_worktree,
+                            id,
+                            ..
+                        } = kind
+                        {
+                            *id == location.worktree_id
+                                && directory_in_worktree.as_ref() == location.path
+                        } else {
+                            false
+                        }
+                    },
+                    &new_templates,
+                );
+                let parsed_templates = &mut self.templates_from_settings;
                 if new_templates.is_empty() {
                     if let Some(worktree_tasks) =
                         parsed_templates.worktree.get_mut(&location.worktree_id)
@@ -765,19 +855,6 @@ impl Inventory {
                         .or_default()
                         .insert(Arc::from(location.path), new_templates);
                 }
-                self.last_scheduled_tasks.retain(|(kind, _)| {
-                    if let TaskSourceKind::Worktree {
-                        directory_in_worktree,
-                        id,
-                        ..
-                    } = kind
-                    {
-                        *id != location.worktree_id
-                            || directory_in_worktree.as_ref() != location.path
-                    } else {
-                        true
-                    }
-                });
             }
         }
 
@@ -993,12 +1070,14 @@ impl ContextProvider for BasicContextProvider {
                     .worktree_for_id(worktree_id, cx)
             });
 
-        if let Some(worktree) = worktree {
+        if let Some(worktree) = worktree
+            && let Some(worktree_root) = worktree.read(cx).root_dir()
+        {
             let worktree = worktree.read(cx);
             let path_style = worktree.path_style();
             task_variables.insert(
                 VariableName::WorktreeRoot,
-                worktree.abs_path().to_string_lossy().into_owned(),
+                worktree_root.to_string_lossy().into_owned(),
             );
             if let Some(current_file) = current_file.as_ref() {
                 let relative_path = current_file.path();
@@ -1073,5 +1152,118 @@ impl ContextProviderWithTasks {
 impl ContextProvider for ContextProviderWithTasks {
     fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         Task::ready(Some(self.templates.clone()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context_with_greeting(value: &str) -> TaskContext {
+        TaskContext {
+            task_variables: TaskVariables::from_iter([(
+                VariableName::Custom(Cow::Owned("GREETING".to_string())),
+                value.to_string(),
+            )]),
+            ..TaskContext::default()
+        }
+    }
+
+    fn greeting_template() -> TaskTemplate {
+        TaskTemplate {
+            label: "echo $ZED_CUSTOM_GREETING".to_string(),
+            command: "echo".to_string(),
+            args: vec!["$ZED_CUSTOM_GREETING".to_string()],
+            ..TaskTemplate::default()
+        }
+    }
+
+    #[test]
+    fn reresolve_task_uses_current_active_item_context() {
+        let template = greeting_template();
+        let stale = template
+            .resolve_task("oneshot", &context_with_greeting("stale"))
+            .expect("template should resolve against the stale context");
+        assert_eq!(stale.resolved_label, "echo stale");
+
+        let task_contexts = TaskContexts {
+            active_item_context: Some((None, None, context_with_greeting("fresh"))),
+            ..TaskContexts::default()
+        };
+
+        let reresolved = task_contexts.reresolve_task(&TaskSourceKind::UserInput, &stale);
+        assert_eq!(
+            reresolved.resolved_label, "echo fresh",
+            "re-resolution should pick up the current active item context"
+        );
+    }
+
+    #[test]
+    fn reresolve_task_scopes_worktree_tasks_to_their_worktree() {
+        let template = greeting_template();
+        let stale = template
+            .resolve_task("worktree", &context_with_greeting("stale"))
+            .expect("template should resolve against the stale context");
+
+        let task_worktree = WorktreeId::from_usize(1);
+        let other_worktree = WorktreeId::from_usize(2);
+        let kind = TaskSourceKind::Worktree {
+            id: task_worktree,
+            directory_in_worktree: RelPath::empty_arc(),
+            id_base: Cow::Borrowed("worktree"),
+        };
+
+        // The active item belongs to a different worktree, so it must not be used; the
+        // task's own worktree context should win instead.
+        let task_contexts = TaskContexts {
+            active_item_context: Some((Some(other_worktree), None, context_with_greeting("other"))),
+            active_worktree_context: Some((task_worktree, context_with_greeting("fresh"))),
+            ..TaskContexts::default()
+        };
+
+        let reresolved = task_contexts.reresolve_task(&kind, &stale);
+        assert_eq!(
+            reresolved.resolved_label, "echo fresh",
+            "worktree tasks should only re-resolve against their own worktree's context"
+        );
+    }
+
+    #[test]
+    fn reresolve_task_prefers_active_item_over_worktree_context() {
+        let template = greeting_template();
+        let stale = template
+            .resolve_task("oneshot", &context_with_greeting("stale"))
+            .expect("template should resolve against the stale context");
+
+        // Both contexts can resolve the task; the active item context is more specific
+        // and must take precedence over the active worktree context.
+        let task_contexts = TaskContexts {
+            active_item_context: Some((None, None, context_with_greeting("item"))),
+            active_worktree_context: Some((
+                WorktreeId::from_usize(1),
+                context_with_greeting("worktree"),
+            )),
+            ..TaskContexts::default()
+        };
+
+        let reresolved = task_contexts.reresolve_task(&TaskSourceKind::UserInput, &stale);
+        assert_eq!(
+            reresolved.resolved_label, "echo item",
+            "the active item context should take precedence over the worktree context"
+        );
+    }
+
+    #[test]
+    fn reresolve_task_falls_back_to_original_when_no_context_resolves() {
+        let template = greeting_template();
+        let stale = template
+            .resolve_task("oneshot", &context_with_greeting("stale"))
+            .expect("template should resolve against the stale context");
+
+        // No contexts provide the variable, and the empty default context cannot resolve
+        // a template that requires it, so the original resolved task is returned unchanged.
+        let task_contexts = TaskContexts::default();
+        let reresolved = task_contexts.reresolve_task(&TaskSourceKind::UserInput, &stale);
+        assert_eq!(reresolved, stale);
     }
 }

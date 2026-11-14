@@ -35,11 +35,7 @@ impl ProcessExecCapability {
             }
         }
 
-        if self.args.len() < desired_args.len() {
-            return false;
-        }
-
-        true
+        self.args.len() >= desired_args.len()
     }
 }
 
