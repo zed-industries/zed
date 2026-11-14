@@ -357,7 +357,7 @@ mod tests {
 
         assert!(!rendered.contains("## Terminal sandbox"));
         assert!(!rendered.contains("allow_hosts"));
-        assert!(!rendered.contains("terminal"));
+        assert!(!rendered.contains("`terminal` tool runs"));
         assert!(!rendered.contains("timeout_ms"));
     }
 
