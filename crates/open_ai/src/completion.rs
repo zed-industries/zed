@@ -41,15 +41,17 @@ fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<Service
     }
 }
 
-/// Omitting effort enables reasoning on Sol/Luna, which then reject temperature.
+/// Omitting effort enables reasoning on Sol/Luna/Terra, which then reject temperature.
 fn temperature_for_model(
     model_id: &str,
     temperature: Option<f32>,
     reasoning_effort: Option<ReasoningEffort>,
 ) -> Option<f32> {
     temperature.filter(|_| match model_id {
-        "gpt-6-astra" | "gpt-6.1-sol" | "gpt-6.1-terra" => false,
-        "gpt-6-sol" | "gpt-6-luna" => reasoning_effort == Some(ReasoningEffort::None),
+        "gpt-6-astra" | "gpt-6.1-sol" => false,
+        "gpt-6-sol" | "gpt-6-luna" | "gpt-6.1-terra" => {
+            reasoning_effort == Some(ReasoningEffort::None)
+        }
         _ => true,
     })
 }
@@ -2383,7 +2385,8 @@ mod tests {
             ("gpt-6.1-sol", Some(0.25), None, None),
             ("gpt-6.1-sol", None, None, None),
             ("gpt-6.1-terra", Some(0.25), None, None),
-            ("gpt-6.1-terra", None, None, None),
+            ("gpt-6.1-terra", Some(0.25), Some(Medium), None),
+            ("gpt-6.1-terra", Some(0.25), Some(NoReasoning), Some(0.25)),
             ("gpt-6-astra", Some(0.25), None, None),
             ("gpt-6-astra", None, None, None),
             ("gpt-6-sol", Some(0.25), None, None),

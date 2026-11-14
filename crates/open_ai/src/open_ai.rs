@@ -363,7 +363,8 @@ impl Model {
             | Self::FivePointSixTerra
             | Self::FivePointSixLuna
             | Self::SixSol
-            | Self::SixLuna => &[
+            | Self::SixLuna
+            | Self::SixPointOneTerra => &[
                 ReasoningEffort::None,
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
@@ -371,7 +372,7 @@ impl Model {
                 ReasoningEffort::XHigh,
                 ReasoningEffort::Max,
             ],
-            Self::SixAstra | Self::SixPointOneSol | Self::SixPointOneTerra => &[
+            Self::SixAstra | Self::SixPointOneSol => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
