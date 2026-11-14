@@ -11878,6 +11878,28 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_paste_content_from_other_app_with_auto_indent_disabled(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent_on_paste = Some(false);
+    });
+
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        "    d(\n        e\n    );".into(),
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.run_until_parked();
+
+    cx.set_state("fn a() {\n    b();\n    if c() {\n        ˇ\n    }\n}");
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+
+    cx.assert_editor_state(
+        "fn a() {\n    b();\n    if c() {\n            d(\n        e\n    );ˇ\n    }\n}",
+    );
+}
+
+#[gpui::test]
 async fn test_paste_after_closing_documentation_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.write_to_clipboard(ClipboardItem::new_string(
