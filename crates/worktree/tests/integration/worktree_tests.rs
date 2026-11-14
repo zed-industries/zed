@@ -3601,6 +3601,42 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_load_file_with_case_mismatched_path(cx: &mut TestAppContext) {
+    // Tests that a path whose spelling differs from the on-disk one only by case is
+    // not opened as a file outside of the snapshot: the scanner reports such a path
+    // as removed, so `load_file` keeps reporting the missing entry.
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.set_case_sensitive(false);
+    fs.insert_tree("/root", json!({ "readme.md": "" })).await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let error = tree
+        .update(cx, |tree, cx| tree.load_file(rel_path("README.md"), cx))
+        .await
+        .expect_err("a case-only mismatch should not open the file")
+        .to_string();
+    assert!(
+        error.contains("Could not find entry in worktree"),
+        "unexpected error: {error}"
+    );
+}
+
+#[gpui::test]
 async fn test_create_file_in_expanded_gitignored_dir(cx: &mut TestAppContext) {
     // Tests the behavior of our worktree refresh when a file in a gitignored directory
     // is created.
