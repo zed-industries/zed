@@ -19,6 +19,7 @@ pub struct ProjectPanelSettings {
     pub entry_spacing: ProjectPanelEntrySpacing,
     pub file_icons: bool,
     pub folder_indicator: FolderIndicator,
+    pub hide_empty_folder_chevrons: bool,
     pub git_status: bool,
     pub indent_size: f32,
     pub indent_guides: IndentGuidesSettings,
@@ -117,6 +118,7 @@ impl Settings for ProjectPanelSettings {
             indent_guides: IndentGuidesSettings {
                 show: project_panel.indent_guides.unwrap().show.unwrap(),
             },
+            hide_empty_folder_chevrons: project_panel.hide_empty_folder_chevrons.unwrap(),
             sticky_scroll: project_panel.sticky_scroll.unwrap(),
             auto_reveal_entries: project_panel.auto_reveal_entries.unwrap(),
             auto_fold_dirs: project_panel.auto_fold_dirs.unwrap(),
