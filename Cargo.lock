@@ -16457,11 +16457,13 @@ dependencies = [
 name = "settings_profile_selector"
 version = "0.1.0"
 dependencies = [
+ "db",
  "editor",
  "fuzzy",
  "gpui",
  "menu",
  "picker",
+ "picker_preview",
  "project",
  "serde_json",
  "settings",
