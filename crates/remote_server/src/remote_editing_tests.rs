@@ -10,6 +10,7 @@ use agent::{
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
+use context_server::{ContextServer, ContextServerId, test::create_fake_transport};
 use language_model::{LanguageModelRegistry, LanguageModelToolResultContent};
 use languages::rust_lang;
 
@@ -49,6 +50,7 @@ use project::{
     CompletionSource, LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
     buffer_store::BufferStoreEvent,
+    context_server_store::ContextServerConfiguration,
     image_store,
     lsp_store::log_store::{
         GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
@@ -5190,6 +5192,98 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
             rendered: expected2
         }
     );
+}
+
+#[gpui::test]
+async fn test_remote_context_server_spawns_wrapped_but_reports_native_command(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    // Starting a stdio server would spawn a real process, which the deterministic
+    // test scheduler rejects. The configuration it is handed is what matters here.
+    let executor = cx.executor();
+    let spawned_configuration = Arc::new(std::sync::Mutex::new(None));
+    store.update(cx, |store, _| {
+        let spawned_configuration = spawned_configuration.clone();
+        store.set_context_server_factory(Box::new(move |id, configuration| {
+            *spawned_configuration.lock().unwrap() = Some(configuration);
+            let transport = create_fake_transport(id.0.to_string(), executor.clone());
+            Arc::new(ContextServer::new(id, Arc::new(transport)))
+        }));
+    });
+
+    cx.update_global(|settings_store: &mut SettingsStore, cx| {
+        settings_store
+            .set_user_settings(
+                &json!({
+                    "context_servers": {
+                        "my-server": {
+                            "enabled": true,
+                            "remote": true,
+                            "command": "my-server-bin",
+                            "args": ["--flag"],
+                        }
+                    }
+                })
+                .to_string(),
+                cx,
+            )
+            .unwrap();
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    let server_id = ContextServerId("my-server".into());
+
+    let spawned_configuration = spawned_configuration
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the remote host should have resolved a command for the server");
+    match spawned_configuration.as_ref() {
+        ContextServerConfiguration::Custom {
+            command,
+            remote,
+            launcher,
+        } => {
+            assert!(remote);
+            assert_eq!(command.path, PathBuf::from("my-server-bin"));
+            assert_eq!(command.args, vec!["--flag"]);
+            // `MockConnection::build_stdio_command` stands in for `ssh ...` / `wsl.exe ...`.
+            let launcher = launcher
+                .as_ref()
+                .expect("a remote server should be spawned through a launcher");
+            assert_eq!(launcher.command.path, PathBuf::from("/bin/sh"));
+        }
+        configuration => panic!("unexpected spawned configuration: {configuration:?}"),
+    }
+
+    let stored_configuration = store
+        .read_with(cx, |store, _| store.configuration_for_server(&server_id))
+        .expect("the server should be tracked by the store");
+    match stored_configuration.as_ref() {
+        ContextServerConfiguration::Custom {
+            command, remote, ..
+        } => {
+            assert!(remote);
+            assert_eq!(command.path, PathBuf::from("my-server-bin"));
+            assert_eq!(command.args, vec!["--flag"]);
+        }
+        configuration => panic!("unexpected stored configuration: {configuration:?}"),
+    }
 }
 
 #[gpui::test]
