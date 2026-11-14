@@ -66,6 +66,39 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     }
 }
 
+fn migrate_json(
+    text: &str,
+    json_indent_size: usize,
+    callback: &dyn Fn(&mut serde_json::Value) -> Result<()>,
+) -> Result<Option<String>> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let old_content: serde_json_lenient::Value = parse_json_with_comments(text)?;
+    let old_value = serde_json::to_value(&old_content)?;
+    let mut new_value = old_value.clone();
+    callback(&mut new_value)?;
+    if new_value == old_value {
+        return Ok(None);
+    }
+
+    let mut current = text.to_string();
+    let mut edits = vec![];
+    update_value_in_json_text(
+        &mut current,
+        &mut vec![],
+        json_indent_size,
+        &old_value,
+        &new_value,
+        &mut edits,
+    );
+    let mut migrated_text = text.to_string();
+    for (range, replacement) in edits {
+        migrated_text.replace_range(range, &replacement);
+    }
+    Ok(Some(migrated_text))
+}
+
 /// Runs the provided migrations on the given text.
 /// Will automatically return `Ok(None)` if there's no content to migrate.
 fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<String>> {
@@ -80,33 +113,10 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
         let migrated_text = match migration {
             MigrationType::TreeSitter(patterns, query) => migrate(&current_text, patterns, query)?,
             MigrationType::Json(callback) => {
-                if current_text.trim().is_empty() {
-                    return Ok(None);
-                }
-                let old_content: serde_json_lenient::Value =
-                    parse_json_with_comments(&current_text)?;
-                let old_value = serde_json::to_value(&old_content).unwrap();
-                let mut new_value = old_value.clone();
-                callback(&mut new_value)?;
-                if new_value != old_value {
-                    let mut current = current_text.clone();
-                    let mut edits = vec![];
-                    update_value_in_json_text(
-                        &mut current,
-                        &mut vec![],
-                        json_indent_size,
-                        &old_value,
-                        &new_value,
-                        &mut edits,
-                    );
-                    let mut migrated_text = current_text.clone();
-                    for (range, replacement) in edits.into_iter() {
-                        migrated_text.replace_range(range, &replacement);
-                    }
-                    Some(migrated_text)
-                } else {
-                    None
-                }
+                migrate_json(&current_text, json_indent_size, callback)?
+            }
+            MigrationType::JsonWithContext(callback) => {
+                migrate_json(&current_text, json_indent_size, callback)?
             }
         };
         if let Some(migrated_text) = migrated_text {
@@ -154,9 +164,38 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
 enum MigrationType<'a> {
     TreeSitter(MigrationPatterns, &'a Query),
     Json(fn(&mut serde_json::Value) -> Result<()>),
+    JsonWithContext(&'a dyn Fn(&mut serde_json::Value) -> Result<()>),
 }
 
 pub fn migrate_settings(text: &str) -> Result<Option<String>> {
+    migrate_settings_with_modal_editing(
+        text,
+        &migrations::m_2026_11_03::combine_modal_editing_settings,
+    )
+}
+
+/// Resolves legacy settings for one release channel and platform in memory.
+///
+/// Do not save this result to disk: another channel or platform may need a
+/// different selection. Use `migrate_settings` for persistent migrations.
+pub fn migrate_settings_for_context(
+    text: &str,
+    release_channel: &str,
+    platform: &str,
+) -> Result<Option<String>> {
+    migrate_settings_with_modal_editing(text, &|value| {
+        migrations::m_2026_11_03::combine_modal_editing_settings_for_context(
+            value,
+            release_channel,
+            platform,
+        )
+    })
+}
+
+fn migrate_settings_with_modal_editing(
+    text: &str,
+    modal_editing_migration: &dyn Fn(&mut serde_json::Value) -> Result<()>,
+) -> Result<Option<String>> {
     let migrations: &[MigrationType] = &[
         MigrationType::TreeSitter(
             migrations::m_2025_01_02::SETTINGS_PATTERNS,
@@ -258,6 +297,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_08_30::nest_markdown_preview_settings),
         MigrationType::Json(migrations::m_2026_09_16::nest_agent_threads_sidebar_settings),
         MigrationType::Json(migrations::m_2026_09_29::move_copilot_enterprise_uri),
+        MigrationType::JsonWithContext(modal_editing_migration),
     ];
     run_migrations(text, migrations)
 }
@@ -464,6 +504,69 @@ mod tests {
     #[test]
     fn test_empty_content() {
         assert_migrate_settings("", None)
+    }
+
+    #[test]
+    fn test_modal_editing_migration_preserves_comments_and_is_idempotent() {
+        let input = r#"{
+            // Keep my theme.
+            "theme": "One Dark",
+            "preview": { "vim_mode": true },
+            "macos": { "vim_mode": false }
+        }"#;
+        let migrated = migrate_settings(input)
+            .expect("migration should succeed")
+            .expect("legacy settings should be converted");
+        let value: serde_json::Value =
+            parse_json_with_comments(&migrated).expect("migrated settings should be valid JSON");
+
+        assert_eq!(value["preview"]["modal_editing"], "vim");
+        assert_eq!(value["macos"]["modal_editing"], "none");
+        assert!(migrated.contains("// Keep my theme."));
+        assert_eq!(
+            migrate_settings(&migrated).expect("rerun should succeed"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_modal_editing_contextual_migration_does_not_rewrite_ambiguous_overrides() {
+        let input = r#"{
+            "vim_mode": true,
+            "preview": { "helix_mode": true },
+            "macos": { "vim_mode": false }
+        }"#;
+        let error = migrate_settings(input)
+            .expect_err("disk migration must report context-dependent overrides");
+        assert!(error.to_string().contains("macos"));
+
+        for (channel, platform, expected) in [
+            ("preview", "macos", "helix"),
+            ("preview", "linux", "helix"),
+            ("stable", "macos", "none"),
+            ("stable", "linux", "vim"),
+        ] {
+            let migrated = migrate_settings_for_context(input, channel, platform)
+                .expect("in-memory migration should succeed")
+                .expect("legacy settings should be converted");
+            let value: serde_json::Value = parse_json_with_comments(&migrated)
+                .expect("migrated settings should be valid JSON");
+            let selected = value
+                .get(platform)
+                .and_then(|settings| settings.get("modal_editing"))
+                .or_else(|| {
+                    value
+                        .get(channel)
+                        .and_then(|settings| settings.get("modal_editing"))
+                })
+                .or_else(|| value.get("modal_editing"));
+            assert_eq!(selected.and_then(serde_json::Value::as_str), Some(expected));
+            assert_eq!(
+                migrate_settings_for_context(&migrated, channel, platform)
+                    .expect("rerun should succeed"),
+                None,
+            );
+        }
     }
 
     #[test]
@@ -4277,7 +4380,7 @@ mod tests {
                         },
                         "Minimal": {
                             "settings": {
-                                "vim_mode": true
+                                "modal_editing": "vim"
                             }
                         }
                     }

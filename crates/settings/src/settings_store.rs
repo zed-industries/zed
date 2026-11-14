@@ -819,10 +819,23 @@ impl SettingsStore {
                     error: err.to_string(),
                 },
             };
+            let contextual_migration = if migration_res.is_err() {
+                migrator::migrate_settings_for_context(
+                    user_settings_content,
+                    release_channel::RELEASE_CHANNEL.dev_name(),
+                    std::env::consts::OS,
+                )
+                .log_err()
+                .flatten()
+            } else {
+                None
+            };
             let content = match &migration_res {
                 Ok(Some(content)) => content,
                 Ok(None) => user_settings_content,
-                Err(_) => user_settings_content,
+                Err(_) => contextual_migration
+                    .as_deref()
+                    .unwrap_or(user_settings_content),
             };
             SettingsContentType::parse_json(content)
         };
@@ -1505,7 +1518,8 @@ pub enum MigrationStatus {
     NotNeeded,
     /// Settings were automatically migrated in memory, but the file needs to be updated
     Succeeded,
-    /// Migration was attempted but failed. Original settings were parsed instead.
+    /// Migration could not be applied to the file. Settings may still be
+    /// migrated in memory for the current release channel and platform.
     Failed { error: String },
 }
 
@@ -1867,6 +1881,70 @@ mod tests {
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: false },
             "dev override from default settings should apply",
+        );
+    }
+
+    #[gpui::test]
+    fn test_modal_editing_migration_preserves_combined_overrides(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &default_settings());
+        let mut settings = serde_json::json!({
+            "vim_mode": true,
+            "profiles": {
+                "standard": { "settings": { "helix_mode": false } },
+                "default": { "base": "default", "settings": { "vim_mode": true } }
+            }
+        });
+        settings[release_channel::RELEASE_CHANNEL.dev_name()] =
+            serde_json::json!({ "helix_mode": true });
+        settings[std::env::consts::OS] = serde_json::json!({ "vim_mode": false });
+        let text = settings.to_string();
+
+        let result = store.set_user_settings(&text, cx);
+
+        assert_eq!(result.parse_status, ParseStatus::Success);
+        assert!(matches!(
+            result.migration_status,
+            MigrationStatus::Failed { .. }
+        ));
+        assert_eq!(
+            store.merged_settings.modal_editing,
+            Some(crate::ModalEditingContent::Helix)
+        );
+        assert_eq!(
+            store.last_user_settings_content.as_deref(),
+            Some(text.as_str())
+        );
+
+        cx.set_global(ActiveSettingsProfileName("standard".into()));
+        store.recompute_values(None, cx);
+        assert_eq!(
+            store.merged_settings.modal_editing,
+            Some(crate::ModalEditingContent::None)
+        );
+
+        cx.set_global(ActiveSettingsProfileName("default".into()));
+        store.recompute_values(None, cx);
+        assert_eq!(
+            store.merged_settings.modal_editing,
+            Some(crate::ModalEditingContent::Vim)
+        );
+    }
+
+    #[gpui::test]
+    fn test_modal_editing_migration_keeps_explicit_platform_disable(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &default_settings());
+        let mut settings = serde_json::json!({});
+        settings[release_channel::RELEASE_CHANNEL.dev_name()] =
+            serde_json::json!({ "vim_mode": true });
+        settings[std::env::consts::OS] = serde_json::json!({ "vim_mode": false });
+
+        let result = store.set_user_settings(&settings.to_string(), cx);
+
+        assert_eq!(result.parse_status, ParseStatus::Success);
+        assert_eq!(result.migration_status, MigrationStatus::Succeeded);
+        assert_eq!(
+            store.merged_settings.modal_editing,
+            Some(crate::ModalEditingContent::None)
         );
     }
 

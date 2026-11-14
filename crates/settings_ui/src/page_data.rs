@@ -1737,29 +1737,19 @@ fn keymap_page() -> SettingsPage {
         ]
     }
 
-    fn modal_editing_section() -> [SettingsPageItem; 3] {
+    fn modal_editing_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Modal Editing"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Vim Mode",
-                description: "Enable Vim mode and key bindings.",
+                title: "Modal Editing",
+                description: "Choose standard editing, Vim mode, or Helix mode.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("vim_mode"),
-                    pick: |settings_content| settings_content.vim_mode.as_ref(),
-                    write: write_vim_mode,
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Helix Mode",
-                description: "Enable Helix mode and key bindings.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("helix_mode"),
-                    pick: |settings_content| settings_content.helix_mode.as_ref(),
-                    write: write_helix_mode,
+                    json_path: Some("modal_editing"),
+                    pick: |settings_content| settings_content.modal_editing.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.modal_editing = value;
+                    },
                 }),
                 metadata: None,
                 files: USER,
@@ -11817,76 +11807,4 @@ where
     T::Discriminant: strum::VariantArray,
 {
     <<T as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS
-}
-
-/// Updates the `vim_mode` setting, disabling `helix_mode` if present and
-/// `vim_mode` is being enabled.
-fn write_vim_mode(settings: &mut SettingsContent, value: Option<bool>, _: &App) {
-    write_vim_mode_inner(settings, value);
-}
-
-fn write_vim_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
-    if value == Some(true) && settings.helix_mode == Some(true) {
-        settings.helix_mode = Some(false);
-    }
-    settings.vim_mode = value;
-}
-
-/// Updates the `helix_mode` setting, disabling `vim_mode` if present and
-/// `helix_mode` is being enabled.
-fn write_helix_mode(settings: &mut SettingsContent, value: Option<bool>, _: &App) {
-    write_helix_mode_inner(settings, value);
-}
-
-fn write_helix_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
-    if value == Some(true) && settings.vim_mode == Some(true) {
-        settings.vim_mode = Some(false);
-    }
-    settings.helix_mode = value;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_write_vim_helix_mode() {
-        // Enabling vim mode while `vim_mode` and `helix_mode` are not yet set
-        // should only update the `vim_mode` setting.
-        let mut settings = SettingsContent::default();
-        write_vim_mode_inner(&mut settings, Some(true));
-        assert_eq!(settings.vim_mode, Some(true));
-        assert_eq!(settings.helix_mode, None);
-
-        // Enabling helix mode while `vim_mode` and `helix_mode` are not yet set
-        // should only update the `helix_mode` setting.
-        let mut settings = SettingsContent::default();
-        write_helix_mode_inner(&mut settings, Some(true));
-        assert_eq!(settings.helix_mode, Some(true));
-        assert_eq!(settings.vim_mode, None);
-
-        // Disabling helix mode should only touch `helix_mode` setting when
-        // `vim_mode` is not set.
-        write_helix_mode_inner(&mut settings, Some(false));
-        assert_eq!(settings.helix_mode, Some(false));
-        assert_eq!(settings.vim_mode, None);
-
-        // Enabling vim mode should update `vim_mode` but leave `helix_mode`
-        // untouched.
-        write_vim_mode_inner(&mut settings, Some(true));
-        assert_eq!(settings.vim_mode, Some(true));
-        assert_eq!(settings.helix_mode, Some(false));
-
-        // Enabling helix mode should update `helix_mode` and disable
-        // `vim_mode`.
-        write_helix_mode_inner(&mut settings, Some(true));
-        assert_eq!(settings.helix_mode, Some(true));
-        assert_eq!(settings.vim_mode, Some(false));
-
-        // Enabling vim mode should update `vim_mode` and disable
-        // `helix_mode`.
-        write_vim_mode_inner(&mut settings, Some(true));
-        assert_eq!(settings.vim_mode, Some(true));
-        assert_eq!(settings.helix_mode, Some(false));
-    }
 }

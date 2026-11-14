@@ -14023,7 +14023,9 @@ mod tests {
 
             // Enable vim mode
             settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |s| s.vim_mode = Some(true));
+                store.update_user_settings(cx, |s| {
+                    s.modal_editing = Some(settings::ModalEditingContent::Vim);
+                });
             });
 
             // Load vim keybindings
