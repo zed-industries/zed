@@ -25,7 +25,7 @@ use util::ResultExt;
 use workspace::{
     Event as WorkspaceEvent, ModalView, Pane, SaveIntent, Workspace,
     item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
-    pane::{Event as PaneEvent, render_item_indicator, tab_details},
+    pane::{render_item_indicator, tab_details},
 };
 
 #[derive(Clone, Copy, Debug, RegisterSetting)]
@@ -129,7 +129,6 @@ impl TabSwitcher {
         cx: &mut Context<Workspace>,
     ) {
         let mut weak_pane = workspace.active_pane().downgrade();
-        let mut dock_pane = None;
         for dock in [
             workspace.left_dock(),
             workspace.bottom_dock(),
@@ -144,7 +143,6 @@ impl TabSwitcher {
                 };
                 if let Some(pane) = panel.pane(cx) {
                     weak_pane = pane.downgrade();
-                    dock_pane = Some(pane);
                 }
             })
         }
@@ -163,7 +161,6 @@ impl TabSwitcher {
                 select_last,
                 cx.entity().downgrade(),
                 weak_pane,
-                dock_pane,
                 weak_workspace,
                 is_global,
                 open_in_active_pane,
@@ -197,23 +194,6 @@ impl TabSwitcher {
             }),
             init_modifiers,
         }
-    }
-
-    fn refresh_matches(&mut self, item_removed: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.picker.update(cx, |picker, cx| {
-            let query = picker.query(cx);
-            picker.delegate.update_matches(query, window, cx);
-
-            // When the Tab Switcher is being used and an item is
-            // removed, there's a chance that the new selected index
-            // will not match the actual tab that is now being displayed
-            // by the pane, as such, the selected index needs to be
-            // updated to match the pane's state.
-            if item_removed {
-                picker.delegate.sync_selected_index(cx);
-            }
-            cx.notify();
-        })
     }
 
     fn handle_modifiers_changed(
@@ -371,7 +351,6 @@ impl TabSwitcherDelegate {
         select_last: bool,
         tab_switcher: WeakEntity<TabSwitcher>,
         pane: WeakEntity<Pane>,
-        dock_pane: Option<Entity<Pane>>,
         workspace: WeakEntity<Workspace>,
         is_all_panes: bool,
         open_in_active_pane: bool,
@@ -379,7 +358,7 @@ impl TabSwitcherDelegate {
         cx: &mut Context<TabSwitcher>,
         original_items: Vec<(Entity<Pane>, usize)>,
     ) -> Self {
-        Self::subscribe_to_updates(&workspace, dock_pane, window, cx);
+        Self::subscribe_to_updates(&workspace, window, cx);
         Self {
             select_last,
             tab_switcher,
@@ -397,7 +376,6 @@ impl TabSwitcherDelegate {
 
     fn subscribe_to_updates(
         workspace: &WeakEntity<Workspace>,
-        dock_pane: Option<Entity<Pane>>,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
     ) {
@@ -407,28 +385,30 @@ impl TabSwitcherDelegate {
         cx.subscribe_in(&workspace, window, |tab_switcher, _, event, window, cx| {
             match event {
                 WorkspaceEvent::ItemAdded { .. } | WorkspaceEvent::PaneRemoved => {
-                    tab_switcher.refresh_matches(false, window, cx)
+                    tab_switcher.picker.update(cx, |picker, cx| {
+                        let query = picker.query(cx);
+                        picker.delegate.update_matches(query, window, cx);
+                        cx.notify();
+                    })
                 }
                 WorkspaceEvent::ItemRemoved { .. } => {
-                    tab_switcher.refresh_matches(true, window, cx)
+                    tab_switcher.picker.update(cx, |picker, cx| {
+                        let query = picker.query(cx);
+                        picker.delegate.update_matches(query, window, cx);
+
+                        // When the Tab Switcher is being used and an item is
+                        // removed, there's a chance that the new selected index
+                        // will not match the actual tab that is now being displayed
+                        // by the pane, as such, the selected index needs to be
+                        // updated to match the pane's state.
+                        picker.delegate.sync_selected_index(cx);
+                        cx.notify();
+                    })
                 }
                 _ => {}
             };
         })
         .detach();
-
-        // The workspace only re-emits item events for panes in its center group,
-        // so a dock panel's pane (e.g. the terminal panel's) has to be observed directly.
-        if let Some(dock_pane) = dock_pane {
-            cx.subscribe_in(&dock_pane, window, |tab_switcher, _, event, window, cx| {
-                match event {
-                    PaneEvent::AddItem { .. } => tab_switcher.refresh_matches(false, window, cx),
-                    PaneEvent::RemovedItem { .. } => tab_switcher.refresh_matches(true, window, cx),
-                    _ => {}
-                };
-            })
-            .detach();
-        }
     }
 
     fn update_all_pane_matches(

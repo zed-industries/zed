@@ -434,7 +434,19 @@ impl TerminalPanel {
     ) {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
-            pane::Event::RemovedItem { .. } => self.serialize(cx),
+            pane::Event::RemovedItem { item } => {
+                // The workspace only emits item events for its center panes, so
+                // forward them for the terminal panel's panes too, letting
+                // listeners like the tab switcher see terminals being closed.
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |_, cx| {
+                        cx.emit(workspace::Event::ItemRemoved {
+                            item_id: item.item_id(),
+                        })
+                    });
+                }
+                self.serialize(cx);
+            }
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
                 let _removal_result = self.center.remove(pane, cx);
@@ -470,7 +482,10 @@ impl TerminalPanel {
             pane::Event::AddItem { item } => {
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        item.added_to_pane(workspace, pane.clone(), window, cx)
+                        item.added_to_pane(workspace, pane.clone(), window, cx);
+                        cx.emit(workspace::Event::ItemAdded {
+                            item: item.boxed_clone(),
+                        });
                     })
                 }
                 self.serialize(cx);
@@ -1874,7 +1889,7 @@ impl RenderOnce for InlineAssistTabBarButton {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZero;
+    use std::{cell::RefCell, num::NonZero, rc::Rc};
 
     use super::*;
     use crate::persistence::{SerializedPane, SerializedPaneGroup};
@@ -1882,7 +1897,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
-    use workspace::{MultiWorkspace, WorkspaceId};
+    use workspace::{MultiWorkspace, SaveIntent, WorkspaceId};
 
     #[test]
     fn test_prepare_empty_task() {
@@ -2903,6 +2918,69 @@ mod tests {
             .expect("Failed to initialize workspace with terminal panel");
 
         (window_handle, terminal_panel)
+    }
+
+    #[gpui::test]
+    async fn test_panel_terminals_emit_workspace_item_events(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("Failed to read workspace");
+
+        let added_items = Rc::new(RefCell::new(Vec::new()));
+        let removed_items = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let added_items = added_items.clone();
+            let removed_items = removed_items.clone();
+            cx.subscribe(
+                &workspace,
+                move |_, event: &workspace::Event, _| match event {
+                    workspace::Event::ItemAdded { item } => {
+                        added_items.borrow_mut().push(item.item_id())
+                    }
+                    workspace::Event::ItemRemoved { item_id } => {
+                        removed_items.borrow_mut().push(*item_id)
+                    }
+                    _ => {}
+                },
+            )
+        });
+
+        for _ in 0..2 {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    terminal_panel.update(cx, |panel, cx| {
+                        panel.add_terminal_shell(false, None, RevealStrategy::Always, window, cx)
+                    })
+                })
+                .expect("Failed to update workspace")
+                .await
+                .expect("Failed to create panel terminal");
+        }
+        cx.run_until_parked();
+
+        let pane = terminal_panel.read_with(cx, |panel, _| panel.active_pane.clone());
+        let item_ids = pane.read_with(cx, |pane, _| {
+            pane.items().map(|item| item.item_id()).collect::<Vec<_>>()
+        });
+        assert_eq!(item_ids.len(), 2);
+        assert_eq!(*added_items.borrow(), item_ids);
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(item_ids[0], SaveIntent::Skip, window, cx)
+                })
+            })
+            .expect("Failed to update workspace")
+            .await
+            .expect("Failed to close panel terminal");
+        cx.run_until_parked();
+
+        assert_eq!(*removed_items.borrow(), vec![item_ids[0]]);
     }
 
     #[gpui::test]
