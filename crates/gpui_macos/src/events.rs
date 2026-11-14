@@ -221,9 +221,10 @@ pub(crate) unsafe fn platform_input_from_native(
                 })
             }
             // Some mice (like Logitech MX Master) send navigation buttons as swipe events
+            // A three-finger trackpad swipe arrives as a single event in the `Changed` phase
             NSEventType::Swipe => {
                 let navigation_direction = match native_event.phase() {
-                    NSEventPhase::Ended => match native_event.deltaX() {
+                    NSEventPhase::Ended | NSEventPhase::Changed => match native_event.deltaX() {
                         x if x > 0.0 => Some(NavigationDirection::Back),
                         x if x < 0.0 => Some(NavigationDirection::Forward),
                         _ => return None,
