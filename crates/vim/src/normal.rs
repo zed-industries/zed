@@ -626,7 +626,16 @@ impl Vim {
                     s.move_cursors_with(&mut |map, cursor, goal| {
                         motion
                             .move_point(map, cursor, goal, times, &text_layout_details)
-                            .unwrap_or((cursor, goal))
+                            .unwrap_or_else(|| {
+                                // `StartOfLine` has to stay fallible so that operators like `y0`
+                                // at column 0 don't overwrite the register with an empty range,
+                                // but it should still reset the goal when the cursor doesn't move.
+                                if matches!(motion, Motion::StartOfLine { .. }) {
+                                    (cursor, SelectionGoal::None)
+                                } else {
+                                    (cursor, goal)
+                                }
+                            })
                     })
                 },
             );
