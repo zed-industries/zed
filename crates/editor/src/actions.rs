@@ -626,10 +626,6 @@ actions!(
         GoToPreviousReference,
         /// Goes to type definition in a split pane.
         GoToTypeDefinitionSplit,
-        /// Goes to the next document highlight.
-        GoToNextDocumentHighlight,
-        /// Goes to the previous document highlight.
-        GoToPreviousDocumentHighlight,
         /// Scrolls down by half a page.
         HalfPageDown,
         /// Scrolls up by half a page.
@@ -974,6 +970,38 @@ actions!(
         ToggleBreadcrumb,
     ]
 );
+
+/// Goes to the next document highlight.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToNextDocumentHighlight {
+    /// Whether to wrap to the first highlight after the last highlight. Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub wrap: bool,
+}
+
+impl Default for GoToNextDocumentHighlight {
+    fn default() -> Self {
+        Self { wrap: true }
+    }
+}
+
+/// Goes to the previous document highlight.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToPreviousDocumentHighlight {
+    /// Whether to wrap to the last highlight before the first highlight. Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub wrap: bool,
+}
+
+impl Default for GoToPreviousDocumentHighlight {
+    fn default() -> Self {
+        Self { wrap: true }
+    }
+}
 
 /// Goes to the definition of the symbol at cursor.
 #[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
