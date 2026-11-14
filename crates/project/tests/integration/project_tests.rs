@@ -16643,6 +16643,65 @@ async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
+async fn test_staging_one_hunk_preserves_crlf(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed = (1..=30)
+        .map(|row| format!("{row},old\r\n"))
+        .collect::<String>();
+    let staged = committed.replace("\n3,old\r\n", "\n3,new\r\n");
+    let working = staged.replace("27,old\r\n", "27,new\r\n");
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/dir"), json!({ ".git": {}, "data.csv": working }))
+        .await;
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("data.csv", committed.clone())],
+    );
+    let repo = fs
+        .open_repo(path!("/dir/.git").as_ref(), Some("git".as_ref()))
+        .unwrap();
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/data.csv"), cx)
+        })
+        .await
+        .unwrap();
+    let diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let range = snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_before(Point::new(3, 0));
+    project
+        .update(cx, |project, cx| {
+            let unstaged = diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged, vec![range.clone()], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let path = RepoPath::from_rel_path(rel_path("data.csv"));
+    assert_eq!(
+        repo.load_index_text(path.clone()).await.unwrap(),
+        staged.as_bytes()
+    );
+
+    project
+        .update(cx, |project, cx| {
+            project.unstage_uncommitted_hunks(buffer, diff, vec![range], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        repo.load_index_text(path).await.unwrap(),
+        committed.as_bytes()
+    );
+}
+
+#[gpui::test]
 async fn test_staging_non_utf8_hunk_preserves_index_encoding(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

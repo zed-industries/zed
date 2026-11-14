@@ -1666,10 +1666,14 @@ impl GitStore {
         let Some(diff_state) = self.diffs.get(&buffer_id) else {
             return;
         };
+        let Some(buffer) = self.buffer_store.read(cx).get(buffer_id) else {
+            return;
+        };
+        let line_ending = buffer.read(cx).line_ending();
         let new_index_text = diff_state
             .read(cx)
             .pending_index_text(cx)
-            .map(|rope| rope.to_string());
+            .map(|rope| text::chunks_with_line_ending(&rope, line_ending).collect());
         self.write_index_text_for_buffer_id(buffer_id, new_index_text, cx);
     }
 
