@@ -594,8 +594,8 @@ mod tests {
         type CommandKind = TestCommandKind;
 
         fn id(key: &Self::Key) -> ResourceId {
-            ResourceId::LanguageServer {
-                payload: settings::LanguageServerResourceId {
+            ResourceId::Npm {
+                payload: NpmResourceId {
                     name: format!("counter-{KIND}-{key}"),
                 },
             }
@@ -778,26 +778,28 @@ mod tests {
     fn resource_specifiers_are_closed_and_typed() {
         use settings::ResourceSpecifier;
 
-        for kind in ["debugger", "language_server", "npm"] {
-            for value in [
-                serde_json::json!(kind),
-                serde_json::json!({"kind":kind,"payload":{"name":"lldb"}}),
-            ] {
-                let specifier: ResourceSpecifier =
-                    serde_json::from_value(value.clone()).expect("valid resource specifier");
-                assert_eq!(
-                    serde_json::to_value(specifier).expect("serialize specifier"),
-                    value
-                );
-            }
+        for value in [
+            serde_json::json!("npm"),
+            serde_json::json!({"kind":"npm","payload":{"name":"test-runtime"}}),
+        ] {
+            let specifier: ResourceSpecifier =
+                serde_json::from_value(value.clone()).expect("valid resource specifier");
+            assert_eq!(
+                serde_json::to_value(specifier).expect("serialize specifier"),
+                value
+            );
         }
         for value in [
             serde_json::json!("unknown"),
             serde_json::json!({"kind":"unknown","payload":{"name":"lldb"}}),
-            serde_json::json!({"kind":"debugger"}),
-            serde_json::json!({"kind":"debugger","payload":{}}),
-            serde_json::json!({"kind":"debugger","payload":{"name":17}}),
-            serde_json::json!({"kind":"debugger","payload":{"name":"lldb","typo":true}}),
+            serde_json::json!("debugger"),
+            serde_json::json!("language_server"),
+            serde_json::json!({"kind":"debugger","payload":{"name":"lldb"}}),
+            serde_json::json!({"kind":"language_server","payload":{"name":"rust-analyzer"}}),
+            serde_json::json!({"kind":"npm"}),
+            serde_json::json!({"kind":"npm","payload":{}}),
+            serde_json::json!({"kind":"npm","payload":{"name":17}}),
+            serde_json::json!({"kind":"npm","payload":{"name":"test-runtime","typo":true}}),
         ] {
             assert!(serde_json::from_value::<ResourceSpecifier>(value).is_err());
         }
@@ -809,28 +811,18 @@ mod tests {
             "default":"denied",
             "resources":[
                 {
-                    "resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},
+                    "resource":{"kind":"npm","payload":{"name":"counter-0-first"}},
                     "obtain":"allowed",
                     "commands":[{"permission":"allowed","command":"read"}]
                 },
-                {"resource":"language_server","obtain":"denied"},
-                {"resource":"debugger","obtain":"allowed"}
+                {"resource":"npm","obtain":"denied"}
             ]
         }))
         .expect("permission rules");
-        let debugger = ResourceId::Debugger {
-            payload: settings::DebuggerResourceId {
-                name: "counter-0-first".into(),
-            },
-        };
-        assert_eq!(
-            permissions.permission(&debugger),
-            Some(ResourcePermission::Allowed)
-        );
         assert_eq!(
             permissions.permission(&ResourceId::Npm {
                 payload: NpmResourceId {
-                    name: "counter-0-first".into()
+                    name: "other-runtime".into()
                 },
             }),
             Some(ResourcePermission::Denied)
@@ -888,10 +880,6 @@ mod tests {
                 .permission(&TestResource::id(&"second"))),
             Some(ResourcePermission::Denied)
         );
-        assert_eq!(
-            store.read_with(cx, |store, _| store.permission(&debugger)),
-            Some(ResourcePermission::Allowed)
-        );
     }
 
     #[gpui::test]
@@ -901,14 +889,14 @@ mod tests {
             (r#"{}"#, true, true),
             (
                 r#"{"experimental.permissions":{"default":"denied","resources":[
-                    {"resource":"language_server","obtain":"allowed","commands":[{"permission":"allowed","command":"add"}]}
+                    {"resource":"npm","obtain":"allowed","commands":[{"permission":"allowed","command":"add"}]}
                 ]}}"#,
                 true,
                 true,
             ),
             (
                 r#"{"experimental.permissions":{"default":"allowed","resources":[
-                    {"resource":"language_server","commands":[{"permission":"denied","command":"add"}]}
+                    {"resource":"npm","commands":[{"permission":"denied","command":"add"}]}
                 ]}}"#,
                 false,
                 true,
@@ -921,7 +909,7 @@ mod tests {
             (
                 r#"{"experimental.permissions":{
                 "default":"denied",
-                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"obtain":"allowed","commands":[{"permission":"allowed","command":"add"}]}]
+                "resources":[{"resource":{"kind":"npm","payload":{"name":"counter-0-first"}},"obtain":"allowed","commands":[{"permission":"allowed","command":"add"}]}]
             }}"#,
                 true,
                 true,
@@ -929,7 +917,7 @@ mod tests {
             (
                 r#"{"experimental.permissions":{
                 "default":"allowed",
-                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"obtain":"denied"}]
+                "resources":[{"resource":{"kind":"npm","payload":{"name":"counter-0-first"}},"obtain":"denied"}]
             }}"#,
                 false,
                 false,
@@ -937,7 +925,7 @@ mod tests {
             (
                 r#"{"experimental.permissions":{
                 "default":"allowed",
-                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"commands":[{"permission":"denied","command":"add"}]}]
+                "resources":[{"resource":{"kind":"npm","payload":{"name":"counter-0-first"}},"commands":[{"permission":"denied","command":"add"}]}]
             }}"#,
                 false,
                 true,
@@ -979,7 +967,7 @@ mod tests {
             "experimental.permissions": {
                 "default": "denied",
                 "resources": [{
-                    "resource": {"kind":"language_server","payload":{"name":"counter-0-first"}},
+                    "resource": {"kind":"npm","payload":{"name":"counter-0-first"}},
                     "obtain": "allowed",
                     "commands": [
                         {"permission":"prompt","command":"add"},
@@ -1043,7 +1031,7 @@ mod tests {
             r#"{
             "experimental.permissions": {
                 "default":"allowed",
-                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"obtain":"prompt"}]
+                "resources":[{"resource":{"kind":"npm","payload":{"name":"counter-0-first"}},"obtain":"prompt"}]
             }
         }"#,
         )
@@ -1087,7 +1075,7 @@ mod tests {
         let initial_settings = r#"{
             "proxy":"http://localhost:1234",
             "experimental.permissions":{
-                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"commands":[{"permission":"allowed","command":"add"}]}]
+                "resources":[{"resource":{"kind":"npm","payload":{"name":"counter-0-first"}},"commands":[{"permission":"allowed","command":"add"}]}]
             }
         }"#;
         fs.insert_file(paths::settings_file(), initial_settings.as_bytes().to_vec())
@@ -1273,11 +1261,11 @@ mod tests {
         let id = TestResource::id(&"first");
         assert_eq!(
             serde_json::to_value(&id).expect("serializable identity"),
-            serde_json::json!({"kind":"language_server","payload":{"name":"counter-0-first"}})
+            serde_json::json!({"kind":"npm","payload":{"name":"counter-0-first"}})
         );
         assert_eq!(
             serde_json::from_value::<ResourceId>(
-                serde_json::json!({"kind":"language_server","payload":{"name":"counter-0-first"}})
+                serde_json::json!({"kind":"npm","payload":{"name":"counter-0-first"}})
             )
             .expect("restorable identity"),
             id
@@ -1303,9 +1291,9 @@ mod tests {
             serde_json::json!({
                 "default": null,
                 "resources": [
-                    {"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"obtain":"allowed"},
-                    {"resource":{"kind":"language_server","payload":{"name":"counter-0-second"}},"obtain":"denied"},
-                    {"resource":{"kind":"language_server","payload":{"name":"counter-1-first"}},"obtain":"denied"},
+                    {"resource":{"kind":"npm","payload":{"name":"counter-0-first"}},"obtain":"allowed"},
+                    {"resource":{"kind":"npm","payload":{"name":"counter-0-second"}},"obtain":"denied"},
+                    {"resource":{"kind":"npm","payload":{"name":"counter-1-first"}},"obtain":"denied"},
                 ],
             })
         );

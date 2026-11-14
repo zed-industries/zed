@@ -80,21 +80,7 @@ impl ResourceSpecifier {
 #[strum_discriminants(derive(Serialize, Deserialize, JsonSchema))]
 #[strum_discriminants(serde(rename_all = "snake_case"))]
 pub enum ResourceId {
-    Debugger { payload: DebuggerResourceId },
-    LanguageServer { payload: LanguageServerResourceId },
     Npm { payload: NpmResourceId },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DebuggerResourceId {
-    pub name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LanguageServerResourceId {
-    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
