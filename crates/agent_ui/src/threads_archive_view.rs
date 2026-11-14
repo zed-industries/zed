@@ -850,7 +850,8 @@ impl ThreadsArchiveView {
                     })?;
                     let state = connection_task.await?;
                     let task = cx.update(|cx| {
-                        delete_session_if_supported(state.connection.session_list(cx), session_id, cx)
+                        let list = state.connection.session_list(cx);
+                        delete_session_if_supported(list, session_id, cx)
                     })?;
                     task.await?;
                 }
@@ -1750,8 +1751,10 @@ mod tests {
             delete_calls: delete_calls.clone(),
         });
 
-        assert!(cx.update(|cx| delete_session_if_supported(None, &session_id, cx)).await.is_ok());
-        assert!(cx.update(|cx| delete_session_if_supported(Some(list), &session_id, cx)).await.is_ok());
+        let no_session_list = cx.update(|cx| delete_session_if_supported(None, &session_id, cx));
+        assert!(no_session_list.await.is_ok());
+        let unsupported = cx.update(|cx| delete_session_if_supported(Some(list), &session_id, cx));
+        assert!(unsupported.await.is_ok());
         assert_eq!(delete_calls.get(), 0);
     }
 
@@ -1764,7 +1767,10 @@ mod tests {
             delete_calls: delete_calls.clone(),
         });
 
-        assert!(cx.update(|cx| delete_session_if_supported(Some(list), &session_id, cx)).await.is_err());
+        let remote_delete = cx.update(|cx| {
+            delete_session_if_supported(Some(list), &session_id, cx)
+        });
+        assert!(remote_delete.await.is_err());
         assert_eq!(delete_calls.get(), 1);
     }
 
