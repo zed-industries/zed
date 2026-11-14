@@ -756,21 +756,26 @@ fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
     let mut last_base_shaped_x = px(f32::NEG_INFINITY);
     let mut last_base_actual_x = px(0.);
 
-    for run in layout.runs.iter_mut() {
-        for glyph in run.glyphs.iter_mut() {
-            let shaped_x = glyph.position.x;
+    let mut glyphs_in_visual_order: Vec<&mut ShapedGlyph> = layout
+        .runs
+        .iter_mut()
+        .flat_map(|run| run.glyphs.iter_mut())
+        .collect();
+    glyphs_in_visual_order.sort_by_key(|glyph| glyph.position.x);
 
-            if shaped_x > last_base_shaped_x + force_width * 0.5 {
-                let forced_x = glyph_pos * force_width;
-                if (shaped_x - forced_x).abs() > px(1.) {
-                    glyph.position.x = forced_x;
-                }
-                last_base_shaped_x = shaped_x;
-                last_base_actual_x = glyph.position.x;
-                glyph_pos += 1;
-            } else {
-                glyph.position.x = last_base_actual_x + (shaped_x - last_base_shaped_x);
+    for glyph in glyphs_in_visual_order {
+        let shaped_x = glyph.position.x;
+
+        if shaped_x > last_base_shaped_x + force_width * 0.5 {
+            let forced_x = glyph_pos * force_width;
+            if (shaped_x - forced_x).abs() > px(1.) {
+                glyph.position.x = forced_x;
             }
+            last_base_shaped_x = shaped_x;
+            last_base_actual_x = glyph.position.x;
+            glyph_pos += 1;
+        } else {
+            glyph.position.x = last_base_actual_x + (shaped_x - last_base_shaped_x);
         }
     }
 }
@@ -1058,6 +1063,22 @@ mod tests {
 
         let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0.5, 8., 16.]);
+    }
+
+    #[test]
+    fn test_force_width_right_to_left_glyphs_stay_in_their_cells() {
+        let cell_width = px(8.);
+        let mut layout = make_layout(vec![
+            glyph_at(20., 0),
+            glyph_at(20., 0),
+            glyph_at(10., 4),
+            glyph_at(0., 6),
+        ]);
+
+        apply_force_width_to_layout(&mut layout, cell_width);
+
+        let positions = glyph_x_positions(&layout);
+        assert_eq!(positions, vec![16., 16., 8., 0.]);
     }
 
     #[test]
