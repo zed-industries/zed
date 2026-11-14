@@ -1544,7 +1544,14 @@ impl Editor {
 
         // Copy selections to primary selection buffer
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        if local {
+        if local
+            && self
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .chain(self.selections.pending_anchor())
+                .any(|selection| selection.start != selection.end)
+        {
             let selections = self
                 .selections
                 .all::<MultiBufferOffset>(&self.display_snapshot(cx));
