@@ -303,7 +303,7 @@ impl Onboarding {
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        v_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
                 let mut ctx = KeyContext::new_with_defaults(cx.platform_info().os);
@@ -325,19 +325,20 @@ impl Render for Onboarding {
                 window.focus_prev(cx);
                 cx.notify();
             }))
-            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
             .child(
-                div()
-                    .id("page-content")
-                    .size_full()
-                    .overflow_y_scroll()
+                v_flex()
+                    .w_full()
+                    .flex_shrink_0()
+                    .bg(cx.theme().colors().editor_background)
                     .child(
                         v_flex()
                             .min_w_0()
                             .max_w(rems_from_px(780_f32))
                             .w_full()
                             .mx_auto()
-                            .p_12()
+                            .px_12()
+                            .pt_12()
+                            .pb_6()
                             .gap_6()
                             .child(
                                 h_flex()
@@ -377,10 +378,28 @@ impl Render for Onboarding {
                                             })
                                     }),
                             )
-                            .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
+                            .child(Divider::horizontal().color(ui::DividerColor::BorderVariant)),
+                    ),
+            )
+            .child(
+                div()
+                    .id("page-content")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx)
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .max_w(rems_from_px(780_f32))
+                            .w_full()
+                            .mx_auto()
+                            .px_12()
+                            .pt_6()
+                            .pb_12()
+                            .gap_6()
                             .child(self.render_page(cx)),
-                    )
-                    .track_scroll(&self.scroll_handle),
+                    ),
             )
     }
 }
