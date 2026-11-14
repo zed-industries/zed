@@ -912,6 +912,7 @@ pub struct App {
     pub(crate) keystroke_observers: SingleSubscriberSet<KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SingleSubscriberSet<KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SingleSubscriberSet<Handler>,
+    pub(crate) text_scale_factor_observers: SingleSubscriberSet<Handler>,
     missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SingleSubscriberSet<Handler>,
     pub(crate) display_observers: SingleSubscriberSet<DisplayHandler>,
@@ -1069,6 +1070,7 @@ impl App {
                 keystroke_observers: SingleSubscriberSet::new(),
                 keystroke_interceptors: SingleSubscriberSet::new(),
                 keyboard_layout_observers: SingleSubscriberSet::new(),
+                text_scale_factor_observers: SingleSubscriberSet::new(),
                 missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SingleSubscriberSet::new(),
                 display_observers: SingleSubscriberSet::new(),
@@ -1121,6 +1123,18 @@ impl App {
                     cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_mapper = cx.platform.keyboard_mapper();
                     cx.keyboard_layout_observers
+                        .clone()
+                        .retain(move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_text_scale_factor_changed(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.text_scale_factor_observers
                         .clone()
                         .retain(move |callback| (callback)(cx));
                 }
@@ -1341,6 +1355,19 @@ impl App {
         F: 'static + FnMut(&mut App),
     {
         self.keyboard_layout_observers.insert(Box::new(move |cx| {
+            callback(cx);
+            true
+        }))
+    }
+
+    /// Invokes a handler when the desktop's font scaling factor changes, which
+    /// includes the first value arriving after startup, since reading it is
+    /// asynchronous. Re-read the factor with [`App::text_scale_factor`].
+    pub fn on_text_scale_factor_changed<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        self.text_scale_factor_observers.insert(Box::new(move |cx| {
             callback(cx);
             true
         }))
@@ -1933,6 +1960,16 @@ impl App {
     /// Returns the window button layout configuration when supported.
     pub fn button_layout(&self) -> Option<WindowButtonLayout> {
         self.platform.button_layout()
+    }
+
+    /// Returns the desktop's font scaling factor, which enlarges text only.
+    ///
+    /// Use it when building text styles so the app follows the desktop's
+    /// accessibility setting; `1.0` on platforms that have none. The value can
+    /// arrive after startup, so most callers also follow it with
+    /// [`App::on_text_scale_factor_changed`].
+    pub fn text_scale_factor(&self) -> f32 {
+        self.platform.text_scale_factor()
     }
 
     /// Reads data from the platform clipboard.
