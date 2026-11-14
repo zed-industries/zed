@@ -28,7 +28,9 @@ use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::{Future, FutureExt as _};
-use project::agent_server_store::{AgentServerCommand, AgentServerStore, AllAgentServersSettings};
+use project::agent_server_store::{
+    AgentServerStore, AllAgentServersSettings, ResolvedAgentServerCommand,
+};
 use project::{AgentId, Project};
 use serde::Deserialize;
 use settings::{AgentConfigOptionValue, SettingsStore};
@@ -372,7 +374,7 @@ impl AgentSessionList for AcpSessionList {
 pub async fn connect(
     agent_id: AgentId,
     project: Entity<Project>,
-    command: AgentServerCommand,
+    command: ResolvedAgentServerCommand,
     agent_server_store: WeakEntity<AgentServerStore>,
     default_mode: Option<acp_v2::SessionConfigValueId>,
     default_config_options: HashMap<String, AgentConfigOptionValue>,
@@ -553,12 +555,16 @@ impl AcpConnection {
     pub async fn stdio(
         agent_id: AgentId,
         project: Entity<Project>,
-        command: AgentServerCommand,
+        command: impl Into<ResolvedAgentServerCommand>,
         agent_server_store: WeakEntity<AgentServerStore>,
         default_mode: Option<acp_v2::SessionConfigValueId>,
         default_config_options: HashMap<String, AgentConfigOptionValue>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        let ResolvedAgentServerCommand {
+            command,
+            installation_lease,
+        } = command.into();
         let original_command = command.clone();
         let transport::StdioProcess {
             child,
@@ -619,13 +625,7 @@ impl AcpConnection {
                 .context("Failed to receive ACP connection handle")
         }
         .boxed_local();
-        let status_fut = child
-            .0
-            .status()
-            .map(|status| {
-                status.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
-            })
-            .boxed_local();
+        let status_fut = child.exit_status(installation_lease);
         let (connection, status_fut, _) = runtime::race_startup(
             connection_rx,
             status_fut,
@@ -2442,6 +2442,7 @@ mod tests {
     use super::super::*;
     use super::*;
     use futures::StreamExt as _;
+    use project::agent_server_store::AgentServerCommand;
     use settings::Settings as _;
 
     #[test]
