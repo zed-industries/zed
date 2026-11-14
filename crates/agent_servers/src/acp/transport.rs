@@ -1,11 +1,15 @@
 use super::debug_log::{AcpDebugLog, AcpDebugMessageDirection};
-use anyhow::{Context as _, Result};
+use super::runtime::ProcessStatus;
+use anyhow::{Context as _, Result, anyhow};
 use futures::{
     AsyncBufReadExt as _, AsyncWriteExt as _, FutureExt as _, Sink, StreamExt as _,
     future::BoxFuture, io::BufReader, stream::BoxStream,
 };
 use gpui::{AsyncApp, Entity};
-use project::{Project, agent_server_store::AgentServerCommand};
+use project::{
+    Project,
+    agent_server_store::{AgentInstallationLease, AgentServerCommand},
+};
 use remote::command::RemoteCommand;
 use std::{io, pin::Pin, process::Stdio};
 use task::{Shell, ShellBuilder};
@@ -16,6 +20,23 @@ pub(super) struct OwnedChild(pub Child);
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         self.0.kill().log_err();
+    }
+}
+
+impl OwnedChild {
+    pub(super) fn exit_status(
+        &mut self,
+        installation_lease: Option<AgentInstallationLease>,
+    ) -> ProcessStatus {
+        self.0
+            .status()
+            .map(move |status| {
+                // Threads can keep a connection alive long after its agent has exited,
+                // so the lease is released here rather than with the connection.
+                drop(installation_lease);
+                status.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
+            })
+            .boxed_local()
     }
 }
 
@@ -151,6 +172,38 @@ mod tests {
     use collections::HashMap;
     use futures::SinkExt as _;
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn installation_lease_is_released_when_the_agent_exits(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("create installation directory");
+        let version_dir = directory.path().join("v_1");
+        std::fs::create_dir(&version_dir).expect("create version directory");
+        let installation_lease =
+            AgentInstallationLease::acquire(&version_dir).expect("acquire installation lease");
+
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "read -r line"]);
+        let mut child = OwnedChild(
+            Child::spawn(command, Stdio::piped(), Stdio::piped(), Stdio::piped())
+                .expect("spawn agent"),
+        );
+        let stdin = child.0.stdin.take().expect("take stdin");
+        let exit_status = child.exit_status(Some(installation_lease));
+        assert!(
+            AgentInstallationLease::is_held_for(&version_dir).expect("check lease"),
+            "the lease must be held while the agent is running"
+        );
+
+        drop(stdin);
+        exit_status.await.expect("wait for agent exit");
+
+        assert!(
+            !AgentInstallationLease::is_held_for(&version_dir).expect("check lease"),
+            "the lease must be released once the agent exits, even though its owner is alive"
+        );
+        drop(child);
+    }
 
     #[gpui::test]
     async fn repeated_spawns_preserve_command_and_stdio(cx: &mut TestAppContext) {

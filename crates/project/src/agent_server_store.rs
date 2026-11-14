@@ -1,5 +1,6 @@
 use std::{
     any::Any,
+    fs::{File, OpenOptions, TryLockError},
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
     time::Duration,
@@ -116,13 +117,68 @@ pub enum ExternalAgentSource {
     Registry,
 }
 
+#[derive(Clone, Debug)]
+pub struct ResolvedAgentServerCommand {
+    pub command: AgentServerCommand,
+    /// Must be held for as long as the agent launched with `command` is running.
+    pub installation_lease: Option<AgentInstallationLease>,
+}
+
+impl From<AgentServerCommand> for ResolvedAgentServerCommand {
+    fn from(command: AgentServerCommand) -> Self {
+        Self {
+            command,
+            installation_lease: None,
+        }
+    }
+}
+
+/// Keeps an installed agent version from being removed while an agent is running from it.
+///
+/// The lease is a shared lock on a file next to the version's directory, so it is
+/// honored by every Zed process and released by the operating system if Zed crashes.
+#[derive(Clone, Debug)]
+pub struct AgentInstallationLease {
+    path: Arc<Path>,
+    _file: Arc<File>,
+}
+
+impl AgentInstallationLease {
+    pub fn acquire(version_dir: &Path) -> Result<Self> {
+        let base_dir = version_dir
+            .parent()
+            .with_context(|| format!("{version_dir:?} has no parent directory"))?;
+        let path = installation_lease_path(version_dir)?;
+        let _leases_lock = lock_installation_leases(base_dir)?;
+        let file = open_lock_file(&path)?;
+        file.lock_shared()
+            .with_context(|| format!("locking {path:?}"))?;
+        Ok(Self {
+            path: path.into(),
+            _file: Arc::new(file),
+        })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_held_for(version_dir: &Path) -> Result<bool> {
+        let path = installation_lease_path(version_dir)?;
+        match open_lock_file(&path)?.try_lock() {
+            Ok(()) => Ok(false),
+            Err(TryLockError::WouldBlock) => Ok(true),
+            Err(TryLockError::Error(error)) => {
+                Err(error).with_context(|| format!("locking {path:?}"))
+            }
+        }
+    }
+}
+
 pub trait ExternalAgentServer {
     fn get_command(
         &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>>;
+    ) -> Task<Result<ResolvedAgentServerCommand>>;
 
     fn version(&self) -> Option<&SharedString> {
         None
@@ -188,6 +244,9 @@ impl ExternalAgentEntry {
 pub struct AgentServerStore {
     state: AgentServerStoreState,
     pub external_agents: HashMap<AgentId, ExternalAgentEntry>,
+    // A remote client launches agents itself, so this store never learns when they exit
+    // and keeps the lease of every version it resolved for one.
+    remote_client_installation_leases: HashMap<Arc<Path>, AgentInstallationLease>,
 }
 
 pub struct AgentServersUpdated;
@@ -523,6 +582,7 @@ impl AgentServerStore {
                 _subscriptions: subscriptions,
             },
             external_agents: HashMap::default(),
+            remote_client_installation_leases: HashMap::default(),
         };
         this.agent_servers_settings_changed(cx);
         this
@@ -540,6 +600,7 @@ impl AgentServerStore {
                 worktree_store,
             },
             external_agents: HashMap::default(),
+            remote_client_installation_leases: HashMap::default(),
         }
     }
 
@@ -547,6 +608,7 @@ impl AgentServerStore {
         Self {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
+            remote_client_installation_leases: HashMap::default(),
         }
     }
 
@@ -617,7 +679,10 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::GetAgentServerCommand>,
         mut cx: AsyncApp,
     ) -> Result<proto::AgentServerCommand> {
-        let command = this
+        let ResolvedAgentServerCommand {
+            command,
+            installation_lease,
+        } = this
             .update(&mut cx, |this, cx| {
                 let AgentServerStoreState::Local {
                     downstream_client, ..
@@ -694,6 +759,12 @@ impl AgentServerStore {
                 anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
             })?
             .await?;
+        if let Some(installation_lease) = installation_lease {
+            this.update(&mut cx, |this, _| {
+                this.remote_client_installation_leases
+                    .insert(installation_lease.path.clone(), installation_lease);
+            });
+        }
         Ok(proto::AgentServerCommand {
             path: command.path.to_string_lossy().into_owned(),
             args: command.args,
@@ -851,7 +922,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>> {
+    ) -> Task<Result<ResolvedAgentServerCommand>> {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
@@ -878,10 +949,13 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
             response.args.extend(extra_args);
             response.env.extend(extra_env);
 
-            Ok(AgentServerCommand {
-                path: response.path.into(),
-                args: response.args,
-                env: Some(response.env.into_iter().collect()),
+            Ok(ResolvedAgentServerCommand {
+                command: AgentServerCommand {
+                    path: response.path.into(),
+                    args: response.args,
+                    env: Some(response.env.into_iter().collect()),
+                },
+                installation_lease: None,
             })
         })
     }
@@ -1054,13 +1128,102 @@ fn versioned_archive_cache_dir(
 // so we only ever remove directories that we created ourselves.
 const VERSIONED_ARCHIVE_CACHE_DIR_PREFIX: &str = "v_";
 
+const INSTALLATION_LEASES_LOCK_FILE_NAME: &str = "leases.lock";
+
+const INSTALLATION_LEASE_FILE_SUFFIX: &str = ".lease";
+
+fn installation_lease_path(version_dir: &Path) -> Result<PathBuf> {
+    let mut file_name = version_dir
+        .file_name()
+        .with_context(|| format!("{version_dir:?} has no directory name"))?
+        .to_os_string();
+    file_name.push(INSTALLATION_LEASE_FILE_SUFFIX);
+    Ok(version_dir.with_file_name(file_name))
+}
+
+fn leased_version_dir(lease_path: &Path) -> Option<PathBuf> {
+    let version_dir_name = lease_path
+        .file_name()?
+        .to_str()?
+        .strip_suffix(INSTALLATION_LEASE_FILE_SUFFIX)?;
+    Some(lease_path.with_file_name(version_dir_name))
+}
+
+fn open_lock_file(path: &Path) -> Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .with_context(|| format!("opening {path:?}"))
+}
+
+/// Serializes taking and removing the leases in `base_dir` until the returned file is
+/// dropped, so that a lease file is never removed between being opened and locked.
+fn lock_installation_leases(base_dir: &Path) -> Result<File> {
+    let path = base_dir.join(INSTALLATION_LEASES_LOCK_FILE_NAME);
+    let file = open_lock_file(&path)?;
+    file.lock().with_context(|| format!("locking {path:?}"))?;
+    Ok(file)
+}
+
 async fn remove_stale_versioned_archive_cache_dirs(
     fs: Arc<dyn Fs>,
     base_dir: &Path,
     current_version_dir: &Path,
 ) -> Result<()> {
-    let Some(current_dir_name) = current_version_dir.file_name() else {
+    let stale_dirs =
+        stale_versioned_archive_cache_dirs(fs.as_ref(), base_dir, current_version_dir).await?;
+    remove_unleased_archive_cache_dirs(base_dir, stale_dirs)
+}
+
+// Synchronous so that the lock on the leases is never held across an await point, where
+// another task on the same thread could block forever trying to take it.
+fn remove_unleased_archive_cache_dirs(base_dir: &Path, version_dirs: Vec<PathBuf>) -> Result<()> {
+    if version_dirs.is_empty() {
         return Ok(());
+    }
+
+    let _leases_lock = lock_installation_leases(base_dir)?;
+    for version_dir in version_dirs {
+        let lease_path = installation_lease_path(&version_dir)?;
+        let lease_file = open_lock_file(&lease_path)?;
+        match lease_file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
+                log::info!("keeping {version_dir:?}: an agent is still running from it");
+                continue;
+            }
+            Err(TryLockError::Error(error)) => {
+                return Err(error).with_context(|| format!("locking {lease_path:?}"));
+            }
+        }
+
+        // The lease file goes first so that an interrupted removal leaves a directory
+        // that the next cleanup retries, rather than a lease file with no directory.
+        std::fs::remove_file(&lease_path).with_context(|| format!("removing {lease_path:?}"))?;
+        match std::fs::remove_dir_all(&version_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("removing stale archive cache directory {version_dir:?}")
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn stale_versioned_archive_cache_dirs(
+    fs: &dyn Fs,
+    base_dir: &Path,
+    current_version_dir: &Path,
+) -> Result<Vec<PathBuf>> {
+    let Some(current_dir_name) = current_version_dir.file_name() else {
+        return Ok(Vec::new());
     };
 
     let current_mtime = fs
@@ -1075,6 +1238,7 @@ async fn remove_stale_versioned_archive_cache_dirs(
         .await
         .with_context(|| format!("reading archive cache directory {base_dir:?}"))?;
 
+    let mut stale_dirs = Vec::new();
     while let Some(entry) = entries.next().await {
         let entry = entry.with_context(|| format!("reading entry in {base_dir:?}"))?;
         let Some(entry_name) = entry.file_name() else {
@@ -1093,6 +1257,13 @@ async fn remove_stale_versioned_archive_cache_dirs(
             continue;
         };
         if !entry_metadata.is_dir {
+            // A lease file is left without its version when an installation fails, or
+            // when a Zed build that doesn't take leases removes the directory.
+            if let Some(version_dir) = leased_version_dir(&entry)
+                && !fs.is_dir(&version_dir).await
+            {
+                stale_dirs.push(version_dir);
+            }
             continue;
         }
         // Only remove directories that predate the current version's directory.
@@ -1102,18 +1273,10 @@ async fn remove_stale_versioned_archive_cache_dirs(
             continue;
         }
 
-        fs.remove_dir(
-            &entry,
-            RemoveOptions {
-                recursive: true,
-                ignore_if_not_exists: true,
-            },
-        )
-        .await
-        .with_context(|| format!("removing stale archive cache directory {entry:?}"))?;
+        stale_dirs.push(entry);
     }
 
-    Ok(())
+    Ok(stale_dirs)
 }
 
 struct LocalRegistryArchiveAgent {
@@ -1155,7 +1318,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>> {
+    ) -> Task<Result<ResolvedAgentServerCommand>> {
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
@@ -1201,6 +1364,18 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 archive_url,
                 target_config.sha256.as_deref(),
             );
+
+            // Taken before looking for the installation, so that a cleanup in another
+            // process can't remove it between this check and the agent starting.
+            let installation_lease = cx
+                .background_spawn({
+                    let version_dir = version_dir.clone();
+                    async move { AgentInstallationLease::acquire(&version_dir) }
+                })
+                .await
+                // Not every file system supports locking. The agent still works without
+                // a lease, and cleanup never removes a version it can't lock.
+                .log_err();
 
             if !fs.is_dir(&version_dir).await {
                 let mut loading_status_tx = loading_status_tx;
@@ -1309,7 +1484,10 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 env: Some(env),
             };
 
-            Ok(command)
+            Ok(ResolvedAgentServerCommand {
+                command,
+                installation_lease,
+            })
         })
     }
 
@@ -1353,7 +1531,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>> {
+    ) -> Task<Result<ResolvedAgentServerCommand>> {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
@@ -1422,7 +1600,10 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 env: Some(env),
             };
 
-            Ok(command)
+            Ok(ResolvedAgentServerCommand {
+                command,
+                installation_lease: None,
+            })
         })
     }
 
@@ -1555,7 +1736,7 @@ impl ExternalAgentServer for LocalCustomAgent {
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>> {
+    ) -> Task<Result<ResolvedAgentServerCommand>> {
         let mut command = self.command.clone();
         let project_environment = self.project_environment.downgrade();
         cx.spawn(async move |cx| {
@@ -1569,7 +1750,10 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(extra_env);
             command.env = Some(env);
             command.args.extend(extra_args);
-            Ok(command)
+            Ok(ResolvedAgentServerCommand {
+                command,
+                installation_lease: None,
+            })
         })
     }
 
@@ -2170,7 +2354,7 @@ mod tests {
         let get_command =
             cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
 
-        let command = get_command.await.unwrap();
+        let command = get_command.await.unwrap().command;
         cx.run_until_parked();
         assert_eq!(
             command.path,
@@ -2199,7 +2383,7 @@ mod tests {
         let get_command =
             cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
 
-        let command = get_command.await.unwrap();
+        let command = get_command.await.unwrap().command;
         cx.run_until_parked();
         assert_eq!(
             command.path,
@@ -2252,8 +2436,57 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-support")]
     #[gpui::test]
-    async fn test_remove_stale_versioned_archive_cache_dirs(cx: &mut TestAppContext) {
+    async fn registry_archive_version_is_kept_while_its_lease_is_held(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let contents = b"agent";
+        let mut agent = make_registry_archive_agent(
+            cx,
+            installation_dir.clone(),
+            static_http_client(contents.to_vec()),
+            None,
+        );
+        let version_dir =
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None);
+
+        let resolved = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        let installation_lease = resolved
+            .installation_lease
+            .expect("archive agents hold a lease on their installation");
+        let cloned_lease = installation_lease.clone();
+
+        // What another connection does once it has installed a newer version.
+        remove_unleased_archive_cache_dirs(&installation_dir, vec![version_dir.clone()]).unwrap();
+        assert_eq!(std::fs::read(&resolved.command.path).unwrap(), contents);
+
+        drop(installation_lease);
+        remove_unleased_archive_cache_dirs(&installation_dir, vec![version_dir.clone()]).unwrap();
+        assert_eq!(std::fs::read(&resolved.command.path).unwrap(), contents);
+
+        drop(cloned_lease);
+        remove_unleased_archive_cache_dirs(&installation_dir, vec![version_dir.clone()]).unwrap();
+        assert!(!version_dir.exists());
+        assert!(!installation_lease_path(&version_dir).unwrap().exists());
+
+        let reinstalled = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(std::fs::read(&reinstalled.command.path).unwrap(), contents);
+        assert!(AgentInstallationLease::is_held_for(&version_dir).unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_stale_versioned_archive_cache_dirs(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor());
         let base_dir = Path::new("/cache");
 
@@ -2263,7 +2496,9 @@ mod tests {
             base_dir,
             serde_json::json!({
                 "v_old_1": {},
+                "v_old_1.lease": "",
                 "v_old_2": {},
+                "v_failed_install.lease": "",
                 "other": {},
             }),
         )
@@ -2272,39 +2507,23 @@ mod tests {
             .await;
         let current_version_dir = base_dir.join("v_current");
         fs.create_dir(&current_version_dir).await.unwrap();
+        fs.insert_file(base_dir.join("v_current.lease"), Vec::new())
+            .await;
         // Sibling that "finished extracting" after the current dir was cached.
         fs.create_dir(&base_dir.join("v_newer")).await.unwrap();
 
-        remove_stale_versioned_archive_cache_dirs(
-            fs.clone() as Arc<dyn Fs>,
-            base_dir,
-            &current_version_dir,
-        )
-        .await
-        .unwrap();
-
-        let mut remaining = fs
-            .read_dir(base_dir)
-            .await
-            .unwrap()
-            .filter_map(|entry| async move { entry.ok() })
-            .map(|path| {
-                path.file_name()
-                    .expect("entry has a name")
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect::<Vec<_>>()
-            .await;
-        remaining.sort();
+        let mut stale_dirs =
+            stale_versioned_archive_cache_dirs(fs.as_ref(), base_dir, &current_version_dir)
+                .await
+                .unwrap();
+        stale_dirs.sort();
 
         assert_eq!(
-            remaining,
+            stale_dirs,
             vec![
-                "other".to_string(),
-                "v_current".to_string(),
-                "v_newer".to_string(),
-                "v_not_a_dir".to_string(),
+                base_dir.join("v_failed_install"),
+                base_dir.join("v_old_1"),
+                base_dir.join("v_old_2"),
             ]
         );
     }

@@ -29,7 +29,7 @@ use futures::{
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use project::{
     AgentId, AgentServerStore, Project,
-    agent_server_store::{AgentServerCommand, AllAgentServersSettings},
+    agent_server_store::{AllAgentServersSettings, ResolvedAgentServerCommand},
 };
 use settings::{AgentConfigOptionValue, SettingsStore};
 use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
@@ -227,10 +227,14 @@ impl AcpV2Connection {
     pub async fn stdio(
         agent_id: AgentId,
         project: Entity<Project>,
-        command: AgentServerCommand,
+        command: impl Into<ResolvedAgentServerCommand>,
         agent_server_store: WeakEntity<AgentServerStore>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        let ResolvedAgentServerCommand {
+            command,
+            installation_lease,
+        } = command.into();
         let transport::StdioProcess {
             child,
             incoming,
@@ -239,13 +243,7 @@ impl AcpV2Connection {
             debug_log,
         } = transport::spawn_stdio(&project, command, cx)?;
         let mut child = transport::OwnedChild(child);
-        let status = child
-            .0
-            .status()
-            .map(|result| {
-                result.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
-            })
-            .boxed_local();
+        let status = child.exit_status(installation_lease);
         let stderr_task = cx
             .background_spawn(async move {
                 stderr.await.log_err();
@@ -2045,6 +2043,7 @@ mod tests {
         v2::Responder,
     };
     use gpui::TestAppContext;
+    use project::agent_server_store::AgentServerCommand;
     use serde_json::json;
     use std::{
         sync::{Arc, Mutex},
