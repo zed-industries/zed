@@ -9227,6 +9227,17 @@ impl Element for EditorElement {
                         cx,
                     )
                     .width;
+                    // Spaces that overflow the wrap width hang at the end of a soft-wrapped row.
+                    // They shouldn't make the editor scroll horizontally.
+                    let is_soft_wrapping = matches!(
+                        self.editor.read(cx).soft_wrap_mode(cx),
+                        SoftWrap::EditorWidth | SoftWrap::Bounded(_)
+                    );
+                    let longest_line_width = if is_soft_wrapping {
+                        longest_line_width.min(editor_width)
+                    } else {
+                        longest_line_width
+                    };
 
                     let scrollbar_layout_information = ScrollbarLayoutInformation::new(
                         text_hitbox.bounds,
