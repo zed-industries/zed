@@ -834,19 +834,19 @@ impl ThreadsArchiveView {
             .as_ref()
             .and_then(|_| self.connection_store_for_remote(remote_connection.as_ref(), cx))
             .map(|connection_store| {
-            let agent = Agent::from(agent);
-            let fs = <dyn Fs>::global(cx);
-            connection_store.update(cx, |store, cx| {
-                store
-                    .request_connection(
-                        agent.clone(),
-                        agent.server(fs, ThreadStore::global(cx)),
-                        cx,
-                    )
-                    .read(cx)
-                    .wait_for_connection()
-            })
-        });
+                let agent = Agent::from(agent);
+                let fs = <dyn Fs>::global(cx);
+                connection_store.update(cx, |store, cx| {
+                    store
+                        .request_connection(
+                            agent.clone(),
+                            agent.server(fs, ThreadStore::global(cx)),
+                            cx,
+                        )
+                        .read(cx)
+                        .wait_for_connection()
+                })
+            });
         let workspace = self.workspace.clone();
 
         cx.spawn(async move |_this, cx| {
