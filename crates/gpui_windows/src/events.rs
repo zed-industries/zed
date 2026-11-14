@@ -109,6 +109,7 @@ impl WindowsWindowInner {
             WM_CLOSE => self.handle_close_msg(),
             WM_DESTROY => self.handle_destroy_msg(handle),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
+            WM_CAPTURECHANGED => self.handle_mouse_capture_lost_msg(),
             WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
             // Treat double click as a second single click, since we track the double clicks ourselves.
@@ -348,6 +349,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_mouse_move_msg(&self, handle: HWND, lparam: LPARAM, wparam: WPARAM) -> Option<isize> {
+        self.dispatch_pending_mouse_capture_loss();
         self.start_tracking_mouse(handle, TME_LEAVE);
         self.restore_cursor_after_hide();
 
@@ -482,6 +484,7 @@ impl WindowsWindowInner {
         button: MouseButton,
         lparam: LPARAM,
     ) -> Option<isize> {
+        self.dispatch_pending_mouse_capture_loss();
         unsafe { SetCapture(handle) };
 
         let Some(mut func) = self.state.callbacks.input.take() else {
@@ -508,11 +511,17 @@ impl WindowsWindowInner {
 
     fn handle_mouse_up_msg(
         &self,
-        _handle: HWND,
+        handle: HWND,
         button: MouseButton,
         lparam: LPARAM,
     ) -> Option<isize> {
-        unsafe { ReleaseCapture().log_err() };
+        self.dispatch_pending_mouse_capture_loss();
+        if unsafe { GetCapture() } == handle {
+            // ReleaseCapture also sends WM_CAPTURECHANGED on a normal mouse-up.
+            self.state.releasing_mouse_capture.set(true);
+            unsafe { ReleaseCapture().log_err() };
+            self.state.releasing_mouse_capture.set(false);
+        }
 
         let Some(mut func) = self.state.callbacks.input.take() else {
             return Some(1);
@@ -532,6 +541,34 @@ impl WindowsWindowInner {
         self.state.callbacks.input.set(Some(func));
 
         if handled { Some(0) } else { Some(1) }
+    }
+
+    fn handle_mouse_capture_lost_msg(self: &Rc<Self>) -> Option<isize> {
+        if !self.state.releasing_mouse_capture.get()
+            && !self.state.mouse_capture_loss_pending.replace(true)
+        {
+            // Win32 can deliver the notification during a GPUI update.
+            let window = Rc::downgrade(self);
+            self.executor
+                .spawn(async move {
+                    if let Some(window) = window.upgrade() {
+                        window.dispatch_pending_mouse_capture_loss();
+                    }
+                })
+                .detach();
+        }
+        Some(0)
+    }
+
+    // Process the loss before a queued mouse event can start or finish a gesture.
+    fn dispatch_pending_mouse_capture_loss(&self) {
+        if self.state.mouse_capture_loss_pending.get()
+            && let Some(mut callback) = self.state.callbacks.input.take()
+        {
+            self.state.mouse_capture_loss_pending.set(false);
+            callback(MouseCaptureLostEvent.to_platform_input());
+            self.state.callbacks.input.set(Some(callback));
+        }
     }
 
     fn handle_xbutton_msg(
