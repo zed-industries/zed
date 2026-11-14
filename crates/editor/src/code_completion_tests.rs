@@ -393,6 +393,58 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_sort_keeps_order_of_equal_keys(cx: &mut TestAppContext) {
+    // Overloads share filter text, sort text and kind, so their sort keys are equal.
+    // An unstable sort only reorders equal elements in longer slices,
+    // hence the number of overloads.
+    let functions = ["eprint", "println", "print"];
+    let completions = (0..16)
+        .flat_map(|arity| {
+            functions.map(|function| {
+                CompletionBuilder::function(
+                    &format!("{function}/{arity}"),
+                    Some(function),
+                    "80000000",
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let query = "print";
+    let mut matches = filter_matches(query, &completions, cx).await;
+    assert_eq!(matches.len(), completions.len());
+    // The matcher returns its results ordered by score, which is close to the sorted order.
+    // Interleave the functions instead, to spread each group of equal keys over the input.
+    matches.sort_by_key(|string_match| string_match.candidate_id);
+    let unsorted_matches = matches.clone();
+
+    let sorted_matches = CompletionsMenu::sort_string_matches(
+        matches,
+        Some(query),
+        SnippetSortOrder::default(),
+        &completions,
+    );
+
+    // The exact match goes first, the match that does not start a word goes last.
+    let mut expected_candidate_ids = Vec::new();
+    for function in ["print", "println", "eprint"] {
+        expected_candidate_ids.extend(
+            unsorted_matches
+                .iter()
+                .filter(|string_match| string_match.string == function)
+                .map(|string_match| string_match.candidate_id),
+        );
+    }
+    assert_eq!(
+        sorted_matches
+            .iter()
+            .map(|string_match| string_match.candidate_id)
+            .collect::<Vec<_>>(),
+        expected_candidate_ids
+    );
+}
+
 async fn test_for_each_prefix<F>(
     target: &str,
     completions: &Vec<Completion>,
@@ -498,6 +550,15 @@ async fn filter_and_sort_matches(
     snippet_sort_order: SnippetSortOrder,
     cx: &mut TestAppContext,
 ) -> Vec<StringMatch> {
+    let matches = filter_matches(query, completions, cx).await;
+    CompletionsMenu::sort_string_matches(matches, Some(query), snippet_sort_order, completions)
+}
+
+async fn filter_matches(
+    query: &str,
+    completions: &Vec<Completion>,
+    cx: &mut TestAppContext,
+) -> Vec<StringMatch> {
     let candidates: Arc<[StringMatchCandidate]> = completions
         .iter()
         .enumerate()
@@ -505,7 +566,7 @@ async fn filter_and_sort_matches(
         .collect();
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let background_executor = cx.executor();
-    let matches = fuzzy::match_strings(
+    fuzzy::match_strings(
         &candidates,
         query,
         query.chars().any(|c| c.is_uppercase()),
@@ -514,6 +575,5 @@ async fn filter_and_sort_matches(
         &cancel_flag,
         background_executor,
     )
-    .await;
-    CompletionsMenu::sort_string_matches(matches, Some(query), snippet_sort_order, completions)
+    .await
 }

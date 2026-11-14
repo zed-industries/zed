@@ -5763,7 +5763,6 @@ impl<'a> BufferChunks<'a> {
                     "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot"
                 );
             }
-            self.initialize_diagnostic_endpoints();
         } else if let Some(highlights) = self.highlights.as_mut() {
             if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
@@ -5832,6 +5831,7 @@ impl<'a> BufferChunks<'a> {
             self.error_depth = 0;
             self.warning_depth = 0;
             self.information_depth = 0;
+            self.unnecessary_depth = 0;
         }
     }
 
