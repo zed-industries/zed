@@ -17483,6 +17483,7 @@ dependencies = [
  "heapless",
  "log",
  "proptest",
+ "proptest-derive",
  "rand 0.9.4",
  "rayon",
  "tracing",

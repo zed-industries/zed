@@ -102,7 +102,10 @@ impl<'a> GitTraversal<'a> {
         } else if entry.is_file() {
             // For a file entry, park the cursor on the corresponding status
             if statuses.seek_forward(&PathTarget::Path(&repo_path), Bias::Left) {
-                // TODO: Investigate statuses.item() being None here.
+                // Note that `seek_forward()` can return true without an
+                // attached status item. In that case, `current_entry_summary`
+                // remains `None` and will be treated as
+                // `GitSummary::UNCHANGED`.
                 self.current_entry_summary = statuses.item().map(|item| item.status.into());
             } else {
                 self.current_entry_summary = Some(GitSummary::UNCHANGED);
