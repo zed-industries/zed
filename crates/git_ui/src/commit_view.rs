@@ -6,7 +6,7 @@ use editor::{
     SelectionEffects, SplittableEditor,
     display_map::{Block, DisplayRow, ToDisplayPoint},
     hover_markdown_style, multibuffer_context_lines,
-    scroll::ScrollAnchor,
+    scroll::{Autoscroll, ScrollAnchor},
 };
 use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, RepoPath};
@@ -18,15 +18,15 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
-    Window, actions,
+    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Subscription, Task,
+    WeakEntity, Window, actions,
 };
 use language::{
     Buffer, BufferId, Capability, DiskState, File, LanguageRegistry, LineEnding,
     OffsetRangeExt as _, ReplicaId, Rope, TextBuffer,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use multi_buffer::PathKey;
+use multi_buffer::{BufferOffset, PathKey};
 use project::{
     Project, ProjectPath, WorktreeId,
     git_store::{CommitDiff, CommitFile, Repository, UnshallowState},
@@ -35,6 +35,7 @@ use settings::{DiffViewStyle, Settings};
 use std::{
     any::{Any, TypeId},
     collections::HashSet,
+    ops::Range,
     path::PathBuf,
     sync::Arc,
 };
@@ -43,7 +44,7 @@ use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, pre
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace, item::ItemEvent, notifications::NotifyTaskExt, pane::SaveIntent,
     searchable::SearchableItemHandle,
 };
@@ -91,6 +92,9 @@ pub struct CommitView {
     is_shallow_boundary: bool,
     file_filter: Option<RepoPath>,
     reveal_file: Option<RepoPath>,
+    /// Whether to show the whole content of each file instead of only its changed hunks.
+    show_full_file: bool,
+    _editor_subscription: Subscription,
     _load_diff_task: Task<Result<()>>,
 }
 
@@ -173,7 +177,9 @@ impl Addon for CommitDiffAddon {
                 Some(Box::new(OpenFileAtHead)),
                 move |window, cx| {
                     commit_view
-                        .update(cx, |view, cx| view.open_file_at_head(&file, window, cx))
+                        .update(cx, |view, cx| {
+                            view.open_file_at_head(&file, None, window, cx)
+                        })
                         .log_err();
                 },
             )
@@ -198,6 +204,22 @@ pub struct CommitViewOptions {
     /// If the file is absent from the displayed diff, normal loading is
     /// unchanged.
     pub reveal_file: Option<RepoPath>,
+    /// Shows the whole content of each file instead of only its changed hunks.
+    pub show_full_file: bool,
+    /// Selects these ranges in the file's content at this commit and scrolls to them. Used with
+    /// `file_filter` and `show_full_file`; ignored for a file revealed by `reveal_file`.
+    pub selections: Vec<Range<language::Point>>,
+}
+
+/// Where [`CommitView::open_file`] shows a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenFileTarget {
+    /// The file's full diff at this commit, next to the commit view.
+    FullFileDiff,
+    /// The file's full diff at this commit, in the pane right of the commit view's.
+    FullFileDiffInSplit,
+    /// The file in the project.
+    Project,
 }
 
 impl CommitView {
@@ -269,34 +291,7 @@ impl CommitView {
                                 cx,
                             )
                         });
-
-                        let pane = workspace.active_pane();
-                        pane.update(cx, |pane, cx| {
-                            let ix = pane.items().position(|item| {
-                                let commit_view = item.downcast::<CommitView>();
-                                commit_view
-                                    .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
-                            });
-                            if let Some(ix) = ix {
-                                let existing = pane
-                                    .items()
-                                    .filter_map(|item| item.downcast::<CommitView>())
-                                    .find(|view| view.read(cx).commit.sha == commit_sha)
-                                    .unwrap();
-
-                                pane.remove_item(existing.item_id(), false, false, window, cx);
-                                pane.add_item(
-                                    Box::new(commit_view),
-                                    true,
-                                    true,
-                                    Some(ix),
-                                    window,
-                                    cx,
-                                );
-                            } else {
-                                pane.add_item(Box::new(commit_view), true, true, None, window, cx);
-                            }
-                        })
+                        Self::add_to_pane(workspace.active_pane(), commit_view, window, cx);
                     })
                     .log_err()
             })
@@ -317,6 +312,8 @@ impl CommitView {
             stash,
             file_filter,
             reveal_file,
+            show_full_file,
+            selections,
         } = options;
         let language_registry = project.read(cx).languages().clone();
         let is_shallow_boundary = commit_diff.is_shallow_boundary;
@@ -350,10 +347,12 @@ impl CommitView {
                 editor.set_show_bookmarks(false, cx);
                 editor.set_show_breakpoints(false, cx);
                 editor.set_show_diff_review_button(true, cx);
+                editor.set_delegate_open_excerpts(true);
             });
 
             editor
         });
+        let editor_subscription = Self::subscribe_to_editor(&editor, window, cx);
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
         let repository_clone = repository.clone();
@@ -386,6 +385,7 @@ impl CommitView {
                     &project_clone,
                     &commit_sha,
                     &language_registry,
+                    show_full_file,
                     cx,
                 )
                 .await?;
@@ -404,6 +404,7 @@ impl CommitView {
                 })?;
             }
 
+            let mut selections = selections;
             for file in files {
                 let is_binary = file.is_binary;
                 let (buffer_id, file_status) = Self::append_commit_file(
@@ -413,6 +414,7 @@ impl CommitView {
                     &project_clone,
                     &commit_sha,
                     &language_registry,
+                    show_full_file,
                     cx,
                 )
                 .await?;
@@ -421,6 +423,13 @@ impl CommitView {
 
                 if is_binary || collapse_files {
                     folded_buffer_ids.insert(buffer_id);
+                }
+
+                if !selections.is_empty() {
+                    let selections = std::mem::take(&mut selections);
+                    this.update_in(cx, |this, window, cx| {
+                        this.select_ranges(buffer_id, selections, window, cx);
+                    })?;
                 }
             }
 
@@ -474,8 +483,45 @@ impl CommitView {
             is_shallow_boundary,
             file_filter,
             reveal_file,
+            show_full_file,
+            _editor_subscription: editor_subscription,
             _load_diff_task: load_diff_task,
         }
+    }
+
+    /// Selects `ranges` in the buffer's content at this commit, centered in the view.
+    fn select_ranges(
+        &mut self,
+        buffer_id: BufferId,
+        ranges: Vec<Range<language::Point>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(buffer) = self.multibuffer.read(cx).buffer(buffer_id) else {
+            return;
+        };
+        self.editor.update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, cx| {
+                let multibuffer = editor.buffer().read(cx);
+                let anchor_ranges = ranges
+                    .into_iter()
+                    .filter_map(|range| {
+                        let start = multibuffer.buffer_point_to_anchor(&buffer, range.start, cx)?;
+                        let end = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx)?;
+                        Some(start..end)
+                    })
+                    .collect::<Vec<_>>();
+                if anchor_ranges.is_empty() {
+                    return;
+                }
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::center()),
+                    window,
+                    cx,
+                    |selections| selections.select_anchor_ranges(anchor_ranges),
+                );
+            });
+        });
     }
 
     async fn append_commit_file(
@@ -485,6 +531,7 @@ impl CommitView {
         project: &Entity<Project>,
         commit_sha: &str,
         language_registry: &Arc<LanguageRegistry>,
+        show_full_file: bool,
         cx: &mut AsyncWindowContext,
     ) -> Result<(BufferId, FileStatus)> {
         let is_created = file.old_text.is_none();
@@ -559,7 +606,7 @@ impl CommitView {
                 snapshot.file().unwrap().path().clone(),
             );
 
-            let ranges = if is_binary {
+            let ranges = if is_binary || show_full_file {
                 vec![language::Point::zero()..snapshot.max_point()]
             } else {
                 let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
@@ -664,6 +711,154 @@ impl CommitView {
         });
     }
 
+    fn subscribe_to_editor(
+        editor: &Entity<SplittableEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe_in(
+            editor,
+            window,
+            |this, _, event: &EditorEvent, window, cx| {
+                if let EditorEvent::OpenExcerptsRequested {
+                    selections_by_buffer,
+                    split,
+                } = event
+                {
+                    let secondary = window.modifiers().secondary(cx);
+                    for (buffer_id, (ranges, line_offset_from_top)) in selections_by_buffer {
+                        // Only clicks carry the clicked line's offset from the top, and only
+                        // secondary-clicks open the project file. The split action holds the
+                        // secondary modifier too, but has no offset.
+                        let target = match (split, line_offset_from_top.is_some() && secondary) {
+                            (false, _) => OpenFileTarget::FullFileDiff,
+                            (true, true) => OpenFileTarget::Project,
+                            (true, false) => OpenFileTarget::FullFileDiffInSplit,
+                        };
+                        this.open_file(*buffer_id, ranges, target, window, cx);
+                    }
+                }
+            },
+        )
+    }
+
+    /// Opens a changed file at `target`, with `ranges` of the file's content at this commit
+    /// selected.
+    fn open_file(
+        &mut self,
+        buffer_id: language::BufferId,
+        ranges: &[Range<BufferOffset>],
+        target: OpenFileTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let multibuffer = self.multibuffer.read(cx);
+        let (Some(buffer), Some(diff)) = (
+            multibuffer.buffer(buffer_id),
+            multibuffer.diff_for(buffer_id),
+        ) else {
+            return;
+        };
+        let buffer = buffer.read(cx);
+        let Some(file) = buffer.file().cloned() else {
+            return;
+        };
+        let selections = ranges
+            .iter()
+            .map(|range| buffer.offset_to_point(range.start.0)..buffer.offset_to_point(range.end.0))
+            .collect::<Vec<_>>();
+        if target == OpenFileTarget::Project {
+            let point = selections.first().map(|range| range.start);
+            self.open_file_at_head(&file, point, window, cx);
+            return;
+        }
+
+        // Rebuild the file from the loaded buffer and diff instead of loading the whole
+        // commit again.
+        let is_deleted = matches!(file.disk_state(), DiskState::Historic { was_deleted: true });
+        let commit_file = CommitFile {
+            path: RepoPath::from_rel_path(file.path()),
+            old_text: diff.read(cx).base_text_string(cx),
+            new_text: (!is_deleted).then(|| buffer.text()),
+            is_binary: !file.can_open(),
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let commit = self.commit.clone();
+        let repository = self.repository.clone();
+        let project = self.project.clone();
+        let options = CommitViewOptions {
+            stash: self.stash,
+            file_filter: Some(commit_file.path.clone()),
+            show_full_file: true,
+            selections,
+            ..Default::default()
+        };
+        let origin = cx.entity();
+        // Adding an item to the pane deactivates this view, which must not be updating then.
+        window.defer(cx, move |window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let workspace_entity = cx.entity();
+                let commit_view = cx.new(|cx| {
+                    CommitView::new(
+                        commit,
+                        CommitDiff {
+                            files: vec![commit_file],
+                            is_shallow_boundary: false,
+                        },
+                        repository,
+                        project,
+                        workspace_entity,
+                        options,
+                        window,
+                        cx,
+                    )
+                });
+                let pane = workspace
+                    .pane_for(&origin)
+                    .unwrap_or_else(|| workspace.active_pane().clone());
+                let pane = if target == OpenFileTarget::FullFileDiffInSplit {
+                    workspace.adjacent_pane_of(&pane, window, cx)
+                } else {
+                    pane
+                };
+                Self::add_to_pane(&pane, commit_view, window, cx);
+            });
+        });
+    }
+
+    /// Adds the view to the pane, in place of an existing view of the same commit and files.
+    fn add_to_pane(
+        pane: &Entity<Pane>,
+        commit_view: Entity<CommitView>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let new_view = commit_view.read(cx);
+        let sha = new_view.commit.sha.clone();
+        let show_full_file = new_view.show_full_file;
+        let file_filter = new_view.file_filter.clone();
+        // A full-file view lives next to the commit view it was opened from.
+        let is_same_view = |view: &CommitView| {
+            view.commit.sha == sha
+                && view.show_full_file == show_full_file
+                && (!show_full_file || view.file_filter == file_filter)
+        };
+        pane.update(cx, |pane, cx| {
+            let existing = pane.items().enumerate().find_map(|(ix, item)| {
+                item.downcast::<CommitView>()
+                    .filter(|view| is_same_view(view.read(cx)))
+                    .map(|view| (ix, view))
+            });
+            let ix = existing.map(|(ix, existing)| {
+                pane.remove_item(existing.item_id(), false, false, window, cx);
+                ix
+            });
+            pane.add_item(Box::new(commit_view), true, true, ix, window, cx);
+        });
+    }
+
     fn render_shallow_boundary_notice(&self, cx: &App) -> impl IntoElement {
         let commit_sha = self.commit.sha.to_string();
         let repository = self.repository.clone();
@@ -671,6 +866,7 @@ impl CommitView {
         let stash = self.stash;
         let file_filter = self.file_filter.clone();
         let reveal_file = self.reveal_file.clone();
+        let show_full_file = self.show_full_file;
         let unshallow_state = self.repository.read(cx).unshallow_state();
         let can_fetch = !self.project.read(cx).is_via_collab()
             && unshallow_state != UnshallowState::Unshallowed;
@@ -737,6 +933,8 @@ impl CommitView {
                                                         stash,
                                                         file_filter,
                                                         reveal_file,
+                                                        show_full_file,
+                                                        selections: Vec::new(),
                                                     },
                                                     false,
                                                     window,
@@ -772,6 +970,8 @@ impl CommitView {
                                         stash,
                                         file_filter: file_filter.clone(),
                                         reveal_file: reveal_file.clone(),
+                                        show_full_file,
+                                        selections: Vec::new(),
                                     },
                                     true,
                                     window,
@@ -802,9 +1002,11 @@ impl CommitView {
         self.multibuffer.read(cx).snapshot(cx).total_changed_lines()
     }
 
+    /// Opens the file in the project, with the cursor at `point` clipped to the file's current content.
     fn open_file_at_head(
         &mut self,
         file: &Arc<dyn language::File>,
+        point: Option<language::Point>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -820,10 +1022,31 @@ impl CommitView {
                 path: rel_path,
             });
 
+        let commit_view = cx.entity();
         self.workspace
             .update(cx, |workspace, cx| {
-                workspace
-                    .open_path_preview(project_path, None, false, false, true, window, cx)
+                let pane = workspace
+                    .pane_for(&commit_view)
+                    .map(|pane| pane.downgrade());
+                let open_item =
+                    workspace.open_path_preview(project_path, pane, true, false, true, window, cx);
+                window
+                    .spawn(cx, async move |cx| {
+                        let item = open_item.await?;
+                        if let Some(point) = point
+                            && let Some(editor) = item.downcast::<Editor>()
+                        {
+                            editor.update_in(cx, |editor, window, cx| {
+                                let point = editor
+                                    .buffer()
+                                    .read(cx)
+                                    .snapshot(cx)
+                                    .clip_point(point, language::Bias::Left);
+                                editor.go_to_singleton_buffer_point(point, window, cx);
+                            })?;
+                        }
+                        anyhow::Ok(())
+                    })
                     .detach_and_log_err(cx);
             })
             .log_err();
@@ -845,7 +1068,7 @@ impl CommitView {
         else {
             return;
         };
-        self.open_file_at_head(&file, window, cx);
+        self.open_file_at_head(&file, None, window, cx);
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1334,6 +1557,11 @@ impl Item for CommitView {
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
+        if self.show_full_file
+            && let Some(file_name) = self.file_filter.as_ref().and_then(|path| path.file_name())
+        {
+            return format!("{short_sha} — {file_name}").into();
+        }
         let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 20);
         format!("{short_sha} — {subject}").into()
     }
@@ -1473,6 +1701,7 @@ impl Item for CommitView {
                 let project = project.clone();
                 let workspace_entity = workspace_entity.clone();
                 let multibuffer = multibuffer.clone();
+                let window = &mut *window;
                 move |cx| {
                     let editor = SplittableEditor::new(
                         diff_view_style,
@@ -1487,6 +1716,7 @@ impl Item for CommitView {
                         editor.set_show_bookmarks(false, cx);
                         editor.set_show_breakpoints(false, cx);
                         editor.set_show_diff_review_button(true, cx);
+                        editor.set_delegate_open_excerpts(true);
                         editor.register_addon(CommitDiffAddon {
                             file_statuses,
                             commit_view,
@@ -1495,6 +1725,7 @@ impl Item for CommitView {
                     editor
                 }
             });
+            let editor_subscription = Self::subscribe_to_editor(&editor, window, cx);
             let language_registry = project.read(cx).languages().clone();
             let message = cx.new(|cx| {
                 Markdown::new(
@@ -1519,6 +1750,8 @@ impl Item for CommitView {
                 is_shallow_boundary: self.is_shallow_boundary,
                 file_filter: self.file_filter.clone(),
                 reveal_file: self.reveal_file.clone(),
+                show_full_file: self.show_full_file,
+                _editor_subscription: editor_subscription,
                 _load_diff_task: Task::ready(Ok(())),
             }
         })))
@@ -1680,7 +1913,7 @@ mod tests {
     use super::*;
     use gpui::{EmptyView, TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
-    use language::{Language, LanguageConfig, LanguageMatcher, markdown_lang};
+    use language::{Language, LanguageConfig, LanguageMatcher, Point, markdown_lang};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1836,6 +2069,414 @@ mod tests {
 
         commit_view.read_with(cx, |commit_view, cx| {
             assert_eq!(folded_files(commit_view, cx), 0);
+        });
+    }
+
+    const TEST_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    /// The content of `a.txt` before and after the test commit: 30 lines with line 15 changed.
+    fn test_file_text(changed_line: &str) -> String {
+        (1..=30)
+            .map(|row| match row {
+                1 => "first\n".to_string(),
+                15 => format!("{changed_line}\n"),
+                30 => "last\n".to_string(),
+                _ => format!("line {row}\n"),
+            })
+            .collect()
+    }
+
+    /// Opens a commit view for a commit that changes line 15 of `a.txt`.
+    async fn open_line_change_commit_view<'a>(
+        show_full_file: bool,
+        project_text: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (
+        Entity<CommitView>,
+        Entity<Workspace>,
+        &'a mut VisualTestContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "a.txt": project_text }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        cx.run_until_parked();
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("project should have a repository")
+        });
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+
+        let commit = CommitDetails {
+            sha: TEST_SHA.into(),
+            message: "Change a line".into(),
+            ..Default::default()
+        };
+        let commit_diff = CommitDiff {
+            files: vec![CommitFile {
+                path: RepoPath::new("a.txt").expect("valid repository path"),
+                old_text: Some(test_file_text("original")),
+                new_text: Some(test_file_text("changed")),
+                is_binary: false,
+            }],
+            is_shallow_boundary: false,
+        };
+        let commit_view = workspace.update_in(cx, |workspace, window, cx| {
+            let workspace_entity = cx.entity();
+            let options = CommitViewOptions {
+                file_filter: show_full_file.then(|| RepoPath::new("a.txt").unwrap()),
+                show_full_file,
+                ..Default::default()
+            };
+            let commit_view = cx.new(|cx| {
+                CommitView::new(
+                    commit,
+                    commit_diff,
+                    repository,
+                    project.clone(),
+                    workspace_entity,
+                    options,
+                    window,
+                    cx,
+                )
+            });
+            workspace.add_item_to_active_pane(
+                Box::new(commit_view.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            commit_view
+        });
+        cx.run_until_parked();
+        (commit_view, workspace, cx)
+    }
+
+    fn commit_buffer_id(
+        commit_view: &Entity<CommitView>,
+        cx: &VisualTestContext,
+    ) -> language::BufferId {
+        commit_view.read_with(cx, |commit_view, cx| {
+            let buffers = commit_view.multibuffer.read(cx).all_buffers();
+            assert_eq!(buffers.len(), 1);
+            buffers.iter().next().unwrap().read(cx).remote_id()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_commit_view_shows_hunks_only(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, _, cx) =
+            open_line_change_commit_view(false, &test_file_text("changed"), cx).await;
+
+        let text =
+            commit_view.read_with(cx, |view, cx| view.multibuffer.read(cx).snapshot(cx).text());
+        assert!(text.contains("changed"));
+        assert!(!text.contains("first"));
+        assert!(!text.contains("last"));
+    }
+
+    #[gpui::test]
+    async fn test_commit_view_show_full_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, _, cx) =
+            open_line_change_commit_view(true, &test_file_text("changed"), cx).await;
+
+        let text =
+            commit_view.read_with(cx, |view, cx| view.multibuffer.read(cx).snapshot(cx).text());
+        assert!(text.contains("first"));
+        assert!(text.contains("changed"));
+        assert!(text.contains("last"));
+    }
+
+    #[gpui::test]
+    async fn test_open_file_opens_full_file_view_next_to_commit_view(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, workspace, cx) =
+            open_line_change_commit_view(false, &test_file_text("changed"), cx).await;
+        let buffer_id = commit_buffer_id(&commit_view, cx);
+
+        commit_view.update_in(cx, |commit_view, window, cx| {
+            commit_view.open_file(buffer_id, &[], OpenFileTarget::FullFileDiff, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            let commit_views = pane
+                .items()
+                .filter_map(|item| item.downcast::<CommitView>())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                commit_views.len(),
+                2,
+                "the full-file view should open next to the commit view"
+            );
+            assert!(commit_views.contains(&commit_view));
+            let full_file_view = pane
+                .active_item()
+                .and_then(|item| item.downcast::<CommitView>())
+                .expect("the full-file view should be active");
+            let full_file_view = full_file_view.read(cx);
+            assert!(full_file_view.show_full_file);
+            assert_eq!(
+                full_file_view.file_filter,
+                Some(RepoPath::new("a.txt").unwrap())
+            );
+            assert_eq!(full_file_view.tab_content_text(0, cx), "0123456 — a.txt");
+            let text = full_file_view.multibuffer.read(cx).snapshot(cx).text();
+            assert!(text.contains("first"));
+            assert!(text.contains("changed"));
+            assert!(text.contains("last"));
+        });
+    }
+
+    /// Emits a split open request for `ranges` of `buffer_id` from the commit view's editor, as
+    /// the split action does without `line_offset_from_top` and a click does with it.
+    fn request_open_split(
+        commit_view: &Entity<CommitView>,
+        buffer_id: language::BufferId,
+        ranges: Vec<Range<BufferOffset>>,
+        line_offset_from_top: Option<u32>,
+        cx: &mut VisualTestContext,
+    ) {
+        let rhs_editor = commit_view.read_with(cx, |commit_view, cx| {
+            commit_view.editor.read(cx).rhs_editor().clone()
+        });
+        rhs_editor.update(cx, |_, cx| {
+            cx.emit(EditorEvent::OpenExcerptsRequested {
+                selections_by_buffer: HashMap::from_iter([(
+                    buffer_id,
+                    (ranges, line_offset_from_top),
+                )]),
+                split: true,
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    fn full_file_view_in_split_pane(workspace: &Workspace, cx: &App) -> Entity<CommitView> {
+        assert_eq!(workspace.panes().len(), 2);
+        let full_file_view = workspace.panes()[1]
+            .read(cx)
+            .active_item()
+            .and_then(|item| item.downcast::<CommitView>())
+            .expect("the full-file view should be active in the split pane");
+        assert!(full_file_view.read(cx).show_full_file);
+        full_file_view
+    }
+
+    #[gpui::test]
+    async fn test_split_action_opens_full_file_view_in_split_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, workspace, cx) =
+            open_line_change_commit_view(false, &test_file_text("changed"), cx).await;
+        let buffer_id = commit_buffer_id(&commit_view, cx);
+        let start = BufferOffset(0)..BufferOffset(0);
+
+        request_open_split(&commit_view, buffer_id, vec![start.clone()], None, cx);
+        request_open_split(&commit_view, buffer_id, vec![start], None, cx);
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.pane_for(&commit_view),
+                Some(workspace.panes()[0].clone()),
+                "the commit view should stay in its pane"
+            );
+            full_file_view_in_split_pane(workspace, cx);
+            assert_eq!(
+                workspace.panes()[1].read(cx).items_len(),
+                1,
+                "opening the file again should replace its full-file view"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_alt_click_opens_full_file_view_in_split_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, workspace, cx) =
+            open_line_change_commit_view(false, &test_file_text("changed"), cx).await;
+        let buffer_id = commit_buffer_id(&commit_view, cx);
+
+        request_open_split(
+            &commit_view,
+            buffer_id,
+            vec![BufferOffset(0)..BufferOffset(0)],
+            Some(0),
+            cx,
+        );
+
+        workspace.read_with(cx, |workspace, cx| {
+            full_file_view_in_split_pane(workspace, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_full_file_view_keeps_selections(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, workspace, cx) =
+            open_line_change_commit_view(false, &test_file_text("changed"), cx).await;
+        let buffer_id = commit_buffer_id(&commit_view, cx);
+        let text = test_file_text("changed");
+        let changed = text.find("changed").unwrap();
+        let line = text.find("line 14").unwrap();
+
+        request_open_split(
+            &commit_view,
+            buffer_id,
+            vec![
+                BufferOffset(line)..BufferOffset(line + "line 14".len()),
+                BufferOffset(changed)..BufferOffset(changed),
+            ],
+            None,
+            cx,
+        );
+
+        let full_file_view = workspace.read_with(cx, |workspace, cx| {
+            full_file_view_in_split_pane(workspace, cx)
+        });
+        let rhs_editor = full_file_view.read_with(cx, |full_file_view, cx| {
+            full_file_view.editor.read(cx).rhs_editor().clone()
+        });
+        rhs_editor.update(cx, |editor, cx| {
+            let selections = editor
+                .selections
+                .all::<Point>(&editor.display_snapshot(cx))
+                .into_iter()
+                .map(|selection| selection.range())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selections,
+                vec![
+                    Point::new(13, 0)..Point::new(13, 7),
+                    Point::new(14, 0)..Point::new(14, 0),
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_secondary_click_opens_project_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, workspace, cx) =
+            open_line_change_commit_view(false, &test_file_text("changed"), cx).await;
+        let buffer_id = commit_buffer_id(&commit_view, cx);
+
+        let secondary = cx.update(|_, cx| gpui::Modifiers::secondary_key(cx));
+        cx.simulate_modifiers_change(secondary);
+        request_open_split(
+            &commit_view,
+            buffer_id,
+            vec![BufferOffset(0)..BufferOffset(0)],
+            Some(0),
+            cx,
+        );
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.panes().len(), 1);
+            let editor = workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("the project file should be active");
+            let file = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).file().cloned())
+                .expect("the editor should show a project file");
+            assert!(file.disk_state().exists());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_file_in_project_jumps_to_line(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, workspace, cx) =
+            open_line_change_commit_view(false, &test_file_text("changed"), cx).await;
+        let buffer_id = commit_buffer_id(&commit_view, cx);
+        let offset = test_file_text("changed").find("changed").unwrap();
+
+        commit_view.update_in(cx, |commit_view, window, cx| {
+            commit_view.open_file(
+                buffer_id,
+                &[BufferOffset(offset)..BufferOffset(offset)],
+                OpenFileTarget::Project,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.active_pane().read(cx);
+            assert!(
+                pane.items()
+                    .any(|item| item.downcast::<CommitView>() == Some(commit_view.clone())),
+                "the project file should open in the commit view's pane"
+            );
+            let editor = pane
+                .active_item()
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("the project file should be active");
+            editor.update(cx, |editor, cx| {
+                assert!(editor.is_focused(window));
+                let file = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .and_then(|buffer| buffer.read(cx).file().cloned())
+                    .expect("the editor should show a project file");
+                assert!(file.disk_state().exists());
+                assert_eq!(file.file_name(cx), "a.txt");
+                let cursor = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head();
+                assert_eq!(cursor, Point::new(14, 0));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_file_in_project_clips_to_current_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, workspace, cx) = open_line_change_commit_view(false, "short\n", cx).await;
+        let buffer_id = commit_buffer_id(&commit_view, cx);
+        let offset = test_file_text("changed").find("changed").unwrap();
+
+        commit_view.update_in(cx, |commit_view, window, cx| {
+            commit_view.open_file(
+                buffer_id,
+                &[BufferOffset(offset)..BufferOffset(offset)],
+                OpenFileTarget::Project,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, _window, cx| {
+            let editor = workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("the project file should be active");
+            editor.update(cx, |editor, cx| {
+                let cursor = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head();
+                assert_eq!(cursor, Point::new(1, 0));
+            });
         });
     }
 
