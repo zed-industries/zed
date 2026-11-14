@@ -228,10 +228,10 @@ pub struct ReadFileToolInput {
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::deserialize_maybe_stringified")]
     pub start_line: Option<u32>,
     /// Optional line number to end reading on (1-based index, inclusive)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::deserialize_maybe_stringified")]
     pub end_line: Option<u32>,
 }
 
@@ -979,6 +979,36 @@ mod test {
             result.unwrap(),
             "     2\tLine 2\n     3\tLine 3\n     4\tLine 4\n".into()
         );
+    }
+
+    #[test]
+    fn test_read_file_input_line_bounds_accept_numbers_and_strings() {
+        let numeric = serde_json::from_value::<ReadFileToolInput>(json!({
+            "path": "root/file.txt",
+            "start_line": 10,
+            "end_line": 20,
+        }))
+        .expect("numeric line bounds should deserialize");
+        assert_eq!(numeric.start_line, Some(10));
+        assert_eq!(numeric.end_line, Some(20));
+
+        // Some models serialize numeric tool arguments as strings, so the same
+        // bounds must also deserialize when quoted.
+        let stringified = serde_json::from_value::<ReadFileToolInput>(json!({
+            "path": "root/file.txt",
+            "start_line": "10",
+            "end_line": "20",
+        }))
+        .expect("string line bounds should deserialize");
+        assert_eq!(stringified.start_line, Some(10));
+        assert_eq!(stringified.end_line, Some(20));
+
+        let omitted = serde_json::from_value::<ReadFileToolInput>(json!({
+            "path": "root/file.txt",
+        }))
+        .expect("missing line bounds should deserialize to None");
+        assert_eq!(omitted.start_line, None);
+        assert_eq!(omitted.end_line, None);
     }
 
     #[gpui::test]
