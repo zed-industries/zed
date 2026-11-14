@@ -40,6 +40,7 @@ use smol::process::Child;
 
 use settings::{Settings as _, SettingsLocation, initial_server_settings_content};
 use std::{
+    ffi::OsStr,
     mem,
     num::NonZeroU64,
     path::{Path, PathBuf},
@@ -323,6 +324,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_server_settings);
         session.add_entity_request_handler(Self::handle_get_directory_environment);
         session.add_entity_request_handler(Self::handle_get_terminal_shell);
+        session.add_entity_request_handler(Self::handle_has_terminal_child_processes);
         session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
         session.add_entity_request_handler(Self::handle_open_image_by_path);
         session.add_entity_request_handler(Self::handle_trust_worktrees);
@@ -1496,6 +1498,45 @@ impl HeadlessProject {
 
         Ok(proto::GetTerminalShellResponse {
             shell: Some(task::shell_to_proto(shell)),
+        })
+    }
+
+    /// Answers whether a terminal's shell on this host has a child process
+    /// running. The shell is found by the marker the client sets on it,
+    /// because its pid is only meaningful on this host.
+    async fn handle_has_terminal_child_processes(
+        _this: Entity<Self>,
+        envelope: TypedEnvelope<proto::HasTerminalChildProcesses>,
+        _cx: AsyncApp,
+    ) -> Result<proto::HasTerminalChildProcessesResponse> {
+        let refresh_kind = ProcessRefreshKind::nothing()
+            .without_tasks()
+            .with_environ(UpdateKind::Always);
+        let system =
+            System::new_with_specifics(RefreshKind::nothing().with_processes(refresh_kind));
+        let marker = format!("ZED_TERMINAL_ID={}", envelope.payload.terminal_id);
+        let parent_links: Vec<_> = system
+            .processes()
+            .iter()
+            .map(|(pid, process)| (*pid, process.parent()))
+            .collect();
+
+        // A cloned terminal shares its marker with the terminal it was cloned
+        // from, and an ended session can leave processes behind. Counting every
+        // match keeps the answer on the side of keeping the terminal.
+        let has_child_processes = system
+            .processes()
+            .iter()
+            .filter(|(_, process)| {
+                process
+                    .environ()
+                    .iter()
+                    .any(|value| value == OsStr::new(&marker))
+            })
+            .any(|(pid, _)| terminal::has_child_processes(*pid, &parent_links));
+
+        Ok(proto::HasTerminalChildProcessesResponse {
+            has_child_processes,
         })
     }
 }
