@@ -757,7 +757,6 @@ impl PathWithPosition {
 /// (e.g. `Z:\project` becomes `\\?\UNC\server\share\project`), which confuses some
 /// software. This function instead keeps the drive letter or mount point the caller
 /// used, and avoids the `\\?\` verbatim prefix where possible.
-#[cfg(not(target_family = "wasm"))]
 pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
     #[cfg(target_os = "windows")]
     {
