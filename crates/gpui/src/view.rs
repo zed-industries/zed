@@ -319,6 +319,7 @@ struct ViewElementState {
     /// The entities the view accessed while it was last drawn, in any phase,
     /// restored when its prepaint is reused so the window stays subscribed.
     accessed_entities: FxHashSet<EntityId>,
+    uses_outer_group: bool,
 }
 
 struct ViewElementCacheKey {
@@ -546,6 +547,7 @@ fn prepaint_view(
                     && element_state.cache_key.content_mask == content_mask
                     && element_state.cache_key.text_style == text_style
                     && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
+                    && !element_state.uses_outer_group
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
                 {
@@ -575,6 +577,7 @@ fn prepaint_view(
                     Some(element),
                     ViewElementState {
                         accessed_entities,
+                        uses_outer_group: false,
                         prepaint_range: prepaint_start..prepaint_end,
                         paint_range: PaintIndex::default()..PaintIndex::default(),
                         cache_key: ViewElementCacheKey {
@@ -630,8 +633,11 @@ fn paint_view(
                     // redrawn on the next frame.
                     if let Some(element) = element {
                         let refreshing = mem::replace(&mut window.refreshing, true);
+                        window.cached_view_outer_groups.push(false);
                         let ((), accessed_entities) =
                             cx.detect_accessed_entities(|cx| element.paint(window, cx));
+                        element_state.uses_outer_group =
+                            window.cached_view_outer_groups.pop().unwrap_or(false);
                         element_state.accessed_entities.extend(accessed_entities);
                         window.refreshing = refreshing;
                         element_state.cache_key.opacity = opacity;
