@@ -825,8 +825,15 @@ impl ThreadsArchiveView {
         remote_connection: Option<RemoteConnectionOptions>,
         cx: &mut Context<Self>,
     ) {
-        let connection_store = self.connection_store_for_remote(remote_connection.as_ref(), cx);
-        let connection_task = connection_store.map(|connection_store| {
+        let session_id = if agent.as_ref() == agent::ZED_AGENT_ID.as_ref() {
+            None
+        } else {
+            session_id
+        };
+        let connection_task = session_id
+            .as_ref()
+            .and_then(|_| self.connection_store_for_remote(remote_connection.as_ref(), cx))
+            .map(|connection_store| {
             let agent = Agent::from(agent);
             let fs = <dyn Fs>::global(cx);
             connection_store.update(cx, |store, cx| {
@@ -851,7 +858,7 @@ impl ThreadsArchiveView {
                     let state = connection_task.await?;
                     let task = cx.update(|cx| {
                         let list = state.connection.session_list(cx);
-                        delete_session_if_supported(list, session_id, cx)
+                        request_session_deletion(list, session_id, cx)
                     })?;
                     task.await?;
                 }
@@ -1695,14 +1702,15 @@ impl PickerDelegate for ProjectPickerDelegate {
     }
 }
 
-fn delete_session_if_supported(
+fn request_session_deletion(
     list: Option<Rc<dyn AgentSessionList>>,
     session_id: &acp::SessionId,
     cx: &mut App,
-) -> Task<anyhow::Result<()>> {
-    list.filter(|list| list.supports_delete())
-        .map(|list| list.delete_session(session_id, cx))
-        .unwrap_or_else(|| Task::ready(Ok(())))
+) -> anyhow::Result<Task<anyhow::Result<()>>> {
+    let list = list
+        .filter(|list| list.supports_delete())
+        .ok_or_else(|| anyhow::anyhow!("This agent does not support deleting sessions"))?;
+    Ok(list.delete_session(session_id, cx))
 }
 
 #[cfg(test)]
@@ -1743,7 +1751,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_delete_thread_without_remote_delete_support(cx: &mut gpui::TestAppContext) {
+    async fn test_delete_thread_rejects_unsupported_remote_deletion(cx: &mut gpui::TestAppContext) {
         let session_id = acp::SessionId::new("session");
         let delete_calls = Rc::new(Cell::new(0));
         let list = Rc::new(DeleteSessionListStub {
@@ -1751,10 +1759,11 @@ mod tests {
             delete_calls: delete_calls.clone(),
         });
 
-        let no_session_list = cx.update(|cx| delete_session_if_supported(None, &session_id, cx));
-        assert!(no_session_list.await.is_ok());
-        let unsupported = cx.update(|cx| delete_session_if_supported(Some(list), &session_id, cx));
-        assert!(unsupported.await.is_ok());
+        assert!(cx.update(|cx| request_session_deletion(None, &session_id, cx)).is_err());
+        assert!(
+            cx.update(|cx| request_session_deletion(Some(list), &session_id, cx))
+                .is_err()
+        );
         assert_eq!(delete_calls.get(), 0);
     }
 
@@ -1767,9 +1776,9 @@ mod tests {
             delete_calls: delete_calls.clone(),
         });
 
-        let remote_delete = cx.update(|cx| {
-            delete_session_if_supported(Some(list), &session_id, cx)
-        });
+        let remote_delete = cx
+            .update(|cx| request_session_deletion(Some(list), &session_id, cx))
+            .expect("agent supports deletion");
         assert!(remote_delete.await.is_err());
         assert_eq!(delete_calls.get(), 1);
     }
