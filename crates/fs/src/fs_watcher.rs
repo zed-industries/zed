@@ -567,13 +567,13 @@ impl WatchKey {
         // normalize before folding case. Windows (NTFS) and Linux are
         // normalization-sensitive, so there we only fold case.
         #[cfg(target_os = "macos")]
-        let folded = {
+        {
             use unicode_normalization::UnicodeNormalization as _;
             lossy.chars().nfc().collect::<String>().to_lowercase()
-        };
+        }
+
         #[cfg(not(target_os = "macos"))]
-        let folded = lossy.to_lowercase();
-        folded
+        lossy.to_lowercase()
     }
 
     fn for_registration(path: &SanitizedPath, case_insensitive: bool) -> Self {
