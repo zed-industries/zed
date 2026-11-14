@@ -117,7 +117,7 @@ mod windows_impl {
     pub(crate) fn show_error(mut content: String) {
         if content.len() > 600 {
             content.truncate(600);
-            content.push_str("...\n");
+            content.push_str("…\n");
         }
         let _ = unsafe {
             MessageBoxW(

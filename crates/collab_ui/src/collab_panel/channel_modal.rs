@@ -262,7 +262,7 @@ impl PickerDelegate for ChannelModalDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search collaborator by username...".into()
+        "Search collaborator by username…".into()
     }
 
     fn match_count(&self) -> usize {

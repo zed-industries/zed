@@ -539,7 +539,7 @@ impl TelemetryLogToolbarItemView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search_editor = cx.new(|cx| {
             let mut editor = editor::Editor::single_line(window, cx);
-            editor.set_placeholder_text("Filter events...", window, cx);
+            editor.set_placeholder_text("Filter events…", window, cx);
             editor
         });
 
