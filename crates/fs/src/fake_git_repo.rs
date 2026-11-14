@@ -1681,6 +1681,22 @@ impl GitRepository for FakeGitRepository {
         }))
     }
 
+    fn tags(&self) -> BoxFuture<'_, Result<Vec<(String, String)>>> {
+        async move {
+            self.fs.with_git_state(&self.dot_git_path, false, |state| {
+                let mut tags = state
+                    .refs
+                    .iter()
+                    .filter(|(name, _)| name.starts_with("refs/tags/"))
+                    .map(|(name, target)| (name.clone(), target.clone()))
+                    .collect::<Vec<_>>();
+                tags.sort();
+                tags
+            })
+        }
+        .boxed()
+    }
+
     fn create_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
         self.edit_ref(RefEdit::Create { ref_name, commit })
     }
