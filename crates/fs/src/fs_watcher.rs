@@ -555,6 +555,10 @@ impl WatchKey {
     }
 
     fn folded(path: &SanitizedPath) -> Self {
+        Self::Folded(Self::folded_path(path).into())
+    }
+
+    fn folded_path(path: &SanitizedPath) -> String {
         // Event ancestors omit trailing separators, even when registration paths include them.
         let normalized_path = path.as_path().components().collect::<std::path::PathBuf>();
         let lossy = normalized_path.to_string_lossy();
@@ -563,13 +567,13 @@ impl WatchKey {
         // normalize before folding case. Windows (NTFS) and Linux are
         // normalization-sensitive, so there we only fold case.
         #[cfg(target_os = "macos")]
-        let folded = {
+        {
             use unicode_normalization::UnicodeNormalization as _;
             lossy.chars().nfc().collect::<String>().to_lowercase()
-        };
+        }
+
         #[cfg(not(target_os = "macos"))]
-        let folded = lossy.to_lowercase();
-        Self::Folded(folded.into())
+        lossy.to_lowercase()
     }
 
     fn for_registration(path: &SanitizedPath, case_insensitive: bool) -> Self {
@@ -876,8 +880,21 @@ impl WatchPaths {
             if let Some(registration) = self.0.get(&WatchKey::exact(ancestor)) {
                 ids.extend_from_slice(&registration.watcher_ids);
             }
+
+            #[cfg(target_os = "windows")]
             if let Some(registration) = self.0.get(&WatchKey::folded(ancestor)) {
                 ids.extend_from_slice(&registration.watcher_ids);
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let folded_path = WatchKey::folded_path(path);
+            for ancestor in Path::new(&folded_path).ancestors() {
+                let key = WatchKey::Folded(Arc::from(ancestor.to_string_lossy().as_ref()));
+                if let Some(registration) = self.0.get(&key) {
+                    ids.extend_from_slice(&registration.watcher_ids);
+                }
             }
         }
     }
