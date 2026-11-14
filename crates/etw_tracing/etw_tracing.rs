@@ -153,9 +153,7 @@ fn save_etw_recording(output_path: PathBuf, cx: &mut App) {
         return;
     }
 
-    let command = Command::Save {
-        output_path: output_path.clone(),
-    };
+    let command = Command::Save { output_path };
     match send_json(&mut session.writer, &command) {
         Ok(()) => {
             session.state = EtwSessionState::Stopping;

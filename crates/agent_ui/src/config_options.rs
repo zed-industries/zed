@@ -1,7 +1,7 @@
 use std::{rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use agent_servers::AgentServer;
 
 use collections::HashSet;
@@ -285,7 +285,9 @@ impl Render for ConfigOptionsView {
             .min_w_0()
             .flex_wrap()
             .gap_1()
-            .children(self.selectors.iter().cloned())
+            // Options read right to left in the order the agent sent them, so the
+            // first one sits next to the send button.
+            .children(self.selectors.iter().rev().cloned())
             .into_any_element()
     }
 }

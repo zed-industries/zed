@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
 use serde::{Deserialize, Serialize};
@@ -873,7 +873,7 @@ mod tests {
         for value in ["", "session/ \0 雪 😀"] {
             let wire = serde_json::json!({
                 "Thread": {
-                    "id": agent_client_protocol::schema::v1::SessionId::new(value),
+                    "id": agent_client_protocol::v1::schema::SessionId::new(value),
                     "name": "Thread",
                 },
             });

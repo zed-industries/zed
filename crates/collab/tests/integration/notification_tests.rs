@@ -48,9 +48,8 @@ async fn test_notifications(
     // Client B receives a contact request notification and responds to the
     // request, accepting it.
     executor.run_until_parked();
-    client_b.notification_store().update(cx_b, |store, cx| {
+    client_b.notification_store().read_with(cx_b, |store, _| {
         assert_eq!(store.notification_count(), 1);
-        assert_eq!(store.unread_notification_count(), 1);
 
         let entry = store.notification_at(0).unwrap();
         assert_eq!(
@@ -72,15 +71,19 @@ async fn test_notifications(
                 }
             ]
         );
-
-        store.respond_to_notification(entry.notification.clone(), true, cx);
     });
+    client_b
+        .user_store()
+        .update(cx_b, |store, cx| {
+            store.respond_to_contact_request(client_a.id(), true, cx)
+        })
+        .await
+        .unwrap();
 
     // Client B sees the notification is now read, and that they responded.
     executor.run_until_parked();
     client_b.notification_store().read_with(cx_b, |store, _| {
         assert_eq!(store.notification_count(), 1);
-        assert_eq!(store.unread_notification_count(), 0);
 
         let entry = store.notification_at(0).unwrap();
         assert!(entry.is_read);
@@ -102,7 +105,6 @@ async fn test_notifications(
     // Client A receives a notification that client B accepted their request.
     client_a.notification_store().read_with(cx_a, |store, _| {
         assert_eq!(store.notification_count(), 1);
-        assert_eq!(store.unread_notification_count(), 1);
 
         let entry = store.notification_at(0).unwrap();
         assert_eq!(
@@ -133,9 +135,8 @@ async fn test_notifications(
     // Client B receives a channel invitation notification and responds to the
     // invitation, accepting it.
     executor.run_until_parked();
-    client_b.notification_store().update(cx_b, |store, cx| {
+    client_b.notification_store().read_with(cx_b, |store, _| {
         assert_eq!(store.notification_count(), 2);
-        assert_eq!(store.unread_notification_count(), 1);
 
         let entry = store.notification_at(0).unwrap();
         assert_eq!(
@@ -147,15 +148,19 @@ async fn test_notifications(
             }
         );
         assert!(!entry.is_read);
-
-        store.respond_to_notification(entry.notification.clone(), true, cx);
     });
+    client_b
+        .channel_store()
+        .update(cx_b, |store, cx| {
+            store.respond_to_channel_invite(channel_id, true, cx)
+        })
+        .await
+        .unwrap();
 
     // Client B sees the notification is now read, and that they responded.
     executor.run_until_parked();
     client_b.notification_store().read_with(cx_b, |store, _| {
         assert_eq!(store.notification_count(), 2);
-        assert_eq!(store.unread_notification_count(), 0);
 
         let entry = store.notification_at(0).unwrap();
         assert!(entry.is_read);

@@ -53,8 +53,8 @@ use collections::FxHashMap;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
-use image::codecs::gif::GifDecoder;
-use image::{AnimationDecoder as _, DynamicImage, Frame};
+use image::codecs::{gif::GifDecoder, webp::WebPDecoder};
+use image::{DynamicImage, Frame, Rgba};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use scheduler::Instant;
 pub use scheduler::RunnableMeta;
@@ -209,7 +209,7 @@ impl ActivityGuard {
 #[inline]
 pub fn guess_compositor() -> &'static str {
     if std::env::var_os("ZED_HEADLESS").is_some() {
-        return "Headless";
+        return "headless";
     }
     GraphicalEnvironment::detect().guess_compositor()
 }
@@ -231,6 +231,11 @@ pub struct GraphicalEnvironment {
     pub x11_display: Option<OsString>,
     /// `XDG_RUNTIME_DIR`: the directory containing Wayland sockets.
     pub xdg_runtime_dir: Option<OsString>,
+    /// `XDG_CURRENT_DESKTOP`: the session's desktop environment, such as `ubuntu:GNOME`.
+    ///
+    /// Only reported by [`GraphicalEnvironment::desktop_environment`]; [`GraphicalEnvironment::apply_to`]
+    /// leaves it alone.
+    pub current_desktop: Option<OsString>,
     /// `XDG_ACTIVATION_TOKEN`: lets the first window take focus on Wayland.
     ///
     /// A platform takes this process's token from its environment when it's created, and uses
@@ -272,6 +277,11 @@ impl GraphicalEnvironment {
     /// Does nothing on this platform: programs inherit the session of the process that
     /// starts them.
     pub fn apply_to(&self, _command: &mut std::process::Command) {}
+
+    /// Returns `None`: this platform has no desktop environments to tell apart.
+    pub fn desktop_environment(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The graphical session to connect to. Carries nothing yet on this platform.
@@ -288,6 +298,11 @@ impl GraphicalEnvironment {
 
     /// Does nothing on this platform.
     pub fn apply_to(&self, _command: &mut std::process::Command) {}
+
+    /// Returns `None`: this platform has no desktop environments to tell apart.
+    pub fn desktop_environment(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A display mode for [`App::request_windowing`] to switch to.
@@ -310,6 +325,7 @@ impl GraphicalEnvironment {
             wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
             x11_display: std::env::var_os("DISPLAY"),
             xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
+            current_desktop: std::env::var_os("XDG_CURRENT_DESKTOP"),
             activation_token: None,
         }
     }
@@ -330,6 +346,18 @@ impl GraphicalEnvironment {
         }
     }
 
+    /// Returns the session's desktop environment, if `XDG_CURRENT_DESKTOP` names one.
+    ///
+    /// The value is a colon-separated list ordered from most to least specific,
+    /// such as `ubuntu:GNOME`.
+    pub fn desktop_environment(&self) -> Option<String> {
+        self.current_desktop
+            .as_ref()
+            .and_then(|desktop| desktop.to_str())
+            .filter(|desktop| !desktop.is_empty())
+            .map(str::to_owned)
+    }
+
     /// Returns the compositor this environment selects: Wayland, then X11, then headless.
     ///
     /// Does not attempt to connect to the compositor.
@@ -341,7 +369,7 @@ impl GraphicalEnvironment {
         } else if cfg!(feature = "x11") && is_set(&self.x11_display) {
             "X11"
         } else {
-            "Headless"
+            "headless"
         }
     }
 }
@@ -510,9 +538,22 @@ pub trait Platform: 'static {
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
+    /// Platform-specific diagnostic state, for [`App::debug_state`].
+    fn debug_state(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
     fn thermal_state(&self) -> ThermalState;
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>>;
+
+    /// Returns the operating system's power mode, or [`PowerMode::Unknown`]
+    /// when the platform cannot determine it.
+    fn power_mode(&self) -> PowerMode {
+        PowerMode::Unknown
+    }
+    /// Registers a callback invoked when the reported power mode changes.
+    fn on_power_mode_change(&self, _callback: Box<dyn FnMut()>) {}
 
     /// Sets the application's process-wide identity and user-visible name.
     ///
@@ -538,8 +579,12 @@ pub trait Platform: 'static {
     ///
     /// Best-effort: some platforms cannot retract a notification once shown,
     /// in which case it ages out of the notification center on its own.
-    fn dismiss_system_notification(&self, tag: &str) {
+    /// The task completes after the platform calls return, not after any
+    /// asynchronous work inside the operating system. Dropping it does not
+    /// cancel dismissal.
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         _ = tag;
+        Task::ready(())
     }
 
     /// Registers the callback invoked when the user activates a system
@@ -699,6 +744,20 @@ pub struct SystemNotificationResponse {
     /// The pressed action button's [`SystemNotificationAction::id`], or
     /// `None` when the user activated the notification body itself.
     pub action_id: Option<SharedString>,
+}
+
+/// The operating system's preference for energy use versus performance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerMode {
+    /// The platform cannot determine the mode, or cannot distinguish the
+    /// active mode from other non-low-power modes.
+    Unknown,
+    /// The system prioritizes reducing energy use.
+    LowPower,
+    /// The system balances energy use and performance.
+    Balanced,
+    /// The system prioritizes performance over energy use.
+    HighPower,
 }
 
 /// Thermal state of the system
@@ -1282,6 +1341,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn zoom(&self);
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
+    /// Platform-specific diagnostic state, for [`App::debug_state`].
+    fn debug_state(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
     fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
         None
     }
@@ -1327,6 +1390,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     #[cfg(target_os = "macos")]
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
+    #[cfg(target_os = "macos")]
+    fn set_native_titlebar_visibility(&self, _visible: bool) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self, _is_resizable: bool, _is_minimizable: bool) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
@@ -1376,6 +1441,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
+    fn set_client_corner_radii(&self, _radii: Corners<Pixels>) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
@@ -2612,10 +2678,23 @@ pub struct WindowOptions {
     /// Leave this `false` for windows that rely on AppKit's native titlebar dragging.
     pub app_owns_titlebar_drag: bool,
 
-    /// The minimum interval between animation frames while the window is inactive.
+    /// The minimum frame interval while inactive without sustained high-rate input.
     ///
-    /// Set to `None` to disable inactive-window animation frame throttling.
+    /// Defaults to approximately 30 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory platform presentations bypass all limits.
     pub inactive_frame_interval: Option<Duration>,
+
+    /// The minimum frame interval while the platform reports Low Power Mode.
+    ///
+    /// Defaults to approximately 30 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory platform presentations bypass all limits.
+    pub low_power_frame_interval: Option<Duration>,
+
+    /// The minimum frame interval under serious or critical thermal pressure.
+    ///
+    /// Defaults to approximately 60 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory platform presentations bypass all limits.
+    pub thermal_frame_interval: Option<Duration>,
 
     /// Whether the window should be resizable by the user
     pub is_resizable: bool,
@@ -2623,8 +2702,8 @@ pub struct WindowOptions {
     /// Whether the window should be minimized by the user
     pub is_minimizable: bool,
 
-    /// The display to create the window on, if this is None,
-    /// the window will be created on the main display
+    /// The display to create the window on. If neither this nor `window_bounds` is set, the window
+    /// is created on the active window's display. Otherwise, it falls back to the primary display.
     pub display_id: Option<DisplayId>,
 
     /// The appearance of the window background.
@@ -2747,9 +2826,10 @@ impl WindowBounds {
         }
     }
 
-    /// Creates a new window bounds that centers the window on the screen.
-    pub fn centered(size: Size<Pixels>, cx: &App) -> Self {
-        WindowBounds::Windowed(Bounds::centered(None, size, cx))
+    /// Creates window bounds centered on the given display, or the primary display if none is
+    /// provided.
+    pub fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &App) -> Self {
+        WindowBounds::Windowed(Bounds::centered(display_id, size, cx))
     }
 }
 
@@ -2768,6 +2848,8 @@ impl Default for WindowOptions {
             is_movable: true,
             app_owns_titlebar_drag: false,
             inactive_frame_interval: Some(Duration::from_micros(33_333)),
+            low_power_frame_interval: Some(Duration::from_micros(33_333)),
+            thermal_frame_interval: Some(Duration::from_micros(16_667)),
             is_resizable: true,
             is_minimizable: true,
             display_id: None,
@@ -2972,7 +3054,9 @@ impl From<&str> for PromptButton {
 }
 
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, EnumIter,
+)]
 pub enum CursorStyle {
     /// The default cursor
     #[default]
@@ -3349,6 +3433,50 @@ pub(crate) fn decode_static_image_from_decoder(
     Ok(SmallVec::from_elem(Frame::new(data), 1))
 }
 
+fn decode_animated_frames<'a>(
+    decoder: impl image::AnimationDecoder<'a>,
+    format_name: &str,
+) -> Result<SmallVec<[Frame; 1]>> {
+    let mut frames = SmallVec::new();
+
+    for frame in decoder.into_frames() {
+        match frame {
+            Ok(mut frame) => {
+                // Convert from RGBA to BGRA.
+                for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+                frames.push(frame);
+            }
+            Err(err) => {
+                log::debug!("Skipping {format_name} frame due to decode error: {err}");
+            }
+        }
+    }
+
+    if frames.is_empty() {
+        anyhow::bail!("{format_name} could not be decoded: all frames failed");
+    }
+
+    Ok(frames)
+}
+
+pub(crate) fn decode_gif_image(bytes: &[u8]) -> Result<SmallVec<[Frame; 1]>> {
+    let decoder = GifDecoder::new(Cursor::new(bytes))?;
+    decode_animated_frames(decoder, "GIF")
+}
+
+pub(crate) fn decode_webp_image(bytes: &[u8]) -> Result<SmallVec<[Frame; 1]>> {
+    let mut decoder = WebPDecoder::new(Cursor::new(bytes))?;
+
+    if decoder.has_animation() {
+        let _ = decoder.set_background_color(Rgba([0, 0, 0, 0]));
+        decode_animated_frames(decoder, "WebP")
+    } else {
+        decode_static_image_from_decoder(decoder)
+    }
+}
+
 impl Hash for Image {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(self.id);
@@ -3412,34 +3540,10 @@ impl Image {
     /// Convert the clipboard image to an `ImageData` object.
     pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
         let frames = match self.format {
-            ImageFormat::Gif => {
-                let decoder = GifDecoder::new(Cursor::new(&self.bytes))?;
-                let mut frames = SmallVec::new();
-
-                for frame in decoder.into_frames() {
-                    match frame {
-                        Ok(mut frame) => {
-                            // Convert from RGBA to BGRA.
-                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                pixel.swap(0, 2);
-                            }
-                            frames.push(frame);
-                        }
-                        Err(err) => {
-                            log::debug!("Skipping GIF frame due to decode error: {err}");
-                        }
-                    }
-                }
-
-                if frames.is_empty() {
-                    anyhow::bail!("GIF could not be decoded: all frames failed");
-                }
-
-                frames
-            }
+            ImageFormat::Gif => decode_gif_image(&self.bytes)?,
             ImageFormat::Png => decode_static_image(&self.bytes, image::ImageFormat::Png)?,
             ImageFormat::Jpeg => decode_static_image(&self.bytes, image::ImageFormat::Jpeg)?,
-            ImageFormat::Webp => decode_static_image(&self.bytes, image::ImageFormat::WebP)?,
+            ImageFormat::Webp => decode_webp_image(&self.bytes)?,
             ImageFormat::Bmp => decode_static_image(&self.bytes, image::ImageFormat::Bmp)?,
             ImageFormat::Tiff => decode_static_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Ico => decode_static_image(&self.bytes, image::ImageFormat::Ico)?,
@@ -3565,6 +3669,36 @@ mod image_tests {
         for pixel in bytes.chunks_exact(4) {
             assert_eq!(pixel, &[0xF8, 0xBD, 0x38, 0xFF]);
         }
+    }
+
+    #[test]
+    fn test_animated_webp_image_to_image_data_decodes_frames() {
+        // 1x1 2-frame animated WebP (frame 0: red, frame 1: blue, 100ms delay each).
+        const ANIMATED_WEBP: &[u8] = &[
+            82, 73, 70, 70, 192, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 88, 10, 0, 0, 0, 2, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 65, 78, 73, 77, 6, 0, 0, 0, 255, 255, 255, 255, 0, 0, 65, 78, 77, 70,
+            72, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 2, 86, 80, 56, 32, 48, 0,
+            0, 0, 208, 1, 0, 157, 1, 42, 1, 0, 1, 0, 2, 0, 52, 37, 160, 2, 116, 186, 1, 248, 0, 3,
+            176, 0, 254, 240, 196, 11, 255, 32, 185, 97, 117, 200, 215, 255, 32, 63, 228, 7, 252,
+            128, 255, 248, 242, 0, 0, 0, 65, 78, 77, 70, 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 100, 0, 0, 0, 86, 80, 56, 32, 44, 0, 0, 0, 148, 1, 0, 157, 1, 42, 1, 0, 1, 0, 0,
+            0, 52, 37, 160, 2, 116, 186, 0, 3, 152, 0, 254, 249, 147, 111, 255, 144, 31, 255, 144,
+            31, 255, 144, 31, 255, 32, 63, 226, 23, 123, 32, 48, 0,
+        ];
+
+        let image = Image::from_bytes(ImageFormat::Webp, ANIMATED_WEBP.to_vec());
+        let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();
+
+        assert_eq!(render_image.frame_count(), 2);
+        assert_eq!(render_image.size(0), size(1.into(), 1.into()));
+        assert_eq!(
+            Duration::from(render_image.delay(0)),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            Duration::from(render_image.delay(1)),
+            Duration::from_millis(100)
+        );
     }
 }
 

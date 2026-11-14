@@ -381,7 +381,7 @@ mod tests {
             cache
                 .get(&small_key, [small_text].into_iter())
                 .map(|highlights| highlights.runs),
-            Some(small_highlights.runs.clone()),
+            Some(small_highlights.runs),
             "highlights within the entry budget must be cached as-is"
         );
 

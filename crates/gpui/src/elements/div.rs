@@ -19,12 +19,12 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent, Bounds, ClickEvent,
     DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
     ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
-    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
-    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
-    PinchEvent, Pixels, Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement,
-    Styled, Task, TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
+    HitboxBehavior, HitboxId, InspectorElementId, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
+    KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent, ModifiersChangedEvent,
+    MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels,
+    Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -1842,8 +1842,14 @@ pub(crate) type ActionListener =
 /// Construct a new [`Div`] element
 #[track_caller]
 pub fn div() -> Div {
+    #[allow(unused_mut)]
+    let mut interactivity = InteractivityBox::new();
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    {
+        interactivity.source_location = Some(core::panic::Location::caller());
+    }
     Div {
-        interactivity: Interactivity::new(),
+        interactivity,
         children: SmallVec::default(),
         prepaint_listener: None,
         image_cache: None,
@@ -1851,9 +1857,55 @@ pub fn div() -> Div {
     }
 }
 
+/// Where a [`Div`]'s [`Interactivity`] lives. Divs built while a frame is drawn, which is
+/// nearly all of them, use the element arena so they don't each cost a heap allocation;
+/// the arena outlives every element built during the frame.
+enum InteractivityBox {
+    Arena(crate::ArenaBox<Interactivity>),
+    Heap(Box<Interactivity>),
+}
+
+impl InteractivityBox {
+    /// Builds the `Interactivity` in place, since moving one in would copy over a kilobyte.
+    #[inline]
+    fn new() -> Self {
+        if crate::window::draw_in_progress() {
+            Self::Arena(crate::window::with_element_arena(|arena| {
+                arena.alloc(Interactivity::default)
+            }))
+        } else {
+            Self::Heap(Box::default())
+        }
+    }
+}
+
+impl std::ops::Deref for InteractivityBox {
+    type Target = Interactivity;
+
+    #[inline]
+    fn deref(&self) -> &Interactivity {
+        match self {
+            Self::Arena(interactivity) => interactivity,
+            Self::Heap(interactivity) => interactivity,
+        }
+    }
+}
+
+impl std::ops::DerefMut for InteractivityBox {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Interactivity {
+        match self {
+            Self::Arena(interactivity) => interactivity,
+            Self::Heap(interactivity) => interactivity,
+        }
+    }
+}
+
 /// A [`Div`] element, the all-in-one element for building complex UIs in GPUI
 pub struct Div {
-    interactivity: Interactivity,
+    // Kept out of line because builder methods move the `Div` by value on every call,
+    // and `Interactivity` is over a kilobyte.
+    interactivity: InteractivityBox,
     children: SmallVec<[StackSafe<AnyElement>; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
     image_cache: Option<Box<dyn ImageCacheProvider>>,
@@ -2141,14 +2193,6 @@ impl Element for Div {
                 },
             )
         });
-    }
-}
-
-impl IntoElement for Div {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -2446,7 +2490,9 @@ impl Interactivity {
 
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
+                            let result = window.with_element_opacity(style.opacity, |window| {
+                                f(&style, scroll_offset, hitbox, window, cx)
+                            });
                             (result, element_state)
                         },
                     )
@@ -2501,7 +2547,7 @@ impl Interactivity {
                 .tracked_scroll_handle
                 .as_ref()
                 .map(|handle| handle.0.borrow_mut());
-            if let Some(mut scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
+            if let Some(scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
                 scroll_handle_state.overflow = style.overflow;
                 scroll_to_bottom = mem::take(&mut scroll_handle_state.scroll_to_bottom);
             }
@@ -4228,17 +4274,6 @@ where
     }
 }
 
-impl<E> IntoElement for Stateful<E>
-where
-    E: Element,
-{
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl<E> ParentElement for Stateful<E>
 where
     E: ParentElement,
@@ -4456,7 +4491,7 @@ impl ScrollHandle {
     /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
     /// As you scroll further down the offset becomes more negative.
-    pub fn set_offset(&self, mut position: Point<Pixels>) {
+    pub fn set_offset(&self, position: Point<Pixels>) {
         let state = self.0.borrow();
         *state.offset.borrow_mut() = position;
     }
@@ -4501,8 +4536,9 @@ impl ScrollHandle {
 mod tests {
     use super::*;
     use crate::{
-        AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, Keystroke,
-        MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
+        AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, IntoElement,
+        Keystroke, MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas,
+        util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -4846,14 +4882,6 @@ mod tests {
         captured_active_tooltip: CapturedActiveTooltip,
     }
 
-    impl IntoElement for TooltipCaptureElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
-    }
-
     impl Element for TooltipCaptureElement {
         type RequestLayoutState = ();
         type PrepaintState = ();
@@ -5141,7 +5169,7 @@ mod tests {
     fn tooltip_respects_custom_show_delay() {
         let extra_delay = Duration::from_secs(1);
         let show_delay_override = DEFAULT_TOOLTIP_SHOW_DELAY + extra_delay;
-        let (mut test_app, _any_window, captured_active_tooltip) =
+        let (test_app, _any_window, captured_active_tooltip) =
             setup_tooltip_owner_test(Some(show_delay_override));
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();

@@ -580,6 +580,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
         .add_basic_renderer::<settings::SidebarDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
+        .add_basic_renderer::<settings::GitDateStyle>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitDiffBaseSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
@@ -669,6 +670,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::FullscreenMode>(render_dropdown)
+        .add_basic_renderer::<settings::TitleBarVisibility>(render_dropdown)
         .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::ScanSymlinksSetting>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
@@ -880,6 +882,7 @@ fn open_settings_editor_with(
         let default_rem_size = 16.0;
         let scale_factor = current_rem_size / default_rem_size;
         let scaled_bounds: gpui::Size<Pixels> = default_bounds.map(|axis| axis * scale_factor);
+        let display_id = cx.active_display().map(|display| display.id());
 
         let app_id = ReleaseChannel::global(cx).app_id();
         let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
@@ -913,7 +916,8 @@ fn open_settings_editor_with(
                     width: SIDEBAR_WIDTH + CONTENT_MIN_WIDTH,
                     height: px(240.0),
                 }),
-                window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
+                window_bounds: Some(WindowBounds::centered(display_id, scaled_bounds, cx)),
+                display_id,
                 ..Default::default()
             },
             |window, cx| {
@@ -2622,7 +2626,7 @@ impl SettingsWindow {
                     continue;
                 };
 
-                missing_worktrees.push((worktree_id, directory_name.clone()));
+                missing_worktrees.push((worktree_id, directory_name));
                 let path = RelPath::empty().to_owned().into_arc();
 
                 let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
@@ -7121,6 +7125,210 @@ pub mod test {
             assert_eq!(settings_window.current_file, SettingsUiFile::User);
             assert_eq!(settings_window.sub_page_stack.len(), 1);
             assert_eq!(displayed_skill_names(settings_window, cx), ["global-skill"]);
+        });
+    }
+
+    /// The project's fs is separate from the host's, so tests can tell which one was used.
+    async fn init_project_skill_test(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Entity<SettingsWindow>,
+        &mut gpui::VisualTestContext,
+        Arc<fs::FakeFs>,
+        Arc<fs::FakeFs>,
+        project::WorktreeId,
+    ) {
+        use project::Project;
+        use serde_json::json;
+
+        cx.update(|cx| {
+            register_settings(cx);
+        });
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state.clone(), cx);
+            app_state
+        });
+
+        let host_fs = app_state.fs.as_fake();
+        host_fs
+            .insert_tree(
+                "/project",
+                json!({ ".agents": { "skills": { "my-skill": { "SKILL.md": "host copy" } } } }),
+            )
+            .await;
+        let project_fs = fs::FakeFs::new(cx.executor());
+        project_fs
+            .insert_tree(
+                "/project",
+                json!({ ".agents": { "skills": { "my-skill": { "SKILL.md": "project copy" } } } }),
+            )
+            .await;
+
+        let project = Project::test(project_fs.clone(), ["/project".as_ref()], cx).await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let (_multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let workspace_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
+        cx.run_until_parked();
+
+        let (settings_window, cx) = cx
+            .add_window_view(|window, cx| SettingsWindow::new(Some(workspace_handle), window, cx));
+        cx.run_until_parked();
+
+        (settings_window, cx, project_fs, host_fs, worktree_id)
+    }
+
+    fn project_skill(worktree_id: project::WorktreeId, name: &str) -> agent_skills::Skill {
+        let directory_path = PathBuf::from(format!("/project/.agents/skills/{name}"));
+        agent_skills::Skill {
+            name: name.to_string(),
+            description: String::new(),
+            source: agent_skills::SkillSource::ProjectLocal {
+                worktree_id: agent_skills::SkillScopeId(worktree_id.to_usize()),
+                worktree_root_name: "project".into(),
+            },
+            skill_file_path: directory_path.join("SKILL.md"),
+            directory_path,
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            embedded_body: None,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_share_link_reads_through_project(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let skill = project_skill(worktree_id, "my-skill");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::copy_skill_share_link(&skill, settings_window, cx)
+            })
+            .await;
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(agent_skills::encode_skill_share_link("project copy"))
+        );
+        settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(
+                settings_window.last_copied_skill_directory_path,
+                Some(skill.directory_path.clone())
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_delete_trashes_through_project(cx: &mut gpui::TestAppContext) {
+        use fs::Fs as _;
+
+        let (settings_window, cx, project_fs, host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let skill = project_skill(worktree_id, "my-skill");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::trash_skill(&skill, settings_window, cx)
+            })
+            .await;
+
+        assert!(!project_fs.is_dir(&skill.directory_path).await);
+        assert!(host_fs.is_dir(&skill.directory_path).await);
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                settings_window
+                    .hidden_deleted_skill_directory_paths
+                    .contains(&skill.directory_path)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_share_link_skips_project_with_same_worktree_id(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // Shares the project's worktree id but not its path, as a collab project can.
+        let (settings_window, cx, _project_fs, host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        host_fs
+            .insert_tree(
+                "/elsewhere",
+                serde_json::json!({ ".agents": { "skills": { "my-skill": { "SKILL.md": "elsewhere copy" } } } }),
+            )
+            .await;
+        let mut skill = project_skill(worktree_id, "my-skill");
+        skill.directory_path = PathBuf::from("/elsewhere/.agents/skills/my-skill");
+        skill.skill_file_path = skill.directory_path.join("SKILL.md");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::copy_skill_share_link(&skill, settings_window, cx)
+            })
+            .await;
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(agent_skills::encode_skill_share_link("elsewhere copy"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_delete_failure_shows_skill_again(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx, project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let skill = project_skill(worktree_id, "my-skill");
+        project_fs.set_remove_dir_error(&skill.directory_path, "permission denied".into());
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::trash_skill(&skill, settings_window, cx)
+            })
+            .await;
+
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                !settings_window
+                    .hidden_deleted_skill_directory_paths
+                    .contains(&skill.directory_path)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_delete_keeps_already_deleted_skill_hidden(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let skill = project_skill(worktree_id, "deleted-outside-zed");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::trash_skill(&skill, settings_window, cx)
+            })
+            .await;
+
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                settings_window
+                    .hidden_deleted_skill_directory_paths
+                    .contains(&skill.directory_path)
+            );
         });
     }
 
