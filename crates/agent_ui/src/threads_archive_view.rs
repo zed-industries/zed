@@ -825,12 +825,12 @@ impl ThreadsArchiveView {
         remote_connection: Option<RemoteConnectionOptions>,
         cx: &mut Context<Self>,
     ) {
-        let session_id = if agent.as_ref() == agent::ZED_AGENT_ID.as_ref() {
+        let remote_session_id = if agent.as_ref() == agent::ZED_AGENT_ID.as_ref() {
             None
         } else {
             session_id
         };
-        let connection_task = session_id
+        let connection_task = remote_session_id
             .as_ref()
             .and_then(|_| self.connection_store_for_remote(remote_connection.as_ref(), cx))
             .map(|connection_store| {
@@ -851,7 +851,7 @@ impl ThreadsArchiveView {
 
         cx.spawn(async move |_this, cx| {
             let result: anyhow::Result<()> = async {
-                if let Some(session_id) = session_id.as_ref() {
+                if let Some(session_id) = remote_session_id.as_ref() {
                     let connection_task = connection_task.ok_or_else(|| {
                         anyhow::anyhow!("Could not find an open workspace for the thread's host")
                     })?;
