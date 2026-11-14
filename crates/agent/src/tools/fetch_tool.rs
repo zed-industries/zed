@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell};
@@ -21,6 +22,12 @@ enum ContentType {
     Html,
     Plaintext,
     Json,
+}
+
+const DEFAULT_MAX_LENGTH: usize = 5000;
+
+fn default_max_length() -> NonZeroUsize {
+    NonZeroUsize::new(DEFAULT_MAX_LENGTH).unwrap()
 }
 
 /// The maximum number of HTTP redirects the fetch tool will follow. Each hop is
@@ -62,10 +69,39 @@ fn normalize_url(url: &str) -> Cow<'_, str> {
 pub struct FetchToolInput {
     /// The URL to fetch.
     url: String,
+    /// Maximum number of characters to return. Must be greater than zero.
+    /// Defaults to 5000. Increase this to read more of a large page in one call,
+    /// keeping in mind that the content counts against the context window.
+    #[serde(default = "default_max_length")]
+    max_length: NonZeroUsize,
+    /// Character index to start returning content from. Defaults to 0. Use this
+    /// together with `max_length` to page through content that was truncated by
+    /// a previous call.
+    #[serde(default)]
+    start_index: usize,
 }
 
 pub struct FetchTool {
     http_client: Arc<HttpClientWithUrl>,
+}
+
+/// Returns the `max_length`-character window of `content` starting at
+/// `start_index`. When more content follows the window, a note is appended
+/// telling the caller how to fetch the rest.
+fn window_content(content: &str, start_index: usize, max_length: usize) -> String {
+    let total = content.chars().count();
+    let start = start_index.min(total);
+    let window: String = content.chars().skip(start).take(max_length).collect();
+    let end = start + window.chars().count();
+
+    if end < total {
+        format!(
+            "{window}\n\n[Showing characters {start}-{end} of {total}. \
+             Call fetch again with start_index={end} to read more.]"
+        )
+    } else {
+        window
+    }
 }
 
 impl FetchTool {
@@ -77,7 +113,12 @@ impl FetchTool {
     /// re-authorize each hop against the shared network grants before following
     /// it. Returns the redirect target when the server responds with a 3xx, or
     /// the final content converted to Markdown otherwise.
-    async fn fetch_step(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<FetchStep> {
+    async fn fetch_step(
+        http_client: Arc<HttpClientWithUrl>,
+        url: &str,
+        start_index: usize,
+        max_length: usize,
+    ) -> Result<FetchStep> {
         let normalized = normalize_url(url);
 
         let mut response = http_client
@@ -112,6 +153,7 @@ impl FetchTool {
 
         if status.is_client_error() {
             let text = String::from_utf8_lossy(body.as_slice());
+            let text = window_content(&text, start_index, max_length);
             bail!("status error {}, response: {text:?}", status.as_u16());
         }
 
@@ -162,7 +204,11 @@ impl FetchTool {
             }
         };
 
-        Ok(FetchStep::Complete(text))
+        Ok(FetchStep::Complete(window_content(
+            &text,
+            start_index,
+            max_length,
+        )))
     }
 }
 
@@ -339,7 +385,9 @@ impl AgentTool for FetchTool {
                 let fetch_task = cx.background_spawn({
                     let http_client = http_client.clone();
                     let url = current_url.clone();
-                    async move { Self::fetch_step(http_client, &url).await }
+                    let start_index = input.start_index;
+                    let max_length = input.max_length.get();
+                    async move { Self::fetch_step(http_client, &url, start_index, max_length).await }
                 });
 
                 let step = futures::select! {
@@ -374,6 +422,160 @@ impl AgentTool for FetchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_content_is_returned_unchanged() {
+        assert_eq!(window_content("hello", 0, 5000), "hello");
+    }
+
+    #[test]
+    fn long_content_is_truncated_with_a_note() {
+        let content = "abcdefghij";
+        assert_eq!(
+            window_content(content, 0, 4),
+            "abcd\n\n[Showing characters 0-4 of 10. \
+             Call fetch again with start_index=4 to read more.]"
+        );
+    }
+
+    #[test]
+    fn start_index_pages_through_content() {
+        let content = "abcdefghij";
+        assert_eq!(
+            window_content(content, 4, 4),
+            "efgh\n\n[Showing characters 4-8 of 10. \
+             Call fetch again with start_index=8 to read more.]"
+        );
+        // Reaching the end drops the note.
+        assert_eq!(window_content(content, 8, 4), "ij");
+    }
+
+    #[test]
+    fn start_index_past_the_end_yields_nothing() {
+        assert_eq!(window_content("abc", 10, 4), "");
+    }
+
+    #[test]
+    fn truncation_respects_character_boundaries() {
+        // Three 4-byte emoji; a byte-based slice would panic or split them.
+        let content = "😀😁😂";
+        assert_eq!(
+            window_content(content, 0, 2),
+            "😀😁\n\n[Showing characters 0-2 of 3. \
+             Call fetch again with start_index=2 to read more.]"
+        );
+        assert_eq!(window_content(content, 1, 2), "😁😂");
+    }
+
+    #[test]
+    fn empty_content_and_large_indices_are_safe() {
+        assert_eq!(window_content("", 0, 5000), "");
+        assert_eq!(window_content("abc", usize::MAX, usize::MAX), "");
+        assert_eq!(window_content("abc", 1, usize::MAX), "bc");
+        assert_eq!(window_content("abc", 0, 3), "abc");
+    }
+
+    #[test]
+    fn fetch_input_defaults_preserve_existing_calls() {
+        let input: FetchToolInput =
+            serde_json::from_value(serde_json::json!({"url": "https://example.com"})).unwrap();
+        assert_eq!(input.max_length.get(), 5000);
+        assert_eq!(input.start_index, 0);
+    }
+
+    #[test]
+    fn fetch_input_rejects_invalid_windows() {
+        assert!(
+            serde_json::from_value::<FetchToolInput>(serde_json::json!({
+                "url": "https://example.com", "start_index": -1
+            }))
+            .is_err()
+        );
+        for max_length in [0, -1] {
+            assert!(
+                serde_json::from_value::<FetchToolInput>(serde_json::json!({
+                    "url": "https://example.com", "max_length": max_length
+                }))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn fetch_step_windows_each_content_type() {
+        for (content_type, body, expected) in [
+            ("text/plain", "abcdefghij", "bcd"),
+            ("text/html", "<p>abcdefghij</p>", "bcd"),
+            ("application/json", "{\"value\": 1}", "``j"),
+        ] {
+            let client = http_client::FakeHttpClient::create(move |_| async move {
+                Ok(http_client::Response::builder()
+                    .header("content-type", content_type)
+                    .body(body.into())
+                    .unwrap())
+            });
+            let result =
+                async_io::block_on(FetchTool::fetch_step(client, "https://example.com", 1, 3))
+                    .unwrap();
+            let FetchStep::Complete(text) = result else {
+                panic!("expected content, not a redirect");
+            };
+            assert!(
+                text.starts_with(&format!("{expected}\n\n[Showing characters 1-4")),
+                "{text}"
+            );
+            assert!(text.ends_with("start_index=4 to read more.]"));
+        }
+    }
+
+    #[test]
+    fn fetch_step_bounds_large_error_responses() {
+        let client = http_client::FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(404)
+                .body("x".repeat(700_000).into())
+                .unwrap())
+        });
+        let result = async_io::block_on(FetchTool::fetch_step(
+            client,
+            "https://example.com/missing",
+            0,
+            5000,
+        ));
+        let error = match result {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("expected an HTTP status error"),
+        };
+        assert!(error.starts_with("status error 404, response:"));
+        assert!(error.len() < 5200, "error has {} bytes", error.len());
+        assert!(error.contains("start_index=5000 to read more."));
+    }
+
+    #[test]
+    fn fetch_step_leaves_redirects_for_authorization() {
+        let client = http_client::FakeHttpClient::create(|request| async move {
+            assert!(matches!(
+                request.extensions().get::<http_client::RedirectPolicy>(),
+                Some(http_client::RedirectPolicy::NoFollow)
+            ));
+            Ok(http_client::Response::builder()
+                .status(302)
+                .header("location", "/next")
+                .body(AsyncBody::default())
+                .unwrap())
+        });
+        let result = async_io::block_on(FetchTool::fetch_step(
+            client,
+            "https://example.com/start",
+            50,
+            100,
+        ))
+        .unwrap();
+        let FetchStep::Redirect(target) = result else {
+            panic!("expected a redirect");
+        };
+        assert_eq!(target, "https://example.com/next");
+    }
 
     // These use IP-literal URLs, which "resolve" to themselves, so the SSRF gate
     // is exercised without depending on real DNS. IP literals can't be *granted*
