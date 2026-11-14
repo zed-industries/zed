@@ -318,6 +318,26 @@ mod tests {
     }
 
     #[test]
+    fn test_system_prompt_includes_terminal_guidance_when_terminal_tool_available() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into(), "terminal".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+
+        assert!(rendered.contains(", and terminal commands for build, test, and project-specific workflows."));
+        assert!(rendered.contains("specify `timeout_ms` to bound runtime"));
+    }
+
+    #[test]
     fn test_system_prompt_omits_sandbox_section_when_terminal_tool_unavailable() {
         // A profile can disable the terminal tool entirely; the prompt must not
         // describe a sandboxed `terminal` tool the model doesn't have.
@@ -337,6 +357,8 @@ mod tests {
 
         assert!(!rendered.contains("## Terminal sandbox"));
         assert!(!rendered.contains("allow_hosts"));
+        assert!(!rendered.contains("terminal"));
+        assert!(!rendered.contains("timeout_ms"));
     }
 
     #[test]
