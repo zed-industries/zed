@@ -591,6 +591,8 @@ pub mod agent {
             /// Toggles the language model selector dropdown.
             #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
             ToggleModelSelector,
+            /// Cycles through favorited models in the ACP model selector.
+            CycleFavoriteModels,
             /// Triggers re-authentication on Gemini
             ReauthenticateAgent,
             /// Logs out of the current external agent

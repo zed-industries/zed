@@ -2,6 +2,7 @@ use std::{cmp::Reverse, sync::Arc};
 
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet, IndexMap};
+use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, ForegroundExecutor,
@@ -13,11 +14,17 @@ use language_model::{
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::Settings;
+use settings::{Settings, update_settings_file};
 use ui::prelude::*;
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
+mod favorite_models;
+mod model_selector_components;
+
+pub use favorite_models::toggle_in_settings;
+pub use model_selector_components::{
+    ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem, ModelSelectorTooltip,
+};
 
 type OnModelChanged = Arc<dyn Fn(LanguageModel, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<LanguageModel> + 'static>;
@@ -560,6 +567,70 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         Some(ModelSelectorFooter::new(OpenSettings.boxed_clone(), focus_handle).into_any_element())
     }
+}
+
+#[derive(Clone)]
+pub enum ModelUsageContext {
+    InlineAssistant,
+    CommitMessage,
+}
+
+impl ModelUsageContext {
+    pub fn model(&self, cx: &App) -> Option<LanguageModel> {
+        match self {
+            Self::InlineAssistant => {
+                LanguageModelRegistry::read_global(cx).inline_assistant_model()
+            }
+            Self::CommitMessage => LanguageModelRegistry::read_global(cx).commit_message_model(cx),
+        }
+    }
+}
+
+pub fn language_model_selector_for(
+    fs: Arc<dyn Fs>,
+    model_usage_context: ModelUsageContext,
+    focus_handle: FocusHandle,
+    window: &mut Window,
+    cx: &mut Context<LanguageModelSelector>,
+) -> LanguageModelSelector {
+    language_model_selector(
+        {
+            let model_context = model_usage_context.clone();
+            move |cx| model_context.model(cx)
+        },
+        {
+            let fs = fs.clone();
+            move |model, cx| {
+                let provider = model.provider_id().0.to_string();
+                let model_id = model.id().0.to_string();
+                match &model_usage_context {
+                    ModelUsageContext::InlineAssistant => {
+                        update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_inline_assistant_model(provider.clone(), model_id);
+                        });
+                    }
+                    ModelUsageContext::CommitMessage => {
+                        update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_commit_message_model(provider.clone(), model_id);
+                        });
+                    }
+                }
+            }
+        },
+        move |model, should_be_favorite, cx| {
+            crate::toggle_in_settings(model, should_be_favorite, fs.clone(), cx);
+        },
+        true, // Use popover styles for picker
+        focus_handle,
+        window,
+        cx,
+    )
 }
 
 #[cfg(test)]

@@ -1369,6 +1369,8 @@ pub struct GitPanel {
     git_access: Option<GitAccess>,
     commit_menu_handle: PopoverMenuHandle<ContextMenu>,
     changes_actions_menu_handle: PopoverMenuHandle<ContextMenu>,
+    commit_message_model_menu_handle:
+        PopoverMenuHandle<language_model_selector::LanguageModelSelector>,
     remote_action_menu_handle: PopoverMenuHandle<ContextMenu>,
     changes_mode: ChangesMode,
     changes_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1743,6 +1745,7 @@ impl GitPanel {
                 git_access: None,
                 commit_menu_handle: PopoverMenuHandle::default(),
                 changes_actions_menu_handle: PopoverMenuHandle::default(),
+                commit_message_model_menu_handle: PopoverMenuHandle::default(),
                 remote_action_menu_handle: PopoverMenuHandle::default(),
                 changes_mode: ChangesMode::Uncommitted,
                 changes_mode_menu_handle: PopoverMenuHandle::default(),
@@ -6908,7 +6911,37 @@ impl GitPanel {
             })
         };
 
-        Some(button.into_any_element())
+        let menu_open = self.commit_message_model_menu_handle.is_deployed();
+        let fs = self.fs.clone();
+        let commit_editor = self.commit_editor.clone();
+        let model_picker = PopoverMenu::new("commit-message-model-picker")
+            .trigger_with_tooltip(
+                crate::render_split_button_chevron_trigger(
+                    "commit-message-model-picker-trigger",
+                    menu_open,
+                ),
+                Tooltip::text("Select Commit Message Model"),
+            )
+            .with_handle(self.commit_message_model_menu_handle.clone())
+            .menu(move |window, cx| {
+                let focus_handle = commit_editor.focus_handle(cx);
+                Some(cx.new(|cx| {
+                    language_model_selector::language_model_selector_for(
+                        fs.clone(),
+                        language_model_selector::ModelUsageContext::CommitMessage,
+                        focus_handle,
+                        window,
+                        cx,
+                    )
+                }))
+            })
+            .anchor(Anchor::TopRight)
+            .offset(gpui::Point {
+                x: px(0.),
+                y: px(2.),
+            });
+
+        Some(SplitButton::new(button, model_picker.into_any_element()).into_any_element())
     }
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
