@@ -88,6 +88,12 @@ impl TestContext {
             "should have pending prompt"
         );
 
+        let answer = if answer == "Trash" {
+            ProjectPanel::trash_confirmation_label()
+        } else {
+            answer
+        };
+
         self.cx.cx.simulate_prompt_answer(answer);
         self.cx.run_until_parked();
     }
