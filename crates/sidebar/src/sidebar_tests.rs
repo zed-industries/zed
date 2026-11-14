@@ -10781,6 +10781,116 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_thread_switcher_menu_navigation_wraps_without_confirming(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    // Opened oldest first, so the switcher lists them as A, B, C.
+    let mut session_ids = Vec::new();
+    for (day, title) in [(1, "Thread C"), (2, "Thread B"), (3, "Thread A")] {
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+            acp_v1::ContentChunk::new("Done".into()),
+        )]);
+        open_thread_with_connection(&panel, connection, cx);
+        send_message(&panel, cx);
+        let session_id = active_session_id(&panel, cx);
+        let timestamp = chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, day, 0, 0, 0).unwrap();
+        save_thread_metadata(
+            session_id.clone(),
+            Some(title.into()),
+            timestamp,
+            Some(timestamp),
+            None,
+            &project,
+            cx,
+        );
+        session_ids.push(session_id);
+    }
+    let [session_id_c, session_id_b, session_id_a] =
+        session_ids.try_into().expect("three threads were opened");
+
+    let selected_session_id = |cx: &mut gpui::VisualTestContext| -> acp::SessionId {
+        sidebar.read_with(cx, |sidebar, cx| {
+            let switcher = sidebar
+                .thread_switcher
+                .as_ref()
+                .expect("switcher should be open");
+            switcher
+                .read(cx)
+                .selected_entry()
+                .and_then(|entry| match entry {
+                    ThreadSwitcherEntry::Thread(entry) => entry.metadata.session_id.clone(),
+                    ThreadSwitcherEntry::Terminal(_) => None,
+                })
+                .expect("a thread should be selected")
+        })
+    };
+    let dispatch_to_switcher = |action: &dyn gpui::Action, cx: &mut gpui::VisualTestContext| {
+        sidebar.update_in(cx, |sidebar, window, cx| {
+            let switcher = sidebar
+                .thread_switcher
+                .as_ref()
+                .expect("switcher should be open");
+            switcher
+                .focus_handle(cx)
+                .dispatch_action(action, window, cx);
+        });
+        cx.run_until_parked();
+    };
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(selected_session_id(cx), session_id_b);
+
+    dispatch_to_switcher(&menu::SelectNext, cx);
+    assert_eq!(selected_session_id(cx), session_id_c);
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            is_active_session(sidebar, &session_id_c),
+            "stepping should preview the newly selected thread"
+        );
+    });
+
+    dispatch_to_switcher(&menu::SelectNext, cx);
+    assert_eq!(selected_session_id(cx), session_id_a);
+
+    dispatch_to_switcher(&menu::SelectPrevious, cx);
+    assert_eq!(selected_session_id(cx), session_id_c);
+
+    dispatch_to_switcher(&menu::SelectPrevious, cx);
+    assert_eq!(selected_session_id(cx), session_id_b);
+
+    dispatch_to_switcher(&menu::SelectLast, cx);
+    assert_eq!(selected_session_id(cx), session_id_c);
+
+    dispatch_to_switcher(&menu::SelectFirst, cx);
+    assert_eq!(selected_session_id(cx), session_id_a);
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            sidebar.thread_switcher.is_some(),
+            "navigating should not confirm or dismiss the switcher"
+        );
+        assert!(
+            sidebar.thread_last_accessed.is_empty(),
+            "navigating should not record a thread access"
+        );
+    });
+
+    dispatch_to_switcher(&menu::Confirm, cx);
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(sidebar.thread_switcher.is_none());
+        assert!(is_active_session(sidebar, &session_id_a));
+    });
+}
+
+#[gpui::test]
 async fn test_archive_thread_keeps_metadata_but_hides_from_sidebar(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =

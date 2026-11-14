@@ -269,6 +269,46 @@ impl ThreadSwitcher {
         self.emit_preview(cx);
     }
 
+    fn select_next_entry(
+        &mut self,
+        _: &menu::SelectNext,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_selection(cx);
+        cx.notify();
+    }
+
+    fn select_previous_entry(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        // `select_last` is the backward step of `ctrl-shift-tab`: one entry
+        // up, wrapping around to the end of the list.
+        self.select_last(cx);
+        cx.notify();
+    }
+
+    fn select_first_entry(
+        &mut self,
+        _: &menu::SelectFirst,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_index(0, cx);
+    }
+
+    fn select_last_entry(
+        &mut self,
+        _: &menu::SelectLast,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_index(self.entries.len().saturating_sub(1), cx);
+    }
+
     fn emit_preview(&mut self, cx: &mut Context<Self>) {
         self.scroll_handle.scroll_to_item(self.selected_index);
         if let Some(entry) = self.entries.get(self.selected_index) {
@@ -367,6 +407,10 @@ impl Render for ThreadSwitcher {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::toggle))
+            .on_action(cx.listener(Self::select_next_entry))
+            .on_action(cx.listener(Self::select_previous_entry))
+            .on_action(cx.listener(Self::select_first_entry))
+            .on_action(cx.listener(Self::select_last_entry))
             .child(
                 v_flex()
                     .id("thread-switcher-list")
