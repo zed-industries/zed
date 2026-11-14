@@ -1490,8 +1490,10 @@ impl HeadlessProject {
                 worktree_id,
                 path: RelPath::empty(),
             });
-            TerminalSettings::get(settings_location, cx).shell.clone()
-        });
+            TerminalSettings::get(settings_location, cx)
+                .resolve_profile(None)
+                .map(|(_, settings)| settings.shell)
+        })?;
         log::debug!("handle_get_terminal_shell: resolved remote terminal shell setting: {shell:?}");
 
         Ok(proto::GetTerminalShellResponse {

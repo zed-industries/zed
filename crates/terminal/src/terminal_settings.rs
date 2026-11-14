@@ -1,4 +1,5 @@
-use collections::HashMap;
+use anyhow::{Context as _, Result, ensure};
+use collections::{HashMap, IndexMap};
 use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,10 @@ pub struct Toolbar {
 
 #[derive(Clone, Debug, Deserialize, RegisterSetting)]
 pub struct TerminalSettings {
+    #[serde(default)]
+    pub profiles: IndexMap<String, settings::TerminalProfileContent>,
+    #[serde(default)]
+    pub default_profile: Option<String>,
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
     pub font_size: Option<Pixels>, // todo(settings_refactor) can be non-optional...
@@ -85,6 +90,8 @@ impl settings::Settings for TerminalSettings {
         let mut project_content = user_content.project.clone();
         project_content.merge_from_option(content.project.terminal.as_ref());
         TerminalSettings {
+            profiles: project_content.profiles.unwrap_or_default(),
+            default_profile: project_content.default_profile,
             shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
             working_directory: project_content.working_directory.unwrap(),
             font_size: user_content.font_size.map(|s| s.into_gpui()),
@@ -141,6 +148,40 @@ impl settings::Settings for TerminalSettings {
     }
 }
 
+impl TerminalSettings {
+    pub fn resolve_profile(&self, name: Option<&str>) -> Result<(Option<String>, Self)> {
+        let mut settings = self.clone();
+        let Some(name) = name.or(self
+            .default_profile
+            .as_deref()
+            .filter(|name| !name.trim().is_empty()))
+        else {
+            return Ok((None, settings));
+        };
+        ensure!(
+            !name.trim().is_empty(),
+            "Terminal profile names must not be blank"
+        );
+        let profile = self
+            .profiles
+            .get(name)
+            .with_context(|| format!("Terminal profile {name:?} is not configured"))?;
+        if let Some(shell) = profile.shell.clone() {
+            settings.shell = settings_shell_to_task_shell(shell);
+        }
+        if let Some(environment) = profile.env.as_ref() {
+            settings.env.extend(environment.clone());
+        }
+        if let Some(working_directory) = profile.working_directory.clone() {
+            settings.working_directory = working_directory;
+        }
+        if let Some(detect_venv) = profile.detect_venv.clone() {
+            settings.detect_venv = detect_venv;
+        }
+        Ok((Some(name.to_owned()), settings))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
@@ -173,6 +214,97 @@ mod tests {
         LocalSettingsKind, LocalSettingsPath, SettingsLocation, SettingsStore, WorktreeId,
     };
     use util::rel_path::rel_path;
+
+    #[gpui::test]
+    fn test_terminal_profiles_resolve_without_changing_defaults(cx: &mut gpui::App) {
+        let result = (|| -> Result<()> {
+            let mut store = SettingsStore::new(cx, &settings::default_settings());
+            store
+                .set_user_settings(
+                    r#"{"terminal": {
+            "shell": {"program": "bash"},
+            "env": {"SHARED": "default"},
+            "default_profile": "Bash",
+            "profiles": {
+                "Bash": {},
+                "JavaScript": {
+                    "shell": {"with_arguments": {"program": "node", "args": ["--interactive"]}},
+                    "env": {"SHARED": "javascript", "NODE_PROFILE": "1"},
+                    "working_directory": "always_home"
+                }
+            }
+        }}"#,
+                    cx,
+                )
+                .result()?;
+            let settings = store.get::<TerminalSettings>(None);
+            let (name, javascript) = settings.resolve_profile(Some("JavaScript"))?;
+            assert_eq!(name.as_deref(), Some("JavaScript"));
+            assert!(
+                matches!(&javascript.shell, Shell::WithArguments { program, args, .. }
+            if program == "node" && args == &["--interactive"])
+            );
+            assert_eq!(
+                javascript.env.get("SHARED").map(String::as_str),
+                Some("javascript")
+            );
+            assert_eq!(javascript.working_directory, WorkingDirectory::AlwaysHome);
+            let (name, default) = settings.resolve_profile(None)?;
+            assert_eq!(name.as_deref(), Some("Bash"));
+            assert_eq!(default.shell.program(), "bash");
+            assert_eq!(
+                default.env.get("SHARED").map(String::as_str),
+                Some("default")
+            );
+            assert!(!default.env.contains_key("NODE_PROFILE"));
+            assert!(settings.resolve_profile(Some("missing")).is_err());
+            assert!(settings.resolve_profile(Some(" ")).is_err());
+            assert_eq!(settings.shell.program(), "bash");
+            Ok(())
+        })();
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[gpui::test]
+    fn test_terminal_profiles_inherit_project_settings(cx: &mut gpui::App) {
+        let result = (|| -> Result<()> {
+            let mut store = SettingsStore::new(cx, &settings::default_settings());
+            store
+                .set_user_settings(
+                    r#"{"terminal": {
+            "profiles": {"Bash": {"shell": {"program": "bash"}, "env": {"USER_PROFILE": "1"}}}
+        }}"#,
+                    cx,
+                )
+                .result()?;
+            store.set_local_settings(
+                WorktreeId::from_usize(1),
+                LocalSettingsPath::InWorktree(rel_path("project").into()),
+                LocalSettingsKind::Settings,
+                Some(
+                    r#"{"terminal": {
+                "default_profile": "Bash",
+                "env": {"PROJECT_SHARED": "1"},
+                "profiles": {"Bash": {"env": {"PROJECT_PROFILE": "1"}}}
+            }}"#,
+                ),
+                cx,
+            )?;
+            let settings = store.get::<TerminalSettings>(Some(SettingsLocation {
+                worktree_id: WorktreeId::from_usize(1),
+                path: rel_path("project"),
+            }));
+            let (_, profile) = settings.resolve_profile(None)?;
+            for variable in ["USER_PROFILE", "PROJECT_SHARED", "PROJECT_PROFILE"] {
+                assert_eq!(profile.env.get(variable).map(String::as_str), Some("1"));
+            }
+            assert_eq!(profile.shell.program(), "bash");
+            let (_, legacy) = store.get::<TerminalSettings>(None).resolve_profile(None)?;
+            assert!(!legacy.env.contains_key("PROJECT_SHARED"));
+            Ok(())
+        })();
+        assert!(result.is_ok(), "{result:?}");
+    }
 
     fn path_regexes<'a>(store: &'a SettingsStore, path: Option<&str>) -> &'a [String] {
         &store
