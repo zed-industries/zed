@@ -21,6 +21,7 @@ pub struct Model {
     pub supports_tools: Option<bool>,
     pub supports_vision: Option<bool>,
     pub supports_thinking: Option<bool>,
+    pub thinking: Option<Thinking>,
     pub disabled: Option<String>,
 }
 
@@ -36,6 +37,7 @@ impl Model {
         supports_tools: Option<bool>,
         supports_vision: Option<bool>,
         supports_thinking: Option<bool>,
+        thinking: Option<Thinking>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -45,6 +47,7 @@ impl Model {
             supports_tools,
             supports_vision,
             supports_thinking,
+            thinking,
             disabled: None,
         }
     }
@@ -58,6 +61,7 @@ impl Model {
             supports_tools: None,
             supports_vision: None,
             supports_thinking: None,
+            thinking: None,
             disabled: Some(reason),
         }
     }
@@ -126,6 +130,21 @@ pub enum OllamaTool {
     Function { function: OllamaFunctionTool },
 }
 
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ThinkingValue {
+    Boolean(bool),
+    Level(String),
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Thinking {
+    pub values: Vec<ThinkingValue>,
+    pub default: ThinkingValue,
+}
+
 #[derive(Serialize, Debug)]
 pub struct ChatRequest {
     pub model: String,
@@ -134,7 +153,7 @@ pub struct ChatRequest {
     pub keep_alive: KeepAlive,
     pub options: Option<ChatOptions>,
     pub tools: Vec<OllamaTool>,
-    pub think: Option<bool>,
+    pub think: Option<ThinkingValue>,
 }
 
 // https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
@@ -199,6 +218,7 @@ pub struct ModelShow {
     pub capabilities: Vec<String>,
     pub context_length: Option<u64>,
     pub architecture: Option<String>,
+    pub thinking: Option<Thinking>,
 }
 
 impl<'de> Deserialize<'de> for ModelShow {
@@ -226,6 +246,7 @@ impl<'de> Deserialize<'de> for ModelShow {
                 let mut architecture: Option<String> = None;
                 let mut context_length: Option<u64> = None;
                 let mut num_ctx: Option<u64> = None;
+                let mut thinking: Option<Thinking> = None;
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
@@ -243,6 +264,9 @@ impl<'de> Deserialize<'de> for ModelShow {
                                     }
                                 }
                             }
+                        }
+                        "thinking" => {
+                            thinking = map.next_value()?;
                         }
                         "model_info" => {
                             let model_info: Value = map.next_value()?;
@@ -270,6 +294,7 @@ impl<'de> Deserialize<'de> for ModelShow {
                     capabilities,
                     context_length,
                     architecture,
+                    thinking,
                 })
             }
         }
@@ -677,6 +702,62 @@ mod tests {
         let result: ModelShow = serde_json::from_value(response).unwrap();
 
         assert_eq!(result.context_length, Some(131072));
+    }
+
+    #[test]
+    fn parse_show_model_thinking_controls() {
+        let response = serde_json::json!({
+            "capabilities": ["completion", "thinking"],
+            "thinking": {
+                "values": ["low", "high", "max"],
+                "default": "max"
+            }
+        });
+
+        let result: ModelShow = serde_json::from_value(response).unwrap();
+        assert_eq!(
+            result.thinking,
+            Some(Thinking {
+                values: vec![
+                    ThinkingValue::Level("low".to_string()),
+                    ThinkingValue::Level("high".to_string()),
+                    ThinkingValue::Level("max".to_string()),
+                ],
+                default: ThinkingValue::Level("max".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_show_model_boolean_thinking_controls() {
+        let response = serde_json::json!({
+            "capabilities": ["completion", "thinking"],
+            "thinking": {
+                "values": [false, true],
+                "default": false
+            }
+        });
+
+        let result: ModelShow = serde_json::from_value(response).unwrap();
+        assert_eq!(
+            result.thinking,
+            Some(Thinking {
+                values: vec![ThinkingValue::Boolean(false), ThinkingValue::Boolean(true)],
+                default: ThinkingValue::Boolean(false),
+            })
+        );
+    }
+
+    #[test]
+    fn serialize_thinking_values() {
+        assert_eq!(
+            serde_json::to_value(ThinkingValue::Boolean(true)).unwrap(),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            serde_json::to_value(ThinkingValue::Level("high".to_string())).unwrap(),
+            serde_json::json!("high")
+        );
     }
 
     #[test]
