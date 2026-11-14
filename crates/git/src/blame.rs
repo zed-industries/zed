@@ -3,7 +3,9 @@ use crate::commit::{get_messages, get_tag_names};
 use crate::repository::{GitBinary, RepoPath};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use futures::{AsyncWriteExt, TryFutureExt, try_join};
+use encoding_rs::Encoding;
+use futures::io::BufWriter;
+use futures::{AsyncWrite, AsyncWriteExt, TryFutureExt, try_join};
 use serde::{Deserialize, Serialize};
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use std::ops::Range;
@@ -26,8 +28,22 @@ impl Blame {
         path: &RepoPath,
         content: &Rope,
         line_ending: LineEnding,
+        encoding: &'static Encoding,
+        has_bom: bool,
     ) -> Result<Self> {
-        let entries = run_git_blame(git, path, BlameSource::Contents(content, line_ending)).await?;
+        // Git splits lines on 0x0A bytes, which UTF-16 can contain inside characters,
+        // so a file stored as UTF-16 can't be blamed line by line.
+        if encoding == encoding_rs::UTF_16LE || encoding == encoding_rs::UTF_16BE {
+            return Ok(Self::default());
+        }
+
+        let source = BlameSource::Contents {
+            content,
+            line_ending,
+            encoding,
+            has_bom,
+        };
+        let entries = run_git_blame(git, path, source).await?;
         Self::with_commit_details(git, entries).await
     }
 
@@ -77,8 +93,67 @@ const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
 
 #[derive(Clone, Copy)]
 enum BlameSource<'a> {
-    Contents(&'a Rope, LineEnding),
+    Contents {
+        content: &'a Rope,
+        line_ending: LineEnding,
+        encoding: &'static Encoding,
+        has_bom: bool,
+    },
     Revision(Oid),
+}
+
+const MAX_NUMERIC_CHARACTER_REFERENCE_LENGTH: usize = 10;
+const BLAME_STDIN_BUFFER_SIZE: usize = 64 * 1024;
+
+async fn write_contents(
+    stdin: &mut (impl AsyncWrite + Unpin),
+    content: &Rope,
+    line_ending: LineEnding,
+    encoding: &'static Encoding,
+    has_bom: bool,
+) -> Result<()> {
+    let mut stdin = BufWriter::with_capacity(BLAME_STDIN_BUFFER_SIZE, stdin);
+    let chunks = text::chunks_with_line_ending(content, line_ending);
+
+    if encoding == encoding_rs::UTF_8 {
+        if has_bom {
+            stdin.write_all(b"\xEF\xBB\xBF").await?;
+        }
+        for chunk in chunks {
+            stdin.write_all(chunk.as_bytes()).await?;
+        }
+        stdin.flush().await?;
+        return Ok(());
+    }
+
+    let mut encoder = encoding.new_encoder();
+    let mut encoded = Vec::new();
+    for chunk in chunks {
+        let mut remaining = chunk;
+        while !remaining.is_empty() {
+            let capacity = encoder
+                .max_buffer_length_from_utf8_if_no_unmappables(remaining.len())
+                .context("buffer chunk is too large to encode")?
+                + MAX_NUMERIC_CHARACTER_REFERENCE_LENGTH;
+            encoded.clear();
+            encoded.reserve(capacity);
+            let (_, read, _) = encoder.encode_from_utf8_to_vec(remaining, &mut encoded, false);
+            stdin.write_all(&encoded).await?;
+            remaining = remaining
+                .get(read..)
+                .context("encoder stopped inside a character")?;
+        }
+    }
+    encoded.clear();
+    encoded.reserve(MAX_NUMERIC_CHARACTER_REFERENCE_LENGTH);
+    let (result, _, _) = encoder.encode_from_utf8_to_vec("", &mut encoded, true);
+    anyhow::ensure!(
+        result == encoding_rs::CoderResult::InputEmpty,
+        "failed to finish encoding buffer contents"
+    );
+    stdin.write_all(&encoded).await?;
+    stdin.flush().await?;
+    Ok(())
 }
 
 async fn run_git_blame(
@@ -92,7 +167,7 @@ async fn run_git_blame(
         let mut args = vec!["blame", "--incremental"];
         let revision_string;
         match source {
-            BlameSource::Contents(..) => args.extend(["--contents", "-"]),
+            BlameSource::Contents { .. } => args.extend(["--contents", "-"]),
             BlameSource::Revision(revision) => {
                 revision_string = revision.to_string();
                 args.push(&revision_string);
@@ -101,7 +176,7 @@ async fn run_git_blame(
         args.push("--");
         git.build_command(&args)
             .arg(path.as_unix_str())
-            .stdin(if matches!(source, BlameSource::Contents(..)) {
+            .stdin(if matches!(source, BlameSource::Contents { .. }) {
                 Stdio::piped()
             } else {
                 Stdio::null()
@@ -124,12 +199,15 @@ async fn run_git_blame(
         .context("failed to get stderr from git blame command")?;
 
     let write_stdin = async move {
-        if let BlameSource::Contents(contents, line_ending) = source {
+        if let BlameSource::Contents {
+            content,
+            line_ending,
+            encoding,
+            has_bom,
+        } = source
+        {
             let mut stdin = stdin.context("failed to get pipe to stdin of git blame command")?;
-            for chunk in text::chunks_with_line_ending(contents, line_ending) {
-                stdin.write_all(chunk.as_bytes()).await?;
-            }
-            stdin.flush().await?;
+            write_contents(&mut stdin, content, line_ending, encoding, has_bom).await?;
         }
         anyhow::Ok(())
     };
@@ -178,8 +256,14 @@ async fn run_git_blame(
             .context("waiting for git blame process")
     };
 
-    let ((), entries, stderr, status) =
-        try_join!(write_stdin, read_stdout, read_stderr, wait_for_status)?;
+    // Git closes stdin when it exits early, for example for an untracked path, so a failed
+    // write is only reported once the exit status and stderr have been examined.
+    let (write_result, entries, stderr, status) = try_join!(
+        async { anyhow::Ok(write_stdin.await) },
+        read_stdout,
+        read_stderr,
+        wait_for_status
+    )?;
 
     if !status.success() {
         let trimmed = stderr.trim();
@@ -188,6 +272,7 @@ async fn run_git_blame(
         }
         anyhow::bail!("git blame process failed: {stderr}");
     }
+    write_result.context("writing buffer contents to git blame")?;
 
     Ok(entries)
 }

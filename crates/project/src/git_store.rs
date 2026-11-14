@@ -2182,6 +2182,8 @@ impl GitStore {
             None => buffer.as_rope().clone(),
         };
         let line_ending = buffer.line_ending();
+        let encoding = buffer.encoding();
+        let has_bom = buffer.has_bom();
         let version = version.unwrap_or(buffer.version());
         let buffer_id = buffer.remote_id();
 
@@ -2193,7 +2195,7 @@ impl GitStore {
                 .map_err(|err| anyhow::anyhow!(err))?;
             match repository_state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .blame(repo_path.clone(), content, line_ending)
+                    .blame(repo_path.clone(), content, line_ending, encoding, has_bom)
                     .await
                     .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                     .map(Some),

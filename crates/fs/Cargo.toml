@@ -23,6 +23,7 @@ async-channel.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
+encoding_rs.workspace = true
 futures.workspace = true
 git.workspace = true
 gpui.workspace = true
