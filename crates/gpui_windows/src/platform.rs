@@ -1036,95 +1036,25 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        // CredWriteW rejects larger blobs with the opaque RPC error
-        // 0x800706F7 "The stub received bad data", so fail with a clear
-        // message instead.
-        if password.len() > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
-            return Task::ready(Err(anyhow!(
-                "credential for {url} is {} bytes, which exceeds the Windows Credential Manager limit of {CRED_MAX_CREDENTIAL_BLOB_SIZE} bytes",
-                password.len()
-            )));
-        }
+        let url = url.to_string();
+        let username = username.to_string();
         let password = password.to_vec();
-        let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
-        let mut target_name = windows_credentials_target_name(url)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
         self.background_executor().spawn(async move {
-            let credentials = CREDENTIALW {
-                LastWritten: unsafe { GetSystemTimeAsFileTime() },
-                Flags: CRED_FLAGS(0),
-                Type: CRED_TYPE_GENERIC,
-                TargetName: PWSTR::from_raw(target_name.as_mut_ptr()),
-                CredentialBlobSize: password.len() as u32,
-                CredentialBlob: password.as_ptr() as *mut _,
-                Persist: CRED_PERSIST_LOCAL_MACHINE,
-                UserName: PWSTR::from_raw(username.as_mut_ptr()),
-                ..CREDENTIALW::default()
-            };
-            unsafe {
-                CredWriteW(&credentials, 0).map_err(|err| {
-                    anyhow!(
-                        "Failed to write credentials to Windows Credential Manager: {}",
-                        err,
-                    )
-                })?;
-            }
-            Ok(())
+            write_credentials_sync(&url, &username, &password)
         })
     }
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        let target_name = windows_credentials_target_name(url)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
+        let url = url.to_string();
         self.background_executor().spawn(async move {
-            let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
-            let result = unsafe {
-                CredReadW(
-                    PCWSTR::from_raw(target_name.as_ptr()),
-                    CRED_TYPE_GENERIC,
-                    None,
-                    &mut credentials,
-                )
-            };
-
-            if let Err(err) = result {
-                // ERROR_NOT_FOUND means the credential doesn't exist.
-                // Return Ok(None) to match macOS and Linux behavior.
-                if err.code() == ERROR_NOT_FOUND.to_hresult() {
-                    return Ok(None);
-                }
-                return Err(err.into());
-            }
-
-            if credentials.is_null() {
-                return Ok(None);
-            }
-
-            // SAFETY: `CredReadW` succeeded, so this points to a valid `CREDENTIALW` until `CredFree` below.
-            let result = unsafe { username_and_password(&*credentials) };
-            unsafe { CredFree(credentials as *const _ as _) };
-            result.map(Some)
+            read_credentials_sync(&url)
         })
     }
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        let target_name = windows_credentials_target_name(url)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
+        let url = url.to_string();
         self.background_executor().spawn(async move {
-            unsafe {
-                CredDeleteW(
-                    PCWSTR::from_raw(target_name.as_ptr()),
-                    CRED_TYPE_GENERIC,
-                    None,
-                )?
-            };
-            Ok(())
+            delete_credentials_sync(&url)
         })
     }
 
@@ -1884,6 +1814,199 @@ unsafe extern "system" fn window_procedure(
     result
 }
 
+const CREDENTIAL_CHUNK_SIZE: usize = 2048;
+const CHUNKED_CREDENTIAL_PREFIX: &str = "zed:chunked:v1:";
+
+fn parse_chunk_header(blob: &[u8]) -> Option<(usize, usize)> {
+    let s = std::str::from_utf8(blob).ok()?;
+    let rest = s.strip_prefix(CHUNKED_CREDENTIAL_PREFIX)?;
+    // Format: "parts={parts}:len={len}"
+    let mut parts = None;
+    let mut len = None;
+    for item in rest.split(':') {
+        if let Some(p) = item.strip_prefix("parts=") {
+            parts = p.parse::<usize>().ok();
+        } else if let Some(l) = item.strip_prefix("len=") {
+            len = l.parse::<usize>().ok();
+        }
+    }
+    match (parts, len) {
+        (Some(p), Some(l)) if p > 0 => Some((p, l)),
+        _ => None,
+    }
+}
+
+fn write_raw_credential(
+    target_name: &str,
+    username: &str,
+    blob: &[u8],
+    persist: CRED_PERSIST,
+) -> Result<()> {
+    if blob.len() > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
+        return Err(anyhow!(
+            "credential blob of {} bytes exceeds Windows Credential Manager limit of {CRED_MAX_CREDENTIAL_BLOB_SIZE} bytes",
+            blob.len()
+        ));
+    }
+    let mut target_name_w: Vec<u16> = target_name.encode_utf16().chain(Some(0)).collect();
+    let mut username_w: Vec<u16> = username.encode_utf16().chain(Some(0)).collect();
+    let credentials = CREDENTIALW {
+        LastWritten: unsafe { GetSystemTimeAsFileTime() },
+        Flags: CRED_FLAGS(0),
+        Type: CRED_TYPE_GENERIC,
+        TargetName: PWSTR::from_raw(target_name_w.as_mut_ptr()),
+        CredentialBlobSize: blob.len() as u32,
+        CredentialBlob: blob.as_ptr() as *mut _,
+        Persist: persist,
+        UserName: if username.is_empty() {
+            PWSTR::null()
+        } else {
+            PWSTR::from_raw(username_w.as_mut_ptr())
+        },
+        ..CREDENTIALW::default()
+    };
+    unsafe {
+        CredWriteW(&credentials, 0).map_err(|err| {
+            anyhow!("Failed to write credentials to Windows Credential Manager for target '{target_name}': {err}")
+        })?;
+    }
+    Ok(())
+}
+
+fn read_raw_credential(target_name: &str) -> Result<Option<(String, Vec<u8>)>> {
+    let target_name_w: Vec<u16> = target_name.encode_utf16().chain(Some(0)).collect();
+    let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
+    let result = unsafe {
+        CredReadW(
+            PCWSTR::from_raw(target_name_w.as_ptr()),
+            CRED_TYPE_GENERIC,
+            None,
+            &mut credentials,
+        )
+    };
+
+    if let Err(err) = result {
+        if err.code() == ERROR_NOT_FOUND.to_hresult() {
+            return Ok(None);
+        }
+        return Err(err.into());
+    }
+
+    if credentials.is_null() {
+        return Ok(None);
+    }
+
+    let result = unsafe { username_and_password(&*credentials) };
+    unsafe { CredFree(credentials as *const _ as _) };
+    result.map(Some)
+}
+
+fn delete_raw_credential(target_name: &str) -> Result<()> {
+    let target_name_w: Vec<u16> = target_name.encode_utf16().chain(Some(0)).collect();
+    let result = unsafe {
+        CredDeleteW(
+            PCWSTR::from_raw(target_name_w.as_ptr()),
+            CRED_TYPE_GENERIC,
+            None,
+        )
+    };
+    if let Err(err) = result {
+        if err.code() == ERROR_NOT_FOUND.to_hresult() {
+            return Ok(());
+        }
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+fn write_credentials_impl(
+    url: &str,
+    username: &str,
+    password: &[u8],
+    persist: CRED_PERSIST,
+) -> Result<()> {
+    let target_name = windows_credentials_target_name(url);
+
+    // Clean up any previously stored chunks for this target
+    if let Some((_, old_blob)) = read_raw_credential(&target_name)? {
+        if let Some((old_parts, _)) = parse_chunk_header(&old_blob) {
+            for i in 0..old_parts {
+                let chunk_target = windows_credentials_chunk_target_name(url, i);
+                let _ = delete_raw_credential(&chunk_target);
+            }
+        }
+    }
+
+    if password.len() <= CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
+        write_raw_credential(&target_name, username, password, persist)
+    } else {
+        let chunks: Vec<&[u8]> = password.chunks(CREDENTIAL_CHUNK_SIZE).collect();
+        let part_count = chunks.len();
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            let chunk_target = windows_credentials_chunk_target_name(url, i);
+            write_raw_credential(&chunk_target, username, chunk, persist)?;
+        }
+
+        let header = format!(
+            "{CHUNKED_CREDENTIAL_PREFIX}parts={part_count}:len={}",
+            password.len()
+        );
+        write_raw_credential(&target_name, username, header.as_bytes(), persist)
+    }
+}
+
+pub(crate) fn write_credentials_sync(url: &str, username: &str, password: &[u8]) -> Result<()> {
+    write_credentials_impl(url, username, password, CRED_PERSIST_LOCAL_MACHINE)
+}
+
+pub(crate) fn read_credentials_sync(url: &str) -> Result<Option<(String, Vec<u8>)>> {
+    let target_name = windows_credentials_target_name(url);
+    let Some((username, blob)) = read_raw_credential(&target_name)? else {
+        return Ok(None);
+    };
+
+    if let Some((parts, expected_len)) = parse_chunk_header(&blob) {
+        let part_0_target = windows_credentials_chunk_target_name(url, 0);
+        if let Some((_, first_chunk)) = read_raw_credential(&part_0_target)? {
+            let mut combined = Vec::with_capacity(expected_len);
+            combined.extend_from_slice(&first_chunk);
+            for i in 1..parts {
+                let chunk_target = windows_credentials_chunk_target_name(url, i);
+                if let Some((_, chunk_blob)) = read_raw_credential(&chunk_target)? {
+                    combined.extend_from_slice(&chunk_blob);
+                } else {
+                    return Err(anyhow!(
+                        "Corrupted chunked credential for '{url}': part {i} of {parts} is missing"
+                    ));
+                }
+            }
+            if combined.len() != expected_len {
+                return Err(anyhow!(
+                    "Corrupted chunked credential for '{url}': expected length {expected_len}, got {}",
+                    combined.len()
+                ));
+            }
+            return Ok(Some((username, combined)));
+        }
+    }
+
+    Ok(Some((username, blob)))
+}
+
+pub(crate) fn delete_credentials_sync(url: &str) -> Result<()> {
+    let target_name = windows_credentials_target_name(url);
+    if let Some((_, blob)) = read_raw_credential(&target_name)? {
+        if let Some((parts, _)) = parse_chunk_header(&blob) {
+            for i in 0..parts {
+                let chunk_target = windows_credentials_chunk_target_name(url, i);
+                let _ = delete_raw_credential(&chunk_target);
+            }
+        }
+    }
+    delete_raw_credential(&target_name)
+}
+
 /// Copies the username and secret out of a credential returned by `CredReadW`.
 ///
 /// Both `UserName` and `CredentialBlob` are optional in Credential Manager and
@@ -2023,5 +2146,114 @@ mod tests {
                 vec![12],
             )),
         );
+    }
+
+    #[test]
+    fn test_parse_chunk_header() {
+        use super::parse_chunk_header;
+
+        assert_eq!(parse_chunk_header(b""), None);
+        assert_eq!(parse_chunk_header(b"hello world"), None);
+        assert_eq!(parse_chunk_header(b"zed:chunked:v1:"), None);
+        assert_eq!(parse_chunk_header(b"zed:chunked:v1:parts=0:len=0"), None);
+        assert_eq!(
+            parse_chunk_header(b"zed:chunked:v1:parts=3:len=5120"),
+            Some((3, 5120))
+        );
+        assert_eq!(
+            parse_chunk_header(b"zed:chunked:v1:parts=10:len=20000"),
+            Some((10, 20000))
+        );
+    }
+
+    #[test]
+    fn test_chunked_credentials_round_trip() {
+        use super::{
+            delete_credentials_sync, read_credentials_sync, read_raw_credential,
+            write_credentials_impl,
+        };
+        use crate::windows_credentials_chunk_target_name;
+
+        let test_url = format!("zed-test-url-chunked-{}", std::process::id());
+        let username = "test_oauth_user";
+        // 5500 bytes easily exceeds the 2560-byte Windows limit and requires 3 chunks (2048 + 2048 + 1404)
+        let large_token: Vec<u8> = (0..5500).map(|i| (i % 251) as u8).collect();
+
+        // Write chunked credential using session persistence
+        write_credentials_impl(
+            &test_url,
+            username,
+            &large_token,
+            CRED_PERSIST_SESSION,
+        )
+        .unwrap();
+
+        // Check that chunks were created
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 0)).unwrap().is_some());
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 1)).unwrap().is_some());
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 2)).unwrap().is_some());
+
+        // Read and verify round-trip reassembly
+        let retrieved = read_credentials_sync(&test_url).unwrap();
+        assert!(retrieved.is_some());
+        let (retrieved_user, retrieved_token) = retrieved.unwrap();
+        assert_eq!(retrieved_user, username);
+        assert_eq!(retrieved_token.len(), large_token.len());
+        assert_eq!(retrieved_token, large_token);
+
+        // Delete and verify all parts and header are cleaned up
+        delete_credentials_sync(&test_url).unwrap();
+        assert!(read_credentials_sync(&test_url).unwrap().is_none());
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 0)).unwrap().is_none());
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 1)).unwrap().is_none());
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 2)).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_chunked_credentials_shrink_cleanup() {
+        use super::{
+            delete_credentials_sync, read_credentials_sync, read_raw_credential,
+            write_credentials_impl,
+        };
+        use crate::windows_credentials_chunk_target_name;
+
+        let test_url = format!("zed-test-url-shrink-{}", std::process::id());
+        let username = "test_shrink_user";
+        // 5000 bytes (3 chunks)
+        let large_token: Vec<u8> = (0..5000).map(|i| (i % 251) as u8).collect();
+
+        write_credentials_impl(
+            &test_url,
+            username,
+            &large_token,
+            CRED_PERSIST_SESSION,
+        )
+        .unwrap();
+
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 0)).unwrap().is_some());
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 1)).unwrap().is_some());
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 2)).unwrap().is_some());
+
+        // Overwrite with a small credential (100 bytes)
+        let small_secret = b"small_secret_token";
+        write_credentials_impl(
+            &test_url,
+            username,
+            small_secret,
+            CRED_PERSIST_SESSION,
+        )
+        .unwrap();
+
+        // Old chunk parts should have been deleted!
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 0)).unwrap().is_none());
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 1)).unwrap().is_none());
+        assert!(read_raw_credential(&windows_credentials_chunk_target_name(&test_url, 2)).unwrap().is_none());
+
+        // Read credential returns the new small secret
+        let (user, secret) = read_credentials_sync(&test_url).unwrap().unwrap();
+        assert_eq!(user, username);
+        assert_eq!(secret, small_secret);
+
+        delete_credentials_sync(&test_url).unwrap();
     }
 }
