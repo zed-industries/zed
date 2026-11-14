@@ -604,7 +604,7 @@ impl GitPanel {
         self.workspace
             .update(cx, |workspace, cx| {
                 BranchDiff::deploy_branch_diff_with_base_ref(
-                    workspace, project, repo, base_ref, list, entry, window, cx,
+                    workspace, project, repo, base_ref, list, entry, None, window, cx,
                 );
             })
             .ok();
