@@ -2043,6 +2043,7 @@ mod tests {
         v2::Responder,
     };
     use gpui::TestAppContext;
+    #[cfg(unix)]
     use project::agent_server_store::AgentServerCommand;
     use serde_json::json;
     use std::{
