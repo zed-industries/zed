@@ -84,7 +84,10 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
         return smol::block_on(async {
             let npm_path = directory.join("npm");
             let key = "example-language-server".to_owned();
-            assert_eq!(Npm::id(&key).0, "npm:example-language-server");
+            assert_eq!(
+                serde_json::to_value(Npm::id(&key))?,
+                serde_json::json!({"kind": "npm", "payload": {"name": "example-language-server"}})
+            );
             assert_ne!(Npm::id(&key), Npm::id(&"another-language-server".into()));
             let mut context = NpmContext {
                 http: Arc::new(http_client::BlockedHttpClient),

@@ -44,16 +44,107 @@ use settings_macros::{MergeFrom, with_fallible_options};
 pub struct ResourcePermissionsContent {
     /// Permission for actions without an explicit override. Applies to acquisition and execution.
     pub default: Option<ResourcePermission>,
-    /// Permissions keyed by resource name, such as `npm`.
-    pub resources: BTreeMap<String, ResourcePermissionContent>,
+    /// Ordered resource rules. The first matching entry wins.
+    pub resources: Vec<ResourcePermissionContent>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ResourcePermissionContent {
+    pub resource: ResourceSpecifier,
     pub obtain: Option<ResourcePermission>,
     #[serde(flatten)]
     pub settings: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ResourceSpecifier {
+    All(ResourceKind),
+    Specific(ResourceId),
+}
+
+impl ResourceSpecifier {
+    pub fn matches(&self, id: &ResourceId) -> bool {
+        match self {
+            Self::All(kind) => *kind == ResourceKind::from(id),
+            Self::Specific(resource) => resource == id,
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, strum::EnumDiscriminants,
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[strum_discriminants(name(ResourceKind))]
+#[strum_discriminants(derive(Serialize, Deserialize, JsonSchema))]
+#[strum_discriminants(serde(rename_all = "snake_case"))]
+pub enum ResourceId {
+    Debugger { payload: DebuggerResourceId },
+    LanguageServer { payload: LanguageServerResourceId },
+    Npm { payload: NpmResourceId },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DebuggerResourceId {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LanguageServerResourceId {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NpmResourceId {
+    pub name: String,
+}
+
+impl ResourcePermissionsContent {
+    pub fn resource(&self, id: &ResourceId) -> Option<&ResourcePermissionContent> {
+        self.resources
+            .iter()
+            .find(|entry| entry.resource.matches(id))
+    }
+
+    pub fn set_obtain_permission(
+        &mut self,
+        id: ResourceId,
+        permission: Option<ResourcePermission>,
+    ) {
+        let insertion_position = self
+            .resources
+            .iter()
+            .position(|entry| entry.resource.matches(&id))
+            .unwrap_or(self.resources.len());
+        let specifier = ResourceSpecifier::Specific(id);
+        let position = self
+            .resources
+            .iter()
+            .position(|entry| entry.resource == specifier);
+        if permission.is_some() {
+            let mut entry = if let Some(position) = position {
+                self.resources.remove(position)
+            } else {
+                ResourcePermissionContent {
+                    resource: specifier,
+                    obtain: None,
+                    settings: BTreeMap::new(),
+                }
+            };
+            entry.obtain = permission;
+            self.resources.insert(insertion_position, entry);
+        } else if let Some(position) = position {
+            let entry = &mut self.resources[position];
+            entry.obtain = None;
+            if entry.settings.is_empty() {
+                self.resources.remove(position);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

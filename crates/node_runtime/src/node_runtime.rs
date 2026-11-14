@@ -6,8 +6,8 @@ use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
 use http_client::{Host, HttpClient, Url};
 use log::Level;
 use managed_resources::{
-    CommandPermissionRule, ManagedResource, ManagedResourceCommand, ResourceAcquisition,
-    ResourceId, ResourcePermission,
+    CommandPermissionRule, ManagedResource, ManagedResourceCommand, NpmResourceId,
+    ResourceAcquisition, ResourceId, ResourcePermission,
 };
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,9 @@ impl ManagedResource for Npm {
     type CommandKind = NpmCommandKind;
 
     fn id(key: &Self::Key) -> ResourceId {
-        ResourceId(format!("npm:{key}"))
+        ResourceId::Npm {
+            payload: NpmResourceId { name: key.clone() },
+        }
     }
 
     async fn obtain(_: &Self::Key, context: &NpmContext) -> Result<ResourceAcquisition<Self>> {

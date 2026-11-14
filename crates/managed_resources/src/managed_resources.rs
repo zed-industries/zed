@@ -16,7 +16,7 @@ use futures::{
 };
 use gpui::{App, AsyncApp, Context, Subscription, Task, WeakEntity};
 use serde::{Deserialize, Serialize};
-pub use settings::{CommandPermissionRule, ResourcePermission};
+pub use settings::{CommandPermissionRule, NpmResourceId, ResourceId, ResourcePermission};
 use settings::{ResourcePermissionsContent, Settings, SettingsContent, SettingsStore};
 use std::{
     any::{Any, TypeId},
@@ -79,10 +79,6 @@ pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
     fn run(self, resource: Arc<Resource>) -> impl Future<Output = Self::Output>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ResourceId(pub String);
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResourcePermissionRequest {
     Obtain(ResourceId),
@@ -115,8 +111,7 @@ impl Settings for ResourcePermissions {
 impl ResourcePermissions {
     fn permission(&self, id: &ResourceId) -> Option<ResourcePermission> {
         self.content
-            .resources
-            .get(&id.0)
+            .resource(id)
             .and_then(|resource| resource.obtain)
             .or(self.content.default)
     }
@@ -126,7 +121,7 @@ impl ResourcePermissions {
         id: &ResourceId,
         command: &Resource::Command,
     ) -> Result<Option<ResourcePermission>, ResourceAccessError> {
-        let settings = if let Some(resource) = self.content.resources.get(&id.0) {
+        let settings = if let Some(resource) = self.content.resource(id) {
             serde_json::from_value(serde_json::Value::Object(
                 resource.settings.clone().into_iter().collect(),
             ))
@@ -138,7 +133,7 @@ impl ResourcePermissions {
     }
 
     fn set_permission(&mut self, id: ResourceId, permission: ResourcePermission) {
-        self.content.resources.entry(id.0).or_default().obtain = Some(permission);
+        self.content.set_obtain_permission(id, Some(permission));
     }
 }
 
@@ -243,12 +238,9 @@ impl ManagedResourceStore {
         if let Some(resource) = self.resources.get_mut(id) {
             resource.permission_revision = resource.permission_revision.wrapping_add(1);
         }
-        if let Some(resource) = self.permissions.content.resources.get_mut(&id.0) {
-            resource.obtain = None;
-            if resource.settings.is_empty() {
-                self.permissions.content.resources.remove(&id.0);
-            }
-        }
+        self.permissions
+            .content
+            .set_obtain_permission(id.clone(), None);
         self.persist_permission(id.clone(), None, cx);
         cx.notify();
     }
@@ -258,14 +250,7 @@ impl ManagedResourceStore {
         cx.global::<SettingsStore>()
             .update_settings_file(fs.clone(), move |settings, _| {
                 let permissions = settings.experimental_permissions.get_or_insert_default();
-                if let Some(permission) = permission {
-                    permissions.resources.entry(id.0).or_default().obtain = Some(permission);
-                } else if let Some(resource) = permissions.resources.get_mut(&id.0) {
-                    resource.obtain = None;
-                    if resource.settings.is_empty() {
-                        permissions.resources.remove(&id.0);
-                    }
-                }
+                permissions.set_obtain_permission(id, permission);
             });
     }
 
@@ -609,7 +594,11 @@ mod tests {
         type CommandKind = TestCommandKind;
 
         fn id(key: &Self::Key) -> ResourceId {
-            ResourceId(format!("counter-{KIND}-{key}"))
+            ResourceId::LanguageServer {
+                payload: settings::LanguageServerResourceId {
+                    name: format!("counter-{KIND}-{key}"),
+                },
+            }
         }
 
         async fn obtain(
@@ -785,11 +774,145 @@ mod tests {
         }
     }
 
+    #[test]
+    fn resource_specifiers_are_closed_and_typed() {
+        use settings::ResourceSpecifier;
+
+        for kind in ["debugger", "language_server", "npm"] {
+            for value in [
+                serde_json::json!(kind),
+                serde_json::json!({"kind":kind,"payload":{"name":"lldb"}}),
+            ] {
+                let specifier: ResourceSpecifier =
+                    serde_json::from_value(value.clone()).expect("valid resource specifier");
+                assert_eq!(
+                    serde_json::to_value(specifier).expect("serialize specifier"),
+                    value
+                );
+            }
+        }
+        for value in [
+            serde_json::json!("unknown"),
+            serde_json::json!({"kind":"unknown","payload":{"name":"lldb"}}),
+            serde_json::json!({"kind":"debugger"}),
+            serde_json::json!({"kind":"debugger","payload":{}}),
+            serde_json::json!({"kind":"debugger","payload":{"name":17}}),
+            serde_json::json!({"kind":"debugger","payload":{"name":"lldb","typo":true}}),
+        ] {
+            assert!(serde_json::from_value::<ResourceSpecifier>(value).is_err());
+        }
+    }
+
+    #[gpui::test]
+    async fn resource_rules_match_kinds_payloads_and_order(cx: &mut TestAppContext) {
+        let mut permissions: ResourcePermissions = serde_json::from_value(serde_json::json!({
+            "default":"denied",
+            "resources":[
+                {
+                    "resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},
+                    "obtain":"allowed",
+                    "commands":[{"permission":"allowed","command":"read"}]
+                },
+                {"resource":"language_server","obtain":"denied"},
+                {"resource":"debugger","obtain":"allowed"}
+            ]
+        }))
+        .expect("permission rules");
+        let debugger = ResourceId::Debugger {
+            payload: settings::DebuggerResourceId {
+                name: "counter-0-first".into(),
+            },
+        };
+        assert_eq!(
+            permissions.permission(&debugger),
+            Some(ResourcePermission::Allowed)
+        );
+        assert_eq!(
+            permissions.permission(&ResourceId::Npm {
+                payload: NpmResourceId {
+                    name: "counter-0-first".into()
+                },
+            }),
+            Some(ResourcePermission::Denied)
+        );
+        let context = Rc::new(TestContext::default());
+        let store = cx.new(|_| {
+            ManagedResourceStore::new(permissions.clone(), |_, _| {
+                panic!("configured permissions must not prompt")
+            })
+        });
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Read, cx)
+                .await
+                .expect("specific resource allowed"),
+            Ok(5)
+        );
+        assert!(matches!(
+            execute::<0>(&store, "second", &context, TestCommand::Unexpected, cx).await,
+            Err(ResourceAccessError::Denied)
+        ));
+
+        permissions.content.resources.swap(0, 1);
+        let store = cx.new(|_| {
+            ManagedResourceStore::new(permissions, |_, _| {
+                panic!("configured permissions must not prompt")
+            })
+        });
+        assert!(matches!(
+            execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx).await,
+            Err(ResourceAccessError::Denied)
+        ));
+        store.update(cx, |store, cx| {
+            store.set_permission(TestResource::id(&"first"), ResourcePermission::Allowed, cx);
+        });
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Read, cx)
+                .await
+                .expect("explicit update overrides wildcard and preserves commands"),
+            Ok(5)
+        );
+        store.update(cx, |store, cx| {
+            store.set_permission(TestResource::id(&"third"), ResourcePermission::Allowed, cx);
+            assert_eq!(
+                store.permission(&TestResource::id(&"third")),
+                Some(ResourcePermission::Allowed)
+            );
+            store.clear_permission(&TestResource::id(&"third"), cx);
+        });
+        assert_eq!(
+            store.read_with(cx, |store, _| store.permission(&TestResource::id(&"third"))),
+            Some(ResourcePermission::Denied)
+        );
+        assert_eq!(
+            store.read_with(cx, |store, _| store
+                .permission(&TestResource::id(&"second"))),
+            Some(ResourcePermission::Denied)
+        );
+        assert_eq!(
+            store.read_with(cx, |store, _| store.permission(&debugger)),
+            Some(ResourcePermission::Allowed)
+        );
+    }
+
     #[gpui::test]
     async fn settings_defaults_and_action_overrides(cx: &mut TestAppContext) {
         let context = Rc::new(TestContext::default());
         for (settings, allowed, acquired) in [
             (r#"{}"#, true, true),
+            (
+                r#"{"experimental.permissions":{"default":"denied","resources":[
+                    {"resource":"language_server","obtain":"allowed","commands":[{"permission":"allowed","command":"add"}]}
+                ]}}"#,
+                true,
+                true,
+            ),
+            (
+                r#"{"experimental.permissions":{"default":"allowed","resources":[
+                    {"resource":"language_server","commands":[{"permission":"denied","command":"add"}]}
+                ]}}"#,
+                false,
+                true,
+            ),
             (
                 r#"{"experimental.permissions":{"default":"denied"}}"#,
                 false,
@@ -798,7 +921,7 @@ mod tests {
             (
                 r#"{"experimental.permissions":{
                 "default":"denied",
-                "resources":{"counter-0-first":{"obtain":"allowed","commands":[{"permission":"allowed","command":"add"}]}}
+                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"obtain":"allowed","commands":[{"permission":"allowed","command":"add"}]}]
             }}"#,
                 true,
                 true,
@@ -806,7 +929,7 @@ mod tests {
             (
                 r#"{"experimental.permissions":{
                 "default":"allowed",
-                "resources":{"counter-0-first":{"obtain":"denied"}}
+                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"obtain":"denied"}]
             }}"#,
                 false,
                 false,
@@ -814,7 +937,7 @@ mod tests {
             (
                 r#"{"experimental.permissions":{
                 "default":"allowed",
-                "resources":{"counter-0-first":{"commands":[{"permission":"denied","command":"add"}]}}
+                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"commands":[{"permission":"denied","command":"add"}]}]
             }}"#,
                 false,
                 true,
@@ -855,14 +978,15 @@ mod tests {
             r#"{
             "experimental.permissions": {
                 "default": "denied",
-                "resources": {"counter-0-first": {
+                "resources": [{
+                    "resource": {"kind":"language_server","payload":{"name":"counter-0-first"}},
                     "obtain": "allowed",
                     "commands": [
                         {"permission":"prompt","command":"add"},
                         {"permission":"allowed","command":"add"},
                         {"permission":"allowed","command":"read"}
                     ]
-                }}
+                }]
             }
         }"#,
         )
@@ -919,7 +1043,7 @@ mod tests {
             r#"{
             "experimental.permissions": {
                 "default":"allowed",
-                "resources":{"counter-0-first":{"obtain":"prompt"}}
+                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"obtain":"prompt"}]
             }
         }"#,
         )
@@ -963,7 +1087,7 @@ mod tests {
         let initial_settings = r#"{
             "proxy":"http://localhost:1234",
             "experimental.permissions":{
-                "resources":{"counter-0-first":{"commands":[{"permission":"allowed","command":"add"}]}}
+                "resources":[{"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"commands":[{"permission":"allowed","command":"add"}]}]
             }
         }"#;
         fs.insert_file(paths::settings_file(), initial_settings.as_bytes().to_vec())
@@ -1031,8 +1155,9 @@ mod tests {
                     permissions.default = Some(ResourcePermission::Denied);
                     let resource = permissions
                         .resources
-                        .entry("counter-0-first".into())
-                        .or_default();
+                        .iter_mut()
+                        .find(|entry| entry.resource.matches(&TestResource::id(&"first")))
+                        .expect("existing resource rule");
                     resource.obtain = Some(ResourcePermission::Allowed);
                     resource.settings.insert(
                         "commands".into(),
@@ -1068,7 +1193,7 @@ mod tests {
         let resource = persisted
             .experimental_permissions
             .as_ref()
-            .and_then(|permissions| permissions.resources.get("counter-0-first"))
+            .and_then(|permissions| permissions.resource(&TestResource::id(&"first")))
             .expect("command permissions retained");
         assert_eq!(resource.obtain, None);
         assert_eq!(
@@ -1148,11 +1273,13 @@ mod tests {
         let id = TestResource::id(&"first");
         assert_eq!(
             serde_json::to_value(&id).expect("serializable identity"),
-            serde_json::json!("counter-0-first")
+            serde_json::json!({"kind":"language_server","payload":{"name":"counter-0-first"}})
         );
         assert_eq!(
-            serde_json::from_value::<ResourceId>(serde_json::json!("counter-0-first"))
-                .expect("restorable identity"),
+            serde_json::from_value::<ResourceId>(
+                serde_json::json!({"kind":"language_server","payload":{"name":"counter-0-first"}})
+            )
+            .expect("restorable identity"),
             id
         );
         let store = new_store(cx);
@@ -1175,11 +1302,11 @@ mod tests {
             serialized,
             serde_json::json!({
                 "default": null,
-                "resources": {
-                    "counter-0-first": {"obtain": "allowed"},
-                    "counter-0-second": {"obtain": "denied"},
-                    "counter-1-first": {"obtain": "denied"},
-                },
+                "resources": [
+                    {"resource":{"kind":"language_server","payload":{"name":"counter-0-first"}},"obtain":"allowed"},
+                    {"resource":{"kind":"language_server","payload":{"name":"counter-0-second"}},"obtain":"denied"},
+                    {"resource":{"kind":"language_server","payload":{"name":"counter-1-first"}},"obtain":"denied"},
+                ],
             })
         );
         let restored = cx.new(|_| {
