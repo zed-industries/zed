@@ -25,13 +25,13 @@ const SHORT_ANIMATION_LENGTH_SECONDS: f32 = 0.05;
 const TRAIL_SIZE: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LogicalCursorPosition {
+pub struct LogicalCursorPosition {
     pub row: u32,
     pub column: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct CursorViewport {
+pub struct CursorViewport {
     content_origin: Point<Pixels>,
     text_bounds: Bounds<Pixels>,
     scroll_position: Point<f64>,
@@ -41,7 +41,7 @@ pub(crate) struct CursorViewport {
 }
 
 impl CursorViewport {
-    pub(crate) fn new(
+    pub fn new(
         content_origin: Point<Pixels>,
         text_bounds: Bounds<Pixels>,
         scroll_position: Point<f64>,
@@ -331,7 +331,7 @@ impl Corner {
 }
 
 #[derive(Clone)]
-pub(crate) struct CursorAnimationState {
+pub struct CursorAnimationState {
     corners: [Corner; 4],
     target_geometry: Option<CursorGeometry>,
     last_logical_position: Option<LogicalCursorPosition>,
@@ -435,7 +435,7 @@ impl Default for CursorAnimationState {
 }
 
 impl CursorAnimationState {
-    pub(crate) fn update(
+    pub fn update(
         &mut self,
         logical_position: LogicalCursorPosition,
         target_bounds: Bounds<Pixels>,
@@ -521,7 +521,7 @@ impl CursorAnimationState {
         }
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.target_geometry = None;
         self.last_logical_position = None;
         self.last_viewport = None;
@@ -591,6 +591,11 @@ impl CursorAnimationState {
                 corner.snap(target_geometry);
             }
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_active(&self) -> bool {
+        self.active
     }
 }
 
