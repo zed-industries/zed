@@ -31695,6 +31695,117 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_open_excerpts_keeps_cursor_line_offset_from_top(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let text = (0..100)
+        .map(|row| format!("line {row}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+    let other_buffer = cx.new(|cx| Buffer::local(sample_text(10, 4, 'a'), cx));
+    let multi_buffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            other_buffer.clone(),
+            [Point::new(0, 0)..Point::new(9, 0)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer.clone(),
+            [Point::new(40, 0)..Point::new(70, 0)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let multi_buffer_editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(
+            Box::new(multi_buffer_editor.clone()),
+            None,
+            true,
+            window,
+            cx,
+        );
+    });
+    cx.executor().run_until_parked();
+
+    let cursor_buffer_row = 55;
+    let expected_line_offset_from_top = 7;
+    multi_buffer_editor.update_in(cx, |editor, window, cx| {
+        let anchor = editor.buffer().update(cx, |multibuffer, cx| {
+            multibuffer
+                .buffer_point_to_anchor(&buffer, Point::new(cursor_buffer_row, 0), cx)
+                .expect("buffer row maps to a multibuffer anchor")
+        });
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_anchor_ranges([anchor..anchor])
+        });
+        let display_snapshot = editor.display_snapshot(cx);
+        let cursor_display_row = editor
+            .selections
+            .newest_display(&display_snapshot)
+            .head()
+            .row()
+            .0;
+        editor.set_scroll_position(
+            gpui::Point::new(
+                0.,
+                (cursor_display_row - expected_line_offset_from_top) as ScrollOffset,
+            ),
+            window,
+            cx,
+        );
+        editor.open_excerpts(&OpenExcerpts, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    let opened_editor = workspace.update(cx, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .expect("should have opened the excerpt's buffer in an editor")
+    });
+    opened_editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), text);
+        let display_snapshot = editor.display_snapshot(cx);
+        let cursor_display_row = editor
+            .selections
+            .newest_display(&display_snapshot)
+            .head()
+            .row()
+            .0;
+        assert_eq!(cursor_display_row, cursor_buffer_row);
+        let scroll_top = editor.scroll_position(cx).y;
+        assert_eq!(
+            cursor_display_row as ScrollOffset - scroll_top,
+            expected_line_offset_from_top as ScrollOffset,
+            "the cursor's line should stay at the same height on screen"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
