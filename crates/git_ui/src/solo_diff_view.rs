@@ -50,10 +50,13 @@ pub struct SoloDiffView {
 }
 
 impl SoloDiffView {
+    /// With `allow_preview`, a newly opened view replaces the pane's preview
+    /// tab. Without it, an already open view stops being a preview.
     pub fn open_or_focus(
         entry: GitStatusEntry,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
@@ -68,6 +71,11 @@ impl SoloDiffView {
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing, true, true, window, cx);
+                if !allow_preview && let Some(pane) = workspace.pane_for(&existing) {
+                    pane.update(cx, |pane, _| {
+                        pane.unpreview_item_if_preview(existing.item_id())
+                    });
+                }
             });
             existing.focus_handle(cx).focus(window, cx);
             return Task::ready(Ok(existing));
@@ -112,7 +120,23 @@ impl SoloDiffView {
                     )
                 });
 
-                workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, window, cx);
+                let pane = workspace.active_pane().clone();
+                let destination_index = if allow_preview {
+                    pane.update(cx, |pane, cx| {
+                        pane.replace_preview_item_id(view.item_id(), window, cx)
+                    })
+                } else {
+                    None
+                };
+                workspace.add_item(
+                    pane,
+                    Box::new(view.clone()),
+                    destination_index,
+                    false,
+                    true,
+                    window,
+                    cx,
+                );
                 view
             })
         })

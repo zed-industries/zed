@@ -9,7 +9,7 @@ use crate::commit_context_menu::{
 };
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
-use crate::commit_view::CommitView;
+use crate::commit_view::{CommitView, CommitViewOptions};
 use crate::git_panel_settings::GitPanelScrollbarAccessor;
 use crate::project_diff::{Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
@@ -107,6 +107,7 @@ use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     DraggedSelection, Item, ModalView, SelectedEntry, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
+    item::PreviewTabsSettings,
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
 use zed_actions::{
@@ -2946,6 +2947,15 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_file_diffs(true, window, cx);
+    }
+
+    fn open_file_diffs(
+        &mut self,
+        allow_preview: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // A file diff shows uncommitted changes, so branch rows open the
         // branch diff instead.
         if self.is_branch_mode() {
@@ -2955,11 +2965,19 @@ impl GitPanel {
         let Some(repository) = self.active_repository.clone() else {
             return;
         };
-        for entry in self.effective_status_entries() {
+        let entries = self.effective_status_entries();
+        // Each preview replaces the previous one, so opening several files at
+        // once gives each of them its own tab.
+        let opens_single_file = entries.len() == 1;
+        let allow_preview = allow_preview
+            && opens_single_file
+            && PreviewTabsSettings::get_global(cx).enable_preview_from_git_panel;
+        for entry in entries {
             SoloDiffView::open_or_focus(
                 entry,
                 repository.clone(),
                 self.workspace.clone(),
+                allow_preview,
                 window,
                 cx,
             )
@@ -3090,7 +3108,8 @@ impl GitPanel {
                 self.focus_handle.focus(window, cx);
             }
             GitPanelClickBehavior::FileDiff => {
-                self.open_solo_diff(&Default::default(), window, cx);
+                // A double click keeps the tab open, as in the project panel.
+                self.open_file_diffs(!secondary, window, cx);
             }
             GitPanelClickBehavior::ViewFile => {
                 self.view_file(&Default::default(), window, cx);
@@ -7920,7 +7939,10 @@ impl GitPanel {
             entry.sha.to_string(),
             active_repository.downgrade(),
             self.workspace.clone(),
-            Default::default(),
+            CommitViewOptions {
+                allow_preview: PreviewTabsSettings::get_global(cx).enable_preview_from_git_panel,
+                ..Default::default()
+            },
             window,
             cx,
         );
@@ -8419,12 +8441,21 @@ impl GitPanel {
                                                 cx.stop_propagation();
                                             }
                                         })
-                                        .on_click(move |_, window, cx| {
+                                        .on_click(move |event, window, cx| {
+                                            // A double click keeps the tab open, as in the
+                                            // project panel.
+                                            let is_single_click = event.click_count() == 1;
+                                            let allow_preview = is_single_click
+                                                && PreviewTabsSettings::get_global(cx)
+                                                    .enable_preview_from_git_panel;
                                             CommitView::open(
                                                 sha_for_click.clone(),
                                                 repo.clone(),
                                                 workspace.clone(),
-                                                Default::default(),
+                                                CommitViewOptions {
+                                                    allow_preview,
+                                                    ..Default::default()
+                                                },
                                                 window,
                                                 cx,
                                             );
@@ -11317,6 +11348,158 @@ mod tests {
         });
     }
 
+    fn open_file_diff_from_keyboard(
+        panel: &Entity<GitPanel>,
+        path: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = entry_index_for_repo_path(panel, &repo_path(path));
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    /// Returns the file name of every open file diff, and of the one shown in
+    /// the preview tab.
+    fn file_diff_tabs(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> (Vec<String>, Option<String>) {
+        workspace.read_with(cx, |workspace, cx| {
+            let file_name = |view: Entity<SoloDiffView>| {
+                let project_path = view.project_path(cx)?;
+                Some(project_path.path.file_name()?.to_owned())
+            };
+            let pane = workspace.active_pane().read(cx);
+            let open = pane
+                .items_of_type::<SoloDiffView>()
+                .filter_map(file_name)
+                .collect();
+            let preview = pane
+                .preview_item()
+                .and_then(|item| item.downcast::<SoloDiffView>())
+                .and_then(file_name);
+            (open, preview)
+        })
+    }
+
+    #[gpui::test]
+    async fn test_file_diff_opens_as_preview_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({ ".git": {}, "a.txt": "a", "b.txt": "b" }),
+            &[
+                ("a.txt", StatusCode::Modified),
+                ("b.txt", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        open_file_diff_from_keyboard(&panel, "a.txt", &mut cx);
+        let (open, preview) = file_diff_tabs(&workspace, &mut cx);
+        assert_eq!(open, ["a.txt"]);
+        assert_eq!(preview.as_deref(), Some("a.txt"));
+
+        open_file_diff_from_keyboard(&panel, "b.txt", &mut cx);
+        let (open, preview) = file_diff_tabs(&workspace, &mut cx);
+        assert_eq!(open, ["b.txt"], "the new diff should replace the preview");
+        assert_eq!(preview.as_deref(), Some("b.txt"));
+
+        workspace.update_in(&mut cx, |workspace, _, cx| {
+            workspace.active_pane().update(cx, |pane, _| {
+                let preview_id = pane.preview_item_id().unwrap();
+                pane.unpreview_item_if_preview(preview_id);
+            });
+        });
+        open_file_diff_from_keyboard(&panel, "a.txt", &mut cx);
+        let (open, preview) = file_diff_tabs(&workspace, &mut cx);
+        assert_eq!(open, ["b.txt", "a.txt"], "a kept diff should stay open");
+        assert_eq!(preview.as_deref(), Some("a.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_file_diff_double_click_keeps_tab_open(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({ ".git": {}, "a.txt": "a" }),
+            &[("a.txt", StatusCode::Modified)],
+        )
+        .await;
+
+        open_file_diff_from_keyboard(&panel, "a.txt", &mut cx);
+        assert_eq!(
+            file_diff_tabs(&workspace, &mut cx).1.as_deref(),
+            Some("a.txt")
+        );
+
+        // With the default click action, a double click opens the file diff.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_selected_entry_on_click(true, window, cx);
+        });
+        cx.run_until_parked();
+        let (open, preview) = file_diff_tabs(&workspace, &mut cx);
+        assert_eq!(open, ["a.txt"]);
+        assert_eq!(preview, None, "a double click should keep the diff open");
+    }
+
+    #[gpui::test]
+    async fn test_file_diff_preview_respects_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({ ".git": {}, "a.txt": "a", "b.txt": "b" }),
+            &[
+                ("a.txt", StatusCode::Modified),
+                ("b.txt", StatusCode::Modified),
+            ],
+        )
+        .await;
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .preview_tabs
+                        .get_or_insert_default()
+                        .enable_preview_from_git_panel = Some(false);
+                })
+            });
+        });
+
+        open_file_diff_from_keyboard(&panel, "a.txt", &mut cx);
+        open_file_diff_from_keyboard(&panel, "b.txt", &mut cx);
+        let (open, preview) = file_diff_tabs(&workspace, &mut cx);
+        assert_eq!(open, ["a.txt", "b.txt"]);
+        assert_eq!(preview, None);
+    }
+
+    #[gpui::test]
+    async fn test_file_diffs_for_several_files_keep_their_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({ ".git": {}, "a.txt": "a", "b.txt": "b" }),
+            &[
+                ("a.txt", StatusCode::Modified),
+                ("b.txt", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            mark_file(panel, "a.txt");
+            mark_file(panel, "b.txt");
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+        let (mut open, preview) = file_diff_tabs(&workspace, &mut cx);
+        open.sort();
+        assert_eq!(open, ["a.txt", "b.txt"]);
+        assert_eq!(preview, None);
+    }
+
     #[gpui::test]
     async fn test_ignore_actions_use_multiple_selected_entries(cx: &mut TestAppContext) {
         init_test(cx);
@@ -11662,6 +11845,10 @@ mod tests {
         }
 
         fn open_commit(&mut self, sha: Oid) {
+            self.open_commit_with_preview(sha, false);
+        }
+
+        fn open_commit_with_preview(&mut self, sha: Oid, allow_preview: bool) {
             let repository = self.panel.read_with(&self.cx, |panel, _| {
                 panel.active_repository.clone().unwrap()
             });
@@ -11671,12 +11858,40 @@ mod tests {
                     sha.to_string(),
                     repository.downgrade(),
                     workspace,
-                    Default::default(),
+                    CommitViewOptions {
+                        allow_preview,
+                        ..Default::default()
+                    },
                     window,
                     cx,
                 );
             });
             self.cx.run_until_parked();
+        }
+
+        fn open_history_entry_from_keyboard(&mut self, index: usize) {
+            self.panel.update_in(&mut self.cx, |panel, window, cx| {
+                panel.focused_history_entry = Some(index);
+                panel.open_diff(&menu::Confirm, window, cx);
+            });
+            self.cx.run_until_parked();
+        }
+
+        /// Returns the SHA of every open commit view, and of the one shown in
+        /// the preview tab.
+        fn commit_tabs(&self) -> (Vec<String>, Option<String>) {
+            self.workspace.read_with(&self.cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                let open = pane
+                    .items_of_type::<CommitView>()
+                    .map(|view| view.read(cx).commit_sha().to_string())
+                    .collect();
+                let preview = pane
+                    .preview_item()
+                    .and_then(|item| item.downcast::<CommitView>())
+                    .map(|view| view.read(cx).commit_sha().to_string());
+                (open, preview)
+            })
         }
     }
 
@@ -11779,6 +11994,92 @@ mod tests {
             (Some(middle_sha), Some(1)),
             "closing the active commit view should highlight the commit view activated next"
         );
+    }
+
+    #[gpui::test]
+    async fn test_history_commit_opens_as_preview_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (mut test, [_, middle_sha, oldest_sha]) = history_panel_with_commits(cx).await;
+
+        test.open_history_entry_from_keyboard(1);
+        let (open, preview) = test.commit_tabs();
+        assert_eq!(open, [middle_sha.to_string()]);
+        assert_eq!(preview, Some(middle_sha.to_string()));
+
+        test.open_history_entry_from_keyboard(2);
+        let (open, preview) = test.commit_tabs();
+        assert_eq!(
+            open,
+            [oldest_sha.to_string()],
+            "the new commit should replace the preview"
+        );
+        assert_eq!(preview, Some(oldest_sha.to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_history_commit_preview_respects_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (mut test, [_, middle_sha, oldest_sha]) = history_panel_with_commits(cx).await;
+        test.cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .preview_tabs
+                        .get_or_insert_default()
+                        .enable_preview_from_git_panel = Some(false);
+                })
+            });
+        });
+
+        test.open_history_entry_from_keyboard(1);
+        test.open_history_entry_from_keyboard(2);
+        let (open, preview) = test.commit_tabs();
+        assert_eq!(open, [middle_sha.to_string(), oldest_sha.to_string()]);
+        assert_eq!(preview, None);
+    }
+
+    #[gpui::test]
+    async fn test_reopening_commit_keeps_it_a_preview_only_if_it_was_one(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (mut test, [newest_sha, middle_sha, oldest_sha]) = history_panel_with_commits(cx).await;
+        test.open_commit(newest_sha);
+
+        test.open_commit_with_preview(middle_sha, true);
+        test.open_commit_with_preview(middle_sha, true);
+        let (open, preview) = test.commit_tabs();
+        assert_eq!(open, [newest_sha.to_string(), middle_sha.to_string()]);
+        assert_eq!(preview, Some(middle_sha.to_string()));
+
+        test.open_commit_with_preview(middle_sha, false);
+        let (open, preview) = test.commit_tabs();
+        assert_eq!(
+            open,
+            [newest_sha.to_string(), middle_sha.to_string()],
+            "reopening should keep the tab in place"
+        );
+        assert_eq!(
+            preview, None,
+            "reopening without preview should keep the tab"
+        );
+
+        test.open_commit_with_preview(middle_sha, true);
+        assert_eq!(
+            test.commit_tabs().1,
+            None,
+            "a kept tab should not become a preview"
+        );
+
+        test.open_commit_with_preview(oldest_sha, true);
+        let (open, preview) = test.commit_tabs();
+        assert_eq!(
+            open,
+            [
+                newest_sha.to_string(),
+                middle_sha.to_string(),
+                oldest_sha.to_string()
+            ]
+        );
+        assert_eq!(preview, Some(oldest_sha.to_string()));
     }
 
     #[gpui::test]

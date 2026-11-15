@@ -198,6 +198,9 @@ pub struct CommitViewOptions {
     /// If the file is absent from the displayed diff, normal loading is
     /// unchanged.
     pub reveal_file: Option<RepoPath>,
+    /// Opens the view as the pane's preview tab. Reopening a commit that is
+    /// already open keeps it a preview only if it was one.
+    pub allow_preview: bool,
 }
 
 impl CommitView {
@@ -252,6 +255,7 @@ impl CommitView {
                 }
 
                 let repo = repo.upgrade()?;
+                let allow_preview = options.allow_preview;
 
                 workspace
                     .update_in(cx, |workspace, window, cx| {
@@ -272,30 +276,34 @@ impl CommitView {
 
                         let pane = workspace.active_pane();
                         pane.update(cx, |pane, cx| {
-                            let ix = pane.items().position(|item| {
-                                let commit_view = item.downcast::<CommitView>();
-                                commit_view
-                                    .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
-                            });
-                            if let Some(ix) = ix {
-                                let existing = pane
-                                    .items()
-                                    .filter_map(|item| item.downcast::<CommitView>())
-                                    .find(|view| view.read(cx).commit.sha == commit_sha)
-                                    .unwrap();
+                            let existing = pane
+                                .items_of_type::<CommitView>()
+                                .find(|view| view.read(cx).commit.sha == commit_sha);
+                            let open_as_preview = match &existing {
+                                Some(existing) => {
+                                    allow_preview && pane.is_active_preview_item(existing.item_id())
+                                }
+                                None => allow_preview,
+                            };
 
+                            let mut destination_index = None;
+                            if let Some(existing) = existing {
+                                destination_index = pane.index_for_item(&existing);
                                 pane.remove_item(existing.item_id(), false, false, window, cx);
-                                pane.add_item(
-                                    Box::new(commit_view),
-                                    true,
-                                    true,
-                                    Some(ix),
-                                    window,
-                                    cx,
-                                );
-                            } else {
-                                pane.add_item(Box::new(commit_view), true, true, None, window, cx);
                             }
+                            if open_as_preview {
+                                let preview_index =
+                                    pane.replace_preview_item_id(commit_view.item_id(), window, cx);
+                                destination_index = destination_index.or(preview_index);
+                            }
+                            pane.add_item(
+                                Box::new(commit_view),
+                                true,
+                                true,
+                                destination_index,
+                                window,
+                                cx,
+                            );
                         })
                     })
                     .log_err()
@@ -317,6 +325,7 @@ impl CommitView {
             stash,
             file_filter,
             reveal_file,
+            allow_preview: _,
         } = options;
         let language_registry = project.read(cx).languages().clone();
         let is_shallow_boundary = commit_diff.is_shallow_boundary;
@@ -737,6 +746,7 @@ impl CommitView {
                                                         stash,
                                                         file_filter,
                                                         reveal_file,
+                                                        allow_preview: false,
                                                     },
                                                     false,
                                                     window,
@@ -772,6 +782,7 @@ impl CommitView {
                                         stash,
                                         file_filter: file_filter.clone(),
                                         reveal_file: reveal_file.clone(),
+                                        allow_preview: false,
                                     },
                                     true,
                                     window,

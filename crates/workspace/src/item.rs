@@ -69,6 +69,7 @@ pub struct PreviewTabsSettings {
     pub enable_preview_from_project_panel: bool,
     pub enable_preview_from_file_finder: bool,
     pub enable_preview_from_multibuffer: bool,
+    pub enable_preview_from_git_panel: bool,
     pub enable_preview_multibuffer_from_code_navigation: bool,
     pub enable_preview_file_from_code_navigation: bool,
     pub enable_keep_preview_on_code_navigation: bool,
@@ -105,6 +106,7 @@ impl Settings for PreviewTabsSettings {
                 .unwrap(),
             enable_preview_from_file_finder: preview_tabs.enable_preview_from_file_finder.unwrap(),
             enable_preview_from_multibuffer: preview_tabs.enable_preview_from_multibuffer.unwrap(),
+            enable_preview_from_git_panel: preview_tabs.enable_preview_from_git_panel.unwrap(),
             enable_preview_multibuffer_from_code_navigation: preview_tabs
                 .enable_preview_multibuffer_from_code_navigation
                 .unwrap(),
