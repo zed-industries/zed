@@ -309,6 +309,12 @@ impl SubagentCardState {
         })
     }
 
+    /// Whether this call sent a message to a subagent that had already worked, rather
+    /// than starting one.
+    pub(crate) fn is_follow_up(&self) -> bool {
+        self.entries.is_some_and(|entries| entries.start > 0)
+    }
+
     /// The subagent entry that full screen should open at: the start of this card's part
     /// once its work has stopped, or `None` while it runs, so the subagent's view keeps
     /// following its latest entries.
@@ -393,6 +399,29 @@ mod tests {
         ] {
             assert_eq!(card(None, status, None).title(None).as_ref(), title);
         }
+    }
+
+    #[test]
+    fn a_call_to_a_subagent_that_already_worked_is_a_follow_up() {
+        let first = card(
+            None,
+            SubagentStatus::Completed,
+            Some(SubagentEntries {
+                start: 0,
+                end: Some(3),
+            }),
+        );
+        assert!(!first.is_follow_up());
+        let later = card(
+            None,
+            SubagentStatus::Running,
+            Some(SubagentEntries {
+                start: 4,
+                end: None,
+            }),
+        );
+        assert!(later.is_follow_up());
+        assert!(!card(None, SubagentStatus::Running, None).is_follow_up());
     }
 
     #[test]

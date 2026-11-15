@@ -7532,6 +7532,20 @@ impl ThreadView {
                         .render_background_result(entry_ix, &source, message, window, cx)
                         .into_any_element();
                 }
+                // Nobody types into a subagent's thread: what it receives comes from
+                // the agent that started it.
+                if let Some(parent_session_id) = self.parent_session_id.as_ref() {
+                    return self
+                        .render_message_from_session(
+                            entry_ix,
+                            "Message from",
+                            Some(parent_session_id),
+                            message,
+                            window,
+                            cx,
+                        )
+                        .into_any_element();
+                }
                 let Some(editor) = self
                     .entry_view_state
                     .read(cx)
@@ -9232,35 +9246,45 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let (heading, participant) = match source {
+        let (heading, sender) = match source {
             agent::BackgroundResultSource::Command => ("Background command finished", None),
-            agent::BackgroundResultSource::Agent(sender) => (
-                "Result from",
-                Some(match self.session_participant_label(sender, cx) {
-                    Some(label) => {
-                        Button::new(("background-agent-result-sender", entry_ix), label)
-                            .label_size(LabelSize::Small)
-                            .tooltip(Tooltip::text("Open Session"))
-                            .on_click({
-                                let server_view = self.server_view.clone();
-                                let sender = sender.clone();
-                                move |_, window, cx| {
-                                    server_view
-                                        .update(cx, |view, cx| {
-                                            view.navigate_to_thread(sender.clone(), window, cx)
-                                        })
-                                        .ok();
-                                }
-                            })
-                            .into_any_element()
-                    }
-                    None => Label::new("Unavailable Session")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .into_any_element(),
-                }),
-            ),
+            agent::BackgroundResultSource::Agent(sender) => ("Result from", Some(sender)),
         };
+        self.render_message_from_session(entry_ix, heading, sender, message, window, cx)
+    }
+
+    /// Draws a user message that another session of this conversation sent, or that Zed
+    /// generated, under a heading that says where it came from.
+    fn render_message_from_session(
+        &self,
+        entry_ix: usize,
+        heading: &'static str,
+        sender: Option<&acp_v2::SessionId>,
+        message: &acp_thread::UserMessage,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let participant = sender.map(|sender| match self.session_participant_label(sender, cx) {
+            Some(label) => Button::new(("message-sender", entry_ix), label)
+                .label_size(LabelSize::Small)
+                .tooltip(Tooltip::text("Open Session"))
+                .on_click({
+                    let server_view = self.server_view.clone();
+                    let sender = sender.clone();
+                    move |_, window, cx| {
+                        server_view
+                            .update(cx, |view, cx| {
+                                view.navigate_to_thread(sender.clone(), window, cx)
+                            })
+                            .ok();
+                    }
+                })
+                .into_any_element(),
+            None => Label::new("Unavailable Session")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+        });
 
         v_flex()
             .px_5()
@@ -12480,6 +12504,17 @@ impl ThreadView {
             subagent_thread_view.map(|view| view.read(cx).thread.read(cx)),
             cx,
         );
+        if state.is_follow_up() {
+            return self.render_subagent_follow_up(
+                active_session_id,
+                entry_ix,
+                &state,
+                subagent_thread_view,
+                focus_handle,
+                window,
+                cx,
+            );
+        }
         let content = self.render_subagent_card(
             active_session_id,
             entry_ix,
@@ -12492,6 +12527,163 @@ impl ThreadView {
         );
 
         v_flex().mx_5().my_1p5().gap_3().child(content)
+    }
+
+    /// A later message to a subagent that already has a card in this thread. Another card
+    /// would read as another subagent, so it is drawn as a message to that subagent, the
+    /// way the subagent's results are drawn as messages from it.
+    fn render_subagent_follow_up(
+        &self,
+        active_session_id: &acp_v2::SessionId,
+        entry_ix: usize,
+        state: &SubagentCardState,
+        subagent_view: Option<&Entity<ThreadView>>,
+        focus_handle: &FocusHandle,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let message_ix = state.entries.map_or(0, |entries| entries.start);
+        let is_running = state.status == SubagentStatus::Running;
+
+        let recipient = match subagent_view {
+            Some(subagent_view) => {
+                let subagent_thread = subagent_view.read(cx).thread.read(cx);
+                let session_id = subagent_thread.session_id().clone();
+                // While the subagent works, its view keeps following its latest entries.
+                let open_at = state.fullscreen_entry();
+                let subagent_view = subagent_view.clone();
+                Button::new(
+                    ("subagent-follow-up-recipient", entry_ix),
+                    subagent_label(subagent_thread),
+                )
+                .label_size(LabelSize::Small)
+                .tooltip(Tooltip::text("Open Session"))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.server_view
+                        .update(cx, |server_view, cx| {
+                            server_view.navigate_to_thread(session_id.clone(), window, cx);
+                        })
+                        .ok();
+                    if let Some(open_at) = open_at {
+                        subagent_view.update(cx, |view, cx| view.scroll_to_entry(open_at, cx));
+                    }
+                }))
+                .into_any_element()
+            }
+            None => Label::new(
+                state
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| "Unavailable Session".into()),
+            )
+            .size(LabelSize::Small)
+            .color(Color::Muted)
+            .into_any_element(),
+        };
+
+        let status = match state.status {
+            SubagentStatus::Running => Some(
+                SpinnerLabel::new()
+                    .size(LabelSize::Small)
+                    .into_any_element(),
+            ),
+            SubagentStatus::Failed => Some(
+                Icon::new(IconName::Close)
+                    .size(IconSize::Small)
+                    .color(Color::Error)
+                    .into_any_element(),
+            ),
+            SubagentStatus::Canceled => Some(
+                Label::new("Canceled")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .into_any_element(),
+            ),
+            SubagentStatus::Completed | SubagentStatus::Unknown => None,
+        };
+
+        let message = subagent_view.and_then(|subagent_view| {
+            let subagent_view = subagent_view.read(cx);
+            match subagent_view.thread.read(cx).entries().get(message_ix)? {
+                AgentThreadEntry::UserMessage(message) => Some(
+                    subagent_view.render_message_content(
+                        message_ix,
+                        0,
+                        &message.content,
+                        window,
+                        cx,
+                    ),
+                ),
+                _ => None,
+            }
+        });
+
+        // The subagent asks for permission in its own thread; offer the request
+        // here too, as its card does.
+        let permission_request = subagent_view
+            .filter(|_| is_running)
+            .and_then(|subagent_view| {
+                let subagent_view = subagent_view.read(cx);
+                let subagent_thread = subagent_view.thread.read(cx);
+                let (_, tool_call_id, _) = self
+                    .conversation
+                    .read(cx)
+                    .pending_tool_call(subagent_thread.session_id(), cx)?;
+                let (tool_call_ix, tool_call) = subagent_thread.tool_call(&tool_call_id)?;
+                Some(
+                    div()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .overflow_hidden()
+                        .child(subagent_view.render_any_tool_call(
+                            active_session_id,
+                            tool_call_ix,
+                            tool_call,
+                            focus_handle,
+                            ToolCallLayout::Embedded,
+                            window,
+                            cx,
+                        )),
+                )
+            });
+
+        v_flex()
+            .px_5()
+            .py_1p5()
+            .w_full()
+            .gap_1p5()
+            .text_ui(cx)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Send)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new("Message to")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(recipient)
+                    .children(status),
+            )
+            .children(message.map(|message| {
+                div()
+                    .pl_3()
+                    .border_l_2()
+                    .border_color(cx.theme().colors().border)
+                    .child(message)
+            }))
+            .children(permission_request)
+            .children(state.error.clone().map(|error| {
+                Callout::new()
+                    .severity(Severity::Error)
+                    .icon(IconName::XCircle)
+                    .title(error)
+            }))
     }
 
     fn render_subagent_card(

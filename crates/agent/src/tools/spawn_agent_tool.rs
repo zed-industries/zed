@@ -51,7 +51,8 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SpawnAgentToolInput {
-    /// Short label displayed in the UI while the agent runs (e.g., "Researching alternatives")
+    /// Short label displayed in the UI while the agent runs (e.g., "Researching alternatives"). Required for a new agent. Omit it when continuing a session with session_id, which keeps its name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
     /// The prompt for the agent. For new sessions, include full context needed for the task. For follow-ups (with session_id), you can rely on the agent already having the previous message.
     pub message: String,
@@ -164,7 +165,11 @@ impl AgentTool for SpawnAgentTool {
         _cx: &mut App,
     ) -> SharedString {
         match input {
-            Ok(i) => i.label.into(),
+            Ok(input) if input.label.is_empty() && input.session_id.is_some() => {
+                "Messaging agent".into()
+            }
+            Ok(input) if input.label.is_empty() => "Spawning agent".into(),
+            Ok(input) => input.label.into(),
             Err(value) => value
                 .get("label")
                 .and_then(|v| v.as_str())
@@ -202,6 +207,9 @@ impl AgentTool for SpawnAgentTool {
                         "model cannot be changed when resuming a subagent session"
                     )),
                     (Some(session_id), None) => self.environment.resume_subagent(session_id, cx),
+                    (None, _) if label.is_empty() => Err(anyhow::anyhow!(
+                        "label is required when starting a new agent"
+                    )),
                     (None, model) => {
                         self.environment
                             .create_subagent(label, model.map(AgentModelId::from), cx)
@@ -391,6 +399,17 @@ mod tests {
             serde_json::to_value(background)?.get("run_in_background"),
             Some(&json!(true))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn label_is_optional_when_continuing_a_session() -> Result<(), serde_json::Error> {
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "message": "message",
+            "session_id": "session",
+        }))?;
+        assert!(input.label.is_empty());
+        assert!(input.session_id.is_some());
         Ok(())
     }
 
