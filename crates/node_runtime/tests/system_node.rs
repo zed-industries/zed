@@ -109,7 +109,7 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
                 anyhow::bail!("configured NPM must be ready");
             };
             assert!(action.is_none());
-            let npm = Arc::new(resource);
+            let npm = resource;
             let arguments = fs::read_to_string(directory.join("npm.args"))?;
             assert!(arguments.lines().any(|argument| argument == "--version"));
 
@@ -134,7 +134,7 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
             ] {
                 assert!(description.contains(detail), "{description}");
             }
-            install().run(npm.clone()).await?;
+            install().run(&npm).await?;
             let arguments = fs::read_to_string(directory.join("npm.args"))?;
             let arguments = arguments.lines().collect::<Vec<_>>();
             assert!(
@@ -161,7 +161,7 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
                 "#!/bin/sh\necho 'installation failed' >&2\nexit 7\n",
             )?;
             let error = install()
-                .run(npm)
+                .run(&npm)
                 .await
                 .expect_err("npm failure propagates");
             assert!(error.to_string().contains("installation failed"));
@@ -251,7 +251,7 @@ fn managed_npm_downloads_only_when_allowed() -> Result<()> {
             };
             assert_eq!(downloads.load(SeqCst), 0);
             assert!(!data_directory.join("node").exists());
-            let npm = Arc::new(action().await?);
+            let npm = action().await?;
             let installation = fs::read_dir(data_directory.join("node"))?
                 .next()
                 .transpose()?
@@ -265,7 +265,7 @@ fn managed_npm_downloads_only_when_allowed() -> Result<()> {
                 directory: package_directory,
                 packages: vec![("@example/server".into(), "1.2.3".into())],
             }
-            .run(npm)
+            .run(&npm)
             .await?;
             let arguments = fs::read_to_string(installation.join("bin/npm.args"))?;
             assert!(arguments.lines().any(|argument| argument == "install"));

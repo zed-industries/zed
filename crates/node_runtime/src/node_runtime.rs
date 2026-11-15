@@ -161,7 +161,7 @@ impl ManagedResourceCommand<Npm> for InstallNpmPackages {
         )
     }
 
-    async fn run(self, npm: Arc<Npm>) -> Self::Output {
+    async fn run(self, npm: &Npm) -> Self::Output {
         let packages = self
             .packages
             .iter()

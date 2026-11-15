@@ -10,6 +10,7 @@
 //! In order to interact with a resource, you ought to implement [ManagedResourceCommand].
 //! One example of a resource is a language server binary. Zed may need to install it on user's behalf. The user may also want us to use the binary available on their system.
 //! But then, whenever we want to invoke said binary, we should let the user know as well, as running arbitrary processes on their PC might affect their machine state.
+use async_lock::RwLock;
 use futures::{
     FutureExt,
     future::{LocalBoxFuture, Shared},
@@ -76,7 +77,7 @@ pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
     /// Describe the specific operation for approval without performing it.
     fn permission_description(&self, resource: &Resource) -> String;
 
-    fn run(self, resource: Arc<Resource>) -> impl Future<Output = Self::Output>;
+    fn run(self, resource: &Resource) -> impl Future<Output = Self::Output>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -318,7 +319,7 @@ impl ManagedResourceStore {
                                     })?
                                 }
                             };
-                            Ok(Arc::new(resource) as Arc<dyn Any + Send + Sync>)
+                            Ok(Arc::new(RwLock::new(resource)) as Arc<dyn Any + Send + Sync>)
                         }
                         .await;
                         this.update(cx, |this, _| {
@@ -349,8 +350,10 @@ impl ManagedResourceStore {
                 })
                 .map_err(|_| ResourceAccessError::StoreDropped)??;
             let resource = resource
-                .downcast::<Resource>()
+                .downcast::<RwLock<Resource>>()
                 .map_err(|_| ResourceAccessError::ConflictingResourceType)?;
+            // Keep the resource unchanged between describing the operation and completing it.
+            let resource = resource.read().await;
             let request = ResourcePermissionRequest::ExecuteCommand {
                 resource: id.clone(),
                 description: command.permission_description(&resource),
@@ -385,7 +388,7 @@ impl ManagedResourceStore {
             if permission != ResourcePermission::Allowed {
                 return Err(ResourceAccessError::CommandDenied);
             }
-            Ok(command.run(resource).await)
+            Ok(command.run(&resource).await)
         })
     }
 
@@ -702,7 +705,7 @@ mod tests {
             )
         }
 
-        async fn run(self, resource: Arc<Counter<KIND>>) -> Self::Output {
+        async fn run(self, resource: &Counter<KIND>) -> Self::Output {
             match self {
                 Self::Read => Ok(resource.value.load(SeqCst)),
                 Self::Add(value) => Ok(resource.value.fetch_add(value, SeqCst) + value),
@@ -735,13 +738,13 @@ mod tests {
             assert_eq!(context.obtain_count.get(), 0);
             let action = match acquisition {
                 ResourceAcquisition::Ready { resource, action } => {
-                    assert_eq!(TestCommand::Read.run(Arc::new(resource)).await, Ok(17));
+                    assert_eq!(TestCommand::Read.run(&resource).await, Ok(17));
                     action.expect("optional update")
                 }
                 ResourceAcquisition::RequiresAction(action) => action,
             };
             let resource = action().await.expect("acquisition action");
-            assert_eq!(TestCommand::Read.run(Arc::new(resource)).await, Ok(41));
+            assert_eq!(TestCommand::Read.run(&resource).await, Ok(41));
             assert_eq!(context.obtain_count.get(), 1);
         }
     }
@@ -1427,6 +1430,66 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn resource_writes_exclude_commands(cx: &mut TestAppContext) {
+        for cancel_command in [false, true] {
+            let store = new_store(cx);
+            let context = Rc::new(TestContext::default());
+            let id = TestResource::id(&"first");
+            store.update(cx, |store, cx| {
+                store.set_permission(id.clone(), ResourcePermission::Allowed, cx);
+            });
+            let (ready, wait) = oneshot::channel();
+            let started = Rc::new(Cell::new(false));
+            let command = execute::<0>(
+                &store,
+                "first",
+                &context,
+                TestCommand::Wait {
+                    started: started.clone(),
+                    ready: wait,
+                    value: 7,
+                },
+                cx,
+            );
+            cx.run_until_parked();
+            assert!(started.get());
+            let resource = store.read_with(cx, |store, _| {
+                store
+                    .resources
+                    .get(&id)
+                    .expect("resource cached")
+                    .value
+                    .clone()
+                    .expect("resource acquired")
+                    .downcast::<RwLock<TestResource>>()
+                    .expect("resource type")
+            });
+            let mut modification = Box::pin(resource.write());
+            assert!(poll!(&mut modification).is_pending());
+            if cancel_command {
+                drop(command);
+                cx.run_until_parked();
+            } else {
+                ready.send(()).expect("command waiting");
+                assert_eq!(command.await.expect("command completed"), Ok(12));
+            }
+            let mut writer = modification.await;
+            assert_eq!(
+                writer.value.load(SeqCst),
+                if cancel_command { 5 } else { 12 }
+            );
+            let mut read = execute::<0>(&store, "first", &context, TestCommand::Read, cx);
+            cx.run_until_parked();
+            assert!(poll!(&mut read).is_pending());
+            *writer = Counter {
+                value: AtomicUsize::new(23),
+            };
+            drop(writer);
+            assert_eq!(read.await.expect("read after modification"), Ok(23));
+        }
+    }
+
+    #[gpui::test]
     async fn revocation_blocks_new_commands_without_cancelling_running_commands(
         cx: &mut TestAppContext,
     ) {
@@ -1554,7 +1617,7 @@ mod tests {
                 panic!("a conflicting resource must not request command approval")
             }
 
-            async fn run(self, _: Arc<Self>) {
+            async fn run(self, _: &Self) {
                 panic!("a conflicting resource must not run commands")
             }
         }
