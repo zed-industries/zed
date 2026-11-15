@@ -10303,6 +10303,272 @@ async fn test_line_ending_initialization_for_new_buffers(cx: &mut gpui::TestAppC
     }
 }
 
+fn configure_line_ending_settings(
+    cx: &mut gpui::TestAppContext,
+    global_line_ending: Option<LineEndingSetting>,
+    rust_line_ending: Option<LineEndingSetting>,
+) {
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.line_ending = global_line_ending;
+                if let Some(rust_line_ending) = rust_line_ending {
+                    settings.languages_mut().insert(
+                        "Rust".into(),
+                        LanguageSettingsContent {
+                            line_ending: Some(rust_line_ending),
+                            ..Default::default()
+                        },
+                    );
+                }
+            });
+        });
+    });
+    cx.executor().run_until_parked();
+}
+
+// Buffers opened from disk without any line ending in their contents have to
+// use the language-specific setting rather than the global one. This must hold
+// both for files that exist (empty or single line, no trailing newline) and
+// for files that are about to be created.
+#[gpui::test]
+async fn test_line_ending_language_override_on_open(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let cases = [
+        (
+            "global prefer_crlf, Rust prefer_lf",
+            LineEndingSetting::PreferCrlf,
+            LineEndingSetting::PreferLf,
+            LineEnding::Unix,
+        ),
+        (
+            "global prefer_lf, Rust prefer_crlf",
+            LineEndingSetting::PreferLf,
+            LineEndingSetting::PreferCrlf,
+            LineEnding::Windows,
+        ),
+    ];
+
+    for (case_name, global_line_ending, rust_line_ending, expected_line_ending) in cases {
+        for (buffer_path, file_exists) in [
+            (path!("/dir/existing.rs"), true),
+            (path!("/dir/missing.rs"), false),
+        ] {
+            let fs = FakeFs::new(cx.executor());
+            if file_exists {
+                fs.insert_tree(path!("/dir"), json!({ "existing.rs": "fn main() {}" }))
+                    .await;
+            } else {
+                fs.insert_tree(path!("/dir"), json!({})).await;
+            }
+
+            let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+            project
+                .read_with(cx, |project, _| project.languages().clone())
+                .add(rust_lang());
+            configure_line_ending_settings(cx, Some(global_line_ending), Some(rust_line_ending));
+
+            let buffer = project
+                .update(cx, |project, cx| project.open_local_buffer(buffer_path, cx))
+                .await
+                .unwrap();
+            cx.executor().run_until_parked();
+            buffer.update(cx, |buffer, _| {
+                assert_eq!(
+                    buffer.line_ending(),
+                    expected_line_ending,
+                    "unexpected line ending for {buffer_path:?} with {case_name}"
+                );
+            });
+        }
+    }
+}
+
+// Without a language-specific override the global setting applies, including
+// to existing files whose contents carry no line ending.
+#[gpui::test]
+async fn test_line_ending_global_setting_without_language_override(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let cases = [
+        (
+            "global prefer_lf",
+            LineEndingSetting::PreferLf,
+            LineEnding::Unix,
+        ),
+        (
+            "global prefer_crlf",
+            LineEndingSetting::PreferCrlf,
+            LineEnding::Windows,
+        ),
+    ];
+
+    for (case_name, global_line_ending, expected_line_ending) in cases {
+        for (buffer_path, file_exists) in [
+            (path!("/dir/existing.rs"), true),
+            (path!("/dir/missing.rs"), false),
+        ] {
+            let fs = FakeFs::new(cx.executor());
+            if file_exists {
+                fs.insert_tree(path!("/dir"), json!({ "existing.rs": "fn main() {}" }))
+                    .await;
+            } else {
+                fs.insert_tree(path!("/dir"), json!({})).await;
+            }
+
+            let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+            project
+                .read_with(cx, |project, _| project.languages().clone())
+                .add(rust_lang());
+            configure_line_ending_settings(cx, Some(global_line_ending), None);
+
+            let buffer = project
+                .update(cx, |project, cx| project.open_local_buffer(buffer_path, cx))
+                .await
+                .unwrap();
+            cx.executor().run_until_parked();
+            buffer.update(cx, |buffer, _| {
+                assert_eq!(
+                    buffer.line_ending(),
+                    expected_line_ending,
+                    "unexpected line ending for {buffer_path:?} with {case_name}"
+                );
+            });
+        }
+    }
+}
+
+// With no line ending setting configured at all, the default (detect) keeps
+// the platform default for buffers that carry no line ending.
+#[gpui::test]
+async fn test_line_ending_default_when_not_configured(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "existing.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    project
+        .read_with(cx, |project, _| project.languages().clone())
+        .add(rust_lang());
+
+    for buffer_path in [path!("/dir/existing.rs"), path!("/dir/missing.rs")] {
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer(buffer_path, cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(
+                buffer.line_ending(),
+                LineEnding::default(),
+                "unexpected line ending for {buffer_path:?} without any setting"
+            );
+        });
+    }
+}
+
+// The line ending setting is only a fallback for buffers that carry no line
+// ending information. Files that do contain line endings must keep them.
+#[gpui::test]
+async fn test_line_ending_preserved_when_file_has_line_endings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "single_line_lf.rs": "fn main() {}\n",
+            "single_line_crlf.rs": "fn main() {}\r\n",
+            "multi_line_lf.rs": "fn main() {\n}\n",
+            "multi_line_crlf.rs": "fn main() {\r\n}\r\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    project
+        .read_with(cx, |project, _| project.languages().clone())
+        .add(rust_lang());
+    configure_line_ending_settings(
+        cx,
+        Some(LineEndingSetting::EnforceCrlf),
+        Some(LineEndingSetting::EnforceCrlf),
+    );
+
+    let cases = [
+        (path!("/dir/single_line_lf.rs"), LineEnding::Unix),
+        (path!("/dir/single_line_crlf.rs"), LineEnding::Windows),
+        (path!("/dir/multi_line_lf.rs"), LineEnding::Unix),
+        (path!("/dir/multi_line_crlf.rs"), LineEnding::Windows),
+    ];
+
+    for (buffer_path, expected_line_ending) in cases {
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer(buffer_path, cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(
+                buffer.line_ending(),
+                expected_line_ending,
+                "line ending of {buffer_path:?} should have been preserved"
+            );
+        });
+    }
+}
+
+// Detecting the language may be deferred until its grammar and queries have
+// finished loading. The language-specific setting still has to be applied once
+// the language becomes available, as long as the buffer is still untouched.
+#[gpui::test]
+async fn test_line_ending_language_override_when_language_is_loaded_later(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    configure_line_ending_settings(
+        cx,
+        Some(LineEndingSetting::PreferCrlf),
+        Some(LineEndingSetting::PreferLf),
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.line_ending(),
+            LineEnding::Windows,
+            "without a known language only the global setting applies"
+        );
+    });
+
+    project
+        .read_with(cx, |project, _| project.languages().clone())
+        .add(rust_lang());
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.line_ending(),
+            LineEnding::Unix,
+            "the language-specific setting should apply once the language is detected"
+        );
+    });
+}
+
 async fn assert_line_endings_after_format(
     cx: &mut gpui::TestAppContext,
     project: &Entity<Project>,

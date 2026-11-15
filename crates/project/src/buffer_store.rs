@@ -728,7 +728,7 @@ impl LocalBufferStore {
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
                     let text_buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, "");
-                    let mut buffer = Buffer::build(
+                    let buffer = Buffer::build(
                         text_buffer,
                         Some(Arc::new(File {
                             worktree,
@@ -741,7 +741,6 @@ impl LocalBufferStore {
                         Capability::ReadWrite,
                         cx,
                     );
-                    apply_initial_line_ending(&mut buffer, cx);
                     buffer
                 }),
                 Err(e) => return Err(e),
@@ -1921,9 +1920,11 @@ fn is_not_found_error(error: &anyhow::Error) -> bool {
         .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
 }
 
-fn apply_initial_line_ending(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
-    // Only applies for empty rope or a single line with no trailing newline.
-    if buffer.max_point().row > 0 {
+pub(crate) fn apply_initial_line_ending(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
+    // Only applies to untouched buffers whose contents carry no line ending
+    // information: an empty buffer, or a single line with no trailing newline.
+    // Otherwise the line ending detected from the file must be preserved.
+    if buffer.is_dirty() || buffer.max_point().row > 0 {
         return;
     }
     let location = buffer.file().map(|file| settings::SettingsLocation {
