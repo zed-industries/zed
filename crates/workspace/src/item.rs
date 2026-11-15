@@ -31,7 +31,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Color, Icon, IntoElement, Label, LabelCommon};
+use ui::{Color, FluentBuilder, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
@@ -175,13 +175,14 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// Returns the tab contents.
     ///
     /// By default this returns a [`Label`] that displays that text from
-    /// `tab_content_text`.
+    /// `tab_content_text`, in italics while the item is a preview tab.
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let text = self.tab_content_text(params.detail.unwrap_or_default(), cx);
 
         Label::new(text)
             .single_line()
             .color(params.text_color())
+            .when(params.preview, |label| label.italic())
             .into_any_element()
     }
 
