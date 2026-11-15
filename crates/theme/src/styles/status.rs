@@ -19,14 +19,16 @@ pub struct StatusColors {
     pub created_background: Hsla,
     pub created_border: Hsla,
     /// Like `created`, but for a change that has been fully staged in Git.
-    pub created_staged: Hsla,
+    /// Falls back to `created` when not set.
+    pub created_staged: Option<Hsla>,
 
     /// Indicates that something no longer exists, like a deleted file.
     pub deleted: Hsla,
     pub deleted_background: Hsla,
     pub deleted_border: Hsla,
     /// Like `deleted`, but for a change that has been fully staged in Git.
-    pub deleted_staged: Hsla,
+    /// Falls back to `deleted` when not set.
+    pub deleted_staged: Option<Hsla>,
 
     /// Indicates a system error, a failed operation or a diagnostic error.
     pub error: Hsla,
@@ -58,7 +60,8 @@ pub struct StatusColors {
     pub modified_background: Hsla,
     pub modified_border: Hsla,
     /// Like `modified`, but for a change that has been fully staged in Git.
-    pub modified_staged: Hsla,
+    /// Falls back to `modified` when not set.
+    pub modified_staged: Option<Hsla>,
 
     /// Indicates something that is predicted, like automatic code completion, or generated code.
     pub predictive: Hsla,
@@ -107,11 +110,11 @@ impl StatusColors {
             created: grass().dark().step_9(),
             created_background: grass().dark().step_9().opacity(0.25),
             created_border: grass().dark().step_9(),
-            created_staged: grass().dark().step_9(),
+            created_staged: None,
             deleted: red().dark().step_9(),
             deleted_background: red().dark().step_9().opacity(0.25),
             deleted_border: red().dark().step_9(),
-            deleted_staged: red().dark().step_9(),
+            deleted_staged: None,
             error: red().dark().step_9(),
             error_background: red().dark().step_9(),
             error_border: red().dark().step_9(),
@@ -130,7 +133,7 @@ impl StatusColors {
             modified: yellow().dark().step_9(),
             modified_background: yellow().dark().step_9().opacity(0.25),
             modified_border: yellow().dark().step_9(),
-            modified_staged: yellow().dark().step_9(),
+            modified_staged: None,
             predictive: neutral().dark_alpha().step_9(),
             predictive_background: neutral().dark_alpha().step_9(),
             predictive_border: neutral().dark_alpha().step_9(),
@@ -160,11 +163,11 @@ impl StatusColors {
             created: grass().light().step_9(),
             created_background: grass().light().step_9(),
             created_border: grass().light().step_9(),
-            created_staged: grass().light().step_9(),
+            created_staged: None,
             deleted: red().light().step_9(),
             deleted_background: red().light().step_9(),
             deleted_border: red().light().step_9(),
-            deleted_staged: red().light().step_9(),
+            deleted_staged: None,
             error: red().light().step_9(),
             error_background: red().light().step_9(),
             error_border: red().light().step_9(),
@@ -183,7 +186,7 @@ impl StatusColors {
             modified: yellow().light().step_9(),
             modified_background: yellow().light().step_9(),
             modified_border: yellow().light().step_9(),
-            modified_staged: yellow().light().step_9(),
+            modified_staged: None,
             predictive: neutral().light_alpha().step_9(),
             predictive_background: neutral().light_alpha().step_9(),
             predictive_border: neutral().light_alpha().step_9(),
@@ -203,6 +206,18 @@ impl StatusColors {
             warning_background: yellow().light().step_9(),
             warning_border: yellow().light().step_9(),
         }
+    }
+
+    pub fn created_staged(&self) -> Hsla {
+        self.created_staged.unwrap_or(self.created)
+    }
+
+    pub fn deleted_staged(&self) -> Hsla {
+        self.deleted_staged.unwrap_or(self.deleted)
+    }
+
+    pub fn modified_staged(&self) -> Hsla {
+        self.modified_staged.unwrap_or(self.modified)
     }
 
     pub fn diagnostic(&self) -> DiagnosticColors {

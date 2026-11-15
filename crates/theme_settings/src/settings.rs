@@ -543,8 +543,7 @@ impl ThemeSettings {
             base_theme.styles.window_background_appearance =
                 window_background_appearance.into_gpui();
         }
-        let mut status_color_refinement = status_colors_refinement(&theme_overrides.status);
-        theme::apply_staged_status_color_defaults(&mut status_color_refinement);
+        let status_color_refinement = status_colors_refinement(&theme_overrides.status);
 
         let theme_color_refinement = theme_colors_refinement(
             &theme_overrides.colors,
@@ -891,7 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn overriding_a_status_color_also_overrides_its_staged_color() {
+    fn overriding_a_status_color_keeps_the_themes_own_staged_color() {
         let mut test_theme = crate::refine_theme(&crate::ThemeContent {
             name: "Test".into(),
             appearance: ::theme::AppearanceContent::Dark,
@@ -922,12 +921,43 @@ mod tests {
 
         let status = &test_theme.styles.status;
         assert_eq!(
-            status.created_staged,
-            ::theme::try_parse_color("#0000ffff").unwrap()
+            status.created_staged(),
+            ::theme::try_parse_color("#00ff0099").unwrap()
         );
         assert_eq!(
-            status.modified_staged,
+            status.modified_staged(),
             ::theme::try_parse_color("#ff00ff99").unwrap()
+        );
+    }
+
+    #[test]
+    fn overriding_a_status_color_overrides_the_staged_color_of_themes_without_one() {
+        let mut test_theme = crate::refine_theme(&crate::ThemeContent {
+            name: "Test".into(),
+            appearance: ::theme::AppearanceContent::Dark,
+            style: ::settings::ThemeStyleContent {
+                status: ::settings::StatusColorsContent {
+                    created: Some("#00ff00ff".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        });
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &::settings::ThemeStyleContent {
+                status: ::settings::StatusColorsContent {
+                    created: Some("#0000ffff".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            test_theme.styles.status.created_staged(),
+            ::theme::try_parse_color("#0000ffff").unwrap()
         );
     }
 }

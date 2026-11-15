@@ -35,9 +35,7 @@ use serde::Deserialize;
 pub use crate::buffer_line_height::*;
 pub use crate::color_space::*;
 pub use crate::default_colors::*;
-pub use crate::fallback_themes::{
-    apply_staged_status_color_defaults, apply_status_color_defaults, apply_theme_color_defaults,
-};
+pub use crate::fallback_themes::{apply_status_color_defaults, apply_theme_color_defaults};
 pub use crate::font_family_cache::*;
 pub use crate::icon_theme::*;
 pub use crate::icon_theme_schema::*;

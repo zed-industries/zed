@@ -2297,11 +2297,11 @@ fn git_status_color_for(status: TrackedSummary) -> Option<Color> {
 fn staged_git_status_color_for(status: TrackedSummary, cx: &App) -> Option<Color> {
     let colors = cx.theme().status();
     let color = if status.deleted > 0 {
-        colors.deleted_staged
+        colors.deleted_staged()
     } else if status.modified > 0 {
-        colors.modified_staged
+        colors.modified_staged()
     } else if status.added > 0 {
-        colors.created_staged
+        colors.created_staged()
     } else {
         return None;
     };
@@ -2846,7 +2846,7 @@ mod tests {
             };
             assert_eq!(
                 entry_git_aware_label_color(git_status, false, false, cx),
-                Color::Custom(cx.theme().status().created_staged)
+                Color::Custom(cx.theme().status().created_staged())
             );
 
             // Untracked.

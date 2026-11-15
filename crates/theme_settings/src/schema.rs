@@ -1111,9 +1111,9 @@ mod tests {
         let mut status_colors = StatusColors::dark();
         status_colors.refine(&refinement);
 
-        assert_eq!(status_colors.created_staged, parse_color("#00ff00ff"));
-        assert_eq!(status_colors.modified_staged, parse_color("#ffff00ff"));
-        assert_eq!(status_colors.deleted_staged, parse_color("#ff000099"));
+        assert_eq!(status_colors.created_staged(), parse_color("#00ff00ff"));
+        assert_eq!(status_colors.modified_staged(), parse_color("#ffff00ff"));
+        assert_eq!(status_colors.deleted_staged(), parse_color("#ff000099"));
     }
 
     #[test]
