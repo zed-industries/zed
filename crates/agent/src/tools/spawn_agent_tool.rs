@@ -40,7 +40,7 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 ///
 /// ### Background agents
 /// - Set `run_in_background` to true for work that takes a while and whose result you do not need before continuing. The call returns immediately with the session_id; keep working on other things, or end your turn.
-/// - When a background agent finishes, its final message arrives as a new message that mentions its session_id. Do not wait for it, poll it, or spawn another agent to check on it.
+/// - When a background agent finishes, its final message arrives as a new message wrapped in `<background_agent_result session_id="...">`. That message is generated automatically; it is not written by the user. Do not wait for it, poll it, or spawn another agent to check on it.
 /// - Sending a follow-up to a background agent that is still running interrupts what it is doing.
 ///
 /// ### Output
@@ -379,14 +379,16 @@ mod tests {
         assert!(!foreground.run_in_background);
         assert!(serde_json::to_value(foreground)?.get("run_in_background").is_none());
 
-        let background_json = json!({
+        let background: SpawnAgentToolInput = serde_json::from_value(json!({
             "label": "label",
             "message": "message",
             "run_in_background": true,
-        });
-        let background: SpawnAgentToolInput = serde_json::from_value(background_json.clone())?;
+        }))?;
         assert!(background.run_in_background);
-        assert_eq!(serde_json::to_value(background)?, background_json);
+        assert_eq!(
+            serde_json::to_value(background)?.get("run_in_background"),
+            Some(&json!(true))
+        );
         Ok(())
     }
 

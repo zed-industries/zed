@@ -3976,16 +3976,19 @@ async fn deliver_background_subagent_result(
     result: Result<String>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let message = match result {
-        Ok(output) => format!(
-            "The background agent with session_id {subagent_session_id} finished. \
-             Its final message:\n\n{output}"
-        ),
-        Err(error) => format!(
-            "The background agent with session_id {subagent_session_id} stopped with an \
-             error:\n\n{error:#}"
-        ),
+    // The result reaches the model as a user message, the only role a new turn
+    // can start from, so it has to say that the user didn't write it.
+    let (status, body) = match result {
+        Ok(output) => ("completed", output),
+        Err(error) => ("error", format!("{error:#}")),
     };
+    let message = format!(
+        "<background_agent_result session_id=\"{subagent_session_id}\" status=\"{status}\">\n\
+         {body}\n\
+         </background_agent_result>\n\n\
+         This message was generated automatically when a background agent you started \
+         with `spawn_agent` stopped. It was not written by the user."
+    );
 
     parent_thread.update(cx, |thread, _| thread.begin_background_result_delivery())?;
     let idle = wait_until_not_generating(&parent_acp_thread, cx).await;
