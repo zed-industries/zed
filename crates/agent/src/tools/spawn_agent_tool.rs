@@ -38,6 +38,11 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - Do not silently choose a different model when an explicit model is unavailable unless the user allowed fallback.
 /// - A resumed session keeps its existing model, so `model` cannot be combined with `session_id`.
 ///
+/// ### Background agents
+/// - Set `run_in_background` to true for work that takes a while and whose result you do not need before continuing. The call returns immediately with the session_id; keep working on other things, or end your turn.
+/// - When a background agent finishes, its final message arrives as a new message that mentions its session_id. Do not wait for it, poll it, or spawn another agent to check on it.
+/// - Sending a follow-up to a background agent that is still running interrupts what it is doing.
+///
 /// ### Output
 /// - You will receive only the agent's final message as output.
 /// - Successful calls return a session_id that you can use for follow-up messages.
@@ -57,6 +62,15 @@ pub struct SpawnAgentToolInput {
     /// Omit to preserve default behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Set to true to start the agent without waiting for it. The call returns
+    /// right away, and the agent's final message is delivered to you later as
+    /// a new message. Defaults to false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub run_in_background: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn deserialize_session_id<'de, D>(deserializer: D) -> Result<Option<acp_v2::SessionId>, D::Error>
@@ -179,6 +193,7 @@ impl AgentTool for SpawnAgentTool {
                 message,
                 session_id,
                 model,
+                run_in_background,
             } = input;
             let (subagent, mut session_info) = cx.update(|cx| {
                 let subagent = match (session_id, model) {
@@ -211,6 +226,28 @@ impl AgentTool for SpawnAgentTool {
 
                 Ok((subagent, session_info))
             })?;
+
+            if run_in_background {
+                let session_id = session_info.session_id.clone();
+                cx.update(|cx| {
+                    self.environment
+                        .run_subagent_in_background(subagent, message, cx)
+                })
+                .map_err(|error| SpawnAgentToolOutput::Error {
+                    session_id: Some(session_id.clone()),
+                    error: error.to_string(),
+                    session_info: Some(session_info.clone()),
+                })?;
+                let output = "The agent is running in the background. Its final message will \
+                              be delivered to you as a new message when it finishes."
+                    .to_string();
+                event_stream.update_fields(|update| update.content(vec![output.clone().into()]));
+                return Ok(SpawnAgentToolOutput::Success {
+                    session_id,
+                    output,
+                    session_info,
+                });
+            }
 
             let send_result = subagent.send(message, cx).await;
 
@@ -330,6 +367,26 @@ mod tests {
         });
         let output: SpawnAgentToolOutput = serde_json::from_value(output_json.clone())?;
         assert_eq!(serde_json::to_value(output)?, output_json);
+        Ok(())
+    }
+
+    #[test]
+    fn run_in_background_defaults_to_false_and_is_omitted() -> Result<(), serde_json::Error> {
+        let foreground: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+        }))?;
+        assert!(!foreground.run_in_background);
+        assert!(serde_json::to_value(foreground)?.get("run_in_background").is_none());
+
+        let background_json = json!({
+            "label": "label",
+            "message": "message",
+            "run_in_background": true,
+        });
+        let background: SpawnAgentToolInput = serde_json::from_value(background_json.clone())?;
+        assert!(background.run_in_background);
+        assert_eq!(serde_json::to_value(background)?, background_json);
         Ok(())
     }
 

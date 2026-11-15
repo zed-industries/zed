@@ -3926,6 +3926,31 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         host.create_sibling_thread(request, cx)
     }
 
+    fn run_subagent_in_background(
+        &self,
+        subagent: Rc<dyn SubagentHandle>,
+        message: String,
+        cx: &mut App,
+    ) -> Result<()> {
+        let parent_thread = self.thread.clone();
+        let parent_acp_thread = self.acp_thread.clone();
+        cx.spawn(async move |cx| {
+            let subagent_session_id = subagent.id();
+            let result = subagent.send_in_background(message, cx).await;
+            deliver_background_subagent_result(
+                parent_thread,
+                parent_acp_thread,
+                subagent_session_id,
+                result,
+                cx,
+            )
+            .await
+            .log_err();
+        })
+        .detach();
+        Ok(())
+    }
+
     fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents> {
         let host = self
             .agent
@@ -3937,6 +3962,79 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 agents: vec![available_native_agent(cx)],
             })
         }
+    }
+}
+
+/// Hands the outcome of a background subagent to its parent thread as a new
+/// message. A parent that is mid-turn is steered: its turn ends at the next
+/// message boundary and the result follows, the way a steering message from
+/// the user does. An idle parent starts a new turn right away.
+async fn deliver_background_subagent_result(
+    parent_thread: WeakEntity<Thread>,
+    parent_acp_thread: WeakEntity<AcpThread>,
+    subagent_session_id: acp_v2::SessionId,
+    result: Result<String>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let message = match result {
+        Ok(output) => format!(
+            "The background agent with session_id {subagent_session_id} finished. \
+             Its final message:\n\n{output}"
+        ),
+        Err(error) => format!(
+            "The background agent with session_id {subagent_session_id} stopped with an \
+             error:\n\n{error:#}"
+        ),
+    };
+
+    parent_thread.update(cx, |thread, _| thread.begin_background_result_delivery())?;
+    let idle = wait_until_not_generating(&parent_acp_thread, cx).await;
+    parent_thread.update(cx, |thread, _| thread.finish_background_result_delivery())?;
+    idle?;
+
+    let acp_thread = parent_acp_thread
+        .upgrade()
+        .context("Parent thread no longer exists")?;
+    cx.update(|cx| {
+        let connection = acp_thread
+            .read(cx)
+            .connection()
+            .clone()
+            .into_any()
+            .downcast::<NativeAgentConnection>()
+            .map_err(|_| anyhow!("Parent connection is not native"))?;
+        connection
+            .send_and_wait_for_completion(acp_thread.clone(), vec![message.into()], cx)
+            .detach();
+        anyhow::Ok(())
+    })
+}
+
+async fn wait_until_not_generating(
+    thread: &WeakEntity<AcpThread>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let (changed_tx, mut changed_rx) = mpsc::unbounded();
+    let _subscription = cx.update(|cx| {
+        let thread = thread.upgrade().context("Parent thread no longer exists")?;
+        anyhow::Ok(cx.subscribe(
+            &thread,
+            move |_, _: &acp_thread::AcpThreadEvent, _| {
+                changed_tx.unbounded_send(()).ok();
+            },
+        ))
+    })?;
+    loop {
+        let generating = thread.read_with(cx, |thread, _| {
+            thread.status() == acp_thread::ThreadStatus::Generating
+        })?;
+        if !generating {
+            return Ok(());
+        }
+        changed_rx
+            .next()
+            .await
+            .context("Parent thread no longer exists")?;
     }
 }
 
@@ -3973,6 +4071,16 @@ impl SubagentHandle for NativeSubagentHandle {
     }
 
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+        self.run(message, false, cx)
+    }
+
+    fn send_in_background(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+        self.run(message, true, cx)
+    }
+}
+
+impl NativeSubagentHandle {
+    fn run(&self, message: String, in_background: bool, cx: &AsyncApp) -> Task<Result<String>> {
         let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();
         let subagent_session_id = self.session_id.clone();
@@ -3981,8 +4089,12 @@ impl SubagentHandle for NativeSubagentHandle {
         cx.spawn(async move |cx| {
             let (task, token_limit_rx, _subscription) = cx.update(|cx| {
                 parent_thread
-                    .update(cx, |parent_thread, _cx| {
-                        parent_thread.register_running_subagent(thread.downgrade())
+                    .update(cx, |parent_thread, cx| {
+                        if in_background {
+                            parent_thread.register_background_subagent(thread.downgrade(), cx)
+                        } else {
+                            parent_thread.register_running_subagent(thread.downgrade())
+                        }
                     })
                     .ok();
 
@@ -4075,7 +4187,11 @@ impl SubagentHandle for NativeSubagentHandle {
 
             parent_thread
                 .update(cx, |parent_thread, cx| {
-                    parent_thread.unregister_running_subagent(&subagent_session_id, cx)
+                    if in_background {
+                        parent_thread.unregister_background_subagent(&subagent_session_id, cx)
+                    } else {
+                        parent_thread.unregister_running_subagent(&subagent_session_id, cx)
+                    }
                 })
                 .ok();
 

@@ -787,6 +787,11 @@ pub trait SubagentHandle {
     fn num_entries(&self, cx: &App) -> usize;
     /// Runs a turn for a given message and returns both the response and the index of that output message.
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
+    /// Like `send`, but the run isn't tied to the parent's current turn:
+    /// cancelling or replacing that turn leaves the subagent running.
+    fn send_in_background(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+        self.send(message, cx)
+    }
 }
 
 pub trait ThreadEnvironment {
@@ -814,6 +819,20 @@ pub trait ThreadEnvironment {
     ) -> Result<Rc<dyn SubagentHandle>> {
         Err(anyhow::anyhow!(
             "Resuming subagent sessions is not supported"
+        ))
+    }
+
+    /// Starts `message` on `subagent` without waiting for it. Its final
+    /// message is delivered to this thread as a new message once it finishes.
+    fn run_subagent_in_background(
+        &self,
+        subagent: Rc<dyn SubagentHandle>,
+        message: String,
+        cx: &mut App,
+    ) -> Result<()> {
+        let _ = (subagent, message, cx);
+        Err(anyhow::anyhow!(
+            "Background agents are not supported in this environment"
         ))
     }
 
@@ -1357,6 +1376,14 @@ pub struct Thread {
     ui_scroll_position: Option<gpui::ListOffset>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
+    /// Subagents started with `run_in_background`. Unlike `running_subagents`
+    /// they outlive the turn that started them: cancelling or replacing that
+    /// turn leaves them running.
+    background_subagents: Vec<WeakEntity<Thread>>,
+    /// Background subagent results waiting for this thread to go idle. While
+    /// there are any, the running turn ends at its next message boundary, the
+    /// way it does for a steering message.
+    pending_background_results: usize,
     inherits_parent_model_settings: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     /// Sandbox permissions the user approved "for the rest of the thread".
@@ -1507,6 +1534,8 @@ impl Thread {
             draft_prompt: None,
             ui_scroll_position: None,
             running_subagents: Vec::new(),
+            background_subagents: Vec::new(),
+            pending_background_results: 0,
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
@@ -1885,6 +1914,8 @@ impl Thread {
                 offset_in_item: gpui::px(sp.offset_in_item),
             }),
             running_subagents: Vec::new(),
+            background_subagents: Vec::new(),
+            pending_background_results: 0,
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
@@ -2419,7 +2450,18 @@ impl Thread {
     }
 
     pub fn end_turn_at_next_boundary(&self) -> bool {
-        self.end_turn_at_next_boundary
+        self.end_turn_at_next_boundary || self.pending_background_results > 0
+    }
+
+    /// Asks the running turn, if any, to end at its next message boundary so
+    /// that a background subagent's result can be delivered. Holds until the
+    /// matching `finish_background_result_delivery`.
+    pub(crate) fn begin_background_result_delivery(&mut self) {
+        self.pending_background_results += 1;
+    }
+
+    pub(crate) fn finish_background_result_delivery(&mut self) {
+        self.pending_background_results = self.pending_background_results.saturating_sub(1);
     }
 
     fn accumulate_token_usage(&mut self, update: language_model::TokenUsage) {
@@ -4537,6 +4579,43 @@ impl Thread {
             s.upgrade()
                 .map_or(false, |s| s.read(cx).id() != subagent_session_id)
         });
+    }
+
+    pub(crate) fn register_background_subagent(
+        &mut self,
+        subagent: WeakEntity<Thread>,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_subagents.push(subagent);
+        cx.notify();
+    }
+
+    pub(crate) fn unregister_background_subagent(
+        &mut self,
+        subagent_session_id: &acp_v2::SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_subagents.retain(|s| {
+            s.upgrade()
+                .map_or(false, |s| s.read(cx).id() != subagent_session_id)
+        });
+        cx.notify();
+    }
+
+    /// Titles of the subagents currently working for this thread, whether
+    /// within its turn or in the background.
+    pub fn active_subagent_titles(&self, cx: &App) -> Vec<SharedString> {
+        self.running_subagents
+            .iter()
+            .chain(&self.background_subagents)
+            .filter_map(|subagent| subagent.upgrade())
+            .map(|subagent| {
+                subagent
+                    .read(cx)
+                    .title()
+                    .unwrap_or_else(|| "Agent".into())
+            })
+            .collect()
     }
 
     #[cfg(any(test, feature = "test-support"))]

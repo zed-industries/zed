@@ -5704,6 +5704,7 @@ impl ThreadView {
                                     .min_w_0()
                                     .flex_wrap()
                                     .gap_1()
+                                    .children(self.render_running_agents(cx))
                                     .children(self.render_activity_status_label(cx))
                                     .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
@@ -5719,6 +5720,32 @@ impl ThreadView {
                     ),
             )
             .into_any()
+    }
+
+    fn render_running_agents(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let titles = self
+            .as_native_thread(cx)?
+            .read(cx)
+            .active_subagent_titles(cx);
+        if titles.is_empty() {
+            return None;
+        }
+        let label: SharedString = if titles.len() == 1 {
+            "1 agent running".into()
+        } else {
+            format!("{} agents running", titles.len()).into()
+        };
+        let tooltip = titles
+            .iter()
+            .map(|title| title.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(
+            div()
+                .id("running-agents")
+                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                .tooltip(Tooltip::text(tooltip)),
+        )
     }
 
     fn render_activity_status_label(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
