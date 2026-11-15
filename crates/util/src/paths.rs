@@ -1055,6 +1055,10 @@ where
 /// 4. For non-numeric characters, using case-insensitive comparison
 /// 5. If everything is equal case-insensitively, using case-sensitive comparison as final tie-breaker
 pub fn natural_sort(a: &str, b: &str) -> Ordering {
+    if a == b {
+        return Ordering::Equal;
+    }
+
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
 
