@@ -6269,6 +6269,161 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_background_subagent_result_starts_a_turn_on_the_idle_parent(
+    cx: &mut TestAppContext,
+) {
+    let fake = init_test(cx);
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent =
+        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = fake.model("thread");
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // The parent and the subagent share a model, so tell their requests apart
+    // by the parent's prompt, which the subagent never sees.
+    let is_parent_request = |request: &language_model::LanguageModelRequest| {
+        request
+            .messages
+            .iter()
+            .any(|message| message.string_contents().contains("PARENT_MARKER"))
+    };
+
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(
+            acp_thread.clone(),
+            vec!["PARENT_MARKER".into()],
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    let request = fake.pending_completions_for(&model).pop().unwrap();
+    fake.send_text(&model, &request, "spawning subagent");
+    let subagent_tool_input = SpawnAgentToolInput {
+        label: "label".to_string(),
+        message: "subagent task prompt".to_string(),
+        session_id: None,
+        model: None,
+        run_in_background: true,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(&subagent_tool_input).unwrap(),
+        ),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_event(
+        &model,
+        &request,
+        LanguageModelCompletionEvent::ToolUse(subagent_tool_use),
+    );
+    fake.end_stream(&model, &request);
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "a background subagent is not tied to the parent's turn"
+        );
+        assert_eq!(thread.active_subagents(cx).len(), 1);
+    });
+
+    // The tool call returned without waiting, so the parent's turn goes on
+    // while the subagent works.
+    let pending = fake.pending_completions_for(&model);
+    let parent_request = pending
+        .iter()
+        .find(|request| is_parent_request(request))
+        .expect("the parent's turn should continue after the tool call")
+        .clone();
+    let subagent_request = pending
+        .iter()
+        .find(|request| !is_parent_request(request))
+        .expect("the subagent should be running")
+        .clone();
+
+    fake.send_text(&model, &parent_request, "Carrying on");
+    fake.end_stream(&model, &parent_request);
+    send.await.unwrap();
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, cx| {
+        assert_eq!(
+            thread.active_subagents(cx).len(),
+            1,
+            "the subagent outlives the turn that started it"
+        );
+    });
+
+    fake.send_text(&model, &subagent_request, "subagent task response");
+    fake.end_stream(&model, &subagent_request);
+    cx.run_until_parked();
+
+    let delivery = fake
+        .pending_completions_for(&model)
+        .into_iter()
+        .find(|request| is_parent_request(request))
+        .expect("the subagent's result should start a new turn on the parent");
+    let delivered = delivery
+        .messages
+        .iter()
+        .map(|message| message.string_contents())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        delivered.contains("<background_agent_result"),
+        "{delivered}"
+    );
+    assert!(delivered.contains("subagent task response"), "{delivered}");
+    assert!(
+        delivered.contains("not written by the user"),
+        "{delivered}"
+    );
+
+    fake.send_text(&model, &delivery, "Thanks");
+    fake.end_stream(&model, &delivery);
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, cx| {
+        assert!(thread.active_subagents(cx).is_empty());
+    });
+}
+
+#[gpui::test]
 async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppContext) {
     let fake = init_test(cx);
     cx.update(|cx| {
