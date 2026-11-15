@@ -161,7 +161,7 @@ impl BatchedTextRun {
         window
             .text_system()
             .shape_line(
-                self.text.clone().into(),
+                self.text.as_str().into(),
                 self.font_size.to_pixels(window.rem_size()),
                 std::slice::from_ref(&self.style),
                 Some(dimensions.cell_width),
