@@ -4,6 +4,7 @@ use crate::{
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
     ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
+    StopAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     WriteFileTool, decide_permission_from_settings,
 };
@@ -771,6 +772,12 @@ pub enum AgentMessageContent {
     ToolUse(LanguageModelToolUse),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SubagentStopRequest {
+    Immediately,
+    AtNextBoundary,
+}
+
 pub trait TerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp_v2::TerminalId>;
     fn current_output(&self, cx: &AsyncApp) -> Result<ProcessOutput>;
@@ -834,6 +841,23 @@ pub trait ThreadEnvironment {
         Err(anyhow::anyhow!(
             "Background agents are not supported in this environment"
         ))
+    }
+
+    /// Stops a subagent that this thread started in the background. With
+    /// `immediately`, its turn is cancelled and the task resolves, once it has
+    /// stopped, to what it had produced; nothing more is delivered for that
+    /// run. Otherwise it stops at its next message boundary, the way a steered
+    /// thread does, and reports back like any other background run.
+    fn stop_background_subagent(
+        &self,
+        session_id: acp_v2::SessionId,
+        immediately: bool,
+        cx: &mut App,
+    ) -> Task<Result<String>> {
+        let _ = (session_id, immediately, cx);
+        Task::ready(Err(anyhow::anyhow!(
+            "Background agents are not supported in this environment"
+        )))
     }
 
     /// Delivers `message` to this thread as a new message, on behalf of work
@@ -1395,6 +1419,9 @@ pub struct Thread {
     /// there are any, the running turn ends at its next message boundary, the
     /// way it does for a steering message.
     pending_background_results: usize,
+    /// How the agent that started this subagent asked its current run to stop,
+    /// if it did.
+    stop_request: Option<SubagentStopRequest>,
     inherits_parent_model_settings: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     /// Sandbox permissions the user approved "for the rest of the thread".
@@ -1547,6 +1574,7 @@ impl Thread {
             running_subagents: Vec::new(),
             background_subagents: Vec::new(),
             pending_background_results: 0,
+            stop_request: None,
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
@@ -1927,6 +1955,7 @@ impl Thread {
             running_subagents: Vec::new(),
             background_subagents: Vec::new(),
             pending_background_results: 0,
+            stop_request: None,
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
@@ -2337,6 +2366,7 @@ impl Thread {
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment.clone()));
+            self.add_tool(StopAgentTool::new(environment.clone()));
         }
 
         // Sibling-thread tools are exposed at every depth: a subagent should
@@ -2461,7 +2491,30 @@ impl Thread {
     }
 
     pub fn end_turn_at_next_boundary(&self) -> bool {
-        self.end_turn_at_next_boundary || self.pending_background_results > 0
+        self.end_turn_at_next_boundary
+            || self.pending_background_results > 0
+            || self.stop_request == Some(SubagentStopRequest::AtNextBoundary)
+    }
+
+    /// Ends this subagent's run at its next message boundary, on behalf of the
+    /// agent that started it.
+    pub(crate) fn stop_at_next_boundary(&mut self) {
+        self.stop_request = Some(SubagentStopRequest::AtNextBoundary);
+    }
+
+    /// Cancels this subagent's run on behalf of the agent that started it.
+    pub(crate) fn stop_for_parent(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.stop_request = Some(SubagentStopRequest::Immediately);
+        self.request_cancel(cx)
+    }
+
+    pub(crate) fn was_stopped_by_parent(&self) -> bool {
+        self.stop_request == Some(SubagentStopRequest::Immediately)
+    }
+
+    /// A stop request applies to the run that was under way when it was made.
+    pub(crate) fn clear_stop_request(&mut self) {
+        self.stop_request = None;
     }
 
     /// Asks the running turn, if any, to end at its next message boundary so
@@ -4611,6 +4664,19 @@ impl Thread {
                 .map_or(false, |s| s.read(cx).id() != subagent_session_id)
         });
         cx.notify();
+    }
+
+    /// The subagent with `session_id`, if this thread started it in the
+    /// background and it is still working.
+    pub(crate) fn background_subagent(
+        &self,
+        session_id: &acp_v2::SessionId,
+        cx: &App,
+    ) -> Option<Entity<Thread>> {
+        self.background_subagents
+            .iter()
+            .filter_map(|subagent| subagent.upgrade())
+            .find(|subagent| subagent.read(cx).id() == session_id)
     }
 
     /// Whether subagents started in the background are still working for this

@@ -43,6 +43,7 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - When a background agent finishes, its final message arrives as a new message wrapped in `<background_agent_result session_id="...">`. That message is generated automatically; it is not written by the user. Do not wait for it, poll it, or spawn another agent to check on it.
 /// - A background agent that needs something from you ends its turn with a question, which arrives the same way. Answer it by calling `spawn_agent` with its session_id: the agent keeps its context and carries on from your answer.
 /// - Sending a follow-up to a background agent that is still running interrupts what it is doing.
+/// - To stop a background agent without giving it new work, use `stop_agent`.
 ///
 /// ### Output
 /// - You will receive only the agent's final message as output.

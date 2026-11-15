@@ -1338,6 +1338,7 @@
           "search_web": true,
           "skill": true,
           "spawn_agent": true,
+          "stop_agent": true,
           "terminal": true,
           "write_file": true,
         },
@@ -1362,6 +1363,7 @@
           "search_web": true,
           "skill": true,
           "spawn_agent": true,
+          "stop_agent": true,
         },
       },
       "minimal": {

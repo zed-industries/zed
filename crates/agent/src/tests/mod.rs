@@ -6302,6 +6302,174 @@ fn test_background_agent_result_names_its_sender() {
 }
 
 #[gpui::test]
+async fn test_stop_agent_stops_a_background_subagent_without_a_result_message(
+    cx: &mut TestAppContext,
+) {
+    let fake = init_test(cx);
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent =
+        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = fake.model("thread");
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // The parent and the subagent share a model, so tell their requests apart
+    // by the parent's prompt, which the subagent never sees.
+    let is_parent_request = |request: &language_model::LanguageModelRequest| {
+        request
+            .messages
+            .iter()
+            .any(|message| message.string_contents().contains("PARENT_MARKER"))
+    };
+
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(
+            acp_thread.clone(),
+            vec!["PARENT_MARKER".into()],
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    let request = fake.pending_completions_for(&model).pop().unwrap();
+    fake.send_text(&model, &request, "spawning subagent");
+    let subagent_tool_input = SpawnAgentToolInput {
+        label: "label".to_string(),
+        message: "subagent task prompt".to_string(),
+        session_id: None,
+        model: None,
+        run_in_background: true,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(&subagent_tool_input).unwrap(),
+        ),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_event(
+        &model,
+        &request,
+        LanguageModelCompletionEvent::ToolUse(subagent_tool_use),
+    );
+    fake.end_stream(&model, &request);
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        let active = thread.active_subagents(cx);
+        assert_eq!(active.len(), 1);
+        active[0].0.clone()
+    });
+    let pending = fake.pending_completions_for(&model);
+    assert!(
+        pending.iter().any(|request| !is_parent_request(request)),
+        "the subagent should be running"
+    );
+    let parent_request = pending
+        .iter()
+        .find(|request| is_parent_request(request))
+        .expect("the parent's turn should continue after the tool call")
+        .clone();
+
+    let stop_tool_input = StopAgentToolInput {
+        session_id: subagent_session_id.to_string(),
+        after_current_step: false,
+    };
+    let stop_tool_use = LanguageModelToolUse {
+        id: "stop_1".into(),
+        name: StopAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&stop_tool_input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(&stop_tool_input).unwrap(),
+        ),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_event(
+        &model,
+        &parent_request,
+        LanguageModelCompletionEvent::ToolUse(stop_tool_use),
+    );
+    fake.end_stream(&model, &parent_request);
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.active_subagents(cx).is_empty(),
+            "the subagent should have been stopped"
+        );
+    });
+
+    // The outcome of the stop is the tool call's result, within the same turn.
+    let after_stop = fake
+        .pending_completions_for(&model)
+        .into_iter()
+        .filter(|request| is_parent_request(request))
+        .last()
+        .expect("the parent's turn should continue after stopping the agent");
+    let sent = after_stop
+        .messages
+        .iter()
+        .map(|message| message.string_contents())
+        .collect::<Vec<_>>()
+        .join("
+");
+    assert!(sent.contains("The agent was stopped"), "{sent}");
+
+    fake.send_text(&model, &after_stop, "Done");
+    fake.end_stream(&model, &after_stop);
+    send.await.unwrap();
+    cx.run_until_parked();
+
+    let reported_back = fake
+        .pending_completions_for(&model)
+        .iter()
+        .flat_map(|request| request.messages.iter())
+        .any(|message| {
+            message
+                .string_contents()
+                .contains("<background_agent_result")
+        });
+    assert!(
+        !reported_back,
+        "an agent stopped at once should not report back with a new message"
+    );
+}
+
+#[gpui::test]
 async fn test_background_subagent_result_starts_a_turn_on_the_idle_parent(
     cx: &mut TestAppContext,
 ) {

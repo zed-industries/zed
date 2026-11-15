@@ -3937,6 +3937,13 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         cx.spawn(async move |cx| {
             let subagent_session_id = subagent.id();
             let result = subagent.send_in_background(message, cx).await;
+            // The call that stopped the agent already returned its outcome.
+            if result
+                .as_ref()
+                .is_err_and(|error| error.is::<StoppedByParent>())
+            {
+                return;
+            }
             let message = background_agent_result_message(&subagent_session_id, result);
             deliver_message_when_idle(parent_thread, parent_acp_thread, message, cx)
                 .await
@@ -3944,6 +3951,49 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         })
         .detach();
         Ok(())
+    }
+
+    fn stop_background_subagent(
+        &self,
+        session_id: acp_v2::SessionId,
+        immediately: bool,
+        cx: &mut App,
+    ) -> Task<Result<String>> {
+        let subagent = match self
+            .thread
+            .read_with(cx, |thread, cx| thread.background_subagent(&session_id, cx))
+        {
+            Ok(Some(subagent)) => subagent,
+            Ok(None) => {
+                return Task::ready(Err(anyhow!(
+                    "No agent with session_id {session_id} is running in the background. \
+                     It may have finished already."
+                )));
+            }
+            Err(error) => return Task::ready(Err(error)),
+        };
+        if !immediately {
+            subagent.update(cx, |thread, _| thread.stop_at_next_boundary());
+            return Task::ready(Ok(
+                "The agent will stop once it finishes the step it is on. Its last message \
+                 will be delivered to you as a new message."
+                    .to_string(),
+            ));
+        }
+        let stopped = subagent.update(cx, |thread, cx| thread.stop_for_parent(cx));
+        cx.spawn(async move |cx| {
+            stopped.await;
+            let partial_output =
+                subagent.read_with(cx, |thread, _| thread.subagent_partial_output());
+            anyhow::Ok(if partial_output.is_empty() {
+                "The agent was stopped before it produced any output.".to_string()
+            } else {
+                format!(
+                    "The agent was stopped. What it had produced (last 3 messages, up to \
+                     4096 characters each):\n\n{partial_output}"
+                )
+            })
+        })
     }
 
     fn deliver_background_message(&self, message: String, cx: &mut App) -> Result<()> {
@@ -3971,6 +4021,19 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         }
     }
 }
+
+/// The error a background subagent's run ends with when the agent that started
+/// it stopped it.
+#[derive(Debug)]
+struct StoppedByParent;
+
+impl std::fmt::Display for StoppedByParent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Stopped by the agent that started it")
+    }
+}
+
+impl std::error::Error for StoppedByParent {}
 
 const BACKGROUND_AGENT_RESULT_PREFIX: &str = "<background_agent_result session_id=\"";
 
@@ -4151,6 +4214,7 @@ impl NativeSubagentHandle {
                         }
                     })
                     .ok();
+                thread.update(cx, |thread, _| thread.clear_stop_request());
 
                 let ratio_before_prompt = thread
                     .read(cx)
@@ -4206,7 +4270,13 @@ impl NativeSubagentHandle {
             let response_stop_reason = response.as_ref().ok().cloned();
             let result = match response {
                 Ok(reason) => match reason {
-                    acp_v2::StopReason::Cancelled => Err(anyhow!("User canceled")),
+                    acp_v2::StopReason::Cancelled => {
+                        if thread.read_with(cx, |thread, _| thread.was_stopped_by_parent()) {
+                            Err(anyhow::Error::new(StoppedByParent))
+                        } else {
+                            Err(anyhow!("User canceled"))
+                        }
+                    }
                     acp_v2::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
                     acp_v2::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
                     acp_v2::StopReason::Refusal => Err(anyhow!("The agent refused to process that prompt. Try again.")),
