@@ -4602,18 +4602,19 @@ impl Thread {
         cx.notify();
     }
 
-    /// Titles of the subagents currently working for this thread, whether
-    /// within its turn or in the background.
-    pub fn active_subagent_titles(&self, cx: &App) -> Vec<SharedString> {
+    /// The subagents currently working for this thread, whether within its
+    /// turn or in the background, as session id and title.
+    pub fn active_subagents(&self, cx: &App) -> Vec<(acp_v2::SessionId, SharedString)> {
         self.running_subagents
             .iter()
             .chain(&self.background_subagents)
             .filter_map(|subagent| subagent.upgrade())
             .map(|subagent| {
-                subagent
-                    .read(cx)
-                    .title()
-                    .unwrap_or_else(|| "Agent".into())
+                let subagent = subagent.read(cx);
+                (
+                    subagent.id().clone(),
+                    subagent.title().unwrap_or_else(|| "Agent".into()),
+                )
             })
             .collect()
     }

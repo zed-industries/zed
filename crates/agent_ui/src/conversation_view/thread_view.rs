@@ -5722,29 +5722,48 @@ impl ThreadView {
             .into_any()
     }
 
+    /// Lists the agents working for this thread; picking one opens its thread,
+    /// like the "expand" button of a subagent card does.
     fn render_running_agents(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
-        let titles = self
-            .as_native_thread(cx)?
-            .read(cx)
-            .active_subagent_titles(cx);
-        if titles.is_empty() {
+        let agents = self.as_native_thread(cx)?.read(cx).active_subagents(cx);
+        if agents.is_empty() {
             return None;
         }
-        let label: SharedString = if titles.len() == 1 {
+        let label: SharedString = if agents.len() == 1 {
             "1 agent running".into()
         } else {
-            format!("{} agents running", titles.len()).into()
+            format!("{} agents running", agents.len()).into()
         };
-        let tooltip = titles
-            .iter()
-            .map(|title| title.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let server_view = self.server_view.clone();
         Some(
-            div()
-                .id("running-agents")
-                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
-                .tooltip(Tooltip::text(tooltip)),
+            PopoverMenu::new("running-agents")
+                .trigger_with_tooltip(
+                    ButtonLike::new("running-agents-trigger")
+                        .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
+                    Tooltip::text("Agents working for this thread"),
+                )
+                .menu(move |window, cx| {
+                    let agents = agents.clone();
+                    let server_view = server_view.clone();
+                    Some(ContextMenu::build(
+                        window,
+                        cx,
+                        move |mut menu, _window, _cx| {
+                            menu = menu.header("Running Agents");
+                            for (session_id, title) in agents {
+                                let server_view = server_view.clone();
+                                menu = menu.entry(title, None, move |window, cx| {
+                                    server_view
+                                        .update(cx, |view, cx| {
+                                            view.navigate_to_thread(session_id.clone(), window, cx)
+                                        })
+                                        .ok();
+                                });
+                            }
+                            menu
+                        },
+                    ))
+                }),
         )
     }
 
