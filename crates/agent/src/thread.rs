@@ -1420,7 +1420,7 @@ impl Thread {
         model: Option<LanguageModel>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_internal(
+        let mut thread = Self::new_internal(
             project.clone(),
             project_context,
             context_server_registry,
@@ -1428,7 +1428,12 @@ impl Thread {
             model,
             cx.new(|_cx| ActionLog::new(project)),
             cx,
-        )
+        );
+        // Applied here rather than in `new_internal` so subagents keep their parent's model.
+        if let Some(selection) = Self::profile_model_selection(&thread.profile_id, cx) {
+            thread.apply_model_selection(&selection, cx);
+        }
+        thread
     }
 
     fn new_internal(
@@ -1535,7 +1540,7 @@ impl Thread {
     ) {
         let Some(model) = Self::resolve_model_from_selection(selection, cx) else {
             log::warn!(
-                "failed to resolve configured subagent model: {}/{}",
+                "failed to resolve configured model: {}/{}",
                 selection.provider.0,
                 selection.model
             );
@@ -2368,9 +2373,17 @@ impl Thread {
 
         self.profile_id = profile_id.clone();
 
-        // Swap to the profile's preferred model when available.
-        if let Some(model) = Self::resolve_profile_model(&self.profile_id, cx) {
+        if let Some(selection) = Self::profile_model_selection(&self.profile_id, cx)
+            && let Some(model) = Self::resolve_model_from_selection(&selection, cx)
+        {
+            let thinking_enabled = selection.enable_thinking && model.supports_thinking();
+            let speed = selection.speed.filter(|_| model.supports_fast_mode());
             self.set_model(model, cx);
+            self.set_thinking_enabled(thinking_enabled, cx);
+            self.set_thinking_effort(selection.effort, cx);
+            if let Some(speed) = speed {
+                self.set_speed(speed, cx);
+            }
         }
 
         for subagent in &self.running_subagents {
@@ -2588,12 +2601,19 @@ impl Thread {
         profile_id: &AgentProfileId,
         cx: &mut Context<Self>,
     ) -> Option<LanguageModel> {
-        let selection = AgentSettings::get_global(cx)
+        let selection = Self::profile_model_selection(profile_id, cx)?;
+        Self::resolve_model_from_selection(&selection, cx)
+    }
+
+    fn profile_model_selection(
+        profile_id: &AgentProfileId,
+        cx: &App,
+    ) -> Option<LanguageModelSelection> {
+        AgentSettings::get_global(cx)
             .profiles
             .get(profile_id)?
             .default_model
-            .clone()?;
-        Self::resolve_model_from_selection(&selection, cx)
+            .clone()
     }
 
     fn user_configured_model_selection(cx: &App) -> Option<SelectedModel> {
