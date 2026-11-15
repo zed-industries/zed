@@ -216,6 +216,7 @@ impl AgentTool for SpawnAgentTool {
                     session_id: subagent.id(),
                     message_start_index: subagent.num_entries(cx),
                     message_end_index: None,
+                    run_in_background,
                 };
 
                 event_stream.update_fields(|update| {

@@ -4613,6 +4613,14 @@ impl Thread {
         cx.notify();
     }
 
+    /// Whether subagents started in the background are still working for this
+    /// thread, which can be the case while the thread itself is idle.
+    pub fn has_background_subagents(&self) -> bool {
+        self.background_subagents
+            .iter()
+            .any(|subagent| subagent.upgrade().is_some())
+    }
+
     /// The subagents currently working for this thread, whether within its
     /// turn or in the background, as session id and title.
     pub fn active_subagents(&self, cx: &App) -> Vec<(acp_v2::SessionId, SharedString)> {

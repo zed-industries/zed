@@ -6981,6 +6981,7 @@ pub(crate) mod tests {
                 session_id: acp_v2::SessionId::new("child"),
                 message_start_index: 2,
                 message_end_index: Some(5),
+                run_in_background: false,
             })
             .expect("subagent session info should serialize"),
         )]);
@@ -7094,6 +7095,15 @@ pub(crate) mod tests {
                 cx,
             )
         });
+        let working = cx.update(|cx| {
+            create_test_acp_subagent(
+                parent_session_id.clone(),
+                "working",
+                connection.clone(),
+                project.clone(),
+                cx,
+            )
+        });
         let without_association = cx.update(|cx| {
             create_test_acp_thread(
                 Some(parent_session_id),
@@ -7103,7 +7113,7 @@ pub(crate) mod tests {
                 cx,
             )
         });
-        for subagent in [&reporting, &silent, &without_association] {
+        for subagent in [&reporting, &silent, &working, &without_association] {
             subagent
                 .update(cx, |subagent, cx| {
                     subagent.upsert_assistant_message(
@@ -7123,14 +7133,23 @@ pub(crate) mod tests {
                 )
             })
             .expect("reported outcome");
+        working
+            .update(cx, |subagent, cx| {
+                subagent.update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+            })
+            .expect("reported state");
 
-        let spawn = |id: &str, status, end, cx: &mut TestAppContext| {
+        let spawn = |id: &str, status, end, run_in_background, cx: &mut TestAppContext| {
             let session_info = acp_v2::Meta::from_iter([(
                 acp_thread::SUBAGENT_SESSION_INFO_META_KEY.into(),
                 serde_json::to_value(acp_thread::SubagentSessionInfo {
                     session_id: acp_v2::SessionId::new("child"),
                     message_start_index: 0,
                     message_end_index: end,
+                    run_in_background,
                 })
                 .expect("subagent session info should serialize"),
             )]);
@@ -7147,14 +7166,38 @@ pub(crate) mod tests {
                 })
                 .expect("spawn tool call should apply");
         };
-        spawn("finished", acp_v2::ToolCallStatus::Completed, Some(0), cx);
-        spawn("running", acp_v2::ToolCallStatus::InProgress, None, cx);
+        spawn(
+            "finished",
+            acp_v2::ToolCallStatus::Completed,
+            Some(0),
+            false,
+            cx,
+        );
+        spawn(
+            "running",
+            acp_v2::ToolCallStatus::InProgress,
+            None,
+            false,
+            cx,
+        );
+        // A background call completes as soon as the subagent starts.
+        spawn(
+            "background",
+            acp_v2::ToolCallStatus::Completed,
+            None,
+            true,
+            cx,
+        );
 
         for (id, subagent, expected) in [
             ("finished", &reporting, SubagentStatus::Canceled),
             ("finished", &silent, SubagentStatus::Completed),
             ("finished", &without_association, SubagentStatus::Completed),
             ("running", &reporting, SubagentStatus::Running),
+            ("background", &working, SubagentStatus::Running),
+            ("background", &reporting, SubagentStatus::Canceled),
+            ("background", &silent, SubagentStatus::Unknown),
+            ("background", &without_association, SubagentStatus::Completed),
         ] {
             let state = cx.update(|cx| {
                 let parent = parent.read(cx);
@@ -7165,6 +7208,11 @@ pub(crate) mod tests {
             });
             let subagent_id = subagent.read_with(cx, |subagent, _| subagent.session_id().clone());
             assert_eq!(state.status, expected, "{id} with {subagent_id}");
+            assert_eq!(
+                state.can_stop,
+                expected == SubagentStatus::Running,
+                "{id} with {subagent_id}"
+            );
         }
     }
 
@@ -17797,6 +17845,7 @@ pub(crate) mod tests {
                     session_id: child_session_id.clone(),
                     message_start_index: 0,
                     message_end_index: None,
+                    run_in_background: false,
                 })
                 .expect("subagent session info should serialize"),
             )]));
@@ -19474,6 +19523,7 @@ pub(crate) mod tests {
                         session_id: child_session_id.clone(),
                         message_start_index: 0,
                         message_end_index: None,
+                        run_in_background: false,
                     })
                     .expect("subagent session context"),
                 )]));

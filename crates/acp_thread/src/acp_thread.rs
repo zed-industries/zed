@@ -322,6 +322,10 @@ pub struct SubagentSessionInfo {
     /// The index of the output of the message that the subagent has returned
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_end_index: Option<usize>,
+    /// Whether the tool call returned without waiting for the subagent, so its
+    /// status does not describe the subagent's work
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub run_in_background: bool,
 }
 
 /// Helper to extract subagent session id from ACP meta
