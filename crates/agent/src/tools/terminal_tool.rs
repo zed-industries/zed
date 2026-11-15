@@ -2630,6 +2630,72 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_run_in_background_returns_at_once_and_delivers_the_output(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let output = ProcessOutput::new("command output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_never_exits(cx).with_output(output),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "make".to_string(),
+                    cd: "root".to_string(),
+                    run_in_background: true,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        rx.expect_update_fields().await;
+        let result = task
+            .await
+            .expect("the tool call should return while the command is still running");
+        assert!(result.contains("running in the background"), "{result}");
+        cx.run_until_parked();
+        assert!(environment.background_messages().is_empty());
+
+        environment.terminal().signal_exit();
+        cx.run_until_parked();
+        let messages = environment.background_messages();
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(
+            messages[0].starts_with("<background_command_result>"),
+            "{messages:?}"
+        );
+        assert!(messages[0].contains("Command: make"), "{messages:?}");
+        assert!(messages[0].contains("command output"), "{messages:?}");
+        assert!(
+            messages[0].contains("not written by the user"),
+            "{messages:?}"
+        );
+    }
+
+    #[gpui::test]
     async fn test_run_old_anchored_git_pattern_no_longer_auto_allows_env_prefix(
         cx: &mut gpui::TestAppContext,
     ) {

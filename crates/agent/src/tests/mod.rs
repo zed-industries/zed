@@ -195,9 +195,20 @@ pub(crate) struct FakeThreadEnvironment {
     terminal_creations: Arc<AtomicUsize>,
     terminal_output_limits: std::cell::RefCell<Vec<Option<u64>>>,
     subagent_models: std::cell::RefCell<Vec<Option<AgentModelId>>>,
+    background_messages: std::cell::RefCell<Vec<String>>,
 }
 
 impl FakeThreadEnvironment {
+    pub(crate) fn terminal(&self) -> Rc<FakeTerminalHandle> {
+        self.terminal_handle
+            .clone()
+            .expect("Terminal handle not available on FakeThreadEnvironment")
+    }
+
+    pub(crate) fn background_messages(&self) -> Vec<String> {
+        self.background_messages.borrow().clone()
+    }
+
     pub(crate) fn with_terminal(self, terminal_handle: FakeTerminalHandle) -> Self {
         Self {
             terminal_handle: Some(terminal_handle.into()),
@@ -258,6 +269,11 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
             .clone()
             .expect("Subagent handle not available on FakeThreadEnvironment")
             as Rc<dyn SubagentHandle>)
+    }
+
+    fn deliver_background_message(&self, message: String, _cx: &mut App) -> Result<()> {
+        self.background_messages.borrow_mut().push(message);
+        Ok(())
     }
 }
 
