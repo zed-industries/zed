@@ -554,7 +554,7 @@ impl SearchQuery {
                     if let std::result::Result::Ok(mat) = mat {
                         let should_push = if *one_match_per_line {
                             // ensure that only one match per line is returned.
-                            let pos = buffer.offset_to_point(mat.start());
+                            let pos = buffer.offset_to_point(range_offset + mat.start());
                             seen_lines.insert(pos.row)
                         } else {
                             true
