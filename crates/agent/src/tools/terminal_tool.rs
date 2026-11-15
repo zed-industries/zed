@@ -2692,6 +2692,11 @@ mod tests {
             .await
             .expect("the tool call should return while the command is still running");
         assert!(result.contains("running in the background"), "{result}");
+        assert!(
+            result.contains("terminal_id fake_terminal"),
+            "the model needs the id to stop the command: {result}"
+        );
+        assert_eq!(environment.background_commands(), vec!["make".to_string()]);
         cx.run_until_parked();
         assert!(environment.background_messages().is_empty());
 
@@ -2708,6 +2713,59 @@ mod tests {
         assert!(
             messages[0].contains("not written by the user"),
             "{messages:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_in_background_does_not_report_a_command_the_agent_stopped(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default()
+                .with_terminal(crate::tests::FakeTerminalHandle::new_never_exits(cx))
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "make".to_string(),
+                    cd: "root".to_string(),
+                    run_in_background: true,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        rx.expect_update_fields().await;
+        task.await
+            .expect("the tool call should return while the command is still running");
+
+        // `stop_command` kills the command and returns its output itself.
+        environment.set_background_commands_stopped_by_agent(true);
+        environment.terminal().signal_exit();
+        cx.run_until_parked();
+        assert!(
+            environment.background_messages().is_empty(),
+            "a command the agent stopped should not be reported a second time"
         );
     }
 

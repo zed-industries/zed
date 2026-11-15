@@ -196,9 +196,22 @@ pub(crate) struct FakeThreadEnvironment {
     terminal_output_limits: std::cell::RefCell<Vec<Option<u64>>>,
     subagent_models: std::cell::RefCell<Vec<Option<AgentModelId>>>,
     background_messages: std::cell::RefCell<Vec<String>>,
+    background_commands: std::cell::RefCell<Vec<String>>,
+    background_commands_stopped_by_agent: std::cell::Cell<bool>,
 }
 
 impl FakeThreadEnvironment {
+    /// The commands the terminal tool reported as left running.
+    pub(crate) fn background_commands(&self) -> Vec<String> {
+        self.background_commands.borrow().clone()
+    }
+
+    /// Makes the environment answer that the agent stopped the commands that
+    /// finish from now on.
+    pub(crate) fn set_background_commands_stopped_by_agent(&self, stopped: bool) {
+        self.background_commands_stopped_by_agent.set(stopped);
+    }
+
     pub(crate) fn terminal(&self) -> Rc<FakeTerminalHandle> {
         self.terminal_handle
             .clone()
@@ -274,6 +287,20 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
     fn deliver_background_message(&self, message: String, _cx: &mut App) -> Result<()> {
         self.background_messages.borrow_mut().push(message);
         Ok(())
+    }
+
+    fn register_background_command(
+        &self,
+        _id: acp_v2::TerminalId,
+        command: String,
+        _terminal: Rc<dyn crate::TerminalHandle>,
+        _cx: &mut App,
+    ) {
+        self.background_commands.borrow_mut().push(command);
+    }
+
+    fn background_command_finished(&self, _id: &acp_v2::TerminalId, _cx: &mut App) -> bool {
+        self.background_commands_stopped_by_agent.get()
     }
 }
 
@@ -6309,6 +6336,71 @@ fn test_background_agent_result_names_its_sender() {
         Some(BackgroundResultSource::Command(None))
     );
     assert_eq!(background_result_source("a message from the user"), None);
+}
+
+#[gpui::test]
+async fn test_stop_background_command_kills_it_and_returns_its_output(cx: &mut TestAppContext) {
+    use crate::ThreadEnvironment as _;
+
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let store = cx.new(ThreadStore::new);
+    let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let acp_thread = cx
+        .update(|cx| connection.new_session(project, PathList::new(&[Path::new("")]), cx))
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let environment = NativeThreadEnvironment {
+        agent: agent.downgrade(),
+        thread: thread.downgrade(),
+        acp_thread: acp_thread.downgrade(),
+    };
+
+    let terminal = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+    let terminal_id = acp_v2::TerminalId::new("fake_terminal");
+    cx.update(|cx| {
+        environment.register_background_command(
+            terminal_id.clone(),
+            "make".to_string(),
+            terminal.clone() as Rc<dyn crate::TerminalHandle>,
+            cx,
+        )
+    });
+    thread.read_with(cx, |thread, _| {
+        assert!(thread.has_background_work());
+        let commands = thread.background_commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].0, terminal_id);
+        assert_eq!(commands[0].1.as_ref(), "make");
+    });
+
+    let output = cx
+        .update(|cx| environment.stop_background_command(terminal_id.clone(), cx))
+        .await
+        .unwrap();
+    assert!(terminal.was_killed());
+    assert!(output.contains("partial output"), "{output}");
+
+    // The terminal tool's own task sees the command exit next. It is told that
+    // the agent stopped the command, so that it does not report it again.
+    assert!(cx.update(|cx| environment.background_command_finished(&terminal_id, cx)));
+    thread.read_with(cx, |thread, _| {
+        assert!(!thread.has_background_work());
+        assert!(thread.background_commands().is_empty());
+    });
+
+    let error = cx
+        .update(|cx| environment.stop_background_command(terminal_id.clone(), cx))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("fake_terminal"), "{error}");
 }
 
 #[gpui::test]
