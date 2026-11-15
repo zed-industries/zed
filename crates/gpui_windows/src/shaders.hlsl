@@ -828,8 +828,6 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
             }
         }
 
-        // Apply coverage to the border alpha before compositing so that
-        // transparent backgrounds do not darken the antialiased inner edge.
         border_color.a *= saturate(antialias_threshold - inner_sdf);
         color = over(background, border_color);
     }
