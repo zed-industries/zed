@@ -3944,7 +3944,8 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             {
                 return;
             }
-            let message = background_agent_result_message(&subagent_session_id, result);
+            let stopped = cx.update(|cx| subagent.stopped_after_current_step(cx));
+            let message = background_agent_result_message(&subagent_session_id, result, stopped);
             deliver_message_when_idle(parent_thread, parent_acp_thread, message, cx)
                 .await
                 .log_err();
@@ -3976,7 +3977,8 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             subagent.update(cx, |thread, _| thread.stop_at_next_boundary());
             return Task::ready(Ok(
                 "The agent will stop once it finishes the step it is on. Its last message \
-                 will be delivered to you as a new message."
+                 will be delivered to you as a new message, with status \"stopped\" unless \
+                 the agent finishes its work first."
                     .to_string(),
             ));
         }
@@ -4044,7 +4046,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             } else {
                 format!(
                     "The command was stopped. Its output:\n\n```\n{}\n```",
-                    output.output
+                    output.output.trim()
                 )
             })
         })
@@ -4128,9 +4130,14 @@ pub fn background_result_source(text: &str) -> Option<BackgroundResultSource> {
 fn background_agent_result_message(
     subagent_session_id: &acp_v2::SessionId,
     result: Result<String>,
+    stopped_after_current_step: bool,
 ) -> String {
+    // A run that was asked to stop can end on a step that has no text, which
+    // reads as an error but is the outcome that was asked for.
     let (status, body) = match result {
+        Ok(output) if stopped_after_current_step => ("stopped", output),
         Ok(output) => ("completed", output),
+        Err(error) if stopped_after_current_step => ("stopped", format!("{error:#}")),
         Err(error) => ("error", format!("{error:#}")),
     };
     format!(
@@ -4257,6 +4264,10 @@ impl SubagentHandle for NativeSubagentHandle {
 
     fn send_in_background(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
         self.run(message, true, cx)
+    }
+
+    fn stopped_after_current_step(&self, cx: &App) -> bool {
+        self.subagent_thread.read(cx).was_stopped_at_boundary()
     }
 }
 

@@ -786,6 +786,8 @@ struct BackgroundCommand {
 enum SubagentStopRequest {
     Immediately,
     AtNextBoundary,
+    /// A request to stop at the next boundary that has taken effect.
+    StoppedAtBoundary,
 }
 
 pub trait TerminalHandle {
@@ -808,6 +810,11 @@ pub trait SubagentHandle {
     /// cancelling or replacing that turn leaves the subagent running.
     fn send_in_background(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
         self.send(message, cx)
+    }
+    /// Whether the last run ended early because the agent that started this
+    /// subagent asked it to stop after its current step.
+    fn stopped_after_current_step(&self, _cx: &App) -> bool {
+        false
     }
 }
 
@@ -2559,6 +2566,21 @@ impl Thread {
         self.stop_request == Some(SubagentStopRequest::Immediately)
     }
 
+    /// Records that the turn ended at a message boundary with work left to do.
+    /// A request to stop there has then taken effect; a run that ends on its
+    /// own before reaching a boundary was not cut short by it.
+    fn turn_ended_at_boundary(&mut self) {
+        if self.stop_request == Some(SubagentStopRequest::AtNextBoundary) {
+            self.stop_request = Some(SubagentStopRequest::StoppedAtBoundary);
+        }
+    }
+
+    /// Whether this subagent's last run ended early, at a message boundary,
+    /// because the agent that started it asked for that.
+    pub(crate) fn was_stopped_at_boundary(&self) -> bool {
+        self.stop_request == Some(SubagentStopRequest::StoppedAtBoundary)
+    }
+
     /// A stop request applies to the run that was under way when it was made.
     pub(crate) fn clear_stop_request(&mut self) {
         self.stop_request = None;
@@ -3485,8 +3507,13 @@ impl Thread {
             } else if end_turn {
                 return Ok(());
             } else {
-                let end_at_boundary =
-                    this.update(cx, |this, _| this.end_turn_at_next_boundary())?;
+                let end_at_boundary = this.update(cx, |this, _| {
+                    let end_at_boundary = this.end_turn_at_next_boundary();
+                    if end_at_boundary {
+                        this.turn_ended_at_boundary();
+                    }
+                    end_at_boundary
+                })?;
                 if end_at_boundary {
                     log::debug!("Steering message queued, ending turn at message boundary");
                     return Ok(());

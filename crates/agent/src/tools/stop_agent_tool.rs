@@ -11,7 +11,7 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// Stops an agent that you started with `spawn_agent` and `run_in_background`, while it is still working.
 ///
 /// - By default the agent stops at once and this call returns what it had produced so far. No result message follows.
-/// - Set `after_current_step` to true to let the agent finish the step it is on first, the way a steering message does. This call then returns right away, and the agent's last message is delivered to you later as a new message, like any background agent's result.
+/// - Set `after_current_step` to true to let the agent finish the step it is on first, the way a steering message does. This call then returns right away, and the agent's last message is delivered to you later as a new message, like any background agent's result. Its status is "stopped", or "completed" if the agent finished its work before it could be stopped.
 /// - A stopped agent keeps its context. Call `spawn_agent` with its session_id to give it new instructions.
 /// - Only agents that you started in the background, and that have not finished, can be stopped.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
