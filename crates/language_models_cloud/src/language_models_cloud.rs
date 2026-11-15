@@ -1187,6 +1187,18 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             cloud_llm_client::LanguageModelProvider::Google => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
+                let mut request = request;
+                // A thread keeps its effort across model switches, and Gemini rejects levels a
+                // model doesn't accept, including any level for thinking-budget models.
+                let effort_supported = request.thinking_effort.as_deref().is_some_and(|effort| {
+                    config
+                        .supported_effort_levels
+                        .iter()
+                        .any(|level| level.value.eq_ignore_ascii_case(effort))
+                });
+                if !effort_supported {
+                    request.thinking_effort = None;
+                }
                 let mode = if config.supports_thinking {
                     GoogleModelMode::Thinking {
                         budget_tokens: None,
@@ -2558,6 +2570,12 @@ mod tests {
         config.provider = cloud_llm_client::LanguageModelProvider::Google;
         config.id = cloud_llm_client::LanguageModelId("future-google-model".into());
         config.supports_thinking = true;
+        config.supported_effort_levels = vec![cloud_llm_client::SupportedEffortLevel {
+            name: Arc::from("Medium"),
+            value: Arc::from("medium"),
+            is_default: Some(true),
+            supports_disabling_thinking: None,
+        }];
         let (provider, model) = bind_test_model(
             FakeHttpClient::create(|mut request| async move {
                 let mut body = String::new();
@@ -2604,6 +2622,91 @@ mod tests {
             }
         }
         assert_eq!(summaries, ["Summary"]);
+    }
+
+    #[gpui::test]
+    async fn hosted_google_gates_thinking_effort_by_catalog_supported_levels(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let send_xhigh_for_supported_levels =
+            async |supported_values: &[&str],
+                   expected_thinking_config: serde_json::Value,
+                   cx: &mut gpui::TestAppContext| {
+                let mut config = cloud_test_config();
+                config.provider = cloud_llm_client::LanguageModelProvider::Google;
+                config.id = cloud_llm_client::LanguageModelId("future-google-model".into());
+                config.supports_thinking = true;
+                config.supported_effort_levels = supported_values
+                    .iter()
+                    .map(|value| cloud_llm_client::SupportedEffortLevel {
+                        name: Arc::from(*value),
+                        value: Arc::from(*value),
+                        is_default: None,
+                        supports_disabling_thinking: None,
+                    })
+                    .collect();
+
+                let (provider, model) = bind_test_model(
+                    FakeHttpClient::create(move |mut request| {
+                        let expected_thinking_config = expected_thinking_config.clone();
+                        async move {
+                            let mut body = String::new();
+                            request.body_mut().read_to_string(&mut body).await?;
+                            let body: serde_json::Value = serde_json::from_str(&body)?;
+                            assert_eq!(
+                                body["provider_request"]["generationConfig"]["thinkingConfig"],
+                                expected_thinking_config
+                            );
+                            let completed = CompletionEvent::Event(json!({
+                                "candidates": [{
+                                    "content": {
+                                        "role": "model",
+                                        "parts": [{"text": "Answer"}]
+                                    },
+                                    "finishReason": "STOP"
+                                }]
+                            }));
+                            let ended = CompletionEvent::<serde_json::Value>::Status(
+                                CompletionRequestStatus::StreamEnded,
+                            );
+                            Ok(Response::builder()
+                                .status(200)
+                                .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                                .body(AsyncBody::from(format!(
+                                    "{}\n{}\n",
+                                    serde_json::to_string(&completed)?,
+                                    serde_json::to_string(&ended)?,
+                                )))?)
+                        }
+                    }),
+                    config,
+                );
+
+                let mut request = compact_test_request();
+                request.thinking_allowed = true;
+                request.thinking_effort = Some("xhigh".into());
+                let mut stream = cx
+                    .update(|cx| provider.stream_completion(&model, request, cx))
+                    .await
+                    .unwrap();
+                while let Some(event) = stream.next().await {
+                    event.unwrap();
+                }
+            };
+
+        send_xhigh_for_supported_levels(
+            &["low", "medium", "high", "xhigh"],
+            json!({"thinkingLevel": "XHIGH", "includeThoughts": true}),
+            cx,
+        )
+        .await;
+
+        send_xhigh_for_supported_levels(
+            &["low", "medium", "high"],
+            json!({"includeThoughts": true}),
+            cx,
+        )
+        .await;
     }
 
     fn cloud_google_test_model(
