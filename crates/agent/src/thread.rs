@@ -836,6 +836,17 @@ pub trait ThreadEnvironment {
         ))
     }
 
+    /// Delivers `message` to this thread as a new message, on behalf of work
+    /// that finished in the background. An idle thread starts a new turn with
+    /// it; a thread that is mid-turn is steered, ending its turn at the next
+    /// message boundary to take the message.
+    fn deliver_background_message(&self, message: String, cx: &mut App) -> Result<()> {
+        let _ = (message, cx);
+        Err(anyhow::anyhow!(
+            "Background work is not supported in this environment"
+        ))
+    }
+
     /// Creates an independent sibling thread visible in the agent sidebar.
     /// Unlike subagents, sibling threads are first-class threads that persist
     /// and run in parallel without reporting results back to the parent.

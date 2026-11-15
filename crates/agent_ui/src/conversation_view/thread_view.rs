@@ -7527,9 +7527,9 @@ impl ThreadView {
                 if message.content.source_blocks().is_empty() {
                     return Empty.into_any_element();
                 }
-                if let Some(sender) = Self::background_agent_result_sender(message) {
+                if let Some(source) = Self::background_result_source(message) {
                     return self
-                        .render_background_agent_result(entry_ix, &sender, message, window, cx)
+                        .render_background_result(entry_ix, &source, message, window, cx)
                         .into_any_element();
                 }
                 let Some(editor) = self
@@ -9211,48 +9211,55 @@ impl ThreadView {
         has_running_terminal_call
     }
 
-    /// The agent whose result this user message delivers, when it is one of the
-    /// automated messages a background agent sends to its parent.
-    fn background_agent_result_sender(
+    /// What this user message reports, when it is one of the automated
+    /// messages that deliver the result of background work.
+    fn background_result_source(
         message: &acp_thread::UserMessage,
-    ) -> Option<acp_v2::SessionId> {
+    ) -> Option<agent::BackgroundResultSource> {
         match message.content.source_blocks().first()? {
-            acp_v2::ContentBlock::Text(text) => agent::background_agent_result_sender(&text.text),
+            acp_v2::ContentBlock::Text(text) => agent::background_result_source(&text.text),
             _ => None,
         }
     }
 
-    /// A background agent's result starts a turn as a user message. Show it as a
-    /// message from that agent, with a way to open it, not as something the
-    /// user typed.
-    fn render_background_agent_result(
+    /// The result of background work starts a turn as a user message. Show it
+    /// as a message from what produced it, not as something the user typed.
+    fn render_background_result(
         &self,
         entry_ix: usize,
-        sender: &acp_v2::SessionId,
+        source: &agent::BackgroundResultSource,
         message: &acp_thread::UserMessage,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let participant = match self.session_participant_label(sender, cx) {
-            Some(label) => Button::new(("background-agent-result-sender", entry_ix), label)
-                .label_size(LabelSize::Small)
-                .tooltip(Tooltip::text("Open Session"))
-                .on_click({
-                    let server_view = self.server_view.clone();
-                    let sender = sender.clone();
-                    move |_, window, cx| {
-                        server_view
-                            .update(cx, |view, cx| {
-                                view.navigate_to_thread(sender.clone(), window, cx)
+        let (heading, participant) = match source {
+            agent::BackgroundResultSource::Command => ("Background command finished", None),
+            agent::BackgroundResultSource::Agent(sender) => (
+                "Result from",
+                Some(match self.session_participant_label(sender, cx) {
+                    Some(label) => {
+                        Button::new(("background-agent-result-sender", entry_ix), label)
+                            .label_size(LabelSize::Small)
+                            .tooltip(Tooltip::text("Open Session"))
+                            .on_click({
+                                let server_view = self.server_view.clone();
+                                let sender = sender.clone();
+                                move |_, window, cx| {
+                                    server_view
+                                        .update(cx, |view, cx| {
+                                            view.navigate_to_thread(sender.clone(), window, cx)
+                                        })
+                                        .ok();
+                                }
                             })
-                            .ok();
+                            .into_any_element()
                     }
-                })
-                .into_any_element(),
-            None => Label::new("Unavailable Session")
-                .size(LabelSize::Small)
-                .color(Color::Muted)
-                .into_any_element(),
+                    None => Label::new("Unavailable Session")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .into_any_element(),
+                }),
+            ),
         };
 
         v_flex()
@@ -9270,11 +9277,11 @@ impl ThreadView {
                             .color(Color::Muted),
                     )
                     .child(
-                        Label::new("Result from")
+                        Label::new(heading)
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(participant),
+                    .children(participant),
             )
             .child(
                 div()

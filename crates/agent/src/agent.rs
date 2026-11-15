@@ -3937,15 +3937,22 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         cx.spawn(async move |cx| {
             let subagent_session_id = subagent.id();
             let result = subagent.send_in_background(message, cx).await;
-            deliver_background_subagent_result(
-                parent_thread,
-                parent_acp_thread,
-                subagent_session_id,
-                result,
-                cx,
-            )
-            .await
-            .log_err();
+            let message = background_agent_result_message(&subagent_session_id, result);
+            deliver_message_when_idle(parent_thread, parent_acp_thread, message, cx)
+                .await
+                .log_err();
+        })
+        .detach();
+        Ok(())
+    }
+
+    fn deliver_background_message(&self, message: String, cx: &mut App) -> Result<()> {
+        let thread = self.thread.clone();
+        let acp_thread = self.acp_thread.clone();
+        cx.spawn(async move |cx| {
+            deliver_message_when_idle(thread, acp_thread, message, cx)
+                .await
+                .log_err();
         })
         .detach();
         Ok(())
@@ -3967,39 +3974,73 @@ impl ThreadEnvironment for NativeThreadEnvironment {
 
 const BACKGROUND_AGENT_RESULT_PREFIX: &str = "<background_agent_result session_id=\"";
 
-/// The session that produced `text`, when `text` is the message that delivers
-/// a background agent's result to its parent.
-pub fn background_agent_result_sender(text: &str) -> Option<acp_v2::SessionId> {
-    let rest = text.strip_prefix(BACKGROUND_AGENT_RESULT_PREFIX)?;
-    let (session_id, _) = rest.split_once('"')?;
-    Some(acp_v2::SessionId::new(session_id))
+const BACKGROUND_COMMAND_RESULT_PREFIX: &str = "<background_command_result>";
+
+/// What finished in the background and reported back to a thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BackgroundResultSource {
+    /// A subagent started with `spawn_agent`, by session id.
+    Agent(acp_v2::SessionId),
+    /// A command started with the terminal tool.
+    Command,
 }
 
-/// Hands the outcome of a background subagent to its parent thread as a new
-/// message. A parent that is mid-turn is steered: its turn ends at the next
-/// message boundary and the result follows, the way a steering message from
-/// the user does. An idle parent starts a new turn right away.
-async fn deliver_background_subagent_result(
-    parent_thread: WeakEntity<Thread>,
-    parent_acp_thread: WeakEntity<AcpThread>,
-    subagent_session_id: acp_v2::SessionId,
+/// What `text` reports, when `text` is one of the messages that deliver the
+/// result of background work to a thread.
+pub fn background_result_source(text: &str) -> Option<BackgroundResultSource> {
+    if let Some(rest) = text.strip_prefix(BACKGROUND_AGENT_RESULT_PREFIX) {
+        let (session_id, _) = rest.split_once('"')?;
+        Some(BackgroundResultSource::Agent(acp_v2::SessionId::new(
+            session_id,
+        )))
+    } else if text.starts_with(BACKGROUND_COMMAND_RESULT_PREFIX) {
+        Some(BackgroundResultSource::Command)
+    } else {
+        None
+    }
+}
+
+// These results reach the model as a user message, the only role a new turn
+// can start from, so they have to say that the user didn't write them.
+
+fn background_agent_result_message(
+    subagent_session_id: &acp_v2::SessionId,
     result: Result<String>,
-    cx: &mut AsyncApp,
-) -> Result<()> {
-    // The result reaches the model as a user message, the only role a new turn
-    // can start from, so it has to say that the user didn't write it.
+) -> String {
     let (status, body) = match result {
         Ok(output) => ("completed", output),
         Err(error) => ("error", format!("{error:#}")),
     };
-    let message = format!(
+    format!(
         "{BACKGROUND_AGENT_RESULT_PREFIX}{subagent_session_id}\" status=\"{status}\">\n\
          {body}\n\
          </background_agent_result>\n\n\
          This message was generated automatically when a background agent you started \
          with `spawn_agent` stopped. It was not written by the user."
-    );
+    )
+}
 
+pub(crate) fn background_command_result_message(command: &str, outcome: &str) -> String {
+    format!(
+        "{BACKGROUND_COMMAND_RESULT_PREFIX}\n\
+         Command: {command}\n\n\
+         {outcome}\n\
+         </background_command_result>\n\n\
+         This message was generated automatically when a command you started in the \
+         background finished. It was not written by the user."
+    )
+}
+
+/// Delivers `message` to a thread as a new message. A thread that is mid-turn
+/// is steered: its turn ends at the next message boundary and the message
+/// follows, the way a steering message from the user does. An idle thread
+/// starts a new turn right away.
+async fn deliver_message_when_idle(
+    parent_thread: WeakEntity<Thread>,
+    parent_acp_thread: WeakEntity<AcpThread>,
+    message: String,
+    cx: &mut AsyncApp,
+) -> Result<()> {
     parent_thread.update(cx, |thread, _| thread.begin_background_result_delivery())?;
     let idle = wait_until_not_generating(&parent_acp_thread, cx).await;
     parent_thread.update(cx, |thread, _| thread.finish_background_result_delivery())?;

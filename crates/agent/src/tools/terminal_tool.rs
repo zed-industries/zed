@@ -42,6 +42,8 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 ///
+/// Set `run_in_background` to true for a command that takes a while and whose result you do not need before continuing, such as a build, a test suite or a deployment. The call returns right away; keep working on other things, or end your turn. When the command finishes, its output arrives as a new message wrapped in `<background_command_result>`. That message is generated automatically; it is not written by the user. Do not wait for it or poll for it.
+///
 /// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
 ///
 /// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
@@ -64,6 +66,11 @@ pub struct TerminalToolInput {
     /// Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
     #[serde(default)]
     pub tail_lines: Option<usize>,
+    /// Set to true to start the command without waiting for it to finish. The
+    /// call returns right away, and the command's output is delivered to you
+    /// later as a new message.
+    #[serde(default)]
+    pub run_in_background: bool,
 }
 
 /// Executes a shell one-liner and returns the combined output.
@@ -83,6 +90,8 @@ pub struct TerminalToolInput {
 /// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
+///
+/// Set `run_in_background` to true for a command that takes a while and whose result you do not need before continuing, such as a build, a test suite or a deployment. The call returns right away; keep working on other things, or end your turn. When the command finishes, its output arrives as a new message wrapped in `<background_command_result>`. That message is generated automatically; it is not written by the user. Do not wait for it or poll for it.
 ///
 /// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
 ///
@@ -106,6 +115,11 @@ pub struct SandboxedTerminalToolInput {
     /// Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
     #[serde(default)]
     pub tail_lines: Option<usize>,
+    /// Set to true to start the command without waiting for it to finish. The
+    /// call returns right away, and the command's output is delivered to you
+    /// later as a new message.
+    #[serde(default)]
+    pub run_in_background: bool,
     /// Hosts the command needs outbound network access to.
     ///
     /// Sandboxed commands cannot reach the network by default. List the hosts
@@ -224,6 +238,7 @@ struct TerminalToolRequest {
     timeout_ms: Option<u64>,
     selection: TerminalOutputSelection,
     sandbox: Option<TerminalSandboxInput>,
+    run_in_background: bool,
 }
 
 impl From<TerminalToolInput> for TerminalToolRequest {
@@ -237,6 +252,7 @@ impl From<TerminalToolInput> for TerminalToolRequest {
                 tail_lines: input.tail_lines,
             },
             sandbox: None,
+            run_in_background: input.run_in_background,
         }
     }
 }
@@ -259,6 +275,7 @@ impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
                 unsandboxed: input.unsandboxed,
                 reason: input.reason,
             }),
+            run_in_background: input.run_in_background,
         }
     }
 }
@@ -994,6 +1011,33 @@ async fn run_terminal_tool(
 
     let timeout = input.timeout_ms.map(Duration::from_millis);
 
+    if input.run_in_background {
+        let command = input.command.clone();
+        cx.spawn(async move |cx| {
+            let outcome = finish_background_command(terminal, &command, timeout, selection, cx)
+                .await
+                .unwrap_or_else(|error| {
+                    format!("The command's result could not be collected: {error}")
+                });
+            let outcome = match sandbox_note {
+                Some(note) => format!("{note}\n\n{outcome}"),
+                None => outcome,
+            };
+            let message = crate::background_command_result_message(&command, &outcome);
+            if let Err(error) =
+                cx.update(|cx| environment.deliver_background_message(message, cx))
+            {
+                log::error!("Failed to deliver a background command's result: {error:#}");
+            }
+        })
+        .detach();
+        return Ok(
+            "The command is running in the background. Its output will be delivered to you \
+             as a new message when it finishes."
+                .to_string(),
+        );
+    }
+
     let mut timed_out = false;
     let mut user_stopped_via_signal = false;
     let wait_for_exit = terminal.wait_for_exit(cx).map_err(|e| e.to_string())?;
@@ -1041,6 +1085,44 @@ async fn run_terminal_tool(
     } else {
         format!("{}\n\n{result}", notes.join("\n\n"))
     })
+}
+
+/// Waits for a command started with `run_in_background` and describes how it
+/// ended, in the words a foreground run would have returned.
+async fn finish_background_command(
+    terminal: Rc<dyn crate::TerminalHandle>,
+    command: &str,
+    timeout: Option<Duration>,
+    selection: TerminalOutputSelection,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let wait_for_exit = terminal.wait_for_exit(cx).map_err(|e| e.to_string())?;
+    let mut timed_out = false;
+    match timeout {
+        Some(timeout) => {
+            let timeout_task = cx.background_executor().timer(timeout);
+            futures::select! {
+                _ = wait_for_exit.clone().fuse() => {},
+                _ = timeout_task.fuse() => {
+                    timed_out = true;
+                    terminal.kill(cx).map_err(|e| e.to_string())?;
+                    wait_for_exit.await;
+                }
+            }
+        }
+        None => {
+            wait_for_exit.await;
+        }
+    }
+    let user_stopped = terminal.was_stopped_by_user(cx).unwrap_or(false);
+    let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
+    Ok(process_content(
+        output,
+        command,
+        timed_out,
+        user_stopped,
+        selection,
+    ))
 }
 
 /// Resolve model-requested write paths into absolute paths.
@@ -2473,6 +2555,7 @@ mod tests {
                     timeout_ms: None,
                     head_lines: Some(1),
                     tail_lines: Some(1),
+                    run_in_background: false,
                 }),
                 event_stream,
                 cx,
