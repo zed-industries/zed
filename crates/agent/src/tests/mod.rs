@@ -6268,6 +6268,17 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     );
 }
 
+#[test]
+fn test_background_agent_result_names_its_sender() {
+    assert_eq!(
+        background_agent_result_sender(
+            "<background_agent_result session_id=\"abc\" status=\"completed\">\ndone"
+        ),
+        Some(acp_v2::SessionId::new("abc"))
+    );
+    assert_eq!(background_agent_result_sender("a message from the user"), None);
+}
+
 #[gpui::test]
 async fn test_background_subagent_result_starts_a_turn_on_the_idle_parent(
     cx: &mut TestAppContext,

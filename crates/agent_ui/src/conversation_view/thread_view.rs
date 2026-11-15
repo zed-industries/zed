@@ -7527,6 +7527,11 @@ impl ThreadView {
                 if message.content.source_blocks().is_empty() {
                     return Empty.into_any_element();
                 }
+                if let Some(sender) = Self::background_agent_result_sender(message) {
+                    return self
+                        .render_background_agent_result(entry_ix, &sender, message, window, cx)
+                        .into_any_element();
+                }
                 let Some(editor) = self
                     .entry_view_state
                     .read(cx)
@@ -9204,6 +9209,80 @@ impl ThreadView {
         }
 
         has_running_terminal_call
+    }
+
+    /// The agent whose result this user message delivers, when it is one of the
+    /// automated messages a background agent sends to its parent.
+    fn background_agent_result_sender(
+        message: &acp_thread::UserMessage,
+    ) -> Option<acp_v2::SessionId> {
+        match message.content.source_blocks().first()? {
+            acp_v2::ContentBlock::Text(text) => agent::background_agent_result_sender(&text.text),
+            _ => None,
+        }
+    }
+
+    /// A background agent's result starts a turn as a user message. Show it as a
+    /// message from that agent, with a way to open it, not as something the
+    /// user typed.
+    fn render_background_agent_result(
+        &self,
+        entry_ix: usize,
+        sender: &acp_v2::SessionId,
+        message: &acp_thread::UserMessage,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let participant = match self.session_participant_label(sender, cx) {
+            Some(label) => Button::new(("background-agent-result-sender", entry_ix), label)
+                .label_size(LabelSize::Small)
+                .tooltip(Tooltip::text("Open Session"))
+                .on_click({
+                    let server_view = self.server_view.clone();
+                    let sender = sender.clone();
+                    move |_, window, cx| {
+                        server_view
+                            .update(cx, |view, cx| {
+                                view.navigate_to_thread(sender.clone(), window, cx)
+                            })
+                            .ok();
+                    }
+                })
+                .into_any_element(),
+            None => Label::new("Unavailable Session")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+        };
+
+        v_flex()
+            .px_5()
+            .py_1p5()
+            .w_full()
+            .gap_1p5()
+            .text_ui(cx)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Envelope)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new("Result from")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(participant),
+            )
+            .child(
+                div()
+                    .pl_3()
+                    .border_l_2()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.render_message_content(entry_ix, 0, &message.content, window, cx)),
+            )
     }
 
     fn render_session_message(

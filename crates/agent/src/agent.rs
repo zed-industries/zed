@@ -3965,6 +3965,16 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     }
 }
 
+const BACKGROUND_AGENT_RESULT_PREFIX: &str = "<background_agent_result session_id=\"";
+
+/// The session that produced `text`, when `text` is the message that delivers
+/// a background agent's result to its parent.
+pub fn background_agent_result_sender(text: &str) -> Option<acp_v2::SessionId> {
+    let rest = text.strip_prefix(BACKGROUND_AGENT_RESULT_PREFIX)?;
+    let (session_id, _) = rest.split_once('"')?;
+    Some(acp_v2::SessionId::new(session_id))
+}
+
 /// Hands the outcome of a background subagent to its parent thread as a new
 /// message. A parent that is mid-turn is steered: its turn ends at the next
 /// message boundary and the result follows, the way a steering message from
@@ -3983,7 +3993,7 @@ async fn deliver_background_subagent_result(
         Err(error) => ("error", format!("{error:#}")),
     };
     let message = format!(
-        "<background_agent_result session_id=\"{subagent_session_id}\" status=\"{status}\">\n\
+        "{BACKGROUND_AGENT_RESULT_PREFIX}{subagent_session_id}\" status=\"{status}\">\n\
          {body}\n\
          </background_agent_result>\n\n\
          This message was generated automatically when a background agent you started \
