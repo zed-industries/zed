@@ -1615,9 +1615,18 @@ impl ThreadView {
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                self.entry_view_state.update(cx, |state, _cx| {
-                    state.collapse_tool_call(tool_call_id);
-                });
+                // A command that the agent left running on purpose is still
+                // of interest, so its output stays visible.
+                let left_running_on_purpose = matches!(
+                    self.thread.read(cx).entries().get(event.entry_index),
+                    Some(AgentThreadEntry::ToolCall(tool_call))
+                        if Self::runs_in_background(tool_call)
+                );
+                if !left_running_on_purpose {
+                    self.entry_view_state.update(cx, |state, _cx| {
+                        state.collapse_tool_call(tool_call_id);
+                    });
+                }
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if self.can_edit_user_message(event.entry_index, cx) {
