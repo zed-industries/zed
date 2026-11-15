@@ -13,7 +13,7 @@ use acp_thread::{
 use action_log::ActionLog;
 use agent_client_protocol::schema::{MaybeUndefined, ProtocolVersion};
 use agent_client_protocol::{
-    Agent, Client, HandleDispatchFrom, JsonRpcRequest, Lines,
+    Agent, Client, HandleDispatchFrom, JsonRpcRequest, JsonRpcResponse, Lines,
     v1::{Builder, ConnectionTo, Responder},
     v2::Builder as V2Builder,
 };
@@ -30,7 +30,7 @@ use futures::future::Shared;
 use futures::{Future, FutureExt as _};
 use project::agent_server_store::{AgentServerCommand, AgentServerStore, AllAgentServersSettings};
 use project::{AgentId, Project};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use settings::{AgentConfigOptionValue, SettingsStore};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -51,6 +51,37 @@ use crate::{CURSOR_ID, GEMINI_ID};
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const PARAMETERIZED_MODEL_PICKER_META_KEY: &str = "parameterizedModelPicker";
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonRpcRequest)]
+#[request(
+    method = "_kiro/terminal/shell_type",
+    response = KiroTerminalShellTypeResponse
+)]
+struct KiroTerminalShellTypeRequest {}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+struct KiroTerminalShellTypeResponse {
+    shell_type: String,
+}
+
+fn shell_name_from_path(shell: Option<&std::ffi::OsStr>) -> Option<String> {
+    let shell = shell?;
+    if shell.is_empty() {
+        return None;
+    }
+    std::path::Path::new(shell)
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
+fn shell_type(shell: &task::Shell) -> String {
+    let program = shell.program();
+    shell_name_from_path(Some(std::ffi::OsStr::new(&program))).unwrap_or_else(|| "sh".to_owned())
+}
+
 async fn close_session_and_drain(
     connection: &ConnectionTo<Agent>,
     session_id: acp_v2::SessionId,
@@ -393,6 +424,7 @@ pub async fn connect(
 
 const MINIMUM_SUPPORTED_VERSION: ProtocolVersion = ProtocolVersion::V1;
 
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn connect_client_future(
     name: &'static str,
     transport: impl agent_client_protocol::ConnectTo<Client> + 'static,
@@ -400,9 +432,29 @@ pub(super) fn connect_client_future(
     connection_tx: futures::channel::oneshot::Sender<ConnectionTo<Agent>>,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> impl Future<Output = Result<(), agent_client_protocol::Error>> {
+    connect_client_future_with_shell(
+        name,
+        transport,
+        dispatch_tx,
+        shell_type(&task::Shell::Program(
+            util::get_default_system_shell_preferring_bash(),
+        )),
+        connection_tx,
+        shutdown,
+    )
+}
+
+fn connect_client_future_with_shell(
+    name: &'static str,
+    transport: impl agent_client_protocol::ConnectTo<Client> + 'static,
+    dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
+    shell_type: String,
+    connection_tx: futures::channel::oneshot::Sender<ConnectionTo<Agent>>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> impl Future<Output = Result<(), agent_client_protocol::Error>> {
     async move {
         let cleanup = runtime::disconnect_cleanup(dispatch_tx.clone());
-        let future = client_builder(name, dispatch_tx)
+        let future = client_builder(name, dispatch_tx, shell_type)
             .on_close({
                 let cleanup = cleanup.clone();
                 async move |_connection: ConnectionTo<Agent>| cleanup.await
@@ -420,6 +472,7 @@ pub(super) fn connect_client_future(
 fn client_builder(
     name: &'static str,
     dispatch_sender: mpsc::UnboundedSender<ForegroundWork>,
+    shell_type: String,
 ) -> Builder<Client, impl HandleDispatchFrom<Agent>> {
     // Each handler forwards its inputs onto the foreground dispatch queue.
     // The SDK requires the closure to be `Send`, so we move a clone of
@@ -442,11 +495,18 @@ fn client_builder(
             }
         }};
     }
-
     Client
         .v1()
         .name(name)
         // --- Request handlers (agent→client) ---
+        .on_receive_request(
+            async move |_request: KiroTerminalShellTypeRequest, responder, _connection| {
+                responder.respond(KiroTerminalShellTypeResponse {
+                    shell_type: shell_type.clone(),
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
         .on_receive_request(
             on_request!(handle_request_permission),
             agent_client_protocol::on_receive_request!(),
@@ -604,10 +664,12 @@ impl AcpConnection {
             .shared();
 
         let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
-        let connection_future = connect_client_future(
+        let shell = project.update(cx, acp_thread::acp_terminal_shell);
+        let connection_future = connect_client_future_with_shell(
             "zed",
             transport,
             dispatch_tx.clone(),
+            shell_type(&shell),
             connection_tx,
             runtime::shutdown_requested(shutdown),
         );
@@ -2443,6 +2505,96 @@ mod tests {
     use super::*;
     use futures::StreamExt as _;
     use settings::Settings as _;
+
+    #[test]
+    fn shell_name_from_path_returns_executable_basename() {
+        for (path, expected) in [
+            ("/bin/zsh", "zsh"),
+            ("/bin/bash", "bash"),
+            ("/opt/homebrew/bin/fish", "fish"),
+            ("sh", "sh"),
+            ("/bin/zsh/", "zsh"),
+        ] {
+            assert_eq!(
+                shell_name_from_path(Some(std::ffi::OsStr::new(path))).as_deref(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn shell_name_from_path_rejects_missing_or_empty_values() {
+        assert_eq!(shell_name_from_path(None), None);
+        assert_eq!(shell_name_from_path(Some(std::ffi::OsStr::new(""))), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_name_from_path_rejects_non_utf8_basename() {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        assert_eq!(
+            shell_name_from_path(Some(std::ffi::OsStr::from_bytes(b"/bin/\xff"))),
+            None
+        );
+    }
+
+    #[gpui::test]
+    async fn client_answers_kiro_terminal_shell_type_request(cx: &mut gpui::TestAppContext) {
+        let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
+        let (dispatch_sender, _dispatch_receiver) = mpsc::unbounded::<ForegroundWork>();
+        let (client_connection_sender, _client_connection_receiver) =
+            futures::channel::oneshot::channel();
+        let _client_task = cx.background_spawn(connect_client_future_with_shell(
+            "shell-type-test-client",
+            client_transport,
+            dispatch_sender,
+            "fish".to_owned(),
+            client_connection_sender,
+            futures::future::pending(),
+        ));
+        let (agent_connection_sender, agent_connection_receiver) =
+            futures::channel::oneshot::channel();
+        let _agent_task = cx.background_spawn(Agent.v1().connect_with(
+            agent_transport,
+            async move |connection| {
+                agent_connection_sender
+                    .send(connection)
+                    .map_err(|_| agent_client_protocol::Error::internal_error())?;
+                futures::future::pending::<Result<(), agent_client_protocol::Error>>().await
+            },
+        ));
+        let agent = agent_connection_receiver
+            .await
+            .expect("receive fake agent connection");
+
+        let response = agent
+            .send_request(KiroTerminalShellTypeRequest {})
+            .block_task()
+            .await
+            .expect("shell type response");
+        assert_eq!(
+            response,
+            KiroTerminalShellTypeResponse {
+                shell_type: "fish".to_owned()
+            }
+        );
+
+        let unknown_request = agent_client_protocol::UntypedMessage::new(
+            "_other/unknown_request",
+            serde_json::json!({}),
+        )
+        .expect("unknown request");
+        let error = agent
+            .send_request(unknown_request)
+            .block_task()
+            .await
+            .expect_err("unknown request should retain method-not-found behavior");
+        assert_eq!(
+            error.code,
+            agent_client_protocol::ErrorCode::METHOD_NOT_FOUND
+        );
+    }
 
     #[test]
     fn test_auth_error_mapping_retains_sdk_record_and_description() {
