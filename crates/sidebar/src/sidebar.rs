@@ -8136,9 +8136,9 @@ fn all_thread_infos_for_workspace(
             let is_title_generating = native_thread
                 .as_ref()
                 .is_some_and(|native_thread| native_thread.read(cx).is_generating_title());
-            let has_background_subagents = native_thread
+            let has_background_work = native_thread
                 .as_ref()
-                .is_some_and(|native_thread| native_thread.read(cx).has_background_subagents());
+                .is_some_and(|native_thread| native_thread.read(cx).has_background_work());
             let session_id = thread.session_id().clone();
             let is_background = agent_panel.is_retained_thread(&conversation_thread_id);
 
@@ -8150,9 +8150,9 @@ fn all_thread_infos_for_workspace(
                 match thread.status() {
                     ThreadStatus::Unconfirmed => AgentThreadStatus::Unconfirmed,
                     ThreadStatus::Generating => AgentThreadStatus::Running,
-                    // An idle thread is still at work while agents it started in the
-                    // background are running.
-                    ThreadStatus::Idle if has_background_subagents => AgentThreadStatus::Running,
+                    // An idle thread is still at work while agents or commands it
+                    // started in the background are running.
+                    ThreadStatus::Idle if has_background_work => AgentThreadStatus::Running,
                     ThreadStatus::Idle => AgentThreadStatus::Completed,
                 }
             };

@@ -3996,6 +3996,60 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         })
     }
 
+    fn register_background_command(
+        &self,
+        id: acp_v2::TerminalId,
+        command: String,
+        terminal: Rc<dyn TerminalHandle>,
+        cx: &mut App,
+    ) {
+        self.thread
+            .update(cx, |thread, cx| {
+                thread.register_background_command(id, command.into(), terminal, cx)
+            })
+            .log_err();
+    }
+
+    fn background_command_finished(&self, id: &acp_v2::TerminalId, cx: &mut App) -> bool {
+        self.thread
+            .update(cx, |thread, cx| thread.background_command_finished(id, cx))
+            .unwrap_or(false)
+    }
+
+    fn stop_background_command(
+        &self,
+        id: acp_v2::TerminalId,
+        cx: &mut App,
+    ) -> Task<Result<String>> {
+        let terminal = match self
+            .thread
+            .update(cx, |thread, _| thread.stop_background_command(&id))
+        {
+            Ok(Some(terminal)) => terminal,
+            Ok(None) => {
+                return Task::ready(Err(anyhow!(
+                    "No command with terminal_id {} is running in the background. \
+                     It may have finished already.",
+                    id.0
+                )));
+            }
+            Err(error) => return Task::ready(Err(error)),
+        };
+        cx.spawn(async move |cx| {
+            terminal.kill(cx)?;
+            terminal.wait_for_exit(cx)?.await;
+            let output = terminal.current_output(cx)?;
+            anyhow::Ok(if output.output.trim().is_empty() {
+                "The command was stopped. It had not printed anything.".to_string()
+            } else {
+                format!(
+                    "The command was stopped. Its output:\n\n```\n{}\n```",
+                    output.output
+                )
+            })
+        })
+    }
+
     fn deliver_background_message(&self, message: String, cx: &mut App) -> Result<()> {
         let thread = self.thread.clone();
         let acp_thread = self.acp_thread.clone();
@@ -4037,15 +4091,16 @@ impl std::error::Error for StoppedByParent {}
 
 const BACKGROUND_AGENT_RESULT_PREFIX: &str = "<background_agent_result session_id=\"";
 
-const BACKGROUND_COMMAND_RESULT_PREFIX: &str = "<background_command_result>";
+const BACKGROUND_COMMAND_RESULT_PREFIX: &str = "<background_command_result";
 
 /// What finished in the background and reported back to a thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BackgroundResultSource {
     /// A subagent started with `spawn_agent`, by session id.
     Agent(acp_v2::SessionId),
-    /// A command started with the terminal tool.
-    Command,
+    /// A command started with the terminal tool, by terminal id. Results
+    /// delivered before they carried the id have none.
+    Command(Option<acp_v2::TerminalId>),
 }
 
 /// What `text` reports, when `text` is one of the messages that deliver the
@@ -4056,8 +4111,12 @@ pub fn background_result_source(text: &str) -> Option<BackgroundResultSource> {
         Some(BackgroundResultSource::Agent(acp_v2::SessionId::new(
             session_id,
         )))
-    } else if text.starts_with(BACKGROUND_COMMAND_RESULT_PREFIX) {
-        Some(BackgroundResultSource::Command)
+    } else if let Some(rest) = text.strip_prefix(BACKGROUND_COMMAND_RESULT_PREFIX) {
+        let terminal_id = rest
+            .strip_prefix(" terminal_id=\"")
+            .and_then(|rest| rest.split_once('"'))
+            .map(|(terminal_id, _)| acp_v2::TerminalId::new(terminal_id));
+        Some(BackgroundResultSource::Command(terminal_id))
     } else {
         None
     }
@@ -4083,14 +4142,19 @@ fn background_agent_result_message(
     )
 }
 
-pub(crate) fn background_command_result_message(command: &str, outcome: &str) -> String {
+pub(crate) fn background_command_result_message(
+    terminal_id: &acp_v2::TerminalId,
+    command: &str,
+    outcome: &str,
+) -> String {
     format!(
-        "{BACKGROUND_COMMAND_RESULT_PREFIX}\n\
+        "{BACKGROUND_COMMAND_RESULT_PREFIX} terminal_id=\"{}\">\n\
          Command: {command}\n\n\
          {outcome}\n\
          </background_command_result>\n\n\
          This message was generated automatically when a command you started in the \
-         background finished. It was not written by the user."
+         background finished. It was not written by the user.",
+        terminal_id.0
     )
 }
 

@@ -6295,8 +6295,18 @@ fn test_background_agent_result_names_its_sender() {
         )))
     );
     assert_eq!(
-        background_result_source(&background_command_result_message("make", "ok")),
-        Some(BackgroundResultSource::Command)
+        background_result_source(&background_command_result_message(
+            &acp_v2::TerminalId::new("term"),
+            "make",
+            "ok"
+        )),
+        Some(BackgroundResultSource::Command(Some(
+            acp_v2::TerminalId::new("term")
+        )))
+    );
+    assert_eq!(
+        background_result_source("<background_command_result>\nCommand: make"),
+        Some(BackgroundResultSource::Command(None))
     );
     assert_eq!(background_result_source("a message from the user"), None);
 }

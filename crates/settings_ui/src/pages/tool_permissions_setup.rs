@@ -1426,8 +1426,9 @@ mod tests {
             // tool calls inside the spawned thread, not the spawning itself.
             "create_thread",
             "spawn_agent",
-            // Only acts on agents that the same thread started.
+            // Only act on agents and commands that the same thread started.
             "stop_agent",
+            "stop_command",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

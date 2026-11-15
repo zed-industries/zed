@@ -5705,6 +5705,7 @@ impl ThreadView {
                                     .flex_wrap()
                                     .gap_1()
                                     .children(self.render_running_agents(cx))
+                                    .children(self.render_background_commands(cx))
                                     .children(self.render_activity_status_label(cx))
                                     .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
@@ -5758,6 +5759,70 @@ impl ThreadView {
                                             view.navigate_to_thread(session_id.clone(), window, cx)
                                         })
                                         .ok();
+                                });
+                            }
+                            menu
+                        },
+                    ))
+                }),
+        )
+    }
+
+    /// Lists the commands this thread left running in the background; picking
+    /// one scrolls to its terminal.
+    fn render_background_commands(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let commands = self.as_native_thread(cx)?.read(cx).background_commands();
+        if commands.is_empty() {
+            return None;
+        }
+        let label: SharedString = if commands.len() == 1 {
+            "1 command running".into()
+        } else {
+            format!("{} commands running", commands.len()).into()
+        };
+        let thread = self.thread.read(cx);
+        let commands = commands
+            .into_iter()
+            .map(|(terminal_id, command)| {
+                let entry_ix = thread.entries().iter().position(|entry| {
+                    matches!(entry, AgentThreadEntry::ToolCall(tool_call)
+                        if tool_call
+                            .terminals()
+                            .any(|terminal| terminal.read(cx).id() == &terminal_id))
+                });
+                let title: SharedString = util::truncate_and_trailoff(
+                    command.lines().next().unwrap_or_default(),
+                    60,
+                )
+                .into();
+                (title, entry_ix)
+            })
+            .collect::<Vec<_>>();
+        let this = cx.weak_entity();
+        Some(
+            PopoverMenu::new("background-commands")
+                .trigger_with_tooltip(
+                    ButtonLike::new("background-commands-trigger")
+                        .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
+                    Tooltip::text("Commands running in the background"),
+                )
+                .menu(move |window, cx| {
+                    let commands = commands.clone();
+                    let this = this.clone();
+                    Some(ContextMenu::build(
+                        window,
+                        cx,
+                        move |mut menu, _window, _cx| {
+                            menu = menu.header("Background Commands");
+                            for (title, entry_ix) in commands {
+                                let this = this.clone();
+                                menu = menu.entry(title, None, move |_window, cx| {
+                                    if let Some(entry_ix) = entry_ix {
+                                        this.update(cx, |this, cx| {
+                                            this.scroll_to_entry(entry_ix, cx)
+                                        })
+                                        .ok();
+                                    }
                                 });
                             }
                             menu
@@ -9247,10 +9312,76 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let (heading, sender) = match source {
-            agent::BackgroundResultSource::Command => ("Background command finished", None),
+            agent::BackgroundResultSource::Command(terminal_id) => {
+                if let Some(terminal_id) = terminal_id
+                    && let Some(terminal) =
+                        self.render_finished_background_command(terminal_id, window, cx)
+                {
+                    return terminal;
+                }
+                ("Background command finished", None)
+            }
             agent::BackgroundResultSource::Agent(sender) => ("Result from", Some(sender)),
         };
         self.render_message_from_session(entry_ix, heading, sender, message, window, cx)
+    }
+
+    /// The model receives a background command's output as text. The user is better
+    /// served by the terminal it came from, so draw that again where the command
+    /// finished. `None` when this thread no longer has that terminal.
+    fn render_finished_background_command(
+        &self,
+        terminal_id: &acp_v2::TerminalId,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<Div> {
+        let thread = self.thread.read(cx);
+        let (tool_call_ix, tool_call, terminal) =
+            thread
+                .entries()
+                .iter()
+                .enumerate()
+                .find_map(|(ix, entry)| {
+                    let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                        return None;
+                    };
+                    let terminal = tool_call
+                        .terminals()
+                        .find(|terminal| terminal.read(cx).id() == terminal_id)?;
+                    Some((ix, tool_call, terminal))
+                })?;
+        Some(
+            v_flex()
+                .w_full()
+                .child(
+                    h_flex()
+                        .px_5()
+                        .pt_1p5()
+                        .gap_1p5()
+                        .child(
+                            Icon::new(IconName::ToolTerminal)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new("Background command finished")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                // Same layout as the command's own card: the two share one terminal
+                // view, which sizes the terminal to the width it is drawn at.
+                .child(self.render_terminal_tool_call(
+                    thread.session_id(),
+                    tool_call_ix,
+                    terminal,
+                    tool_call,
+                    &self.focus_handle(cx),
+                    ToolCallLayout::Standalone,
+                    window,
+                    cx,
+                )),
+        )
     }
 
     /// Draws a user message that another session of this conversation sent, or that Zed
@@ -9470,10 +9601,20 @@ impl ThreadView {
         })
     }
 
+    /// Whether this terminal tool call asked for its command to be left running.
+    fn runs_in_background(tool_call: &ToolCall) -> bool {
+        tool_call
+            .raw_input
+            .as_ref()
+            .and_then(|input| input.get("run_in_background"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    }
+
     fn render_collapsible_command(
         &self,
         group: SharedString,
-        is_preview: bool,
+        preview_label: Option<&'static str>,
         command: Entity<Markdown>,
         window: &Window,
         cx: &Context<Self>,
@@ -9499,18 +9640,14 @@ impl ThreadView {
         // line (wrapped or not) is padded consistently.
         style.code_block_overflow_x_scroll = false;
 
-        let run_command_label = if is_preview {
-            Some(
-                h_flex().h_6().child(
-                    Label::new("Run Command")
-                        .buffer_font(cx)
-                        .size(LabelSize::XSmall)
-                        .color(Color::Muted),
-                ),
+        let run_command_label = preview_label.map(|label| {
+            h_flex().h_6().child(
+                Label::new(label)
+                    .buffer_font(cx)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
             )
-        } else {
-            None
-        };
+        });
         // Suppress the code block's built-in copy button so we don't stack two
         // copy buttons on top of each other; the outer button below is the one
         // we want, because it copies the unfenced command text.
@@ -9530,7 +9667,7 @@ impl ThreadView {
             .group(group)
             .relative()
             .p_1p5()
-            .when(is_preview, |this| this.pt_1().children(run_command_label))
+            .when_some(run_command_label, |this, label| this.pt_1().child(label))
             .child(markdown_element)
             .child(div().absolute().top_1().right_1().child(copy_button))
     }
@@ -9600,7 +9737,7 @@ impl ThreadView {
 
         let command_element = self.render_collapsible_command(
             header_group.clone(),
-            false,
+            None,
             tool_call.label.clone(),
             window,
             cx,
@@ -10212,7 +10349,11 @@ impl ThreadView {
                     this.child(
                         self.render_collapsible_command(
                             card_header_id.clone(),
-                            true,
+                            Some(if Self::runs_in_background(tool_call) {
+                                "Run Background Command"
+                            } else {
+                                "Run Command"
+                            }),
                             tool_call.label.clone(),
                             window,
                             cx,

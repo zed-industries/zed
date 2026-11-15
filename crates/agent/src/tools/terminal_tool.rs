@@ -42,7 +42,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 ///
-/// Set `run_in_background` to true for a command that takes a while and whose result you do not need before continuing, such as a build, a test suite or a deployment. The call returns right away; keep working on other things, or end your turn. When the command finishes, its output arrives as a new message wrapped in `<background_command_result>`. That message is generated automatically; it is not written by the user. Do not wait for it or poll for it.
+/// Set `run_in_background` to true for a command that takes a while and whose result you do not need before continuing, such as a build, a test suite or a deployment. The call returns right away; keep working on other things, or end your turn. When the command finishes, its output arrives as a new message wrapped in `<background_command_result>`. That message is generated automatically; it is not written by the user. Do not wait for it or poll for it. To stop the command before it finishes, call `stop_command` with the terminal_id that this call returns.
 ///
 /// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
 ///
@@ -91,7 +91,7 @@ pub struct TerminalToolInput {
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 ///
-/// Set `run_in_background` to true for a command that takes a while and whose result you do not need before continuing, such as a build, a test suite or a deployment. The call returns right away; keep working on other things, or end your turn. When the command finishes, its output arrives as a new message wrapped in `<background_command_result>`. That message is generated automatically; it is not written by the user. Do not wait for it or poll for it.
+/// Set `run_in_background` to true for a command that takes a while and whose result you do not need before continuing, such as a build, a test suite or a deployment. The call returns right away; keep working on other things, or end your turn. When the command finishes, its output arrives as a new message wrapped in `<background_command_result>`. That message is generated automatically; it is not written by the user. Do not wait for it or poll for it. To stop the command before it finishes, call `stop_command` with the terminal_id that this call returns.
 ///
 /// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
 ///
@@ -1013,6 +1013,21 @@ async fn run_terminal_tool(
 
     if input.run_in_background {
         let command = input.command.clone();
+        let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
+        cx.update(|cx| {
+            environment.register_background_command(
+                terminal_id.clone(),
+                command.clone(),
+                terminal.clone(),
+                cx,
+            )
+        });
+        let started = format!(
+            "The command is running in the background with terminal_id {}. Its output will \
+             be delivered to you as a new message when it finishes. To stop it before that, \
+             use `stop_command`.",
+            terminal_id.0
+        );
         cx.spawn(async move |cx| {
             let outcome = finish_background_command(terminal, &command, timeout, selection, cx)
                 .await
@@ -1023,7 +1038,12 @@ async fn run_terminal_tool(
                 Some(note) => format!("{note}\n\n{outcome}"),
                 None => outcome,
             };
-            let message = crate::background_command_result_message(&command, &outcome);
+            // The call that stopped the command already returned its output.
+            if cx.update(|cx| environment.background_command_finished(&terminal_id, cx)) {
+                return;
+            }
+            let message =
+                crate::background_command_result_message(&terminal_id, &command, &outcome);
             if let Err(error) =
                 cx.update(|cx| environment.deliver_background_message(message, cx))
             {
@@ -1031,11 +1051,7 @@ async fn run_terminal_tool(
             }
         })
         .detach();
-        return Ok(
-            "The command is running in the background. Its output will be delivered to you \
-             as a new message when it finishes."
-                .to_string(),
-        );
+        return Ok(started);
     }
 
     let mut timed_out = false;
@@ -2684,7 +2700,7 @@ mod tests {
         let messages = environment.background_messages();
         assert_eq!(messages.len(), 1, "{messages:?}");
         assert!(
-            messages[0].starts_with("<background_command_result>"),
+            messages[0].starts_with("<background_command_result terminal_id=\""),
             "{messages:?}"
         );
         assert!(messages[0].contains("Command: make"), "{messages:?}");

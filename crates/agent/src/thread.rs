@@ -4,7 +4,7 @@ use crate::{
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
     ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
-    StopAgentTool,
+    StopAgentTool, StopCommandTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     WriteFileTool, decide_permission_from_settings,
 };
@@ -772,6 +772,16 @@ pub enum AgentMessageContent {
     ToolUse(LanguageModelToolUse),
 }
 
+/// A command that the terminal tool started with `run_in_background` and that
+/// has not exited yet.
+struct BackgroundCommand {
+    id: acp_v2::TerminalId,
+    command: SharedString,
+    terminal: Rc<dyn TerminalHandle>,
+    /// Whether the agent stopped it, and so already has its output.
+    stopped_by_agent: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SubagentStopRequest {
     Immediately,
@@ -857,6 +867,38 @@ pub trait ThreadEnvironment {
         let _ = (session_id, immediately, cx);
         Task::ready(Err(anyhow::anyhow!(
             "Background agents are not supported in this environment"
+        )))
+    }
+
+    /// Keeps track of a command that the terminal tool left running in the
+    /// background, so that it can be listed and stopped.
+    fn register_background_command(
+        &self,
+        id: acp_v2::TerminalId,
+        command: String,
+        terminal: Rc<dyn TerminalHandle>,
+        cx: &mut App,
+    ) {
+        let _ = (id, command, terminal, cx);
+    }
+
+    /// Forgets a background command that has finished. Returns whether the
+    /// agent stopped it, in which case it already has the command's output.
+    fn background_command_finished(&self, id: &acp_v2::TerminalId, cx: &mut App) -> bool {
+        let _ = (id, cx);
+        false
+    }
+
+    /// Kills a command that this thread left running in the background. The
+    /// task resolves, once the command has exited, to what it had printed.
+    fn stop_background_command(
+        &self,
+        id: acp_v2::TerminalId,
+        cx: &mut App,
+    ) -> Task<Result<String>> {
+        let _ = (id, cx);
+        Task::ready(Err(anyhow::anyhow!(
+            "Background commands are not supported in this environment"
         )))
     }
 
@@ -1422,6 +1464,8 @@ pub struct Thread {
     /// How the agent that started this subagent asked its current run to stop,
     /// if it did.
     stop_request: Option<SubagentStopRequest>,
+    /// Commands that the terminal tool left running in the background.
+    background_commands: Vec<BackgroundCommand>,
     inherits_parent_model_settings: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     /// Sandbox permissions the user approved "for the rest of the thread".
@@ -1575,6 +1619,7 @@ impl Thread {
             background_subagents: Vec::new(),
             pending_background_results: 0,
             stop_request: None,
+            background_commands: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
@@ -1956,6 +2001,7 @@ impl Thread {
             background_subagents: Vec::new(),
             pending_background_results: 0,
             stop_request: None,
+            background_commands: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
@@ -2345,6 +2391,7 @@ impl Thread {
             self.project.clone(),
             environment.clone(),
         ));
+        self.add_tool(StopCommandTool::new(environment.clone()));
         self.add_tool(WebSearchTool);
 
         self.add_tool(AskUserTool);
@@ -4679,12 +4726,73 @@ impl Thread {
             .find(|subagent| subagent.read(cx).id() == session_id)
     }
 
-    /// Whether subagents started in the background are still working for this
-    /// thread, which can be the case while the thread itself is idle.
-    pub fn has_background_subagents(&self) -> bool {
-        self.background_subagents
+    /// Whether subagents or commands started in the background are still
+    /// working for this thread, which can be the case while the thread itself
+    /// is idle.
+    pub fn has_background_work(&self) -> bool {
+        !self.background_commands.is_empty()
+            || self
+                .background_subagents
+                .iter()
+                .any(|subagent| subagent.upgrade().is_some())
+    }
+
+    pub(crate) fn register_background_command(
+        &mut self,
+        id: acp_v2::TerminalId,
+        command: SharedString,
+        terminal: Rc<dyn TerminalHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_commands.push(BackgroundCommand {
+            id,
+            command,
+            terminal,
+            stopped_by_agent: false,
+        });
+        cx.notify();
+    }
+
+    /// Forgets a background command that has finished. Returns whether the
+    /// agent stopped it.
+    pub(crate) fn background_command_finished(
+        &mut self,
+        id: &acp_v2::TerminalId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(ix) = self
+            .background_commands
             .iter()
-            .any(|subagent| subagent.upgrade().is_some())
+            .position(|command| &command.id == id)
+        else {
+            return false;
+        };
+        let command = self.background_commands.remove(ix);
+        cx.notify();
+        command.stopped_by_agent
+    }
+
+    /// Marks a running background command as stopped by the agent and returns
+    /// its terminal, for the caller to kill.
+    pub(crate) fn stop_background_command(
+        &mut self,
+        id: &acp_v2::TerminalId,
+    ) -> Option<Rc<dyn TerminalHandle>> {
+        let command = self
+            .background_commands
+            .iter_mut()
+            .find(|command| &command.id == id)?;
+        command.stopped_by_agent = true;
+        Some(command.terminal.clone())
+    }
+
+    /// The commands this thread left running in the background, as terminal
+    /// id and command line.
+    pub fn background_commands(&self) -> Vec<(acp_v2::TerminalId, SharedString)> {
+        self.background_commands
+            .iter()
+            .map(|command| (command.id.clone(), command.command.clone()))
+            .collect()
     }
 
     /// The subagents currently working for this thread, whether within its
