@@ -5,8 +5,12 @@ use chrono::{DateTime, Utc};
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
 use http_client::{Host, HttpClient, Url};
 use log::Level;
+use managed_resources::{
+    CommandPermissionRule, ManagedResource, ManagedResourceCommand, NpmResourceId,
+    ResourceAcquisition, ResourceId, ResourcePermission,
+};
 use semver::{Version, VersionReq};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
 use std::collections::HashMap;
@@ -41,6 +45,132 @@ pub struct NpmCommand {
     pub env: HashMap<String, String>,
     /// Apply this working directory when spawning the command to avoid project-local npm settings.
     pub current_dir: PathBuf,
+}
+
+pub struct Npm {
+    runtime: NodeRuntime,
+}
+
+pub struct NpmContext {
+    pub http: Arc<dyn HttpClient>,
+    pub options: NodeBinaryOptions,
+}
+
+impl ManagedResource for Npm {
+    type Key = String;
+    type Context = NpmContext;
+    type Command = InstallNpmPackages;
+    type CommandKind = NpmCommandKind;
+
+    fn id(key: &Self::Key) -> ResourceId {
+        ResourceId::Npm {
+            payload: NpmResourceId { name: key.clone() },
+        }
+    }
+
+    async fn obtain(_: &Self::Key, context: &NpmContext) -> Result<ResourceAcquisition<Self>> {
+        // Keep the acquisition options fixed so commands cannot switch to an unapproved source.
+        let runtime = NodeRuntime::new(
+            context.http.clone(),
+            None,
+            watch::channel(Some(context.options.clone())).1,
+        );
+        let instance: Option<Box<dyn NodeRuntimeTrait>> =
+            if let Some((node, npm)) = &context.options.use_paths {
+                Some(Box::new(
+                    SystemNodeRuntime::new(node.clone(), npm.clone()).await?,
+                ))
+            } else if context.options.allow_path_lookup
+                && let Ok(instance) = SystemNodeRuntime::detect().await
+            {
+                Some(Box::new(instance))
+            } else if context.options.allow_binary_download {
+                let instance = ManagedNodeRuntime {
+                    installation_path: ManagedNodeRuntime::installation_path()?,
+                };
+                if instance.is_valid().await {
+                    Some(Box::new(instance))
+                } else {
+                    None
+                }
+            } else {
+                bail!("no usable Node.js installation and binary downloads are disabled");
+            };
+
+        if let Some(instance) = instance {
+            {
+                let mut state = runtime.0.lock().await;
+                state.instance = Some(instance);
+                state.last_options = Some(context.options.clone());
+            }
+            runtime.run_npm_subcommand(None, "--version", &[]).await?;
+            Ok(ResourceAcquisition::Ready {
+                resource: Self { runtime },
+                action: None,
+            })
+        } else {
+            Ok(ResourceAcquisition::RequiresAction(Box::new(move || {
+                async move {
+                    runtime.run_npm_subcommand(None, "--version", &[]).await?;
+                    Ok(Self { runtime })
+                }
+                .boxed_local()
+            })))
+        }
+    }
+}
+
+pub struct InstallNpmPackages {
+    pub directory: PathBuf,
+    pub packages: Vec<(String, String)>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NpmPermissionSettings {
+    pub commands: Vec<CommandPermissionRule<NpmCommandKind>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NpmCommandKind {
+    Install,
+}
+
+impl ManagedResourceCommand<Npm> for InstallNpmPackages {
+    type Output = Result<()>;
+    type PermissionSettings = NpmPermissionSettings;
+
+    fn command_kind(&self) -> NpmCommandKind {
+        NpmCommandKind::Install
+    }
+
+    fn permission(&self, settings: &Self::PermissionSettings) -> Option<ResourcePermission> {
+        let command = self.command_kind();
+        settings
+            .commands
+            .iter()
+            .find(|rule| rule.command == command)
+            .map(|rule| rule.permission)
+    }
+
+    fn permission_description(&self, _: &Npm) -> String {
+        format!(
+            "Install npm packages {:?} in {:?}",
+            self.packages, self.directory
+        )
+    }
+
+    async fn run(self, npm: &Npm) -> Self::Output {
+        let packages = self
+            .packages
+            .iter()
+            .map(|(name, version)| (name.as_str(), version.as_str()))
+            .collect::<Vec<_>>();
+        npm.runtime
+            .npm_install_packages(&self.directory, &packages)
+            .await
+    }
 }
 
 pub enum VersionStrategy<'a> {
@@ -618,9 +748,7 @@ impl ManagedNodeRuntime {
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
 
-    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Self> {
-        log::info!("Node runtime install_if_needed");
-
+    fn installation_path() -> Result<PathBuf> {
         let os = match consts::OS {
             "macos" => "darwin",
             "linux" => "linux",
@@ -636,13 +764,16 @@ impl ManagedNodeRuntime {
 
         let version = Self::VERSION;
         let folder_name = format!("node-{version}-{os}-{arch}");
-        let node_containing_dir = paths::data_dir().join("node");
-        let node_dir = node_containing_dir.join(folder_name);
+        Ok(paths::data_dir().join("node").join(folder_name))
+    }
+
+    async fn is_valid(&self) -> bool {
+        let node_dir = &self.installation_path;
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
-        let valid = if fs::metadata(&node_binary).await.is_ok() {
+        if fs::metadata(&node_binary).await.is_ok() {
             let result = util::command::new_command(&node_binary)
                 .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
                 .arg(npm_file)
@@ -667,8 +798,7 @@ impl ManagedNodeRuntime {
                 }
                 Err(err) => {
                     log::warn!(
-                        "Zed managed Node.js binary at {} failed check, so re-downloading it. \
-                        Error: {}",
+                        "Zed managed Node.js binary at {} failed check. Error: {}",
                         node_binary.display(),
                         err
                     );
@@ -677,9 +807,18 @@ impl ManagedNodeRuntime {
             }
         } else {
             false
-        };
+        }
+    }
 
-        if !valid {
+    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Self> {
+        log::info!("Node runtime install_if_needed");
+
+        let runtime = Self {
+            installation_path: Self::installation_path()?,
+        };
+        let node_dir = &runtime.installation_path;
+        let node_containing_dir = paths::data_dir().join("node");
+        if !runtime.is_valid().await {
             _ = fs::remove_dir_all(&node_containing_dir).await;
             fs::create_dir(&node_containing_dir)
                 .await
@@ -692,8 +831,12 @@ impl ManagedNodeRuntime {
             };
 
             let version = Self::VERSION;
+            let folder_name = node_dir
+                .file_name()
+                .context("missing Node.js installation folder name")?
+                .to_string_lossy();
             let file_name = format!(
-                "node-{version}-{os}-{arch}.{extension}",
+                "{folder_name}.{extension}",
                 extension = match archive_type {
                     ArchiveType::TarGz => "tar.gz",
                     ArchiveType::Zip => "zip",
@@ -727,9 +870,7 @@ impl ManagedNodeRuntime {
         _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
         _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
 
-        anyhow::Ok(ManagedNodeRuntime {
-            installation_path: node_dir,
-        })
+        Ok(runtime)
     }
 }
 
@@ -1377,14 +1518,73 @@ mod tests {
 
     use anyhow::{Result, bail};
     use http_client::Url;
+    use managed_resources::{ManagedResourceCommand as _, ResourcePermission};
     use semver::{Version, VersionReq};
 
     use super::{
-        ManagedNodeRuntime, NodeDiscoveryError, NodeRuntimeTrait, NpmInfo, SystemNodeRuntime,
-        VersionStrategy, build_npm_command_args, check_node_version,
-        deserialize_npm_info_from_response, find_node_path, find_npm_path, npm_command_directory,
-        proxy_argument, select_npm_package_version, should_install_npm_package_version,
+        InstallNpmPackages, ManagedNodeRuntime, NodeDiscoveryError, NodeRuntimeTrait, NpmInfo,
+        NpmPermissionSettings, SystemNodeRuntime, VersionStrategy, build_npm_command_args,
+        check_node_version, deserialize_npm_info_from_response, find_node_path, find_npm_path,
+        npm_command_directory, proxy_argument, select_npm_package_version,
+        should_install_npm_package_version,
     };
+
+    #[test]
+    fn npm_command_permissions_identify_operations_not_arguments() {
+        let serialized = serde_json::json!({"commands":[{
+            "permission":"prompt",
+            "command":"install"
+        }]});
+        let settings: NpmPermissionSettings =
+            serde_json::from_value(serialized.clone()).expect("npm settings");
+        assert_eq!(
+            serde_json::to_value(&settings).expect("serializable settings"),
+            serialized
+        );
+        let command = InstallNpmPackages {
+            directory: PathBuf::from("/tmp/npm-permission-test"),
+            packages: vec![
+                ("typescript".into(), "5.8.3".into()),
+                ("typescript-language-server".into(), "4.3.4".into()),
+            ],
+        };
+        assert_eq!(
+            command.permission(&settings),
+            Some(ResourcePermission::Prompt)
+        );
+        assert_eq!(
+            serde_json::to_value(command.command_kind()).expect("serializable command"),
+            serde_json::json!("install")
+        );
+        for other in [
+            InstallNpmPackages {
+                directory: PathBuf::from("/tmp/other"),
+                packages: command.packages.clone(),
+            },
+            InstallNpmPackages {
+                directory: command.directory.clone(),
+                packages: vec![
+                    ("typescript".into(), "5.9.0".into()),
+                    ("typescript-language-server".into(), "4.3.4".into()),
+                ],
+            },
+            InstallNpmPackages {
+                directory: command.directory.clone(),
+                packages: vec![("typescript".into(), "5.8.3".into())],
+            },
+        ] {
+            assert_eq!(
+                other.permission(&settings),
+                Some(ResourcePermission::Prompt)
+            );
+        }
+        assert!(
+            serde_json::from_value::<NpmPermissionSettings>(serde_json::json!({"commands":[{
+                "permission":"allowed","command":"unknown"
+            }]}))
+            .is_err()
+        );
+    }
 
     #[test]
     fn test_npm_commands_use_an_isolated_default_directory() -> Result<()> {

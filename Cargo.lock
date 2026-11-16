@@ -10491,6 +10491,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc04a4c58212d57930a24bf47d3fa87485264a3a054e9c10e042eb373573ad3c"
 
 [[package]]
+name = "managed_resources"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-lock",
+ "fs",
+ "futures 0.3.34",
+ "gpui",
+ "paths",
+ "serde",
+ "serde_json",
+ "settings",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "manatee"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11312,6 +11328,7 @@ dependencies = [
  "futures 0.3.34",
  "http_client",
  "log",
+ "managed_resources",
  "paths",
  "semver",
  "serde",
