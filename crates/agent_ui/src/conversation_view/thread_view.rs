@@ -691,7 +691,8 @@ pub(crate) enum PermissionSelection {
     Choice(usize),
     /// "Select options…" mode where individual command patterns can be toggled.
     /// Contains the indices of checked patterns in the `patterns` list.
-    /// All patterns start checked when this mode is first activated.
+    /// Only the pattern the user clicked is checked when this mode is first activated;
+    /// the user must explicitly check any additional patterns.
     SelectedPatterns(Vec<usize>),
 }
 
@@ -712,7 +713,7 @@ impl PermissionSelection {
         }
     }
 
-    fn has_any_checked_patterns(&self) -> bool {
+    pub(super) fn has_any_checked_patterns(&self) -> bool {
         match self {
             Self::SelectedPatterns(checked) => !checked.is_empty(),
             _ => false,
