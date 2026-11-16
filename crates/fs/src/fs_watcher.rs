@@ -881,13 +881,13 @@ impl WatchPaths {
                 ids.extend_from_slice(&registration.watcher_ids);
             }
 
-            #[cfg(target_os = "windows")]
+            #[cfg(not(target_os = "macos"))]
             if let Some(registration) = self.0.get(&WatchKey::folded(ancestor)) {
                 ids.extend_from_slice(&registration.watcher_ids);
             }
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
         {
             let folded_path = WatchKey::folded_path(path);
             for ancestor in Path::new(&folded_path).ancestors() {
