@@ -177,10 +177,6 @@ pub enum InboundSessionUpdate {
         plan: acp_v2::PlanMarkdown,
         update_meta: Option<acp_v2::Meta>,
     },
-    PlanFile {
-        plan: acp_v2::PlanFile,
-        update_meta: Option<acp_v2::Meta>,
-    },
     PlanRemoved(acp_v2::PlanRemoved),
     Terminal(DecodedTerminalUpdate),
     SessionInfo(acp_v2::SessionInfoUpdate),
@@ -247,10 +243,6 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
                     update_meta: update.meta,
                 },
                 acp_v2::PlanUpdateContent::Markdown(plan) => InboundSessionUpdate::PlanMarkdown {
-                    plan,
-                    update_meta: update.meta,
-                },
-                acp_v2::PlanUpdateContent::File(plan) => InboundSessionUpdate::PlanFile {
                     plan,
                     update_meta: update.meta,
                 },
@@ -346,10 +338,6 @@ impl InboundSessionNotification {
             }
             InboundSessionUpdate::PlanMarkdown { plan, update_meta } => {
                 thread.upsert_plan_markdown(plan, update_meta, cx);
-                Ok(())
-            }
-            InboundSessionUpdate::PlanFile { plan, update_meta } => {
-                thread.upsert_plan_file(plan, update_meta, cx);
                 Ok(())
             }
             InboundSessionUpdate::PlanRemoved(removed) => {

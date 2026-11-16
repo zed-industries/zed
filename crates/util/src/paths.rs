@@ -1055,6 +1055,10 @@ where
 /// 4. For non-numeric characters, using case-insensitive comparison
 /// 5. If everything is equal case-insensitively, using case-sensitive comparison as final tie-breaker
 pub fn natural_sort(a: &str, b: &str) -> Ordering {
+    if a == b {
+        return Ordering::Equal;
+    }
+
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
 
@@ -1096,6 +1100,16 @@ fn natural_sort_no_tiebreak(a: &str, b: &str) -> Ordering {
         Ordering::Equal
     } else {
         natural_sort(a, b)
+    }
+}
+
+fn compare_lowercase(a: &str, b: &str) -> Ordering {
+    if a.is_ascii() && b.is_ascii() {
+        a.bytes()
+            .map(|byte| byte.to_ascii_lowercase())
+            .cmp(b.bytes().map(|byte| byte.to_ascii_lowercase()))
+    } else {
+        a.to_lowercase().cmp(&b.to_lowercase())
     }
 }
 
@@ -1245,10 +1259,8 @@ pub fn compare_rel_paths_by(
                 if order == SortOrder::Extension {
                     // Directories have no extension and must take part in this comparison too,
                     // otherwise mixed mode would produce an inconsistent (non-transitive) ordering.
-                    let extension_ordering = a_ext
-                        .unwrap_or_default()
-                        .to_lowercase()
-                        .cmp(&b_ext.unwrap_or_default().to_lowercase());
+                    let extension_ordering =
+                        compare_lowercase(a_ext.unwrap_or_default(), b_ext.unwrap_or_default());
                     if !extension_ordering.is_eq() {
                         return extension_ordering;
                     }

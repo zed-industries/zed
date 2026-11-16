@@ -10927,6 +10927,24 @@ async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext
     );
 }
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[gpui::test]
+async fn test_empty_selections_keep_primary_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let primary_text = |cx: &mut EditorTestContext| {
+        cx.update_editor(|_, _, cx| cx.read_from_primary())
+            .and_then(|item| item.text())
+    };
+
+    cx.set_state("«oneˇ» two");
+    assert_eq!(primary_text(&mut cx), Some("one".to_string()));
+
+    cx.set_selections_state("ˇone ˇtwo");
+    assert_eq!(primary_text(&mut cx), Some("one".to_string()));
+}
+
 #[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

@@ -6079,9 +6079,9 @@ impl Sidebar {
         if let Some(thread_switcher) = &self.thread_switcher {
             thread_switcher.update(cx, |switcher, cx| {
                 if select_last {
-                    switcher.select_last(cx);
+                    switcher.select_previous(&SelectPrevious, window, cx);
                 } else {
-                    switcher.cycle_selection(cx);
+                    switcher.select_next(&SelectNext, window, cx);
                 }
             });
             return;
