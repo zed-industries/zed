@@ -145,7 +145,7 @@ impl CanonicalPathBuf {
             // and `readlink` of an `O_PATH|O_NOFOLLOW` fd on a symlink returns
             // the symlink's *own* path (equal to `path`), so the comparison
             // below wouldn't catch it.
-            let stat = nix::sys::stat::fstat(fd.as_raw_fd()).map_err(io::Error::from)?;
+            let stat = nix::sys::stat::fstat(&fd).map_err(io::Error::from)?;
             if stat.st_mode & libc::S_IFMT == libc::S_IFLNK {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
@@ -266,8 +266,8 @@ impl PartialEq for CanonicalPathBuf {
         #[cfg(target_os = "linux")]
         {
             match (
-                linux_fd_identity(self.fd.as_raw_fd()),
-                linux_fd_identity(other.fd.as_raw_fd()),
+                linux_fd_identity(self.fd.as_fd()),
+                linux_fd_identity(other.fd.as_fd()),
             ) {
                 (Some(a), Some(b)) => a == b,
                 // An `fstat` on an `O_PATH` fd we own should never fail; if it
@@ -296,7 +296,7 @@ impl Eq for CanonicalPathBuf {}
 /// whether two [`CanonicalPathBuf`]s (or their parents) refer to the same
 /// filesystem object.
 #[cfg(target_os = "linux")]
-pub(crate) fn linux_fd_identity(fd: std::os::fd::RawFd) -> Option<(u64, u64)> {
+pub(crate) fn linux_fd_identity(fd: BorrowedFd<'_>) -> Option<(u64, u64)> {
     let stat = nix::sys::stat::fstat(fd).ok()?;
     Some((stat.st_dev as u64, stat.st_ino as u64))
 }

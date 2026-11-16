@@ -25,6 +25,7 @@ picks them up automatically when run from that directory.
 - `shared_string_from_str_literal` — `SharedString::new/from` etc where `SharedString::from_static` should be used instead.
 - `async_block_without_await` — `async { … }` blocks whose body contains no `.await` expression.
 - `entity_update_in_render` — `Entity::update`/`WeakEntity::update` mutating an entity inside `Render::render`.
+- `map_lookup_then_insert` — map value lookups that branch into an insertion for the same key, on any map with an `entry` method (`HashMap`, `BTreeMap`, `FxHashMap`, `hashbrown`, `indexmap`, ...), and the same pattern on `HashSet`/`BTreeSet` (where a bare `insert` already searches only once). Keys are matched up to borrows/derefs, value-preserving conversions (`clone`, `to_owned`, `to_string` on string types, `to_vec` on slices, `String::from` on `&str` — each resolved by definition, not name), and immutable local aliases, so looking up `&key` and inserting `key.clone()` is caught.
 - `notify_in_render` — `Context::notify()` called inside `Render::render`.
 - `owned_string_into_shared` — `String::from(<lit>).into()` / `<lit>.to_string().into()` / `<lit>.to_owned().into()` whose target is `SharedString`, `Arc<str>`, `Rc<str>`, or `Cow<'_, str>`.
 - `blocking_io_on_foreground` - Catch blocking IO calls that are called on the main thread (but not on closures or background threads)

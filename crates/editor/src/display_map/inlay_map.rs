@@ -12,7 +12,7 @@ use crate::{
 use collections::BTreeSet;
 use language::{Chunk, Edit, LanguageAwareStyling, Point, TextSummary};
 use multi_buffer::{
-    MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
+    Anchor, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
     RowInfo, ToOffset,
 };
 use project::InlayId;
@@ -20,6 +20,7 @@ use smallvec::SmallVec;
 use std::{
     cmp, iter,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
+    slice,
     sync::Arc,
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
@@ -778,7 +779,7 @@ impl InlayMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> + Default {
+    pub fn current_inlays(&self) -> slice::Iter<'_, Inlay> {
         self.inlays.iter()
     }
 
@@ -1294,6 +1295,42 @@ impl InlaySnapshot {
         .collect()
     }
 
+    pub(super) fn inlay_offset_range(
+        &self,
+        inlay_id: InlayId,
+        position: Anchor,
+    ) -> Option<Range<InlayOffset>> {
+        let buffer_offset = position.to_offset(&self.buffer);
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<MultiBufferOffset, InlayOffset>>(());
+        cursor.seek(&buffer_offset, Bias::Left);
+        while let Some(transform) = cursor.item() {
+            if cursor.start().0 > buffer_offset {
+                break;
+            }
+            if let Transform::Inlay(inlay) = transform
+                && inlay.id == inlay_id
+            {
+                return Some(cursor.start().1..cursor.end().1);
+            }
+            cursor.next();
+        }
+        None
+    }
+
+    pub(super) fn inlay_hint_at_offset(&self, offset: InlayOffset) -> Option<(&Inlay, usize)> {
+        let (start, _, transform) =
+            self.transforms
+                .find::<InlayOffset, _>((), &offset, Bias::Right);
+        match transform {
+            Some(Transform::Inlay(inlay)) if matches!(inlay.id, InlayId::Hint(_)) => {
+                Some((inlay, offset - start))
+            }
+            _ => None,
+        }
+    }
+
     #[ztracing::instrument(skip_all)]
     fn check_invariants(&self) {
         #[cfg(any(debug_assertions, feature = "test-support"))]
@@ -1459,8 +1496,9 @@ mod tests {
         hover_links::InlayHighlight,
     };
     use collections::HashMap;
-    use gpui::{App, HighlightStyle};
-    use multi_buffer::Anchor;
+    use gpui::{App, AppContext as _, HighlightStyle};
+    use language::Buffer;
+    use multi_buffer::{Anchor, PathKey};
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1478,6 +1516,7 @@ mod tests {
                 Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
+                    text_edits: None,
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: false,
                     padding_right: false,
@@ -1498,6 +1537,7 @@ mod tests {
                 Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
+                    text_edits: None,
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: true,
                     padding_right: true,
@@ -1518,6 +1558,7 @@ mod tests {
                 Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
+                    text_edits: None,
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: false,
                     padding_right: false,
@@ -1538,6 +1579,7 @@ mod tests {
                 Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
+                    text_edits: None,
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: true,
                     padding_right: true,
@@ -1561,6 +1603,7 @@ mod tests {
                 Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String("🎨".to_string()),
+                    text_edits: None,
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: true,
                     padding_right: true,
@@ -2352,6 +2395,95 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Reproduces the "cannot summarize backward" crash family: when a path
+    /// key is reused for a different buffer, as happens when a diff's base
+    /// buffer is recreated, an inlay anchored in the departed buffer resolves
+    /// to the end of the reused path's region while still sorting before
+    /// anchors into the new buffer (same-path anchors order by buffer id).
+    /// That breaks the resolved-offset ordering `InlayMap::sync`'s binary
+    /// search over `self.inlays` relies on, so the scan reaches a valid inlay
+    /// belonging to a region before the edit and pushes it after content that
+    /// was already built, panicking in the rope layer.
+    #[gpui::test]
+    fn test_sync_after_path_key_reused_for_different_buffer(cx: &mut App) {
+        init_test(cx);
+
+        let buffer_x = cx.new(|cx| Buffer::local("xxx xxx xxx\nxxx\n", cx));
+        let buffer_y = cx.new(|cx| Buffer::local("yyy yyy yyy\nyyy\n", cx));
+        let path = PathKey::sorted(0);
+        let multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadWrite));
+        multibuffer.update(cx, |multibuffer, cx| {
+            let max_point_x = buffer_x.read(cx).max_point();
+            multibuffer.set_excerpts_for_path(
+                path.clone(),
+                buffer_x.clone(),
+                [Point::zero()..max_point_x],
+                0,
+                cx,
+            );
+        });
+
+        let subscription = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        let (mut inlay_map, _) = InlayMap::new(snapshot.clone());
+
+        // Anchor two inlays in `buffer_x` while it holds the path. Two are
+        // needed so that the binary search over the inlays probes one of them
+        // and is steered away from the valid inlay added below.
+        inlay_map.splice(
+            &[],
+            vec![
+                Inlay::mock_hint(0, snapshot.anchor_after(MultiBufferOffset(5)), "|stale|"),
+                Inlay::mock_hint(2, snapshot.anchor_after(MultiBufferOffset(7)), "|stale|"),
+            ],
+        );
+
+        // Reuse the path for `buffer_y`. The stale inlay's anchor now resolves
+        // to the end of the path's region while still sorting first.
+        multibuffer.update(cx, |multibuffer, cx| {
+            let max_point_y = buffer_y.read(cx).max_point();
+            multibuffer.set_excerpts_for_path(
+                path.clone(),
+                buffer_y.clone(),
+                [Point::zero()..max_point_y],
+                0,
+                cx,
+            );
+        });
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        let edits = subscription.consume().into_inner();
+        inlay_map.sync(snapshot.clone(), edits);
+
+        // Anchor a valid inlay early in `buffer_y`'s region.
+        inlay_map.splice(
+            &[],
+            vec![Inlay::mock_hint(
+                1,
+                snapshot.anchor_after(MultiBufferOffset(2)),
+                "|valid|",
+            )],
+        );
+
+        // Append another buffer, producing an edit at the end of the
+        // multibuffer: between the valid inlay's position and where the stale
+        // inlay now resolves.
+        let buffer_z = cx.new(|cx| Buffer::local("zzz zzz zzz\nzzz\n", cx));
+        multibuffer.update(cx, |multibuffer, cx| {
+            let max_point_z = buffer_z.read(cx).max_point();
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                buffer_z.clone(),
+                [Point::zero()..max_point_z],
+                0,
+                cx,
+            );
+        });
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        let edits = subscription.consume().into_inner();
+        let (inlay_snapshot, _) = inlay_map.sync(snapshot, edits);
+        inlay_snapshot.check_invariants();
     }
 
     fn init_test(cx: &mut App) {

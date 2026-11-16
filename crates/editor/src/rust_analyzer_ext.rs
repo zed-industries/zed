@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::fs;
 
 use anyhow::Context as _;
 use gpui::{App, AppContext as _, Context, Entity, TaskExt, Window};
@@ -14,6 +14,7 @@ use project::{
 };
 use rpc::proto;
 use text::ToPointUtf16;
+use url::Url;
 
 use crate::{
     CancelFlycheck, ClearFlycheck, Editor, ExpandMacroRecursively, GoToParentModule,
@@ -89,6 +90,7 @@ pub fn go_to_parent_module(
                 project_id,
                 buffer_id: buffer_id.to_proto(),
                 position: Some(serialize_anchor(&trigger_anchor)),
+                server_id: server_to_query.to_proto(),
             };
             let response = client
                 .request(request)
@@ -112,7 +114,10 @@ pub fn go_to_parent_module(
                     project.request_lsp(
                         buffer,
                         project::LanguageServerToQuery::Other(server_to_query),
-                        project::lsp_store::lsp_ext_command::GoToParentModule { position },
+                        project::lsp_store::lsp_ext_command::GoToParentModule {
+                            position,
+                            server_id: server_to_query,
+                        },
                         cx,
                     )
                 })
@@ -169,6 +174,7 @@ pub fn expand_macro_recursively(
                 project_id,
                 buffer_id: buffer_id.to_proto(),
                 position: Some(serialize_anchor(&trigger_anchor)),
+                server_id: server_to_query.to_proto(),
             };
             let response = client
                 .request(request)
@@ -186,7 +192,10 @@ pub fn expand_macro_recursively(
                     project.request_lsp(
                         buffer,
                         project::LanguageServerToQuery::Other(server_to_query),
-                        ExpandMacro { position },
+                        ExpandMacro {
+                            position,
+                            server_id: server_to_query,
+                        },
                         cx,
                     )
                 })
@@ -258,6 +267,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
                 project_id,
                 buffer_id: buffer_id.to_proto(),
                 position: Some(serialize_anchor(&trigger_anchor)),
+                server_id: server_to_query.to_proto(),
             };
             let response = client
                 .request(request)
@@ -275,7 +285,10 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
                     project.request_lsp(
                         buffer,
                         project::LanguageServerToQuery::Other(server_to_query),
-                        project::lsp_store::lsp_ext_command::OpenDocs { position },
+                        project::lsp_store::lsp_ext_command::OpenDocs {
+                            position,
+                            server_id: server_to_query,
+                        },
                         cx,
                     )
                 })
@@ -288,18 +301,23 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
             return Ok(());
         }
 
-        workspace.update(cx, |_workspace, cx| {
-            // Check if the local document exists, otherwise fallback to the online document.
-            // Open with the default browser.
-            if let Some(local_url) = docs_urls.local
-                && fs::metadata(Path::new(&local_url[8..])).is_ok()
-            {
-                cx.open_url(&local_url);
-                return;
-            }
+        // Check if the local document exists, otherwise fallback to the online document.
+        let url = if let Some(local_url) = docs_urls.local
+            && let Ok(url) = Url::parse(&local_url)
+            && url.scheme() == "file"
+            && let Ok(path) = url.to_file_path()
+            && cx
+                .background_spawn(async move { fs::metadata(path).is_ok() })
+                .await
+        {
+            Some(local_url)
+        } else {
+            docs_urls.web
+        };
 
-            if let Some(web_url) = docs_urls.web {
-                cx.open_url(&web_url);
+        workspace.update(cx, |_workspace, cx| {
+            if let Some(url) = url {
+                cx.open_url(&url);
             }
         });
         anyhow::Ok(())

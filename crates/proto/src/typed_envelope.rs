@@ -138,10 +138,6 @@ impl PeerId {
     }
 }
 
-impl Copy for PeerId {}
-
-impl Eq for PeerId {}
-
 impl Ord for PeerId {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.owner_id
@@ -153,13 +149,6 @@ impl Ord for PeerId {
 impl PartialOrd for PeerId {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl std::hash::Hash for PeerId {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.owner_id.hash(state);
-        self.id.hash(state);
     }
 }
 

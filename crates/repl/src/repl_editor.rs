@@ -839,7 +839,7 @@ mod tests {
         editor::init(cx);
 
         // Initialize the ReplStore with a fake filesystem
-        let fs = Arc::new(project::RealFs::new(None, cx.background_executor().clone()));
+        let fs = project::RealFs::new(None, cx.background_executor().clone());
         ReplStore::init(fs, cx);
 
         // Add mock kernel specifications for TypeScript and Python

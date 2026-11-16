@@ -31,7 +31,7 @@ use alacritty_terminal::{
 use anyhow::{Context as _, Result};
 use futures::channel::mpsc::UnboundedSender;
 use util::paths::PathStyle;
-use vte::ansi::Handler;
+use vte::ansi::{Handler, Processor, Rgb, StdSyncHandler};
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
@@ -55,7 +55,10 @@ pub(super) type AlacrittyGridIterator<'a> = GridIterator<'a, AlacCell>;
 pub(super) type AlacrittyHyperlink = AlacHyperlink;
 
 #[derive(Clone)]
-pub(super) struct ZedListener(UnboundedSender<PtyEvent>);
+pub(super) struct ZedListener {
+    sender: UnboundedSender<PtyEvent>,
+    generation: u64,
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct AlacrittySearch {
@@ -190,8 +193,16 @@ pub(super) fn new_term(
     bounds: TerminalBounds,
     events_tx: UnboundedSender<PtyEvent>,
     alternate_scroll: AlternateScroll,
+    generation: u64,
 ) -> Arc<AlacrittyTermLock> {
-    let mut term = Term::new(config.clone(), &bounds, ZedListener(events_tx));
+    let mut term = Term::new(
+        config.clone(),
+        &bounds,
+        ZedListener {
+            sender: events_tx,
+            generation,
+        },
+    );
 
     if let AlternateScroll::Off = alternate_scroll {
         term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
@@ -206,8 +217,17 @@ pub(super) fn spawn_event_loop(
     pty: AlacrittyPty,
     drain_on_exit: bool,
 ) -> Result<PtySender> {
-    let event_loop = EventLoop::new(term, ZedListener(events_tx), pty, drain_on_exit, false)
-        .context("failed to create event loop")?;
+    let event_loop = EventLoop::new(
+        term,
+        ZedListener {
+            sender: events_tx,
+            generation: 0,
+        },
+        pty,
+        drain_on_exit,
+        false,
+    )
+    .context("failed to create event loop")?;
     let pty_tx = event_loop.channel();
     let _io_thread = event_loop.spawn();
 
@@ -222,6 +242,40 @@ pub(super) fn resize(term: &mut AlacrittyTerm, bounds: TerminalBounds) {
 
 pub(super) fn display_offset(term: &AlacrittyTerm) -> usize {
     term.grid().display_offset()
+}
+
+pub(super) fn history_size(term: &AlacrittyTerm) -> usize {
+    term.history_size()
+}
+
+pub(super) fn cursor_line(term: &AlacrittyTerm) -> i32 {
+    term.grid().cursor.point.line.0
+}
+
+pub(super) fn cursor_blinking(term: &AlacrittyTerm) -> bool {
+    term.cursor_style().blinking
+}
+
+/// A color set by the running program (OSC 4/10/11), if any.
+pub(super) fn palette_color(term: &AlacrittyTerm, index: usize) -> Option<Rgb> {
+    term.colors()[index]
+}
+
+pub(super) fn renderable_cells(term: &AlacrittyTerm) -> RenderableCells<'_> {
+    RenderableCells::new(term.renderable_content().display_iter)
+}
+
+/// Feeds output that doesn't come through the PTY event loop into a terminal.
+pub(super) struct OutputParser(Processor<StdSyncHandler>);
+
+impl OutputParser {
+    pub(super) fn new() -> Self {
+        Self(Processor::new())
+    }
+
+    pub(super) fn advance(&mut self, term: &mut AlacrittyTerm, bytes: &[u8]) {
+        self.0.advance(term, bytes);
+    }
 }
 
 pub(super) fn scroll_display(term: &mut AlacrittyTerm, scroll: Scroll) {
@@ -325,7 +379,9 @@ impl From<AlacTermEvent> for TerminalBackendEvent {
 
 impl EventListener for ZedListener {
     fn send_event(&self, event: AlacTermEvent) {
-        self.0.unbounded_send(PtyEvent::Event(event.into())).ok();
+        self.sender
+            .unbounded_send(PtyEvent::Event(event.into(), self.generation))
+            .ok();
     }
 }
 
@@ -1188,7 +1244,14 @@ mod tests {
     fn semantic_selection_stops_at_tree_branch() {
         let config = pty_term_config(1000, SettingsCursorShape::default());
         let (events_tx, _events_rx) = futures::channel::mpsc::unbounded();
-        let mut term = Term::new(config, &TerminalBounds::default(), ZedListener(events_tx));
+        let mut term = Term::new(
+            config,
+            &TerminalBounds::default(),
+            ZedListener {
+                sender: events_tx,
+                generation: 0,
+            },
+        );
         for character in "└─zms-demo.target".chars() {
             term.input(character);
         }

@@ -1,4 +1,6 @@
-use gpui::Hsla;
+use std::sync::Arc;
+
+use gpui::{Hsla, SvgRenderer};
 use mermaid_render::MermaidTheme;
 
 fn rgb(r: u8, g: u8, b: u8) -> Hsla {
@@ -174,6 +176,7 @@ fn check_svg_issues(name: &str, svg: &str) -> Vec<String> {
     }
 
     // Parse with quick-xml to find ANY empty attribute values on visual elements
+    use quick_xml::XmlVersion;
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(svg);
     loop {
@@ -183,7 +186,9 @@ fn check_svg_issues(name: &str, svg: &str) -> Vec<String> {
                 let tag = String::from_utf8_lossy(e.name().local_name().as_ref()).to_string();
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
-                    let val = attr.unescape_value().unwrap_or_default();
+                    let val = attr
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .unwrap_or_default();
                     let visual_attr = matches!(
                         key.as_str(),
                         "fill"
@@ -230,7 +235,8 @@ fn accent_colors_auto_applied_to_nodes() {
     // automatic accent colors applied to its node groups.
     let source = "stateDiagram-v2\n    [*] --> Idle\n    Idle --> Processing\n    Processing --> Done\n    Done --> [*]";
 
-    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+    let svg =
+        mermaid_render::render_to_svg(source, &theme, &svg_renderer()).expect("render failed");
 
     // accent_fill_and_text darkens the background color for dark mode.
     // The stroke colors are direct hex conversions of the accent rgb values.
@@ -256,7 +262,8 @@ fn accent_colors_auto_applied_to_nodes() {
 fn generics_not_double_escaped() {
     let theme = rgb_theme();
     let source = "classDiagram\n    class Shelter {\n        -List~Animal~ animals\n        +adopt(Animal a) bool\n    }";
-    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+    let svg =
+        mermaid_render::render_to_svg(source, &theme, &svg_renderer()).expect("render failed");
     assert!(
         !svg.contains("&amp;lt;"),
         "Double-escaped &amp;lt; found in SVG"
@@ -279,10 +286,12 @@ fn class_diagram_label_text_uses_accent_classes() {
         +String breed
         +bark() void
     }
-    Dog --|> Animal"#;
+    Dog --|> Animal : inherits"#;
 
-    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+    let svg =
+        mermaid_render::render_to_svg(source, &theme, &svg_renderer()).expect("render failed");
 
+    use quick_xml::XmlVersion;
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(&svg);
     let mut accent_classes: Vec<String> = Vec::new();
@@ -291,7 +300,10 @@ fn class_diagram_label_text_uses_accent_classes() {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) if e.name().as_ref() == b"text" => {
                 if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
-                    let class = class_attr.unescape_value().unwrap_or_default().to_string();
+                    let class = class_attr
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .unwrap_or_default()
+                        .to_string();
                     for token in class.split_whitespace() {
                         if token.starts_with("zed-accent-") {
                             accent_classes.push(token.to_string());
@@ -303,9 +315,16 @@ fn class_diagram_label_text_uses_accent_classes() {
         }
     }
 
-    assert!(
-        !accent_classes.is_empty(),
-        "expected zed-accent-N classes on label text elements",
+    assert_eq!(
+        accent_classes,
+        [
+            "zed-accent-0",
+            "zed-accent-0",
+            "zed-accent-0",
+            "zed-accent-1",
+            "zed-accent-1",
+            "zed-accent-1",
+        ],
     );
 }
 
@@ -313,8 +332,10 @@ fn class_diagram_label_text_uses_accent_classes() {
 fn sequence_diagram_tspan_uses_accent_classes() {
     let theme = rgb_theme();
     let source = "sequenceDiagram\n    participant Database";
-    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+    let svg =
+        mermaid_render::render_to_svg(source, &theme, &svg_renderer()).expect("render failed");
 
+    use quick_xml::XmlVersion;
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(&svg);
     let mut accent_classes: Vec<String> = Vec::new();
@@ -323,7 +344,10 @@ fn sequence_diagram_tspan_uses_accent_classes() {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) if e.name().as_ref() == b"tspan" => {
                 if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
-                    let class = class_attr.unescape_value().unwrap_or_default().to_string();
+                    let class = class_attr
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .unwrap_or_default()
+                        .to_string();
                     for token in class.split_whitespace() {
                         if token.starts_with("zed-accent-") {
                             accent_classes.push(token.to_string());
@@ -347,7 +371,7 @@ fn no_empty_attributes_or_nan_with_rgb_theme() {
     let mut all_issues = Vec::new();
 
     for (name, source) in DIAGRAMS {
-        match mermaid_render::render_to_svg(source, &theme) {
+        match mermaid_render::render_to_svg(source, &theme, &svg_renderer()) {
             Ok(svg) => all_issues.extend(check_svg_issues(name, &svg)),
             Err(e) => eprintln!("{name}: render failed (skipped): {e}"),
         }
@@ -360,4 +384,8 @@ fn no_empty_attributes_or_nan_with_rgb_theme() {
             all_issues.join("\n")
         );
     }
+}
+
+fn svg_renderer() -> SvgRenderer {
+    SvgRenderer::new(Arc::new(()))
 }

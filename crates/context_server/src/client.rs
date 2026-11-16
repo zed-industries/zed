@@ -160,6 +160,17 @@ pub struct ModelContextServerBinary {
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
     pub timeout: Option<u64>,
+    #[serde(skip)]
+    pub stdin_prefix: Option<StdinPrefix>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct StdinPrefix(pub Vec<u8>);
+
+impl std::fmt::Debug for StdinPrefix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StdinPrefix([REDACTED {} bytes])", self.0.len())
+    }
 }
 
 impl Client {
@@ -592,9 +603,14 @@ impl NotificationSubscriptionSet {
             return;
         };
 
-        for handler_id in handler_ids {
-            if let Some(handler) = self.handlers.get_mut(*handler_id) {
-                handler(payload.clone(), cx.clone());
+        if let Some((last_handler_id, handler_ids)) = handler_ids.split_last() {
+            for handler_id in handler_ids {
+                if let Some(handler) = self.handlers.get_mut(*handler_id) {
+                    handler(payload.clone(), cx.clone());
+                }
+            }
+            if let Some(handler) = self.handlers.get_mut(*last_handler_id) {
+                handler(payload, cx.clone());
             }
         }
     }

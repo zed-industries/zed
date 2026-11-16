@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "agent_skills.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true

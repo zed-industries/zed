@@ -52,7 +52,10 @@ pub(crate) fn lychee_link_check(dir: &str) -> Step<Use> {
         "lychee-action",
         "82202e5e9c2f4ef1a55a3d02563e1cb6041e5332",
     ) // v2.4.1
-    .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
+    .add_with((
+        "args",
+        format!("--config .config/lychee.toml --no-progress --exclude '^http' '{dir}'"),
+    ))
     .add_with(("fail", true))
     .add_with(("jobSummary", false))
 }

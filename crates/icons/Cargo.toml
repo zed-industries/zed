@@ -10,7 +10,8 @@ workspace = true
 
 [lib]
 path = "src/icons.rs"
+doctest = false
 
 [dependencies]
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 strum.workspace = true

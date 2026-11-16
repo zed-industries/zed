@@ -5,7 +5,7 @@ use super::TextFinder;
 
 impl Render for TextFinder {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("TextFinder");
 
         v_flex()

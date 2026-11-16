@@ -249,7 +249,7 @@ Zed has three dock positions: left, bottom, and right. Panels can be moved betwe
 
 Both IntelliJ and Zed offer integrated debugging, but the experience differs:
 
-- Zed's debugger uses the Debug Adapter Protocol (DAP), supporting multiple languages
+- Zed's [debugger](../debugger.md) uses the Debug Adapter Protocol (DAP), supporting multiple languages
 - Set breakpoints with `Ctrl+F8`
 - Start debugging with `Alt+Shift+F9`
 - Step through code with `F7` (step into), `F8` (step over), `Shift+F8` (step out)

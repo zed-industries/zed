@@ -86,6 +86,12 @@ impl CommandPaletteDB {
             .await
     }
 
+    query! {
+        pub async fn delete_command_history(command_name: String) -> Result<()> {
+            DELETE FROM command_invocations WHERE command_name = (?)
+        }
+    }
+
     #[cfg(test)]
     query! {
         pub(crate) fn get_last_invoked(command: &str) -> Result<Option<SerializedCommandInvocation>> {
@@ -103,6 +109,13 @@ impl CommandPaletteDB {
     query! {
         pub(crate) async fn clear_all() -> Result<()> {
             DELETE FROM command_invocations
+        }
+    }
+
+    #[cfg(test)]
+    query! {
+        pub(crate) async fn set_last_invoked(last_invoked: i64, command_name: String) -> Result<()> {
+            UPDATE command_invocations SET last_invoked = (?) WHERE command_name = (?)
         }
     }
 
@@ -224,6 +237,33 @@ mod tests {
         assert_eq!(commands.as_slice()[0].invocations, 2);
         assert_eq!(commands.as_slice()[1].command_name, "go to line: toggle");
         assert_eq!(commands.as_slice()[1].invocations, 1);
+    }
+
+    #[gpui::test]
+    async fn test_deletes_all_history_for_one_command() {
+        let db = CommandPaletteDB::open_test_db("test_deletes_all_history_for_one_command").await;
+        db.write_command_invocation("editor: backspace", "back")
+            .await
+            .unwrap();
+        db.write_command_invocation("editor: backspace", "backspace")
+            .await
+            .unwrap();
+        db.write_command_invocation("go to line: toggle", "line")
+            .await
+            .unwrap();
+        let remaining_usage = db.get_command_usage("go to line: toggle").unwrap().unwrap();
+
+        for _ in 0..2 {
+            db.delete_command_history("editor: backspace".to_string())
+                .await
+                .unwrap();
+
+            assert_eq!(
+                db.list_commands_used().unwrap(),
+                vec![remaining_usage.clone()]
+            );
+            assert_eq!(db.list_recent_queries().unwrap(), vec!["line"]);
+        }
     }
 
     #[gpui::test]

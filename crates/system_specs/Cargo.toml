@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/system_specs.rs"
+test = false
+doctest = false
 
 [features]
 default = []

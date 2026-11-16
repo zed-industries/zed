@@ -22,6 +22,7 @@ pub mod opencode;
 
 pub mod vercel_ai_gateway;
 pub mod x_ai;
+pub mod x_ai_subscribed;
 
 const COMMON_RESERVED_HEADER_NAMES: &[&str] = &["Authorization", "Content-Type", "Accept"];
 
@@ -71,6 +72,20 @@ pub(crate) fn resolve_custom_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::{StreamExt, stream};
+    use language_model::stream_in_background;
+
+    #[gpui::test]
+    async fn test_stream_in_background(cx: &mut gpui::TestAppContext) {
+        let events = stream::iter([1, 2, 3])
+            .flat_map(|event| stream::iter([event, event * 10]))
+            .boxed();
+        let mapped_events = stream_in_background(events, cx.background_executor.clone())
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(mapped_events, [1, 10, 2, 20, 3, 30]);
+    }
 
     fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs

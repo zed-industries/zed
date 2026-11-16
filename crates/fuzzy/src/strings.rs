@@ -194,7 +194,12 @@ where
         return Vec::new();
     }
 
-    let mut results = segment_results.concat();
-    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    let mut results = segment_results.into_iter().flatten().collect::<Vec<_>>();
+    rank_matches(&mut results, max_results);
     results
+}
+
+#[inline(never)]
+fn rank_matches(results: &mut Vec<StringMatch>, max_results: usize) {
+    gpui_util::truncate_to_bottom_n_sorted_by(results, max_results, &|a, b| b.cmp(a));
 }

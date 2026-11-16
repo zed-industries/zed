@@ -1,6 +1,7 @@
 use crate::{LanguageId, LanguageLoader, LanguageMatcher, LanguageName, ManifestName};
 use collections::FxHashMap;
 use globset::GlobSet;
+use gpui::SharedString;
 use smallvec::SmallVec;
 use std::{cell::LazyCell, path::Path, sync::Arc};
 use sum_tree::Bias;
@@ -17,6 +18,13 @@ pub struct AvailableLanguage {
     pub(super) load: LanguageLoader,
     pub(super) loaded: bool,
     pub(super) manifest_name: Option<ManifestName>,
+    pub(super) origin: LanguageOrigin,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum LanguageOrigin {
+    Native,
+    Extension,
 }
 
 impl AvailableLanguage {
@@ -57,17 +65,28 @@ impl AvailableLanguages {
         hidden: bool,
         manifest_name: Option<ManifestName>,
         load: LanguageLoader,
-    ) -> bool {
+        origin: LanguageOrigin,
+    ) -> Option<bool> {
         if let Some(existing_language) = self
             .0
             .iter_mut()
             .find(|existing_language| existing_language.name == name)
         {
+            if origin == LanguageOrigin::Extension
+                && existing_language.origin == LanguageOrigin::Native
+            {
+                return None;
+            }
+            existing_language.id = LanguageId::new();
             existing_language.grammar = grammar;
             existing_language.matcher = matcher;
+            existing_language.hidden = hidden;
             existing_language.load = load;
             existing_language.manifest_name = manifest_name;
-            false
+            existing_language.origin = origin;
+            let was_loaded = existing_language.loaded;
+            existing_language.loaded = false;
+            Some(was_loaded)
         } else {
             self.add(AvailableLanguage {
                 id: LanguageId::new(),
@@ -78,8 +97,9 @@ impl AvailableLanguages {
                 load,
                 loaded: false,
                 manifest_name,
+                origin,
             });
-            true
+            Some(false)
         }
     }
 
@@ -159,8 +179,20 @@ impl AvailableLanguages {
         }
     }
 
-    pub(super) fn remove(&mut self, names: &[LanguageName]) {
-        self.0.retain(|language| !names.contains(&language.name));
+    pub(super) fn remove_extension_languages(
+        &mut self,
+        names: &[LanguageName],
+    ) -> Vec<LanguageName> {
+        let mut removed = Vec::new();
+        self.0.retain(|language| {
+            let should_remove =
+                language.origin == LanguageOrigin::Extension && names.contains(&language.name);
+            if should_remove {
+                removed.push(language.name.clone());
+            }
+            !should_remove
+        });
+        removed
     }
 
     pub(super) fn mark_loaded(&mut self, id: LanguageId) {
@@ -208,19 +240,20 @@ impl AvailableLanguages {
 
     pub(super) fn find_for_file(
         &self,
-        path: &Path,
+        filename: Option<&str>,
+        paths: &[&Path],
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<LanguageId> {
-        let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
         // and no other extension which is not the desired behavior here,
         // as we want `.zshrc` to result in extension being `Some("zshrc")`
         let extension = filename.and_then(|filename| filename.split('.').next_back());
-        let path_suffixes = [extension, filename, path.to_str()]
-            .iter()
+        let path_suffixes = [extension, filename]
+            .into_iter()
+            .chain(paths.iter().map(|path| path.to_str()))
             .filter_map(|suffix| suffix.map(|suffix| (suffix, globset::Candidate::new(suffix))))
-            .collect::<SmallVec<[_; 3]>>();
+            .collect::<SmallVec<[_; 6]>>();
         let content = LazyCell::new(|| {
             content.map(|content| {
                 let end = content.clip_point(Point::new(0, 256), Bias::Left);
@@ -231,19 +264,20 @@ impl AvailableLanguages {
 
         self.find_best_match(move |language_name, matcher, current_best_match| {
             let path_matches_default_suffix = || {
-                let len =
-                    matcher
-                        .path_suffixes
-                        .iter()
-                        .fold(0, |acc: usize, path_suffix: &String| {
-                            let ext = ".".to_string() + path_suffix;
-                            let matched_suffix_len = path_suffixes
-                                .iter()
-                                .find(|(suffix, _)| suffix.ends_with(&ext) || suffix == path_suffix)
-                                .map(|(suffix, _)| suffix.len());
+                let len = matcher.path_suffixes.iter().fold(
+                    0,
+                    |acc: usize, path_suffix: &SharedString| {
+                        let ext = ".".to_string() + path_suffix;
+                        let matched_suffix_len = path_suffixes
+                            .iter()
+                            .find(|(suffix, _)| {
+                                suffix.ends_with(&ext) || *suffix == path_suffix.as_str()
+                            })
+                            .map(|(suffix, _)| suffix.len());
 
-                            matched_suffix_len.map_or(acc, |len| acc.max(len))
-                        });
+                        matched_suffix_len.map_or(acc, |len| acc.max(len))
+                    },
+                );
                 (len > 0).then_some(len)
             };
 

@@ -3,9 +3,14 @@ use gpui_util::post_inc;
 use std::{
     cell::{Cell, RefCell},
     fmt::Debug,
+    mem,
     rc::Rc,
 };
 
+/// Stores subscriptions for a single emitter.
+pub(crate) struct SingleSubscriberSet<Callback>(Rc<RefCell<SingleSubscriberSetState<Callback>>>);
+
+/// Stores subscriptions for emitters.
 pub(crate) struct SubscriberSet<EmitterKey, Callback>(
     Rc<RefCell<SubscriberSetState<EmitterKey, Callback>>>,
 );
@@ -17,13 +22,19 @@ impl<EmitterKey, Callback> Clone for SubscriberSet<EmitterKey, Callback> {
 }
 
 struct SubscriberSetState<EmitterKey, Callback> {
-    subscribers: BTreeMap<EmitterKey, Option<BTreeMap<usize, Subscriber<Callback>>>>,
+    subscribers: BTreeMap<EmitterKey, BTreeMap<usize, Subscriber<Callback>>>,
     next_subscriber_id: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SubscriberState {
+    Pending,
+    Active,
+    Dropped,
+}
+
 struct Subscriber<Callback> {
-    active: Rc<Cell<bool>>,
-    dropped: Rc<Cell<bool>>,
+    state: Rc<Cell<SubscriberState>>,
     callback: Callback,
 }
 
@@ -39,43 +50,47 @@ where
         })))
     }
 
-    /// Inserts a new [`Subscription`] for the given `emitter_key`. By default, subscriptions
-    /// are inert, meaning that they won't be listed when calling `[SubscriberSet::remove]` or `[SubscriberSet::retain]`.
-    /// This method returns a tuple of a [`Subscription`] and an `impl FnOnce`, and you can use the latter
-    /// to activate the [`Subscription`].
-    pub fn insert(
+    /// Inserts an immediately active subscription for the given emitter.
+    pub fn insert(&self, emitter_key: EmitterKey, callback: Callback) -> Subscription {
+        let (subscription, activate) = self.insert_pending(emitter_key, callback);
+        activate();
+        subscription
+    }
+
+    /// Inserts a pending subscription and returns its handle and activation function.
+    ///
+    /// Pending callbacks are skipped by `retain` and excluded from `remove` until activated.
+    pub fn insert_pending(
         &self,
         emitter_key: EmitterKey,
         callback: Callback,
     ) -> (Subscription, impl FnOnce() + use<EmitterKey, Callback>) {
-        let active = Rc::new(Cell::new(false));
-        let dropped = Rc::new(Cell::new(false));
+        let state = Rc::new(Cell::new(SubscriberState::Pending));
         let mut lock = self.0.borrow_mut();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
         lock.subscribers
             .entry(emitter_key.clone())
             .or_default()
-            .get_or_insert_with(Default::default)
             .insert(
                 subscriber_id,
                 Subscriber {
-                    active: active.clone(),
-                    dropped: dropped.clone(),
+                    state: state.clone(),
                     callback,
                 },
             );
         let this = self.0.clone();
 
         let subscription = Subscription {
-            unsubscribe: Some(Box::new(move || {
-                dropped.set(true);
+            unsubscribe: Some(Box::new({
+                let state = state.clone();
+                move || {
+                    state.set(SubscriberState::Dropped);
 
-                let mut lock = this.borrow_mut();
-                let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
-                    return;
-                };
+                    let mut lock = this.borrow_mut();
+                    let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
+                        return;
+                    };
 
-                if let Some(subscribers) = subscribers {
                     subscribers.remove(&subscriber_id);
                     if subscribers.is_empty() {
                         lock.subscribers.remove(&emitter_key);
@@ -83,7 +98,11 @@ where
                 }
             })),
         };
-        (subscription, move || active.set(true))
+        (subscription, move || {
+            if state.get() == SubscriberState::Pending {
+                state.set(SubscriberState::Active);
+            }
+        })
     }
 
     pub fn remove(
@@ -92,12 +111,11 @@ where
     ) -> impl IntoIterator<Item = Callback> + use<EmitterKey, Callback> {
         let subscribers = self.0.borrow_mut().subscribers.remove(emitter);
         subscribers
-            .unwrap_or_default()
             .map(|s| s.into_values())
             .into_iter()
             .flatten()
             .filter_map(|subscriber| {
-                if subscriber.active.get() {
+                if subscriber.state.get() == SubscriberState::Active {
                     Some(subscriber.callback)
                 } else {
                     None
@@ -111,35 +129,129 @@ where
     where
         F: FnMut(&mut Callback) -> bool,
     {
+        // We do not remove here upfront to reduce BTreeMap shuffling churn
         let Some(mut subscribers) = self
             .0
             .borrow_mut()
             .subscribers
             .get_mut(emitter)
-            .and_then(|s| s.take())
+            .map(mem::take)
         else {
             return;
         };
 
-        subscribers.retain(|_, subscriber| {
-            if !subscriber.active.get() {
-                return true;
-            }
-            if subscriber.dropped.get() {
-                return false;
-            }
-            let keep = f(&mut subscriber.callback);
-            keep && !subscriber.dropped.get()
-        });
+        subscribers.retain(|_, subscriber| subscriber.retain(&mut f));
         let mut lock = self.0.borrow_mut();
 
-        // Add any new subscribers that were added while invoking the callback.
-        if let Some(Some(new_subscribers)) = lock.subscribers.remove(emitter) {
-            subscribers.extend(new_subscribers);
+        if subscribers.is_empty() {
+            if lock
+                .subscribers
+                .get(emitter)
+                .is_some_and(|subscribers| subscribers.is_empty())
+            {
+                lock.subscribers.remove(emitter);
+            }
+            return;
         }
 
-        if !subscribers.is_empty() {
-            lock.subscribers.insert(emitter.clone(), Some(subscribers));
+        // Add any new subscribers that were added while invoking the callback.
+        lock.subscribers
+            .entry(emitter.clone())
+            .or_default()
+            .append(&mut subscribers);
+    }
+}
+
+struct SingleSubscriberSetState<Callback> {
+    subscribers: BTreeMap<usize, Subscriber<Callback>>,
+    next_subscriber_id: usize,
+}
+
+impl<Callback> Clone for SingleSubscriberSet<Callback> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<Callback: 'static> SingleSubscriberSet<Callback> {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(SingleSubscriberSetState {
+            subscribers: BTreeMap::new(),
+            next_subscriber_id: 0,
+        })))
+    }
+
+    /// Inserts an immediately active subscription.
+    pub fn insert(&self, callback: Callback) -> Subscription {
+        let (subscription, activate) = self.insert_pending(callback);
+        activate();
+        subscription
+    }
+
+    /// Inserts a pending subscription and returns its handle and activation function.
+    ///
+    /// Pending callbacks are skipped by `retain` and excluded from `remove` until activated.
+    pub fn insert_pending(
+        &self,
+        callback: Callback,
+    ) -> (Subscription, impl FnOnce() + use<Callback>) {
+        let state = Rc::new(Cell::new(SubscriberState::Pending));
+        let mut lock = self.0.borrow_mut();
+        let subscriber_id = post_inc(&mut lock.next_subscriber_id);
+        lock.subscribers.insert(
+            subscriber_id,
+            Subscriber {
+                state: state.clone(),
+                callback,
+            },
+        );
+        let this = self.0.clone();
+
+        let subscription = Subscription {
+            unsubscribe: Some(Box::new({
+                let state = state.clone();
+                move || {
+                    state.set(SubscriberState::Dropped);
+                    this.borrow_mut().subscribers.remove(&subscriber_id);
+                }
+            })),
+        };
+        (subscription, move || {
+            if state.get() == SubscriberState::Pending {
+                state.set(SubscriberState::Active);
+            }
+        })
+    }
+
+    /// Removes all subscriptions and returns the active callbacks in registration order.
+    pub fn remove(&self) -> impl IntoIterator<Item = Callback> + use<Callback> {
+        let subscribers = mem::take(&mut self.0.borrow_mut().subscribers);
+        subscribers.into_values().filter_map(|subscriber| {
+            if subscriber.state.get() == SubscriberState::Active {
+                Some(subscriber.callback)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Invokes each active callback, removing subscriptions for which `f` returns false.
+    pub fn retain(&self, mut f: impl FnMut(&mut Callback) -> bool) {
+        let mut subscribers = mem::take(&mut self.0.borrow_mut().subscribers);
+        subscribers.retain(|_, subscriber| subscriber.retain(&mut f));
+        self.0.borrow_mut().subscribers.append(&mut subscribers);
+    }
+}
+
+impl<Callback> Subscriber<Callback> {
+    fn retain(&mut self, f: &mut impl FnMut(&mut Callback) -> bool) -> bool {
+        match self.state.get() {
+            SubscriberState::Pending => true,
+            SubscriberState::Dropped => false,
+            SubscriberState::Active => {
+                let keep = f(&mut self.callback);
+                keep && self.state.get() != SubscriberState::Dropped
+            }
         }
     }
 }
@@ -203,6 +315,102 @@ impl std::fmt::Debug for Subscription {
 mod tests {
     use super::*;
     use crate::{Global, TestApp};
+
+    #[test]
+    fn test_immediate_and_pending_insertions() {
+        let subscribers = SubscriberSet::new();
+        let first = subscribers.insert(1usize, 10);
+        let (second, activate_second) = subscribers.insert_pending(1, 20);
+        let mut visited = Vec::new();
+        subscribers.retain(&1, |callback| {
+            visited.push(*callback);
+            subscribers.insert(1, 30).detach();
+            true
+        });
+        assert_eq!(visited, [10]);
+        activate_second();
+        assert_eq!(
+            subscribers.remove(&1).into_iter().collect::<Vec<_>>(),
+            [10, 20, 30]
+        );
+        drop(first);
+        drop(second);
+
+        let (pending, _activate) = subscribers.insert_pending(1, 40);
+        assert_eq!(subscribers.remove(&1).into_iter().count(), 0);
+        drop(pending);
+    }
+
+    #[test]
+    fn test_single_immediate_and_pending_insertions() {
+        let subscribers = SingleSubscriberSet::new();
+        let first = subscribers.insert(10);
+        let (second, activate_second) = subscribers.insert_pending(20);
+        let mut visited = Vec::new();
+        subscribers.retain(|callback| {
+            visited.push(*callback);
+            subscribers.insert(30).detach();
+            true
+        });
+        assert_eq!(visited, [10]);
+        activate_second();
+        assert_eq!(
+            subscribers.remove().into_iter().collect::<Vec<_>>(),
+            [10, 20, 30]
+        );
+        drop(first);
+        drop(second);
+
+        let (pending, _activate) = subscribers.insert_pending(40);
+        assert_eq!(subscribers.remove().into_iter().count(), 0);
+        drop(pending);
+    }
+
+    #[test]
+    fn test_activation_after_drop_during_retain() {
+        let subscribers = SubscriberSet::new();
+        let (first, activate_first) = subscribers.insert_pending(1usize, 10);
+        let (second, activate_second) = subscribers.insert_pending(1, 20);
+        subscribers.retain(&1, |_| panic!("pending subscriber invoked"));
+        activate_first();
+        let mut second = Some((second, activate_second));
+        let mut visited = Vec::new();
+
+        subscribers.retain(&1, |callback| {
+            visited.push(*callback);
+            let (subscription, activate) = second.take().expect("only the first callback runs");
+            drop(subscription);
+            activate();
+            true
+        });
+
+        assert_eq!(visited, [10]);
+        assert_eq!(subscribers.remove(&1).into_iter().collect::<Vec<_>>(), [10]);
+        drop(first);
+    }
+
+    #[test]
+    fn test_single_activation_after_drop_during_retain() {
+        let subscribers = SingleSubscriberSet::new();
+        let (first, activate_first) = subscribers.insert_pending(10);
+        let (second, activate_second) = subscribers.insert_pending(20);
+        subscribers.retain(|_| panic!("pending subscriber invoked"));
+        activate_first();
+        let mut second = Some((second, activate_second));
+        let mut visited = Vec::new();
+
+        subscribers.retain(|callback| {
+            visited.push(*callback);
+            let (subscription, activate) = second.take().expect("only the first callback runs");
+            drop(subscription);
+            activate();
+            true
+        });
+
+        assert_eq!(visited, [10]);
+        assert_eq!(subscribers.remove().into_iter().collect::<Vec<_>>(), [10]);
+        drop(first);
+    }
 
     #[test]
     fn test_unsubscribe_during_callback_with_insert() {

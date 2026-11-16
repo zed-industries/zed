@@ -15,45 +15,68 @@ doctest = false
 [[bin]]
 name = "cli"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [features]
-no-bundled-uninstall = []
-default = []
+no-bundled-uninstall = ["cli"]
+default = ["cli"]
+cli = [
+    "dep:askpass",
+    "dep:clap",
+    "dep:clap_complete",
+    "dep:clap_complete_nushell",
+    "dep:console",
+    "dep:core-foundation",
+    "dep:core-services",
+    "dep:dialoguer",
+    "dep:exec",
+    "dep:fork",
+    "dep:parking_lot",
+    "dep:paths",
+    "dep:plist",
+    "dep:rayon",
+    "dep:release_channel",
+    "dep:tempfile",
+    "dep:util",
+    "dep:walkdir",
+    "dep:windows",
+    "dep:windows_resources",
+]
 
 [dependencies]
 anyhow.workspace = true
-askpass.workspace = true
-clap.workspace = true
-clap_complete.workspace = true
-clap_complete_nushell.workspace = true
+askpass = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+clap_complete = { workspace = true, optional = true }
+clap_complete_nushell = { workspace = true, optional = true }
 collections.workspace = true
-console.workspace = true
-dialoguer.workspace = true
+console = { workspace = true, optional = true }
+dialoguer = { workspace = true, optional = true }
 ipc-channel = "0.19"
-parking_lot.workspace = true
-paths.workspace = true
-release_channel.workspace = true
-serde.workspace = true
-util.workspace = true
-tempfile.workspace = true
-rayon.workspace = true
-walkdir = "2.5"
+parking_lot = { workspace = true, optional = true }
+paths = { workspace = true, optional = true }
+release_channel = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+util = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+walkdir = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
 util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-exec.workspace = true
-fork.workspace = true
+exec = { workspace = true, optional = true }
+fork = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation.workspace = true
-core-services = "0.2"
-plist = "1.3"
+core-foundation = { workspace = true, optional = true }
+core-services = { workspace = true, optional = true }
+plist = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
+windows = { workspace = true, optional = true }
 
-[build-dependencies]
-windows_resources = { path = "../windows_resources" }
+[target.'cfg(target_os = "windows")'.build-dependencies]
+windows_resources = { workspace = true, optional = true }

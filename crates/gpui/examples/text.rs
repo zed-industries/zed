@@ -1,5 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use std::{
     borrow::Cow,
     ops::{Deref, DerefMut},
@@ -279,6 +282,8 @@ impl Render for TextExample {
         let tcx = cx.text_context();
         let colors = cx.default_colors().clone();
 
+        let font_size = tcx.font_size;
+        let line_height = tcx.line_height;
         let type_scale = tcx.type_scale;
 
         let step_down_2 = 1.0 / (type_scale * type_scale);
@@ -319,6 +324,21 @@ impl Render for TextExample {
                     .overflow_x_hidden()
                     .bg(rgb(0xffffff))
                     .size_full()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .p_3()
+                            .text_size(px(font_size))
+                            .line_height(relative(line_height))
+                            .children([
+                                div().child("CJK: 中文「日本語」한글"),
+                                div().child(
+                                    "Kana: が / か\u{3099}; Hangul: 각 / \u{1100}\u{1161}\u{11a8}",
+                                ),
+                                div().child("Emoji: 😀 ❤️ ❤\u{fe0e} 👍🏽 🇯🇵 1\u{fe0f}\u{20e3} 👩‍💻 👨‍👩‍👧‍👦"),
+                            ]),
+                    )
                     .child(div().child(CharacterGrid::new().scale(base)))
                     .child(
                         div()
@@ -348,6 +368,9 @@ impl Render for TextExample {
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         cx.set_menus(vec![Menu {
             name: "GPUI Typography".into(),
             disabled: false,

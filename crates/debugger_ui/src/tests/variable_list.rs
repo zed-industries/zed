@@ -2592,3 +2592,58 @@ async fn test_refresh_watchers(executor: BackgroundExecutor, cx: &mut TestAppCon
         assert_eq!(3, watcher.variables_reference);
     });
 }
+
+#[gpui::test]
+async fn test_evaluate_variable_value_uses_clipboard_context(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "index.js": "const debug = { foo: 1 };",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let session = start_debug_session(&workspace, cx, |client| {
+        client.on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_clipboard_context: Some(true),
+                ..Default::default()
+            })
+        });
+    })
+    .unwrap();
+
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    client.on_request::<Evaluate, _>(move |_, args| {
+        assert_eq!("debug", args.expression);
+        assert_eq!(Some(dap::EvaluateArgumentsContext::Clipboard), args.context);
+
+        Ok(dap::EvaluateResponse {
+            result: "full value".to_string(),
+            type_: None,
+            presentation_hint: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            value_location_reference: None,
+        })
+    });
+
+    let value = session
+        .update(cx, |session, cx| {
+            session.evaluate_variable_value("debug".to_string(), Some(1), cx)
+        })
+        .await;
+
+    assert_eq!(Some("full value".to_string()), value);
+}

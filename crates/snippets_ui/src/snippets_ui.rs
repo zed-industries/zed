@@ -189,7 +189,7 @@ impl ScopeSelectorDelegate {
         matcher
             .path_suffixes
             .iter()
-            .find_map(|extension| FileIcons::get_icon(Path::new(extension), cx))
+            .find_map(|extension| FileIcons::get_icon(Path::new(extension.as_str()), cx))
             .or(FileIcons::get(cx).get_icon_for_type("default", cx))
             .map(Icon::from_path)
             .map(|icon| icon.color(Color::Muted))
@@ -250,7 +250,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.scope_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn selected_index(&self) -> usize {

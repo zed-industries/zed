@@ -15,8 +15,8 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task, TaskExt,
     WeakEntity, Window,
 };
-use language::Capability;
 pub use language::HighlightedText;
+use language::{Buffer, Capability};
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -283,7 +283,9 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         Capability::ReadWrite
     }
 
-    fn toggle_read_only(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+    fn read_only_toggle_buffer(&self, _: &App) -> Option<Entity<Buffer>> {
+        None
+    }
 
     fn has_deleted_file(&self, _: &App) -> bool {
         false
@@ -430,7 +432,6 @@ pub trait SerializableItem: Item {
         workspace: &mut Workspace,
         item_id: ItemId,
         closing: bool,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>>;
 
@@ -443,7 +444,6 @@ pub trait SerializableItemHandle: ItemHandle {
         &self,
         workspace: &mut Workspace,
         closing: bool,
-        window: &mut Window,
         cx: &mut App,
     ) -> Option<Task<Result<()>>>;
     fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool;
@@ -461,11 +461,10 @@ where
         &self,
         workspace: &mut Workspace,
         closing: bool,
-        window: &mut Window,
         cx: &mut App,
     ) -> Option<Task<Result<()>>> {
         self.update(cx, |this, cx| {
-            this.serialize(workspace, cx.entity_id().as_u64(), closing, window, cx)
+            this.serialize(workspace, cx.entity_id().as_u64(), closing, cx)
         })
     }
 
@@ -530,6 +529,7 @@ pub trait ItemHandle: 'static + Send {
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
     fn capability(&self, cx: &App) -> Capability;
+    fn read_only_toggle_buffer(&self, cx: &App) -> Option<Entity<Buffer>>;
     fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
@@ -1046,10 +1046,25 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).capability(cx)
     }
 
+    fn read_only_toggle_buffer(&self, cx: &App) -> Option<Entity<Buffer>> {
+        self.read(cx).read_only_toggle_buffer(cx)
+    }
+
     fn toggle_read_only(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |this, cx| {
-            this.toggle_read_only(window, cx);
-        })
+        let Some(buffer) = self.read_only_toggle_buffer(cx) else {
+            return;
+        };
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_capability(
+                match buffer.capability() {
+                    Capability::ReadWrite => Capability::Read,
+                    Capability::Read => Capability::ReadWrite,
+                    Capability::ReadOnly => Capability::ReadOnly,
+                },
+                cx,
+            );
+        });
+        window.refresh();
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
@@ -1876,7 +1891,6 @@ pub mod test {
             _workspace: &mut Workspace,
             _item_id: ItemId,
             _closing: bool,
-            _window: &mut Window,
             _cx: &mut Context<Self>,
         ) -> Option<Task<anyhow::Result<()>>> {
             if let Some(serialize) = self.serialize.take() {

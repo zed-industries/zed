@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 Route community PRs to the correct review track on a GitHub Project board,
-and surface signal fields (Size, Issue Linked, Contributor, Upvotes) that the
-board's views can filter and sort on.
+and surface signal fields (Size, Issue Linked, Contributor, Upvotes, Last
+push, Merge conflicts, Opened with no self-review) that the board's views
+can filter and sort on.
 
 Reads the event payload dispatched by the GitHub Actions workflow and:
-- On `labeled`: adds the PR to the board (idempotent), sets the Track
-  field to the most specific matching track, and recomputes signal fields.
+- On `labeled` or `reopened`: adds the PR to the board (idempotent), sets the
+  Track field to the most specific matching track, and recomputes signals.
 - On `unlabeled`: re-resolves Track from remaining labels, or clears it
   if no area/platform labels remain (PR stays on the board for visibility).
   Signals are recomputed if the PR is on the board.
@@ -24,20 +25,27 @@ Reads the event payload dispatched by the GitHub Actions workflow and:
   recomputes signals for a manually specified PR.
 - When run with REFRESH_ALL=1: walks every open PR on the board and
   recomputes its signals. Used by the scheduled refresh workflow as a
-  belt-and-suspenders pass against missed webhook events (notably
-  intentionally-unsubscribed `synchronize` events that change Size, and
-  sidebar edits to linked issues that don't fire a PR webhook).
+  belt-and-suspenders pass against changes that don't reach the
+  event-driven workflow (notably intentionally-unsubscribed `synchronize`
+  events that change Size, Last push and Merge conflicts, pushes to main
+  that change Merge conflicts, reactions, comments and reviews that change
+  Upvotes, and sidebar edits to linked issues that don't fire a PR webhook).
+- When run with PUBLISH_HIGH_MR=1: copies the High MR contributors from
+  Snowflake into a section of the board's README, which every other run
+  reads to set Contributor. Used by the scheduled refresh workflow, in its
+  own step, before REFRESH_ALL.
 
 Review-based status changes (approved → "In Progress (us)", changes
 requested → "In Progress (author)") are handled by built-in board
 automations, not this script.
 
-Signal fields are written best-effort: if a field or option is missing
-from the project, the script logs and skips it rather than failing, so
-new fields can be rolled out in the project UI independently of deploys.
+Signal fields are written only when their value changed, and best-effort:
+if a field or option is missing from the project, the script logs and
+skips it rather than failing, so new fields can be rolled out in the
+project UI independently of deploys.
 
 Requires:
-    requests (pip install requests)
+    `requests`; `cryptography` for PUBLISH_HIGH_MR
 
 Usage (called by the workflow, not directly):
     python github-community-pr-board.py
@@ -47,18 +55,23 @@ import json
 import os
 import sys
 import time
+from functools import cache
+from itertools import batched
 from pathlib import Path
 
-import requests
+from github_helpers import (
+    add_github_project_item,
+    fetch_github_project,
+    github_graphql,
+    github_rest_api,
+    is_staff_member,
+    set_github_project_field,
+    update_github_project_readme,
+)
 
-RETRYABLE_STATUS_CODES = {502, 503, 504}
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 5
-
-GITHUB_API_URL = "https://api.github.com"
 REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
-STAFF_TEAM_SLUG = "staff"
+REPO_FULL_NAME = f"{REPO_OWNER}/{REPO_NAME}"
 
 SKIP_LABELS = {"staff", "bot"}
 
@@ -70,51 +83,111 @@ STATUS_IN_PROGRESS_AUTHOR = (
 
 MAPPING_PATH = Path(__file__).parent / "community-pr-track-mapping.json"
 
+MERGE_CONFLICTS_FIELD = "Merge conflicts"
+HAS_CONFLICTS_OPTION = "❌"
+NO_SELF_REVIEW_LABEL = "no self-review"
+NO_SELF_REVIEW_OPTION = "AI?"
+HIGH_MR_VIEW = "GITHUB_ANALYTICS.ENRICHED.COMMUNITY_HIGH_MR_AUTHORS_V1"
+HIGH_MR_SECTION_START = "<!-- high-mr-contributors:start -->"
+HIGH_MR_SECTION_END = "<!-- high-mr-contributors:end -->"
+POSITIVE_REACTIONS = {"THUMBS_UP", "HEART", "HOORAY", "ROCKET"}
+BOTS_WITH_USER_ACCOUNTS = {"zed-industries-bot"}
+# GitHub answers 502 to batches of 25.
+BOARD_ITEMS_PER_QUERY = 10
+MAX_NODE_IDS_PER_QUERY = 100
+# GitHub forgets mergeability whenever main moves, and only computes it again
+# once asked, so a recheck asks, waits, and reads again.
+MERGEABILITY_RECHECK_DELAY_SECONDS = 15
+MERGEABILITY_RECHECK_ROUNDS = 3
+
+CONNECTION_NODE_SELECTIONS = {
+    "reactions": "content user { login }",
+    "comments": "author { __typename login }",
+    "reviews": "author { __typename login }",
+}
+# %-formatting, since every GraphQL brace would need doubling in an f-string.
+BOARD_ITEM_FRAGMENT = """
+fragment BoardItem on ProjectV2Item {
+  id
+  isArchived
+  fieldValues(first: 30) {
+    nodes {
+      ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+      ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } }
+      ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } }
+    }
+  }
+  content {
+    ... on PullRequest {
+      id
+      number
+      state
+      additions
+      deletions
+      mergeable
+      author { login }
+      labels(first: 50) { nodes { name } }
+      commits(last: 1) { nodes { commit { committedDate } } }
+      reactions(first: 100) { nodes { %(reactions)s } pageInfo { hasNextPage endCursor } }
+      comments(first: 100) { nodes { %(comments)s } pageInfo { hasNextPage endCursor } }
+      reviews(first: 100) { nodes { %(reviews)s } pageInfo { hasNextPage endCursor } }
+      closingIssuesReferences(first: 20) {
+        nodes {
+          __typename
+          id
+          repository { nameWithOwner }
+          issueType { name }
+          reactions(first: 100) { nodes { %(reactions)s } pageInfo { hasNextPage endCursor } }
+          comments(first: 100) { nodes { %(comments)s } pageInfo { hasNextPage endCursor } }
+        }
+      }
+    }
+  }
+}
+""" % CONNECTION_NODE_SELECTIONS
+
 
 def sync_track_from_labels(pr, project_number):
     """Sync the PR's Track field on the board with its current labels.
 
-    Returns (project, project_item) if the PR ends up on (or stays on)
-    the board, so callers can do further per-item work without a second
-    project/item lookup. Returns (None, None) otherwise.
+    Returns (project, item) if the PR ends up on (or stays on) the board, so
+    callers can refresh its signals without fetching it again. Returns
+    (None, None) otherwise.
     """
     pr_labels = {label["name"] for label in pr.get("labels", [])}
     track_name = resolve_track(pr_labels, load_mapping())
 
-    project = github_fetch_project(project_number)
-    project_item = github_find_project_item(project["id"], pr["node_id"])
+    project = fetch_github_project(project_number)
+    item_id = github_find_project_item_id(project["id"], pr["node_id"])
+    if not item_id:
+        if not track_name:
+            print(
+                f"No track matched for labels on PR #{pr['number']}, not on board, nothing to do"
+            )
+            return None, None
+        item_id = add_github_project_item(project["id"], pr["node_id"])
 
-    if not track_name:
-        if project_item:
-            github_clear_field(project, project_item, "Track")
-            print(f"No track matched, cleared Track on PR #{pr['number']}")
-            return project, project_item
-        print(
-            f"No track matched for labels on PR #{pr['number']}, not on board, nothing to do"
-        )
-        return None, None
-
-    print(f"Resolved track: {track_name}")
-
-    if not project_item:
-        project_item = github_add_to_project(project["id"], pr["node_id"])
-    github_set_project_field(project, project_item, "Track", track_name)
-    return project, project_item
+    [item] = github_fetch_board_items([item_id])
+    current_track = current_field_values(item).get("Track")
+    # Case-insensitive like the write, since the mapping is maintained by hand.
+    if (current_track or "").casefold() != (track_name or "").casefold():
+        set_github_project_field(project, item_id, "Track", track_name)
+    return project, item
 
 
 def set_progress_status_on_assignment(pr, assignee_login, project_number):
     """Set Status to 'In Progress (us)' when a staff member self-assigns."""
-    if not github_is_staff_member(assignee_login):
+    if not is_staff_member(assignee_login):
         print(f"Assignee '{assignee_login}' is not a staff member, skipping")
         return
 
-    project = github_fetch_project(project_number)
-    item_id = github_find_project_item(project["id"], pr["node_id"])
+    project = fetch_github_project(project_number)
+    item_id = github_find_project_item_id(project["id"], pr["node_id"])
     if not item_id:
         print(f"PR #{pr['number']} not on board, skipping assignment status update")
         return
 
-    github_set_project_field(project, item_id, "Status", STATUS_IN_PROGRESS_US)
+    set_github_project_field(project, item_id, "Status", STATUS_IN_PROGRESS_US)
 
 
 def return_to_reviewer(pr, project_number, reason):
@@ -123,8 +196,8 @@ def return_to_reviewer(pr, project_number, reason):
     Called when the author signals they're ready for re-review, either
     by re-requesting review or by commenting on the PR.
     """
-    project = github_fetch_project(project_number)
-    item_id = github_find_project_item(project["id"], pr["node_id"])
+    project = fetch_github_project(project_number)
+    item_id = github_find_project_item_id(project["id"], pr["node_id"])
     if not item_id:
         print(f"PR #{pr['number']} not on board, skipping")
         return
@@ -134,7 +207,7 @@ def return_to_reviewer(pr, project_number, reason):
         print(
             f"{reason}, flipping status from '{current_status}' to '{STATUS_IN_PROGRESS_US}'"
         )
-        github_set_project_field(project, item_id, "Status", STATUS_IN_PROGRESS_US)
+        set_github_project_field(project, item_id, "Status", STATUS_IN_PROGRESS_US)
     else:
         print(f"Current status is '{current_status}', not flipping ({reason})")
 
@@ -152,61 +225,290 @@ def compute_size_bucket(total_changes):
     return "XL"
 
 
-def compute_contributor(pr_labels):
-    """Return the Contributor value derived from the PR's labels.
+def compute_contributor(pr):
+    """Return the Contributor value derived from the PR's labels and author.
 
     The auto-labeler is responsible for applying `guild`, `community champion`
     and `first contribution` based on the author's membership/history; anything
     else on the board is treated as a returning contributor (PRs from staff/bots
-    don't reach this function because they're filtered upstream).
+    don't reach this function because they're filtered upstream), shown as
+    High MR when the author has a high merge rate.
 
     Guild takes precedence over Champion because current-cohort guild members
     are frequently also community champions, and their guild status is the more
     relevant signal while the cohort is active.
     """
-    if "guild" in pr_labels:
+    labels = {label["name"] for label in pr["labels"]["nodes"]}
+    if "guild" in labels:
         return "Guild"
-    if "community champion" in pr_labels:
+    if "community champion" in labels:
         return "Champion"
-    if "first contribution" in pr_labels:
+    if "first contribution" in labels:
         return "First PR"
+    if pr["author"] and pr["author"]["login"].lower() in _fetch_high_mr_logins():
+        return "High MR"
     return "Returning"
 
 
-def recompute_signals(pr, project, project_item):
-    """Recompute Size, Contributor, Issue Linked, and Upvotes on a board item.
+def closing_issues_in_repository(pr):
+    return [
+        issue
+        for issue in pr["closingIssuesReferences"]["nodes"]
+        if issue["repository"]["nameWithOwner"] == REPO_FULL_NAME
+    ]
 
-    Best-effort: missing fields/options are logged and skipped so the
-    project's field set can be rolled out independently.
-    """
-    pr_labels = {label["name"] for label in pr.get("labels", [])}
-    total_changes = pr.get("additions", 0) + pr.get("deletions", 0)
-    author_login = (pr.get("user") or {}).get("login")
 
-    set_field_optional(project, project_item, "Size", compute_size_bucket(total_changes))
-    set_field_optional(project, project_item, "Contributor", compute_contributor(pr_labels))
-    set_field_optional(project, project_item, "Issue Linked", github_pr_issue_type(pr["node_id"]))
-    set_number_field_optional(project, project_item, "Upvotes", github_pr_upvotes(pr["node_id"], author_login))
+def linked_issue_type(pr):
+    """Return the most significant type among the repository's issues the PR closes."""
+    closing_issues = closing_issues_in_repository(pr)
+    if not closing_issues:
+        return "No issue"
+
+    type_names = {
+        issue["issueType"]["name"]
+        for issue in closing_issues
+        if issue.get("issueType")
+    }
+    for type_name in ("Crash", "Bug", "Feature", "Docs"):
+        if type_name in type_names:
+            return type_name
+
+    print(
+        f"Warning: PR has {len(closing_issues)} linked issue(s) but none with "
+        f"a recognized type (saw: {type_names or 'no type set'})"
+    )
+    return "No issue"
+
+
+def github_connection_page(subject, connection_name, cursor):
+    data = github_graphql(
+        f"""
+        query($id: ID!, $cursor: String!) {{
+          node(id: $id) {{
+            ... on {subject['__typename']} {{
+              page: {connection_name}(first: 100, after: $cursor) {{
+                nodes {{ {CONNECTION_NODE_SELECTIONS[connection_name]} }}
+                pageInfo {{ hasNextPage endCursor }}
+              }}
+            }}
+          }}
+        }}
+        """,
+        {"id": subject["id"], "cursor": cursor},
+    )
+    return data["node"]["page"]
+
+
+def connection_nodes(subject, connection_name):
+    connection = subject[connection_name]
+    while True:
+        yield from connection["nodes"]
+        if not connection["pageInfo"]["hasNextPage"]:
+            return
+        connection = github_connection_page(
+            subject, connection_name, connection["pageInfo"]["endCursor"]
+        )
+
+
+def engaged_users(pr):
+    for subject in [pr, *closing_issues_in_repository(pr)]:
+        for reaction in connection_nodes(subject, "reactions"):
+            if reaction["content"] in POSITIVE_REACTIONS:
+                yield reaction["user"]
+        for comment in connection_nodes(subject, "comments"):
+            yield comment["author"]
+    for review in connection_nodes(pr, "reviews"):
+        yield review["author"]
+
+
+def is_bot(user):
+    login = user["login"].lower()
+    return (
+        user.get("__typename") == "Bot"
+        or login.endswith("[bot]")
+        or login in BOTS_WITH_USER_ACCOUNTS
+    )
+
+
+def count_interested_people(pr):
+    author_login = (pr["author"] or {}).get("login")
+    interested_logins = {
+        user["login"]
+        for user in engaged_users(pr)
+        if user
+        and user["login"] != author_login
+        and not is_bot(user)
+        and not is_staff_member(user["login"])
+    }
+    return len(interested_logins)
+
+
+def merge_conflicts_value(mergeable):
+    return HAS_CONFLICTS_OPTION if mergeable == "CONFLICTING" else None
+
+
+def compute_signals(pr):
+    pr_labels = {label["name"] for label in pr["labels"]["nodes"]}
+    signals = {
+        "Size": compute_size_bucket(pr["additions"] + pr["deletions"]),
+        "Contributor": compute_contributor(pr),
+        "Issue Linked": linked_issue_type(pr),
+        # Counts people, not reactions, despite the field's name.
+        "Upvotes": count_interested_people(pr),
+        # The committer date moves with rebases and merges from main.
+        "Last push": pr["commits"]["nodes"][0]["commit"]["committedDate"][:10],
+        "Opened with no self-review": (
+            NO_SELF_REVIEW_OPTION if NO_SELF_REVIEW_LABEL in pr_labels else None
+        ),
+    }
+    # Left out while GitHub is still computing mergeability, so the current value stays.
+    if pr["mergeable"] != "UNKNOWN":
+        signals[MERGE_CONFLICTS_FIELD] = merge_conflicts_value(pr["mergeable"])
+    return signals
+
+
+def current_field_values(item):
+    return {
+        node["field"]["name"]: node.get("name", node.get("number", node.get("date")))
+        for node in item["fieldValues"]["nodes"]
+        if "field" in node
+    }
+
+
+def write_changed_fields(project, item_id, values, current_values):
+    for field_name, value in values.items():
+        if current_values.get(field_name) != value:
+            set_github_project_field(
+                project, item_id, field_name, value, missing_ok=True
+            )
+
+
+def refresh_signals(project, item):
+    pr = item["content"]
+    print(f"--- Refreshing signals on PR #{pr['number']} ---")
+    write_changed_fields(
+        project, item["id"], compute_signals(pr), current_field_values(item)
+    )
 
 
 def refresh_signals_if_on_board(pr, project_number):
-    """Recompute signals for a PR only if it's already on the board."""
-    project = github_fetch_project(project_number)
-    project_item = github_find_project_item(project["id"], pr["node_id"])
-    if not project_item:
+    project = fetch_github_project(project_number)
+    item_id = github_find_project_item_id(project["id"], pr["node_id"])
+    if not item_id:
         print(f"PR #{pr['number']} not on board, skipping signal refresh")
         return
-    recompute_signals(pr, project, project_item)
+    [item] = github_fetch_board_items([item_id])
+    refresh_signals(project, item)
+
+
+def listed_high_mr_logins(text):
+    """Return the logins listed between the High MR markers, or None without them."""
+    start = text.find(HIGH_MR_SECTION_START)
+    if start == -1:
+        return None
+    section = text[start : text.index(HIGH_MR_SECTION_END, start)]
+    return frozenset(
+        line.removeprefix("- ")
+        for line in section.splitlines()
+        if line.startswith("- ")
+    )
+
+
+@cache
+def _fetch_high_mr_logins():
+    readme = fetch_github_project(int(os.environ["PROJECT_NUMBER"]))["readme"] or ""
+    logins = listed_high_mr_logins(readme)
+    if logins is None:
+        raise RuntimeError("No High MR section in the board's README")
+    return logins
+
+
+def readme_with_high_mr_logins(readme, logins):
+    """Return the README with its High MR section replaced or appended."""
+    section = "\n".join([
+        HIGH_MR_SECTION_START,
+        "### High MR contributors",
+        "",
+        *(f"- {login}" for login in logins),
+        HIGH_MR_SECTION_END,
+    ])
+    start = readme.find(HIGH_MR_SECTION_START)
+    if start == -1:
+        return f"{readme.rstrip()}\n\n{section}\n".lstrip()
+    end = readme.index(HIGH_MR_SECTION_END, start) + len(HIGH_MR_SECTION_END)
+    return readme[:start] + section + readme[end:]
+
+
+def publish_high_mr_logins(project_number):
+    # Imported here, since only the publish step installs cryptography.
+    from snowflake_helpers import query_snowflake
+
+    rows = query_snowflake(f"SELECT AUTHOR_LOGIN FROM {HIGH_MR_VIEW}")
+    logins = sorted(row[0] for row in rows)
+    # A broken mart would otherwise turn every High MR card back into Returning.
+    if not logins:
+        raise RuntimeError("Snowflake returned no High MR contributors, list kept")
+    project = fetch_github_project(project_number)
+    readme = project["readme"] or ""
+    if listed_high_mr_logins(readme) == frozenset(logins):
+        print(f"High MR list unchanged ({len(logins)} contributors)")
+        return
+    update_github_project_readme(
+        project["id"], readme_with_high_mr_logins(readme, logins)
+    )
+    print(f"Published {len(logins)} High MR contributors")
+
+
+def recheck_mergeability(project, mergeability_rechecks):
+    """Write Merge conflicts on items whose mergeability was still UNKNOWN on
+    the first read. Returns the number of items that failed.
+    """
+    failed = 0
+    pending_rechecks = mergeability_rechecks
+    for _ in range(MERGEABILITY_RECHECK_ROUNDS):
+        time.sleep(MERGEABILITY_RECHECK_DELAY_SECONDS)
+        still_unknown = []
+        for batch in batched(pending_rechecks, MAX_NODE_IDS_PER_QUERY):
+            try:
+                mergeable_by_pr_id = github_fetch_mergeable_by_pr_id(
+                    [recheck["pr_id"] for recheck in batch]
+                )
+            except Exception as error:
+                print(f"Failed to re-read mergeability of {len(batch)} PR(s): {error}")
+                failed += len(batch)
+                continue
+            for recheck in batch:
+                mergeable = mergeable_by_pr_id.get(recheck["pr_id"], "UNKNOWN")
+                if mergeable == "UNKNOWN":
+                    still_unknown.append(recheck)
+                    continue
+                try:
+                    write_changed_fields(
+                        project,
+                        recheck["item_id"],
+                        {MERGE_CONFLICTS_FIELD: merge_conflicts_value(mergeable)},
+                        {MERGE_CONFLICTS_FIELD: recheck["merge_conflicts"]},
+                    )
+                except Exception as error:
+                    print(f"Failed to write Merge conflicts on PR #{recheck['number']}: {error}")
+                    failed += 1
+        pending_rechecks = still_unknown
+        if not pending_rechecks:
+            break
+    if pending_rechecks:
+        print(f"Mergeability still unknown for {len(pending_rechecks)} PR(s), left as they were")
+    return failed
 
 
 def refresh_all_board_items(project_number):
-    """Walk every open PR on the board and recompute its signals.
+    """Walk every open PR on the board and refresh its signals.
 
-    Backstop for the daily refresh workflow. Individual PR failures are
-    logged and don't abort the rest of the run.
+    Backstop for the daily refresh workflow. A failure on one PR doesn't
+    stop the others, but fails the run at the end.
     """
-    project = github_fetch_project(project_number)
-    processed = skipped = errors = 0
+    project = fetch_github_project(project_number)
+    listed_items = []
+    skipped = 0
     for item in github_list_project_items(project["id"]):
         if item.get("isArchived"):
             skipped += 1
@@ -218,28 +520,51 @@ def refresh_all_board_items(project_number):
         if content.get("state") != "OPEN" or content.get("isDraft"):
             skipped += 1
             continue
-        label_names = [n["name"] for n in content["labels"]["nodes"]]
+        label_names = [label["name"] for label in content["labels"]["nodes"]]
         if set(label_names) & SKIP_LABELS:
             skipped += 1
             continue
-        pr = {
-            "number": content["number"],
-            "node_id": content["id"],
-            "labels": [{"name": n} for n in label_names],
-            "additions": content["additions"],
-            "deletions": content["deletions"],
-            "user": {"login": (content.get("author") or {}).get("login")},
-        }
-        print(f"--- Refreshing PR #{pr['number']} ---")
+        listed_items.append(item)
+
+    processed = failed = 0
+    mergeability_rechecks = []
+    for batch in batched(listed_items, BOARD_ITEMS_PER_QUERY):
         try:
-            recompute_signals(pr, project, item["id"])
-            processed += 1
-        except Exception as exc:
-            print(f"Failed to refresh PR #{pr['number']}: {exc}")
-            errors += 1
+            items = github_fetch_board_items([item["id"] for item in batch])
+        except Exception as error:
+            # One broken item fails the whole query, so they're fetched one by one.
+            print(f"Failed to fetch {len(batch)} items at once, retrying one by one: {error}")
+            items = [None] * len(batch)
+        for listed_item, item in zip(batch, items):
+            try:
+                if item is None:
+                    [item] = github_fetch_board_items([listed_item["id"]])
+                pr = item["content"]
+                # Closed since the board was listed, and archived along with it.
+                if item["isArchived"] or pr["state"] != "OPEN":
+                    skipped += 1
+                    continue
+                refresh_signals(project, item)
+                processed += 1
+                if pr["mergeable"] == "UNKNOWN":
+                    mergeability_rechecks.append({
+                        "item_id": item["id"],
+                        "pr_id": pr["id"],
+                        "number": pr["number"],
+                        "merge_conflicts": current_field_values(item).get(
+                            MERGE_CONFLICTS_FIELD
+                        ),
+                    })
+            except Exception as error:
+                print(f"Failed to refresh PR #{listed_item['content']['number']}: {error}")
+                failed += 1
+    if mergeability_rechecks:
+        failed += recheck_mergeability(project, mergeability_rechecks)
     print(
-        f"Refresh complete: {processed} processed, {skipped} skipped, {errors} errors"
+        f"Refresh complete: {processed} processed, {skipped} skipped, {failed} failed"
     )
+    if failed:
+        raise RuntimeError(f"Failed to refresh {failed} PR(s), see above")
 
 
 def load_mapping(path=MAPPING_PATH):
@@ -260,114 +585,9 @@ def resolve_track(pr_labels, tracks):
     return None
 
 
-def github_graphql(query, variables):
-    """Execute a GitHub GraphQL query. Retries on transient server errors."""
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.post(
-            f"{GITHUB_API_URL}/graphql",
-            headers=GITHUB_HEADERS,
-            json={"query": query, "variables": variables},
-        )
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            print(
-                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
-            )
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        result = response.json()
-        if "errors" in result:
-            raise RuntimeError(f"GraphQL error: {result['errors']}")
-        return result["data"]
-    raise RuntimeError("github_graphql: retry loop exited without return")
-
-
-def github_rest_get(path):
-    """GET from the GitHub REST API. Retries on transient server errors."""
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.get(f"{GITHUB_API_URL}/{path}", headers=GITHUB_HEADERS)
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            print(
-                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
-            )
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        return response.json()
-    raise RuntimeError("github_rest_get: retry loop exited without return")
-
-
-def github_is_staff_member(username):
-    """Check if a user is a member of the staff team."""
-    try:
-        response = requests.get(
-            f"{GITHUB_API_URL}/orgs/{REPO_OWNER}/teams/{STAFF_TEAM_SLUG}/members/{username}",
-            headers=GITHUB_HEADERS,
-        )
-        if response.status_code == 204:
-            return True
-        if response.status_code == 404:
-            return False
-        print(
-            f"Warning: unexpected status {response.status_code} checking staff membership for '{username}'"
-        )
-        return False
-    except requests.RequestException as exc:
-        print(f"Warning: failed to check staff membership for '{username}': {exc}")
-        return False
-
-
 def github_fetch_pr(pr_number):
     """Fetch a PR by number via the REST API."""
-    return github_rest_get(f"repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}")
-
-
-def github_fetch_project(project_number):
-    """Fetch a GitHub project board's metadata including fields and their options."""
-    data = github_graphql(
-        """
-        query($owner: String!, $number: Int!) {
-          organization(login: $owner) {
-            projectV2(number: $number) {
-              id
-              fields(first: 50) {
-                nodes {
-                  ... on ProjectV2Field {
-                    id
-                    name
-                    dataType
-                  }
-                  ... on ProjectV2SingleSelectField {
-                    id
-                    name
-                    options { id name }
-                  }
-                }
-              }
-            }
-          }
-        }
-        """,
-        {"owner": REPO_OWNER, "number": project_number},
-    )
-    return data["organization"]["projectV2"]
-
-
-def github_add_to_project(project_id, content_node_id):
-    """Add a PR to the project board. Returns the new project item ID."""
-    data = github_graphql(
-        """
-        mutation($projectId: ID!, $contentId: ID!) {
-          addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
-            item { id }
-          }
-        }
-        """,
-        {"projectId": project_id, "contentId": content_node_id},
-    )
-    item_id = data["addProjectV2ItemById"]["item"]["id"]
-    print(f"Added PR to board (item: {item_id})")
-    return item_id
+    return github_rest_api("GET", f"repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}")
 
 
 def github_list_project_items(project_id):
@@ -391,13 +611,9 @@ def github_list_project_items(project_id):
                       content {
                         __typename
                         ... on PullRequest {
-                          id
                           number
                           state
                           isDraft
-                          additions
-                          deletions
-                          author { login }
                           labels(first: 50) { nodes { name } }
                         }
                       }
@@ -417,97 +633,34 @@ def github_list_project_items(project_id):
         cursor = page["pageInfo"]["endCursor"]
 
 
-def github_pr_upvotes(pr_node_id, author_login):
-    """Return the count of unique positive reactors on the PR.
-
-    Counts users (not bots) who left at least one of THUMBS_UP, HEART,
-    HOORAY, or ROCKET on the PR itself. Each user is counted once even if
-    they reacted with multiple positive emojis. The PR author is excluded
-    so self-reactions don't inflate the count.
-
-    Caps at 100 reactors per emoji — above that the exact count stops
-    mattering for ranking purposes.
-    """
+def github_fetch_board_items(item_ids):
     data = github_graphql(
-        """
-        query($prId: ID!) {
-          node(id: $prId) {
-            ... on PullRequest {
-              reactionGroups {
-                content
-                reactors(first: 100) {
-                  nodes {
-                    __typename
-                    ... on User { login }
-                  }
-                }
-              }
-            }
-          }
+        BOARD_ITEM_FRAGMENT
+        + """
+        query($ids: [ID!]!) {
+          nodes(ids: $ids) { ...BoardItem }
         }
         """,
-        {"prId": pr_node_id},
+        {"ids": item_ids},
     )
-    positive_contents = {"THUMBS_UP", "HEART", "HOORAY", "ROCKET"}
-    reactors = set()
-    for group in data["node"]["reactionGroups"] or []:
-        if group["content"] not in positive_contents:
-            continue
-        for node in group["reactors"]["nodes"]:
-            if node.get("__typename") != "User":
-                continue
-            login = node.get("login")
-            if login and login != author_login:
-                reactors.add(login)
-    return len(reactors)
+    return data["nodes"]
 
 
-def github_pr_issue_type(pr_node_id):
-    """Return the Issue Linked field value for a PR.
-
-    Reads `closingIssuesReferences` (authoritative source for what GitHub
-    will close on merge, covers both `Closes #N` keywords and Development
-    sidebar links) and maps the linked issues' types to one of: 'Crash',
-    'Bug', 'Feature', 'Docs', or 'No issue'.
-
-    When a PR closes multiple issues with different types, returns the
-    most urgent one by the priority Crash > Bug > Feature > Docs.
-    """
+def github_fetch_mergeable_by_pr_id(pr_ids):
     data = github_graphql(
         """
-        query($prId: ID!) {
-          node(id: $prId) {
-            ... on PullRequest {
-              closingIssuesReferences(first: 20) {
-                totalCount
-                nodes { issueType { name } }
-              }
-            }
-          }
+        query($ids: [ID!]!) {
+          nodes(ids: $ids) { ... on PullRequest { id mergeable } }
         }
         """,
-        {"prId": pr_node_id},
+        {"ids": pr_ids},
+        partial_errors_ok=True,
     )
-    refs = data["node"]["closingIssuesReferences"]
-    if refs["totalCount"] == 0:
-        return "No issue"
-    type_names = {
-        n["issueType"]["name"] for n in refs["nodes"] if n.get("issueType")
-    }
-    for priority in ("Crash", "Bug", "Feature", "Docs"):
-        if priority in type_names:
-            return priority
-    # Org-wide guardrails should ensure every issue has a recognized type,
-    # so reaching this branch means something slipped through. Log it and
-    # fall back so the PR doesn't carry stale data.
-    print(
-        f"Warning: PR has {refs['totalCount']} linked issue(s) but none with "
-        f"a recognized type (saw: {type_names or 'no type set'})"
-    )
-    return "No issue"
+    # PRs GitHub can no longer return come back as null.
+    return {node["id"]: node["mergeable"] for node in data["nodes"] if node}
 
 
-def github_find_project_item(project_id, content_node_id):
+def github_find_project_item_id(project_id, content_node_id):
     """Find a PR's item ID on the project board, or None if not present.
 
     Uses a read-only query so it won't add the PR as a side effect.
@@ -533,179 +686,6 @@ def github_find_project_item(project_id, content_node_id):
         if item["project"]["id"] == project_id:
             return item["id"]
     return None
-
-
-def github_set_project_field(project, item_id, field_name, option_name):
-    """Set a single-select field on a project item."""
-    field_id = None
-    option_id = None
-    for field in project["fields"]["nodes"]:
-        if field.get("name") == field_name:
-            field_id = field["id"]
-            for option in field.get("options", []):
-                if option["name"] == option_name:
-                    option_id = option["id"]
-                    break
-            break
-
-    if not field_id:
-        available = [f["name"] for f in project["fields"]["nodes"] if "name" in f]
-        raise RuntimeError(
-            f"Field '{field_name}' not found on project. Available: {available}"
-        )
-    if not option_id:
-        available = [
-            opt["name"]
-            for f in project["fields"]["nodes"]
-            if f.get("name") == field_name
-            for opt in f.get("options", [])
-        ]
-        raise RuntimeError(
-            f"Option '{option_name}' not found in field '{field_name}'. "
-            f"Available: {available}"
-        )
-
-    github_graphql(
-        """
-        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-          updateProjectV2ItemFieldValue(input: {
-            projectId: $projectId
-            itemId: $itemId
-            fieldId: $fieldId
-            value: { singleSelectOptionId: $optionId }
-          }) {
-            projectV2Item { id }
-          }
-        }
-        """,
-        {
-            "projectId": project["id"],
-            "itemId": item_id,
-            "fieldId": field_id,
-            "optionId": option_id,
-        },
-    )
-    print(f"Set '{field_name}' to '{option_name}'")
-
-
-def set_field_optional(project, item_id, field_name, option_name):
-    """Set a single-select field, logging and skipping if the field or
-    option doesn't exist on the project yet.
-
-    Used for signal fields so they can be added in the project UI
-    independently of script deploys without crashing the workflow.
-    """
-    field = None
-    for f in project["fields"]["nodes"]:
-        if f.get("name") == field_name:
-            field = f
-            break
-    if not field:
-        print(f"Field '{field_name}' not on project, skipping")
-        return
-    option_id = None
-    for opt in field.get("options", []):
-        if opt["name"] == option_name:
-            option_id = opt["id"]
-            break
-    if not option_id:
-        available = [opt["name"] for opt in field.get("options", [])]
-        print(
-            f"Option '{option_name}' not in field '{field_name}' "
-            f"(available: {available}), skipping"
-        )
-        return
-    github_graphql(
-        """
-        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-          updateProjectV2ItemFieldValue(input: {
-            projectId: $projectId
-            itemId: $itemId
-            fieldId: $fieldId
-            value: { singleSelectOptionId: $optionId }
-          }) {
-            projectV2Item { id }
-          }
-        }
-        """,
-        {
-            "projectId": project["id"],
-            "itemId": item_id,
-            "fieldId": field["id"],
-            "optionId": option_id,
-        },
-    )
-    print(f"Set '{field_name}' to '{option_name}'")
-
-
-def set_number_field_optional(project, item_id, field_name, value):
-    """Set a number field, logging and skipping if the field doesn't exist
-    on the project yet. Mirror of `set_field_optional` for non-select fields.
-    """
-    field = None
-    for f in project["fields"]["nodes"]:
-        if f.get("name") == field_name:
-            field = f
-            break
-    if not field:
-        print(f"Field '{field_name}' not on project, skipping")
-        return
-    github_graphql(
-        """
-        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
-          updateProjectV2ItemFieldValue(input: {
-            projectId: $projectId
-            itemId: $itemId
-            fieldId: $fieldId
-            value: { number: $value }
-          }) {
-            projectV2Item { id }
-          }
-        }
-        """,
-        {
-            "projectId": project["id"],
-            "itemId": item_id,
-            "fieldId": field["id"],
-            "value": value,
-        },
-    )
-    print(f"Set '{field_name}' to {value}")
-
-
-def github_clear_field(project, item_id, field_name):
-    """Clear a single-select field on a project item."""
-    field_id = None
-    for field in project["fields"]["nodes"]:
-        if field.get("name") == field_name:
-            field_id = field["id"]
-            break
-
-    if not field_id:
-        available = [f["name"] for f in project["fields"]["nodes"] if "name" in f]
-        raise RuntimeError(
-            f"Field '{field_name}' not found on project. Available: {available}"
-        )
-
-    github_graphql(
-        """
-        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
-          clearProjectV2ItemFieldValue(input: {
-            projectId: $projectId
-            itemId: $itemId
-            fieldId: $fieldId
-          }) {
-            projectV2Item { id }
-          }
-        }
-        """,
-        {
-            "projectId": project["id"],
-            "itemId": item_id,
-            "fieldId": field_id,
-        },
-    )
-    print(f"Cleared '{field_name}'")
 
 
 def github_get_field_value(item_id, field_name):
@@ -736,13 +716,12 @@ def github_get_field_value(item_id, field_name):
 
 
 if __name__ == "__main__":
-    GITHUB_HEADERS = {
-        "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
 
     project_number = int(os.environ["PROJECT_NUMBER"])
+
+    if os.environ.get("PUBLISH_HIGH_MR") == "1":
+        publish_high_mr_logins(project_number)
+        sys.exit(0)
 
     if os.environ.get("REFRESH_ALL") == "1":
         refresh_all_board_items(project_number)
@@ -796,10 +775,10 @@ if __name__ == "__main__":
 
     print(f"Processing PR #{pr['number']}: action={action}")
 
-    if action in ("labeled", "unlabeled"):
-        project, project_item = sync_track_from_labels(pr, project_number)
-        if project_item:
-            recompute_signals(pr, project, project_item)
+    if action in ("labeled", "unlabeled", "reopened"):
+        project, item = sync_track_from_labels(pr, project_number)
+        if item:
+            refresh_signals(project, item)
     elif action == "assigned":
         assignee_login = event.get("assignee", {}).get("login")
         if not assignee_login:

@@ -112,21 +112,17 @@ impl Editor {
         });
 
         self.colorize_brackets_task = cx.spawn(async move |editor, cx| {
-            if invalidate {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.clear_highlights_with(
-                            &mut |key| matches!(key, HighlightKey::ColorizeBracket(_)),
-                            cx,
-                        );
-                    })
-                    .ok();
-            }
-
             let (bracket_matches_by_accent, updated_chunks) = bracket_matches_by_accent.await;
 
             editor
                 .update(cx, |editor, cx| {
+                    if invalidate {
+                        editor.clear_highlights_with(
+                            &mut |key| matches!(key, HighlightKey::ColorizeBracket(_)),
+                            cx,
+                        );
+                    }
+
                     editor
                         .bracket_fetched_tree_sitter_chunks
                         .extend(updated_chunks);
@@ -408,7 +404,7 @@ mod tests {
     use gpui::{Rgba, UpdateGlobal as _, hsla};
     use indoc::indoc;
     use itertools::Itertools;
-    use language::{Capability, markdown_lang};
+    use language::{Buffer, Capability, markdown_lang};
     use languages::rust_lang;
     use multi_buffer::{MultiBuffer, PathKey};
     use pretty_assertions::assert_eq;
@@ -684,6 +680,60 @@ where
                 .unwrap(),
             "File-less buffer should still have its brackets colorized"
         );
+    }
+
+    #[gpui::test(iterations = 20)]
+    fn test_bracket_colorization_retained_during_reparse(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let text = "fn main() { let value = 1; }";
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(text, cx);
+            buffer.set_language(Some(rust_lang()), cx);
+            buffer
+        });
+        let editor = cx.add_window(|window, cx| {
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = MultiBuffer::without_headers(Capability::ReadOnly);
+                multibuffer.set_excerpts_for_path(
+                    PathKey::sorted(0),
+                    buffer.clone(),
+                    [Point::new(0, 0)..Point::new(0, text.len() as u32)],
+                    0,
+                    cx,
+                );
+                multibuffer
+            });
+            let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
+            editor.set_read_only(true);
+            editor
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        let bracket_colors = |cx: &mut gpui::TestAppContext| {
+            editor
+                .update(cx, |editor, window, cx| {
+                    editor_bracket_colors_markup(&editor.snapshot(window, cx))
+                })
+                .unwrap()
+        };
+        let expected = indoc! {"
+            fn main«1()1» «1{ let value = 1; }1»
+            1 hsla(207.80, 81.00%, 66.00%, 1.00)
+        "};
+        assert_eq!(bracket_colors(cx), expected);
+
+        let offset = text.find('1').expect("literal exists");
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(offset..offset + 1, "2")], None, cx);
+        });
+        let expected = expected.replace("1;", "2;");
+        assert_eq!(bracket_colors(cx), expected);
+        while cx.executor().tick() {
+            assert_eq!(bracket_colors(cx), expected);
+        }
     }
 
     #[gpui::test]

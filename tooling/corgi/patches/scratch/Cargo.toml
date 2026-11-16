@@ -1,0 +1,9 @@
+[package]
+name = "scratch"
+version = "1.0.9"
+edition = "2021"
+description = "corgi-patched scratch: uses a keyed, per-action shared directory"
+license = "MIT OR Apache-2.0"
+
+[lib]
+path = "src/lib.rs"

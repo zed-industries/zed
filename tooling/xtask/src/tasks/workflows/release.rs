@@ -33,11 +33,13 @@ pub(crate) fn release() -> Workflow {
         linux_aarch64: bundle_linux(
             Arch::AARCH64,
             None,
+            true,
             &[&linux_tests, &linux_clippy, &check_scripts],
         ),
         linux_x86_64: bundle_linux(
             Arch::X86_64,
             None,
+            true,
             &[&linux_tests, &linux_clippy, &check_scripts],
         ),
         bwrap_linux_aarch64: build_static_bwrap(
