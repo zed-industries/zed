@@ -108,6 +108,28 @@ impl Vim {
     ) {
         self.switch_mode(Mode::Normal, true, window, cx);
         self.temp_mode = true;
+        if self.mode != Mode::Normal {
+            return;
+        }
+
+        // Like Vim, a cursor past the end of the line steps back onto the last character, and
+        // steps forward again when returning to insert mode if it is still on that line's last
+        // character. Lines are remembered rather than selections, since some commands replace
+        // the selections.
+        let mut line_ends = Vec::new();
+        self.update_editor(cx, |_, editor, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(&mut |map, selection| {
+                    let head = selection.head();
+                    let last_character = map.clip_at_line_end(head);
+                    if selection.is_empty() && last_character != head {
+                        line_ends.push(map.display_point_to_anchor(head, Bias::Left));
+                        selection.collapse_to(last_character, SelectionGoal::None);
+                    }
+                });
+            });
+        });
+        self.temp_mode_line_ends = line_ends;
     }
 
     fn insert_around(&mut self, direction: Direction, _: &mut Window, cx: &mut Context<Self>) {
