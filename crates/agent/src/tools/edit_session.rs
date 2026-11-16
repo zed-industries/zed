@@ -2,7 +2,10 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
-use super::tool_permissions::{canonicalize_with_ancestors, resolve_creatable_global_skill_path};
+use super::tool_permissions::{
+    canonicalize_with_ancestors, leads_through_dangling_symlink,
+    resolve_creatable_global_skill_path,
+};
 use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
@@ -801,6 +804,7 @@ impl EditSession {
             let fs = cx.update(|cx| self.context.project.read(cx).fs().clone());
             if canonicalize_with_ancestors(&save_path, fs.as_ref()).await
                 != self.authorized_canonical_path
+                || leads_through_dangling_symlink(&save_path, fs.as_ref()).await
             {
                 bail!(
                     "{} changed on disk while it was being edited, so the edit was not saved.",

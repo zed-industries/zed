@@ -98,6 +98,22 @@ pub async fn canonicalize_with_ancestors(path: &Path, fs: &dyn Fs) -> Option<Pat
     }
 }
 
+/// Returns whether writing to `path` would go through a symlink whose target
+/// does not exist. Such a path can't be canonicalized, so
+/// [`canonicalize_with_ancestors`] reports it as if it were a plain missing
+/// file, while a write would follow the link and create its target.
+pub async fn leads_through_dangling_symlink(path: &Path, fs: &dyn Fs) -> bool {
+    for ancestor in path.ancestors() {
+        if fs.canonicalize(ancestor).await.is_ok() {
+            return false;
+        }
+        if fs.read_link(ancestor).await.is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Returns the canonicalized global agent skills directory
 /// (`~/.agents/skills`).
 ///
@@ -892,6 +908,31 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn test_leads_through_dangling_symlink(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.txt": "content" }))
+            .await;
+        fs.insert_tree(path!("/outside"), json!({})).await;
+        fs.insert_symlink(
+            path!("/root/dangling.txt"),
+            PathBuf::from(path!("/outside/new.txt")),
+        )
+        .await;
+
+        for (path, expected) in [
+            (path!("/root/dangling.txt"), true),
+            (path!("/root/file.txt"), false),
+            (path!("/root/missing.txt"), false),
+        ] {
+            assert_eq!(
+                leads_through_dangling_symlink(Path::new(path), fs.as_ref()).await,
+                expected,
+                "{path}"
+            );
+        }
     }
 
     async fn worktree_roots(
