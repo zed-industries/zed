@@ -553,8 +553,12 @@ impl SearchQuery {
 
                     if let std::result::Result::Ok(mat) = mat {
                         let should_push = if *one_match_per_line {
-                            // ensure that only one match per line is returned.
-                            let pos = buffer.offset_to_point(mat.start());
+                            // Ensure that only one match per line is returned.
+                            // Match offsets are relative to `text`, so convert
+                            // them to buffer offsets before looking up the row,
+                            // otherwise we could end up marking rows before
+                            // `subrange` as seen.
+                            let pos = buffer.offset_to_point(range_offset + mat.start());
                             seen_lines.insert(pos.row)
                         } else {
                             true
