@@ -2350,6 +2350,15 @@ impl Terminal {
         self.keyboard_input_sent
     }
 
+    /// The recorded spawn directory; unlike [`Self::working_directory`],
+    /// does not need the PTY event loop to progress.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn initial_working_directory(&self) -> Option<&Path> {
+        self.cwd_history
+            .first()
+            .map(|entry| entry.working_directory.as_ref())
+    }
+
     pub fn toggle_vi_mode(&mut self) {
         self.events.push_back(InternalEvent::ToggleViMode);
     }

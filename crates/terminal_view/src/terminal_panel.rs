@@ -1,4 +1,10 @@
-use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
+use std::{
+    cmp,
+    path::{Path, PathBuf},
+    process::ExitStatus,
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::{
     TerminalView, default_working_directory,
@@ -18,14 +24,17 @@ use gpui::{
 use itertools::Itertools;
 use project::{Fs, Project};
 
-use settings::{Settings, TerminalDockPosition};
+use settings::{Settings, SettingsLocation, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
-use terminal::{Terminal, terminal_settings::TerminalSettings};
+use terminal::{
+    Terminal,
+    terminal_settings::{MenuEntry, MenuEntryPlan, TerminalSettings, build_menu_entries},
+};
 use ui::{
     ButtonLike, Clickable, CommonAnimationExt, ContextMenu, FluentBuilder, PopoverMenu,
     SplitButton, Toggleable, Tooltip, prelude::*,
 };
-use util::{ResultExt, TryFutureExt, defer};
+use util::{ResultExt, TryFutureExt, defer, rel_path::RelPath};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
@@ -57,6 +66,7 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
+            workspace.register_action(TerminalPanel::spawn_detected_shell);
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
@@ -125,6 +135,7 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) {
         let assistant_enabled = self.assistant_enabled;
+        let workspace = self.workspace.clone();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
                 let split_context = pane
@@ -142,6 +153,7 @@ impl TerminalPanel {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
+                let workspace = workspace.clone();
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
@@ -154,7 +166,31 @@ impl TerminalPanel {
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |window, cx| {
                                 let focus_handle = focus_handle.clone();
-                                let menu = ContextMenu::build(window, cx, |menu, _, _| {
+                                let plan = {
+                                    let settings = workspace
+                                        .upgrade()
+                                        .map(|workspace| {
+                                            terminal_settings_for_cwd(
+                                                Some(workspace.read(cx)),
+                                                None,
+                                                cx,
+                                            )
+                                        })
+                                        .unwrap_or_else(|| {
+                                            TerminalSettings::get_global(cx).clone()
+                                        });
+                                    let detected =
+                                        util::shell_detection::detect_available_shells().to_vec();
+                                    build_menu_entries(
+                                        &settings.profiles,
+                                        detected,
+                                        &settings.profile_warnings,
+                                    )
+                                };
+                                let is_remote = workspace.upgrade().is_some_and(|workspace| {
+                                    workspace.read(cx).project().read(cx).is_via_remote_server()
+                                });
+                                let menu = ContextMenu::build(window, cx, move |menu, _, _| {
                                     menu.context(focus_handle.clone())
                                         .action(
                                             "New Terminal",
@@ -167,6 +203,8 @@ impl TerminalPanel {
                                             "Spawn Task",
                                             zed_actions::Spawn::modal().boxed_clone(),
                                         )
+                                        .separator()
+                                        .shell_entries(plan, is_remote)
                                 });
 
                                 Some(menu)
@@ -629,6 +667,37 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
+    /// Spawn a terminal running a detected (non-profile) shell program.
+    pub fn spawn_detected_shell(
+        workspace: &mut Workspace,
+        action: &crate::SpawnDetectedShell,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
+            return;
+        };
+        let working_directory = default_working_directory(workspace, cx);
+        let shell = Shell::WithArguments {
+            program: action.program.clone(),
+            args: action.args.clone(),
+            title_override: Some(action.label.clone()),
+        };
+        terminal_panel
+            .update(cx, |panel, cx| {
+                panel.add_terminal_shell_with(
+                    action.local,
+                    working_directory,
+                    Some(shell),
+                    None,
+                    RevealStrategy::Always,
+                    window,
+                    cx,
+                )
+            })
+            .detach_and_log_err(cx);
+    }
+
     pub fn spawn_task(
         &mut self,
         task: &SpawnInTerminal,
@@ -723,9 +792,13 @@ impl TerminalPanel {
             RevealTarget::Center => self
                 .workspace
                 .update(cx, |workspace, cx| {
-                    Self::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_task(spawn_task, cx)
-                    })
+                    Self::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_terminal_task(spawn_task, cx),
+                        None,
+                    )
                 })
                 .unwrap_or_else(|e| Task::ready(Err(e))),
             RevealTarget::Dock => self.add_terminal_task(spawn_task, reveal, window, cx),
@@ -733,7 +806,7 @@ impl TerminalPanel {
     }
 
     /// Create a new Terminal in the current working directory or the user's home directory
-    fn new_terminal(
+    pub(crate) fn new_terminal(
         workspace: &mut Workspace,
         action: &workspace::NewTerminal,
         window: &mut Window,
@@ -746,16 +819,31 @@ impl TerminalPanel {
             .active_item()
             .is_some_and(|item| item.downcast::<TerminalView>().is_some());
 
+        let (shell_override, profile_name) =
+            resolve_profile_override(action.profile.as_deref(), workspace, cx);
+
         if center_pane_has_focus && active_center_item_is_terminal {
             let working_directory = default_working_directory(workspace, cx);
             let local = action.local;
-            Self::add_center_terminal(workspace, window, cx, move |project, cx| {
-                if local {
-                    project.create_local_terminal(cx)
-                } else {
-                    project.create_terminal_shell(working_directory, cx)
-                }
-            })
+            let is_remote = workspace.project().read(cx).is_via_remote_server();
+            let tag = if local || !is_remote {
+                profile_name
+            } else {
+                None
+            };
+            Self::add_center_terminal(
+                workspace,
+                window,
+                cx,
+                move |project, cx| {
+                    if local {
+                        project.create_local_terminal_with(shell_override, cx)
+                    } else {
+                        project.create_terminal_shell_with(working_directory, shell_override, cx)
+                    }
+                },
+                tag,
+            )
             .detach_and_log_err(cx);
             return;
         }
@@ -766,9 +854,11 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |this, cx| {
-                this.add_terminal_shell(
+                this.add_terminal_shell_with(
                     action.local,
                     default_working_directory(workspace, cx),
+                    shell_override,
+                    profile_name,
                     RevealStrategy::Always,
                     window,
                     cx,
@@ -841,6 +931,7 @@ impl TerminalPanel {
             &mut Context<Project>,
         ) -> Task<Result<Entity<Terminal>>>
         + 'static,
+        profile_name: Option<String>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         if !is_enabled_in_workspace(workspace, cx) {
             return Task::ready(Err(anyhow!(
@@ -853,14 +944,16 @@ impl TerminalPanel {
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = cx.new(|cx| {
-                    TerminalView::new(
+                    let mut view = TerminalView::new(
                         terminal.clone(),
                         workspace.weak_handle(),
                         workspace.database_id(),
                         workspace.project().downgrade(),
                         window,
                         cx,
-                    )
+                    );
+                    tag_view_with_profile(&mut view, profile_name);
+                    view
                 });
                 // Don't steal focus from an open modal (e.g. the command palette):
                 // a background terminal can finish starting up after the user has
@@ -937,6 +1030,22 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
+        self.add_terminal_shell_with(force_local, cwd, None, None, reveal_strategy, window, cx)
+    }
+
+    /// Like [`add_terminal_shell`] but supplies a profile-derived shell
+    /// override, with the name used to tag the `TerminalView` for
+    /// persistence.
+    fn add_terminal_shell_with(
+        &mut self,
+        force_local: bool,
+        cwd: Option<PathBuf>,
+        shell_override: Option<Shell>,
+        profile_name: Option<String>,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
         self.spawn_pending_terminal(window, cx, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
@@ -945,11 +1054,15 @@ impl TerminalPanel {
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = if force_local {
                 project
-                    .update(cx, |project, cx| project.create_local_terminal(cx))
+                    .update(cx, |project, cx| {
+                        project.create_local_terminal_with(shell_override, cx)
+                    })
                     .await
             } else {
                 project
-                    .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                    .update(cx, |project, cx| {
+                        project.create_terminal_shell_with(cwd, shell_override, cx)
+                    })
                     .await
             };
 
@@ -958,14 +1071,27 @@ impl TerminalPanel {
             match terminal {
                 Ok(terminal) => workspace.update_in(cx, |workspace, window, cx| {
                     let terminal_view = Box::new(cx.new(|cx| {
-                        TerminalView::new(
+                        let mut view = TerminalView::new(
                             terminal.clone(),
                             workspace.weak_handle(),
                             workspace.database_id(),
                             workspace.project().downgrade(),
                             window,
                             cx,
-                        )
+                        );
+                        // A remote, non-force_local spawn drops the
+                        // override (create_terminal_shell_internal warns),
+                        // so the view must stay untagged or restore would
+                        // spawn a local terminal where the user had a
+                        // remote one.
+                        let profile_name = if force_local {
+                            profile_name
+                        } else {
+                            profile_name
+                                .filter(|_| !workspace.project().read(cx).is_via_remote_server())
+                        };
+                        tag_view_with_profile(&mut view, profile_name);
+                        view
                     }));
 
                     let take_focus = reveal_strategy == RevealStrategy::Always
@@ -1280,9 +1406,7 @@ impl TerminalPanel {
     }
 }
 
-/// Prepares a `SpawnInTerminal` by computing the command, args, and command_label
-/// based on the shell configuration. This is a pure function that can be tested
-/// without spawning actual terminals.
+/// Prepares a `SpawnInTerminal` for the given shell configuration.
 pub fn prepare_task_for_spawn(
     task: &SpawnInTerminal,
     shell: &Shell,
@@ -1302,6 +1426,86 @@ pub fn prepare_task_for_spawn(
 
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
+}
+
+/// Tag a freshly spawned view with the profile name for persistence.
+/// Callers must only pass a name when the profile override actually
+/// applied to the spawned shell — restore re-runs the override from this
+/// tag, so tagging a terminal that ran something else would flip its type
+/// on reload.
+fn tag_view_with_profile(view: &mut TerminalView, profile_name: Option<String>) {
+    if let Some(profile_name) = profile_name {
+        view.profile_name = Some(profile_name);
+        view.needs_serialize = true;
+    }
+}
+
+/// Resolve [`TerminalSettings`] scoped to the worktree containing `cwd`
+/// (falling back to the worktree of the workspace's default working
+/// directory, then to global), matching the spawn path's per-location
+/// lookup.
+pub(crate) fn terminal_settings_for_cwd(
+    workspace: Option<&Workspace>,
+    cwd: Option<&Path>,
+    cx: &App,
+) -> TerminalSettings {
+    let settings_location = cwd
+        .and_then(|cwd| settings_location_for_path(workspace, cwd, cx))
+        .or_else(|| {
+            let workspace = workspace?;
+            let cwd = default_working_directory(workspace, cx)?;
+            settings_location_for_path(Some(workspace), &cwd, cx)
+        });
+    TerminalSettings::get(settings_location, cx).clone()
+}
+
+fn settings_location_for_path(
+    workspace: Option<&Workspace>,
+    cwd: &Path,
+    cx: &App,
+) -> Option<SettingsLocation<'static>> {
+    let project = workspace?.project().read(cx);
+    let (worktree, _) = project.find_worktree(cwd, cx)?;
+    Some(SettingsLocation {
+        worktree_id: worktree.read(cx).id(),
+        path: RelPath::empty(),
+    })
+}
+
+/// Resolve a profile name from a `NewTerminal` action into a
+/// `(shell_override, profile_name)` pair. An unresolvable name emits a
+/// user-visible toast and falls back to the default shell.
+fn resolve_profile_override(
+    requested_profile: Option<&str>,
+    workspace: &mut Workspace,
+    cx: &mut Context<Workspace>,
+) -> (Option<Shell>, Option<String>) {
+    let Some(name) = requested_profile else {
+        return (None, None);
+    };
+    let settings = terminal_settings_for_cwd(Some(workspace), None, cx);
+    match settings.profiles.get(name) {
+        Some(profile) => {
+            let shell = terminal::terminal_settings::profile_to_task_shell(name, profile);
+            (Some(shell), Some(name.to_string()))
+        }
+        None => {
+            let message =
+                format!("Unknown terminal profile '{name}'; falling back to the default shell.");
+            log::warn!("{message}");
+            workspace.show_toast(
+                workspace::Toast::new(
+                    workspace::notifications::NotificationId::unique::<
+                        crate::TerminalProfileWarning,
+                    >(),
+                    message,
+                )
+                .autohide(),
+                cx,
+            );
+            (None, None)
+        }
+    }
 }
 
 pub fn new_terminal_pane(
@@ -1872,9 +2076,59 @@ impl RenderOnce for InlineAssistTabBarButton {
     }
 }
 
+/// Extend `ContextMenu` with the "+" menu's terminal-shell section.
+trait TerminalPanelMenuExt: Sized {
+    fn shell_entries(self, plan: MenuEntryPlan, is_remote: bool) -> Self;
+}
+
+impl TerminalPanelMenuExt for ContextMenu {
+    fn shell_entries(self, plan: MenuEntryPlan, is_remote: bool) -> Self {
+        match plan {
+            MenuEntryPlan::Inline { entries } => inline_shell_entries(self, entries, is_remote),
+            MenuEntryPlan::Collapsed { entries } => {
+                self.submenu("Select Shell…", move |submenu, _window, _cx| {
+                    inline_shell_entries(submenu, entries.clone(), is_remote)
+                })
+            }
+        }
+    }
+}
+
+fn inline_shell_entries(
+    mut menu: ContextMenu,
+    entries: Vec<MenuEntry>,
+    is_remote: bool,
+) -> ContextMenu {
+    for entry in entries {
+        match entry {
+            MenuEntry::Configured { name } => {
+                let action = workspace::NewTerminal {
+                    local: is_remote,
+                    profile: Some(name.clone()),
+                };
+                menu = menu.action(name.as_str(), action.boxed_clone());
+            }
+            MenuEntry::Detected {
+                label,
+                program,
+                args,
+            } => {
+                let action = crate::SpawnDetectedShell {
+                    program,
+                    args,
+                    label: label.clone(),
+                    local: is_remote,
+                };
+                menu = menu.action(label.as_str(), action.boxed_clone());
+            }
+        }
+    }
+    menu
+}
+
 #[cfg(test)]
 mod tests {
-    use std::num::NonZero;
+    use std::{num::NonZero, path::Path};
 
     use super::*;
     use crate::persistence::{SerializedPane, SerializedPaneGroup};
@@ -1947,6 +2201,94 @@ mod tests {
             item_count, 5,
             "Terminal panel should bypass max_tabs limit and have all 5 terminals"
         );
+    }
+
+    #[gpui::test]
+    async fn project_scoped_profile_resolves_from_keymap_dispatch(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({
+                ".zed": { "settings.json": "" },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                    workspace.add_panel(panel, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let worktree_id = window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace.workspace().read_with(cx, |workspace, cx| {
+                    workspace.worktrees(cx).next().unwrap().read(cx).id()
+                })
+            })
+            .unwrap();
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        settings::LocalSettingsPath::InWorktree(RelPath::empty_arc()),
+                        settings::LocalSettingsKind::Settings,
+                        Some(
+                            r#"{
+                                "terminal": {
+                                    "profiles": {
+                                        "Project Profile": { "program": "/bin/bash" }
+                                    }
+                                }
+                            }"#,
+                        ),
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let action = workspace::NewTerminal {
+                    local: false,
+                    profile: Some("Project Profile".to_string()),
+                };
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(workspace, &action, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                let panel = multi_workspace
+                    .workspace()
+                    .read_with(cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
+                    .unwrap();
+                let item = panel.read(cx).active_pane.read(cx).active_item();
+                let terminal_view = item
+                    .and_then(|item| item.act_as::<TerminalView>(cx))
+                    .expect("profile spawn should produce a terminal");
+                assert_eq!(
+                    terminal_view.read(cx).terminal.read(cx).title(false),
+                    "Project Profile"
+                );
+            })
+            .unwrap();
     }
 
     #[cfg(unix)]
@@ -2509,20 +2851,26 @@ mod tests {
     ) {
         workspace
             .update_in(cx, |workspace, window, cx| {
-                TerminalPanel::add_center_terminal(workspace, window, cx, |_, cx| {
-                    let terminal = cx.new(|cx| {
-                        terminal::TerminalBuilder::new_display_only(
-                            terminal::terminal_settings::CursorShape::default(),
-                            terminal::terminal_settings::AlternateScroll::On,
-                            None,
-                            0,
-                            cx.background_executor(),
-                            util::paths::PathStyle::local(),
-                        )
-                        .subscribe(cx)
-                    });
-                    gpui::Task::ready(Ok(terminal))
-                })
+                TerminalPanel::add_center_terminal(
+                    workspace,
+                    window,
+                    cx,
+                    |_, cx| {
+                        let terminal = cx.new(|cx| {
+                            terminal::TerminalBuilder::new_display_only(
+                                terminal::terminal_settings::CursorShape::default(),
+                                terminal::terminal_settings::AlternateScroll::On,
+                                None,
+                                0,
+                                cx.background_executor(),
+                                util::paths::PathStyle::local(),
+                            )
+                            .subscribe(cx)
+                        });
+                        gpui::Task::ready(Ok(terminal))
+                    },
+                    None,
+                )
             })
             .await
             .unwrap();
@@ -3012,9 +3360,13 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_shell(None, cx)
-                    })
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_terminal_shell(None, cx),
+                        None,
+                    )
                 })
             })
             .expect("Failed to update workspace")
@@ -3181,9 +3533,13 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_shell(None, cx)
-                    })
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_terminal_shell(None, cx),
+                        None,
+                    )
                 })
             })
             .expect("Failed to update workspace")
@@ -3226,7 +3582,10 @@ mod tests {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
                     TerminalPanel::new_terminal(
                         workspace,
-                        &workspace::NewTerminal { local: true },
+                        &workspace::NewTerminal {
+                            local: true,
+                            profile: None,
+                        },
                         window,
                         cx,
                     );
@@ -3271,9 +3630,13 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_shell(None, cx)
-                    })
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_terminal_shell(None, cx),
+                        None,
+                    )
                 })
             })
             .expect("Failed to update workspace")
@@ -3355,6 +3718,218 @@ mod tests {
             store.update_user_settings(cx, |settings| {
                 settings.workspace.max_tabs = value.map(|v| NonZero::new(v).unwrap())
             });
+        });
+    }
+
+    fn configure_zsh_profile(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    terminal.project.profiles = Some(collections::IndexMap::from_iter([(
+                        "Zsh".to_string(),
+                        settings::TerminalProfile {
+                            program: "/bin/zsh".to_string(),
+                            args: Some(vec!["-l".to_string()]),
+                            title_override: None,
+                        },
+                    )]));
+                });
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_terminal_with_known_profile_applies_override(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        configure_zsh_profile(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(
+                        workspace,
+                        &workspace::NewTerminal {
+                            local: false,
+                            profile: Some("Zsh".to_string()),
+                        },
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .expect("Failed to dispatch NewTerminal with profile=Zsh");
+        cx.run_until_parked();
+
+        let active_item =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
+        let terminal_view = active_item
+            .and_then(|item| item.downcast::<TerminalView>())
+            .expect("active panel item should be a TerminalView");
+        terminal_view.update(cx, |view, cx| {
+            assert_eq!(
+                view.profile_name,
+                Some("Zsh".to_string()),
+                "TerminalView should be tagged with the profile name for persistence"
+            );
+            let title = view.terminal().read(cx).title(false);
+            assert_eq!(
+                title, "Zsh",
+                "tab title should be promoted to the profile name"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_terminal_with_unknown_profile_falls_back(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        configure_zsh_profile(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let panel_items_before =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(
+                        workspace,
+                        &workspace::NewTerminal {
+                            local: false,
+                            profile: Some("DefinitelyNotAProfile".to_string()),
+                        },
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .expect("Failed to dispatch NewTerminal with unknown profile");
+        cx.run_until_parked();
+
+        let panel_items_after =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(
+            panel_items_after,
+            panel_items_before + 1,
+            "Unknown profile should still spawn a terminal (default-shell fallback)"
+        );
+
+        let active_item =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
+        let terminal_view = active_item
+            .and_then(|item| item.downcast::<TerminalView>())
+            .expect("active panel item should be a TerminalView");
+        terminal_view.update(cx, |view, _cx| {
+            assert!(
+                view.profile_name.is_none(),
+                "Unknown-profile fallback should not tag the view with a profile name"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_spawn_detected_shell_dispatches_add_terminal_shell_with(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+
+        let detected = crate::SpawnDetectedShell {
+            program: if cfg!(unix) {
+                "/bin/sh".to_string()
+            } else {
+                "cmd.exe".to_string()
+            },
+            args: Vec::new(),
+            label: "Detected Shell".to_string(),
+            local: false,
+        };
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::spawn_detected_shell(workspace, &detected, window, cx);
+                })
+            })
+            .expect("Failed to dispatch SpawnDetectedShell");
+        cx.run_until_parked();
+
+        let active_item =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
+        let terminal_view = active_item
+            .and_then(|item| item.downcast::<TerminalView>())
+            .expect("active panel item should be a TerminalView after detected-shell spawn");
+        terminal_view.update(cx, |view, cx| {
+            assert!(
+                view.profile_name.is_none(),
+                "detected-shell spawn must NOT set profile_name (would mislead deserialize into a default-shell fallback). Got: {:?}",
+                view.profile_name,
+            );
+            let title = view.terminal().read(cx).title(false);
+            assert_eq!(
+                title, "Detected Shell",
+                "tab title should come from the detected label"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_spawn_detected_shell_uses_project_working_directory(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({})).await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                    workspace.add_panel(panel.clone(), window, cx);
+                    panel
+                })
+            })
+            .expect("Failed to initialize workspace with terminal panel");
+
+        let detected = crate::SpawnDetectedShell {
+            program: if cfg!(unix) {
+                "/bin/sh".to_string()
+            } else {
+                "cmd.exe".to_string()
+            },
+            args: Vec::new(),
+            label: "Detected Shell".to_string(),
+            local: false,
+        };
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::spawn_detected_shell(workspace, &detected, window, cx);
+                })
+            })
+            .expect("Failed to dispatch SpawnDetectedShell");
+        cx.run_until_parked();
+
+        let count =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(count, 1, "detected-shell spawn should produce a terminal");
+
+        let active_item =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
+        let terminal_view = active_item
+            .and_then(|item| item.downcast::<TerminalView>())
+            .expect("active panel item should be a TerminalView");
+        terminal_view.update(cx, |view, cx| {
+            assert_eq!(
+                view.terminal().read(cx).initial_working_directory(),
+                Some(Path::new("/project"))
+            );
         });
     }
 

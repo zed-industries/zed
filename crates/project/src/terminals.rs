@@ -287,7 +287,20 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        self.create_terminal_shell_internal(cwd, false, cx)
+        self.create_terminal_shell_internal(cwd, None, false, cx)
+    }
+
+    /// Same as [`create_terminal_shell`](Self::create_terminal_shell) but lets
+    /// the caller supply a profile-derived shell override. The override is
+    /// dropped (with a `log::warn!`) when the project is remote and
+    /// `force_local` is false.
+    pub fn create_terminal_shell_with(
+        &mut self,
+        cwd: Option<PathBuf>,
+        shell_override: Option<Shell>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_shell_internal(cwd, shell_override, false, cx)
     }
 
     /// Creates a local terminal even if the project is remote.
@@ -297,22 +310,34 @@ impl Project {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
+        self.create_local_terminal_with(None, cx)
+    }
+
+    /// Like [`create_local_terminal`] but accepts a profile-derived shell
+    /// override, which is always honored.
+    pub fn create_local_terminal_with(
+        &mut self,
+        shell_override: Option<Shell>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
         let working_directory = if self.remote_client.is_some() {
-            // Remote project: don't use remote paths, let shell use Zed's cwd
             None
         } else {
-            // Local project: use project directory like normal terminals
             self.active_project_directory(cx).map(|p| p.to_path_buf())
         };
-        self.create_terminal_shell_internal(working_directory, true, cx)
+        self.create_terminal_shell_internal(working_directory, shell_override, true, cx)
     }
 
     /// Internal method for creating terminal shells.
-    /// If force_local is true, creates a local terminal even if the project has a remote client.
+    /// If `force_local` is true, creates a local terminal even if the project has a remote client.
     /// This allows "breaking out" to a local shell in remote projects.
+    ///
+    /// `shell_override` replaces `terminal.shell` and is dropped for
+    /// remote, non-`force_local` terminals with a warning.
     fn create_terminal_shell_internal(
         &mut self,
         cwd: Option<PathBuf>,
+        shell_override: Option<Shell>,
         force_local: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
@@ -331,6 +356,17 @@ impl Project {
         let settings = TerminalSettings::get(settings_location, cx).clone();
         let detect_venv = settings.detect_venv.as_option().is_some();
         let local_path = if is_via_remote { None } else { path.clone() };
+
+        let shell_override = if is_via_remote && shell_override.is_some() {
+            log::warn!(
+                "terminal profile override ignored for remote terminal \
+                 (remote shell selection happens on the server)"
+            );
+            None
+        } else {
+            shell_override
+        };
+        let effective_shell = shell_override.unwrap_or_else(|| settings.shell.clone());
 
         // See create_terminal_task: scope the toolchain lookup to the
         // worktree the terminal is opened in, not the active editor's
@@ -369,8 +405,11 @@ impl Project {
                 .read(cx)
                 .shell()
                 .unwrap_or_else(get_default_system_shell),
-            None => settings.shell.program(),
+            None => effective_shell.program(),
         };
+        // Env resolution stays on the login shell locally, independent of
+        // the profile, so venv detection keeps working when `$SHELL`
+        // differs from the profile program.
         let env_shell = match &remote_client {
             Some(_) => shell.clone(),
             None => get_system_shell(),
@@ -439,7 +478,7 @@ impl Project {
                                 };
                                 create_remote_shell(spawn_command, env, path, remote_client, cx)?
                             }
-                            None => (settings.shell, env),
+                            None => (effective_shell, env),
                         }
                     };
                     anyhow::Ok(TerminalBuilder::new(
