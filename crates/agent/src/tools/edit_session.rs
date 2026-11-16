@@ -2,12 +2,12 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
-use super::tool_permissions::resolve_creatable_global_skill_path;
+use super::tool_permissions::{canonicalize_with_ancestors, resolve_creatable_global_skill_path};
 use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
 use agent_client_protocol::v2::schema as acp;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
@@ -278,10 +278,15 @@ pub(crate) async fn run_session(
 ) -> Result<EditSessionOutput, EditSessionOutput> {
     match result {
         EditSessionResult::Completed(session) => {
-            session
-                .context
-                .ensure_buffer_saved(&session.buffer, cx)
-                .await;
+            if let Err(error) = session.save(cx).await {
+                let error = error.to_string();
+                event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
+                return Err(EditSessionOutput::Error {
+                    error,
+                    input_path: Some(session.input_path),
+                    diff: String::new(),
+                });
+            }
             let (new_text, diff) = session.compute_new_text_and_diff(cx).await;
             Ok(EditSessionOutput::Success {
                 old_text: session.old_text.clone(),
@@ -294,10 +299,7 @@ pub(crate) async fn run_session(
             error,
             session: Some(session),
         } => {
-            session
-                .context
-                .ensure_buffer_saved(&session.buffer, cx)
-                .await;
+            session.save(cx).await.log_err();
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
             if diff.is_empty() {
                 event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
@@ -345,6 +347,7 @@ where
 
 pub(crate) struct EditSession {
     abs_path: PathBuf,
+    authorized_canonical_path: Option<PathBuf>,
     pub(crate) input_path: PathBuf,
     pub(crate) buffer: Entity<Buffer>,
     pub(crate) old_text: Arc<String>,
@@ -722,6 +725,11 @@ impl EditSession {
             update.locations(vec![acp::ToolCallLocation::new(abs_path.clone())])
         });
 
+        // Captured before authorizing, so a path swapped at any point after the
+        // authorization check is detected when saving.
+        let fs = cx.update(|cx| context.project.read(cx).fs().clone());
+        let authorized_canonical_path = canonicalize_with_ancestors(&abs_path, fs.as_ref()).await;
+
         cx.update(|cx| context.authorize(tool_name, &path, event_stream, cx))
             .await
             .map_err(|e| e.to_string())?;
@@ -769,6 +777,7 @@ impl EditSession {
 
         Ok(Self {
             abs_path,
+            authorized_canonical_path,
             input_path: path,
             buffer,
             old_text,
@@ -778,6 +787,29 @@ impl EditSession {
             context,
             _finalize_diff_guard: finalize_diff_guard,
         })
+    }
+
+    /// Saves the buffer, unless the file it would be written to no longer
+    /// resolves to the location that was authorized (e.g. a directory in its
+    /// path was replaced by a symlink while the edit was streaming).
+    async fn save(&self, cx: &mut AsyncApp) -> Result<()> {
+        let save_path = self.buffer.read_with(cx, |buffer, cx| {
+            let file = buffer.file()?.as_local()?;
+            Some(file.abs_path(cx))
+        });
+        if let Some(save_path) = save_path {
+            let fs = cx.update(|cx| self.context.project.read(cx).fs().clone());
+            if canonicalize_with_ancestors(&save_path, fs.as_ref()).await
+                != self.authorized_canonical_path
+            {
+                bail!(
+                    "{} changed on disk while it was being edited, so the edit was not saved.",
+                    self.input_path.display()
+                );
+            }
+        }
+        self.context.ensure_buffer_saved(&self.buffer, cx).await;
+        Ok(())
     }
 
     pub(crate) async fn finalize_edit(

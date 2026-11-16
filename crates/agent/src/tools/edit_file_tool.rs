@@ -3181,6 +3181,73 @@ mod tests {
         assert_eq!(err.to_string(), "missing field `old_text`");
     }
 
+    #[gpui::test]
+    async fn test_streaming_edit_symlink_swap_to_external_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "safe": { "file.txt": "original project" } }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/outside"),
+            json!({ "file.txt": "original external" }),
+        )
+        .await;
+        let (edit_tool, _project, _action_log, fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
+
+        sender.send_partial(json!({ "path": "root/safe/file.txt" }));
+        cx.run_until_parked();
+        sender.send_partial(json!({
+            "path": "root/safe/file.txt",
+            "edits": [{"old_text": "original", "new_text": "pwn"}]
+        }));
+        cx.run_until_parked();
+
+        fs.rename(
+            path!("/root/safe").as_ref(),
+            path!("/root/safe_moved").as_ref(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        fs.create_symlink(
+            path!("/root/safe").as_ref(),
+            std::path::PathBuf::from(path!("/outside")),
+        )
+        .await
+        .unwrap();
+
+        // Deliberately not parking here: once the worktree rescans, the buffer
+        // follows the renamed entry to `safe_moved` and the save stays inside
+        // the project. The escape only happens when the save wins that race.
+        sender.send_full(json!({
+            "path": "root/safe/file.txt",
+            "edits": [{"old_text": "original", "new_text": "pwned"}]
+        }));
+        task.await.ok();
+        cx.run_until_parked();
+
+        let mut authorization_count = 0;
+        while let Ok(event) = receiver.try_recv() {
+            if matches!(event, Ok(crate::ThreadEvent::ToolCallAuthorization(_))) {
+                authorization_count += 1;
+            }
+        }
+        let external = fs.load(path!("/outside/file.txt").as_ref()).await.unwrap();
+        assert_eq!(
+            (external.as_str(), authorization_count),
+            ("original external", 0),
+            "external file was overwritten without authorization"
+        );
+    }
+
     async fn setup_test_with_fs(
         cx: &mut TestAppContext,
         fs: Arc<project::FakeFs>,

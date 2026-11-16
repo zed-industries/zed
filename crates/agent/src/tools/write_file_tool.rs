@@ -1375,6 +1375,92 @@ mod tests {
         assert_eq!(on_disk, "on disk content plus user edit");
     }
 
+    async fn swap_directory_for_symlink_during_streaming_write(
+        cx: &mut TestAppContext,
+        symlink_target: &str,
+    ) -> (Arc<project::FakeFs>, usize) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "safe": {},
+                ".zed": { "settings.json": "original settings" },
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/outside"),
+            json!({ "settings.json": "original external" }),
+        )
+        .await;
+        let (write_tool, _project, _action_log, fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (mut sender, input) = ToolInput::<WriteFileToolInput>::test();
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| write_tool.clone().run(input, event_stream, cx));
+
+        sender.send_partial(json!({ "path": "root/safe/settings.json" }));
+        cx.run_until_parked();
+        sender.send_partial(json!({ "path": "root/safe/settings.json", "content": "pwn" }));
+        cx.run_until_parked();
+
+        fs.rename(
+            path!("/root/safe").as_ref(),
+            path!("/root/safe_moved").as_ref(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        fs.create_symlink(path!("/root/safe").as_ref(), PathBuf::from(symlink_target))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        sender.send_full(json!({ "path": "root/safe/settings.json", "content": "pwned" }));
+        task.await.ok();
+        cx.run_until_parked();
+
+        let mut authorization_count = 0;
+        while let Ok(event) = receiver.try_recv() {
+            if matches!(event, Ok(crate::ThreadEvent::ToolCallAuthorization(_))) {
+                authorization_count += 1;
+            }
+        }
+        (fs, authorization_count)
+    }
+
+    #[gpui::test]
+    async fn test_streaming_write_symlink_swap_to_external_directory(cx: &mut TestAppContext) {
+        let (fs, authorization_count) =
+            swap_directory_for_symlink_during_streaming_write(cx, path!("/outside")).await;
+        let external = fs
+            .load(path!("/outside/settings.json").as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            (external.as_str(), authorization_count),
+            ("original external", 0),
+            "external file was overwritten without authorization"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_write_symlink_swap_to_local_settings(cx: &mut TestAppContext) {
+        let (fs, authorization_count) =
+            swap_directory_for_symlink_during_streaming_write(cx, path!("/root/.zed")).await;
+        let settings = fs
+            .load(path!("/root/.zed/settings.json").as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            (settings.as_str(), authorization_count),
+            ("original settings", 0),
+            "local settings were overwritten without authorization"
+        );
+    }
+
     async fn setup_test_with_fs(
         cx: &mut TestAppContext,
         fs: Arc<project::FakeFs>,
