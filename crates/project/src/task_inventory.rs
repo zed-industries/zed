@@ -42,6 +42,7 @@ pub struct DebugScenarioContext {
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
+    last_scheduled_task_id: Option<TaskId>,
     last_scheduled_scenarios: VecDeque<(DebugScenario, DebugScenarioContext)>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
@@ -51,6 +52,7 @@ impl std::fmt::Debug for Inventory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Inventory")
             .field("last_scheduled_tasks", &self.last_scheduled_tasks)
+            .field("last_scheduled_task_id", &self.last_scheduled_task_id)
             .field("last_scheduled_scenarios", &self.last_scheduled_scenarios)
             .field("templates_from_settings", &self.templates_from_settings)
             .field("scenarios_from_settings", &self.scenarios_from_settings)
@@ -312,6 +314,7 @@ impl Inventory {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|_| Self {
             last_scheduled_tasks: VecDeque::default(),
+            last_scheduled_task_id: None,
             last_scheduled_scenarios: VecDeque::default(),
             templates_from_settings: InventoryFor::default(),
             scenarios_from_settings: InventoryFor::default(),
@@ -642,7 +645,10 @@ impl Inventory {
                 .find(|(_, task)| &task.id == task_id)
                 .cloned()
         } else {
-            self.last_scheduled_tasks.back().cloned()
+            self.last_scheduled_tasks
+                .back()
+                .filter(|(_, task)| Some(&task.id) == self.last_scheduled_task_id.as_ref())
+                .cloned()
         }
     }
 
@@ -652,6 +658,7 @@ impl Inventory {
         task_source_kind: TaskSourceKind,
         resolved_task: ResolvedTask,
     ) {
+        self.last_scheduled_task_id = Some(resolved_task.id.clone());
         self.last_scheduled_tasks
             .push_back((task_source_kind, resolved_task));
         if self.last_scheduled_tasks.len() > 5_000 {
@@ -662,7 +669,16 @@ impl Inventory {
     /// Deletes a resolved task from history, using its id.
     /// A similar may still resurface in `used_and_current_resolved_tasks` when its [`TaskTemplate`] is resolved again.
     pub fn delete_previously_used(&mut self, id: &TaskId) {
+        let deleted_rerun_target = self
+            .last_scheduled_task(None)
+            .is_some_and(|(_, task)| &task.id == id);
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
+        if deleted_rerun_target {
+            self.last_scheduled_task_id = self
+                .last_scheduled_tasks
+                .back()
+                .map(|(_, task)| task.id.clone());
+        }
     }
 
     /// Returns global task templates with the provided tag.
@@ -700,6 +716,16 @@ impl Inventory {
             .chain(self.global_templates_from_settings())
             .filter(|(_, template)| !template.hooks.is_disjoint(hooks))
             .collect()
+    }
+
+    fn retain_unchanged_tasks(
+        &mut self,
+        is_updated_source: impl Fn(&TaskSourceKind) -> bool,
+        new_templates: &[TaskTemplate],
+    ) {
+        self.last_scheduled_tasks.retain(|(kind, task)| {
+            !is_updated_source(kind) || new_templates.contains(task.original_task())
+        });
     }
 
     fn global_templates_from_settings(
@@ -780,23 +806,42 @@ impl Inventory {
             Some(template)
         });
 
-        let parsed_templates = &mut self.templates_from_settings;
+        let new_templates = new_templates.collect::<Vec<_>>();
         match location {
             TaskSettingsLocation::Global(path) => {
-                parsed_templates
+                self.retain_unchanged_tasks(
+                    |kind| {
+                        if let TaskSourceKind::AbsPath { abs_path, .. } = kind {
+                            abs_path == path
+                        } else {
+                            false
+                        }
+                    },
+                    &new_templates,
+                );
+                self.templates_from_settings
                     .global
                     .entry(path.to_owned())
-                    .insert_entry(new_templates.collect());
-                self.last_scheduled_tasks.retain(|(kind, _)| {
-                    if let TaskSourceKind::AbsPath { abs_path, .. } = kind {
-                        abs_path != path
-                    } else {
-                        true
-                    }
-                });
+                    .insert_entry(new_templates);
             }
             TaskSettingsLocation::Worktree(location) => {
-                let new_templates = new_templates.collect::<Vec<_>>();
+                self.retain_unchanged_tasks(
+                    |kind| {
+                        if let TaskSourceKind::Worktree {
+                            directory_in_worktree,
+                            id,
+                            ..
+                        } = kind
+                        {
+                            *id == location.worktree_id
+                                && directory_in_worktree.as_ref() == location.path
+                        } else {
+                            false
+                        }
+                    },
+                    &new_templates,
+                );
+                let parsed_templates = &mut self.templates_from_settings;
                 if new_templates.is_empty() {
                     if let Some(worktree_tasks) =
                         parsed_templates.worktree.get_mut(&location.worktree_id)
@@ -810,19 +855,6 @@ impl Inventory {
                         .or_default()
                         .insert(Arc::from(location.path), new_templates);
                 }
-                self.last_scheduled_tasks.retain(|(kind, _)| {
-                    if let TaskSourceKind::Worktree {
-                        directory_in_worktree,
-                        id,
-                        ..
-                    } = kind
-                    {
-                        *id != location.worktree_id
-                            || directory_in_worktree.as_ref() != location.path
-                    } else {
-                        true
-                    }
-                });
             }
         }
 

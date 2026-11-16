@@ -113,14 +113,23 @@ fn safe_area_probe(
         .map_err(|error| anyhow::anyhow!("Failed to create safe-area probe: {error:?}"))?
         .dyn_into::<web_sys::HtmlElement>()
         .map_err(|error| anyhow::anyhow!("Invalid safe-area probe element: {error:?}"))?;
-    probe
-        .set_attribute(
-            "style",
-            &format!(
-                "position:fixed;left:0;top:0;width:0;padding:0;border:0;visibility:hidden;\
-                 pointer-events:none;height:env(safe-area-inset-{edge},0px)"
-            ),
-        )
-        .map_err(|error| anyhow::anyhow!("Failed to style safe-area probe: {error:?}"))?;
+    let height = format!("env(safe-area-inset-{edge},0px)");
+    // A CSP that blocks inline styles still allows per-property CSSOM writes.
+    let style = probe.style();
+    for (property, value) in [
+        ("position", "fixed"),
+        ("left", "0"),
+        ("top", "0"),
+        ("width", "0"),
+        ("padding", "0"),
+        ("border", "0"),
+        ("visibility", "hidden"),
+        ("pointer-events", "none"),
+        ("height", height.as_str()),
+    ] {
+        style.set_property(property, value).map_err(|error| {
+            anyhow::anyhow!("Failed to set safe-area probe {property} style: {error:?}")
+        })?;
+    }
     Ok(probe)
 }

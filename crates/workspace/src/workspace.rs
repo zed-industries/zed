@@ -3123,7 +3123,7 @@ impl Workspace {
                         .insert(project_path.clone());
                 }
 
-                history.insert(project_path, (fs_path, std::usize::MAX));
+                history.insert(project_path, (fs_path, usize::MAX));
             }
         }
 
@@ -11561,6 +11561,27 @@ fn preferred_workspace_target(
     }
 }
 
+/// `ssh://` URL paths arrive unconverted, because each remote has its own path style. Every
+/// candidate converts its own copy, so the caller's paths reach a fresh connection unchanged.
+fn paths_for_candidate<'a>(
+    abs_paths: &'a [impl AsRef<Path>],
+    host: &ProjectHost<'_>,
+    path_style: PathStyle,
+) -> Vec<&'a Path> {
+    abs_paths
+        .iter()
+        .map(|path| {
+            let path = path.as_ref();
+            match (host, path.to_str()) {
+                (ProjectHost::Remote(_), Some(url_path)) => {
+                    Path::new(util::paths::url_path_to_path(url_path, path_style))
+                }
+                _ => path,
+            }
+        })
+        .collect()
+}
+
 pub fn find_existing_workspace(
     abs_paths: &[impl AsRef<Path>],
     open_options: &OpenOptions,
@@ -11592,16 +11613,17 @@ pub fn find_existing_workspace(
                             continue;
                         }
 
+                        let paths = paths_for_candidate(abs_paths, host, project.path_style(cx));
                         let visibility = match open_options.workspace_matching {
                             WorkspaceMatching::None => None,
                             WorkspaceMatching::MatchExact => {
-                                project.visibility_for_paths(abs_paths, true, cx)
+                                project.visibility_for_paths(&paths, true, cx)
                             }
                             WorkspaceMatching::MatchSubpaths => {
-                                project.visibility_for_subpaths(abs_paths, cx)
+                                project.visibility_for_subpaths(&paths, cx)
                             }
                             WorkspaceMatching::MatchSubdirectory => {
-                                project.visibility_for_paths(abs_paths, false, cx)
+                                project.visibility_for_paths(&paths, false, cx)
                             }
                         };
 
@@ -11629,8 +11651,9 @@ pub fn find_existing_workspace(
                 let workspace = target.workspace.read(cx);
                 let project = workspace.project.read(cx);
                 let path_style = workspace.path_style(cx);
+                let paths = paths_for_candidate(abs_paths, host, path_style);
 
-                !abs_paths.iter().any(|path| {
+                !paths.iter().any(|path| {
                     let path = util::paths::SanitizedPath::new(path);
 
                     project
@@ -17516,9 +17539,8 @@ mod tests {
         });
         cx.executor().run_until_parked();
 
-        // A non-reopenable modal (e.g. the which-key popup) is already
-        // active when the reopen fires, and it dismisses *after* the action rather
-        // than before it (which-key dismisses when pending input clears).
+        // A non-reopenable modal is already active when the reopen fires, and it
+        // dismisses *after* the action rather than before it.
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, TestModal::new);
         });

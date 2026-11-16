@@ -5,7 +5,6 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
-    usize,
 };
 use tasks_ui::{TaskOverrides, TasksModal};
 
@@ -515,7 +514,7 @@ impl NewProcessModal {
                 };
 
                 for adapter in available_adapters.into_iter() {
-                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.clone()));
+                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter));
                 }
 
                 menu

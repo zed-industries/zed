@@ -993,7 +993,7 @@ impl BufferDiffSnapshot {
                 log::debug!("unstaging hunk {:?}", buffer_offset_range);
                 Arc::from(
                     head_text
-                        .chunks_in_range(diff_base_byte_range.clone())
+                        .chunks_in_range(diff_base_byte_range)
                         .collect::<String>(),
                 )
             };

@@ -27,8 +27,6 @@ harness = false
 [features]
 runtime_shaders = ["gpui_apple/runtime_shaders"]
 
-[dependencies]
-gpui.workspace = true
 
 [target.'cfg(target_os = "ios")'.dev-dependencies]
 gpui_platform.workspace = true
@@ -39,6 +37,7 @@ slotmap.workspace = true
 anyhow.workspace = true
 block2.workspace = true
 futures.workspace = true
+gpui.workspace = true
 gpui_apple = { workspace = true, features = ["font-kit"] }
 log.workspace = true
 objc2.workspace = true

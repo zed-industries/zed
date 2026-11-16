@@ -28,7 +28,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use platform_title_bar::{SidebarWindowControls, apply_title_bar_insets};
+use platform_title_bar::{SidebarWindowControls, TitleBarSettings, apply_title_bar_insets};
 use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
@@ -864,20 +864,31 @@ impl ThreadsArchiveView {
             left: left_window_controls,
             right: right_window_controls,
         } = SidebarWindowControls::new(AgentSettings::get_global(cx).sidebar_side(), window, cx);
-        let header_height = platform_title_bar_height(window);
+        let title_bar_visible = TitleBarSettings::is_title_bar_visible(window, cx);
+        let header_height = if title_bar_visible {
+            platform_title_bar_height(window)
+        } else {
+            Tab::container_height(cx)
+        };
         let show_focus_keybinding =
             self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
 
         h_flex()
+            .debug_selector(|| "threads-archive-header".into())
             .h(header_height)
-            .map(|header| match window.window_decorations() {
-                Decorations::Client { .. } => apply_title_bar_insets(
-                    header,
-                    left_window_controls,
-                    right_window_controls,
-                    false,
-                ),
-                Decorations::Server => header.mt_px().pb_px(),
+            .map(|header| {
+                if !title_bar_visible {
+                    return header.mt_px();
+                }
+                match window.window_decorations() {
+                    Decorations::Client { .. } => apply_title_bar_insets(
+                        header,
+                        left_window_controls,
+                        right_window_controls,
+                        false,
+                    ),
+                    Decorations::Server => header.mt_px().pb_px(),
+                }
             })
             .when(left_window_controls, |this| {
                 this.children(Self::render_left_window_controls(window, cx))
