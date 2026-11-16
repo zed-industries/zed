@@ -1476,7 +1476,23 @@ impl AppState {
         fs: Arc<dyn fs::Fs>,
         cx: &mut App,
     ) -> Entity<ManagedResourceStore> {
-        let store = cx.new(|cx| {
+        cx.new(|cx: &mut Context<ManagedResourceStore>| {
+            cx.subscribe_self(move |_, event: &StateUpdated, cx| {
+                let snapshot = event.0.clone().into_content();
+                cx.global::<SettingsStore>().update_settings_file(
+                    fs.clone(),
+                    move |settings, _| {
+                        settings.experimental_permissions = Some(snapshot);
+                    },
+                );
+            })
+            .detach();
+            cx.observe_global::<SettingsStore>(|store, cx| {
+                let snapshot = ManagedResourceSettings::get_global(cx).0.clone();
+                store.replace_state(snapshot, cx);
+            })
+            .detach();
+
             ManagedResourceStore::new(
                 ManagedResourceSettings::get_global(cx).0.clone(),
                 |request, cx| {
@@ -1506,28 +1522,7 @@ impl AppState {
                     })
                 },
             )
-        });
-        let outgoing = cx.subscribe(&store, move |_, event: &StateUpdated, cx| {
-            let snapshot = event.0.clone().into_content();
-            cx.global::<SettingsStore>()
-                .update_settings_file(fs.clone(), move |settings, _| {
-                    settings.experimental_permissions = Some(snapshot);
-                });
-        });
-        let incoming = cx.observe_global::<SettingsStore>({
-            let store = store.downgrade();
-            move |cx| {
-                if let Some(store) = store.upgrade() {
-                    let snapshot = ManagedResourceSettings::get_global(cx).0.clone();
-                    store.update(cx, |store, cx| store.replace_state(snapshot, cx));
-                }
-            }
-        });
-        store.update(cx, |_, cx| {
-            cx.on_release(move |_, _| drop((incoming, outgoing)))
-                .detach();
-        });
-        store
+        })
     }
 
     #[track_caller]
