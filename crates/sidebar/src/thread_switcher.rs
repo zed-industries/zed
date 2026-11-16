@@ -249,15 +249,26 @@ impl ThreadSwitcher {
         self.selected_index
     }
 
-    pub fn cycle_selection(&mut self, cx: &mut Context<Self>) {
+    pub fn select_next(
+        &mut self,
+        _: &menu::SelectNext,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.entries.is_empty() {
             return;
         }
         self.selected_index = (self.selected_index + 1) % self.entries.len();
         self.emit_preview(cx);
+        cx.notify();
     }
 
-    pub fn select_last(&mut self, cx: &mut Context<Self>) {
+    pub fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.entries.is_empty() {
             return;
         }
@@ -267,31 +278,10 @@ impl ThreadSwitcher {
             self.selected_index -= 1;
         }
         self.emit_preview(cx);
-    }
-
-    fn select_next_entry(
-        &mut self,
-        _: &menu::SelectNext,
-        _window: &mut gpui::Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.cycle_selection(cx);
         cx.notify();
     }
 
-    fn select_previous_entry(
-        &mut self,
-        _: &menu::SelectPrevious,
-        _window: &mut gpui::Window,
-        cx: &mut Context<Self>,
-    ) {
-        // `select_last` is the backward step of `ctrl-shift-tab`: one entry
-        // up, wrapping around to the end of the list.
-        self.select_last(cx);
-        cx.notify();
-    }
-
-    fn select_first_entry(
+    fn select_first(
         &mut self,
         _: &menu::SelectFirst,
         _window: &mut gpui::Window,
@@ -300,7 +290,7 @@ impl ThreadSwitcher {
         self.select_index(0, cx);
     }
 
-    fn select_last_entry(
+    fn select_last(
         &mut self,
         _: &menu::SelectLast,
         _window: &mut gpui::Window,
@@ -352,13 +342,13 @@ impl ThreadSwitcher {
     fn toggle(
         &mut self,
         action: &ToggleThreadSwitcher,
-        _window: &mut gpui::Window,
+        window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
         if action.select_last {
-            self.select_last(cx);
+            self.select_previous(&menu::SelectPrevious, window, cx);
         } else {
-            self.cycle_selection(cx);
+            self.select_next(&menu::SelectNext, window, cx);
         }
     }
 
@@ -407,10 +397,10 @@ impl Render for ThreadSwitcher {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::toggle))
-            .on_action(cx.listener(Self::select_next_entry))
-            .on_action(cx.listener(Self::select_previous_entry))
-            .on_action(cx.listener(Self::select_first_entry))
-            .on_action(cx.listener(Self::select_last_entry))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
             .child(
                 v_flex()
                     .id("thread-switcher-list")

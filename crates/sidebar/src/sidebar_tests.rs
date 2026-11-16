@@ -10588,12 +10588,12 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         let switcher = sidebar.thread_switcher.as_ref().unwrap();
         assert_eq!(switcher.read(cx).selected_index(), 1);
     });
-    sidebar.update_in(cx, |sidebar, _window, cx| {
+    sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar
             .thread_switcher
             .as_ref()
             .unwrap()
-            .update(cx, |s, cx| s.cycle_selection(cx));
+            .update(cx, |s, cx| s.select_next(&menu::SelectNext, window, cx));
     });
     cx.run_until_parked();
     assert_eq!(switcher_selected_id(&sidebar, cx), thread_id_c);
@@ -10673,9 +10673,11 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         vec![thread_id_a, thread_id_c, thread_id_b,],
     );
 
-    sidebar.update_in(cx, |sidebar, _window, cx| {
+    sidebar.update_in(cx, |sidebar, window, cx| {
         let switcher = sidebar.thread_switcher.as_ref().unwrap();
-        switcher.update(cx, |switcher, cx| switcher.cycle_selection(cx));
+        switcher.update(cx, |switcher, cx| {
+            switcher.select_next(&menu::SelectNext, window, cx)
+        });
     });
     cx.run_until_parked();
 
