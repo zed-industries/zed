@@ -1773,7 +1773,7 @@ where
 #[cfg(test)]
 mod tests {
     use fs::FakeFs;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use project::{LanguageServerPromptRequest, Project};
 
     use crate::tests::init_test;
@@ -1975,5 +1975,61 @@ mod tests {
         // Advance time past the custom duration
         cx.executor().advance_clock(Duration::from_millis(1000));
         assert_eq!(count_notifications(&workspace, cx), 0);
+    }
+
+    #[gpui::test]
+    async fn test_repeated_language_server_prompts_do_not_stack(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let count_notifications = |workspace: &Entity<Workspace>, cx: &mut VisualTestContext| {
+            workspace.read_with(cx, |workspace, _| workspace.notification_ids().len())
+        };
+
+        let emit_prompt =
+            |message: &str, actions: Vec<lsp::MessageActionItem>, cx: &mut VisualTestContext| {
+                project.update(cx, |_, cx| {
+                    cx.emit(project::Event::LanguageServerPrompt(
+                        LanguageServerPromptRequest::test(
+                            gpui::PromptLevel::Warning,
+                            message.to_string(),
+                            actions,
+                            "rust-analyzer".to_string(),
+                        ),
+                    ))
+                });
+                cx.run_until_parked();
+            };
+
+        let first_notification_entity =
+            |workspace: &Entity<Workspace>, cx: &mut VisualTestContext| {
+                workspace.read_with(cx, |workspace, _| {
+                    workspace
+                        .notification_views()
+                        .first()
+                        .map(|view| view.entity_id())
+                })
+            };
+
+        emit_prompt("invalid config values", Vec::new(), cx);
+        let original_entity = first_notification_entity(&workspace, cx);
+        emit_prompt("invalid config values", Vec::new(), cx);
+        assert_eq!(count_notifications(&workspace, cx), 1);
+        assert_eq!(first_notification_entity(&workspace, cx), original_entity);
+
+        emit_prompt("a different message", Vec::new(), cx);
+        assert_eq!(count_notifications(&workspace, cx), 2);
+
+        let actions = vec![lsp::MessageActionItem {
+            title: "Retry".to_string(),
+            properties: Default::default(),
+        }];
+        emit_prompt("server crashed", actions.clone(), cx);
+        emit_prompt("server crashed", actions, cx);
+        assert_eq!(count_notifications(&workspace, cx), 4);
     }
 }

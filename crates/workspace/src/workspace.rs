@@ -1922,15 +1922,23 @@ impl Workspace {
                 project::Event::LanguageServerPrompt(request) => {
                     struct LanguageServerPrompt;
 
-                    this.show_notification(
-                        NotificationId::composite::<LanguageServerPrompt>(request.id),
-                        cx,
-                        |cx| {
-                            cx.new(|cx| {
-                                notifications::LanguageServerPrompt::new(request.clone(), cx)
-                            })
-                        },
-                    );
+                    let notification_id = if request.actions.is_empty() {
+                        let notification_id = NotificationId::composite::<LanguageServerPrompt>(
+                            SharedString::from(format!(
+                                "{}:{:?}:{}",
+                                request.lsp_name, request.level, request.message
+                            )),
+                        );
+                        if this.has_notification(&notification_id) {
+                            return;
+                        }
+                        notification_id
+                    } else {
+                        NotificationId::composite::<LanguageServerPrompt>(request.id)
+                    };
+                    this.show_notification(notification_id, cx, |cx| {
+                        cx.new(|cx| notifications::LanguageServerPrompt::new(request.clone(), cx))
+                    });
                 }
 
                 project::Event::AgentLocationChanged => {
