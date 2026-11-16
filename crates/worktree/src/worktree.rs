@@ -282,6 +282,9 @@ struct BackgroundScannerState {
     watched_dir_abs_paths_by_entry_id: HashMap<ProjectEntryId, Arc<Path>>,
     path_prefixes_to_scan: HashSet<Arc<RelPath>>,
     paths_to_scan: HashSet<Arc<RelPath>>,
+    /// Requested paths that didn't exist inside an ignored directory. The directories that
+    /// will contain them are scanned once they are created, so that the paths are picked up.
+    missing_paths_in_ignored_dirs: HashSet<Arc<RelPath>>,
     removed_entries: RemovedEntries,
     changed_paths: Vec<Arc<RelPath>>,
     prev_snapshot: Snapshot,
@@ -1391,6 +1394,7 @@ impl LocalWorktree {
                         scanning_enabled,
                         path_prefixes_to_scan: Default::default(),
                         paths_to_scan: Default::default(),
+                        missing_paths_in_ignored_dirs: Default::default(),
                         removed_entries: RemovedEntries::default(),
                         changed_paths: Default::default(),
                     }),
@@ -4741,6 +4745,26 @@ impl BackgroundScanner {
         )
         .await;
 
+        {
+            let mut state = self.state.lock().await;
+            let state = &mut *state;
+            let snapshot = &state.snapshot;
+            state
+                .missing_paths_in_ignored_dirs
+                .retain(|path| snapshot.entry_for_path(path).is_none());
+            for path in &request.relative_paths {
+                let mut existing_ancestors = path
+                    .ancestors()
+                    .filter_map(|ancestor| snapshot.entry_for_path(ancestor));
+                let is_missing_in_ignored_dir = existing_ancestors
+                    .next()
+                    .is_some_and(|entry| entry.path != *path && entry.is_ignored);
+                if is_missing_in_ignored_dir {
+                    state.missing_paths_in_ignored_dirs.insert(path.clone());
+                }
+            }
+        }
+
         self.send_status_update(scanning, request.done, &[]).await
     }
 
@@ -6327,6 +6351,10 @@ impl BackgroundScanner {
                 .iter()
                 .any(|p| p.starts_with(&entry.path))
             || state
+                .missing_paths_in_ignored_dirs
+                .iter()
+                .any(|p| p.starts_with(&entry.path))
+            || state
                 .path_prefixes_to_scan
                 .iter()
                 .any(|p| entry.path.starts_with(p))
@@ -7565,6 +7593,7 @@ mod tests {
                         watched_dir_abs_paths_by_entry_id: HashMap::default(),
                         path_prefixes_to_scan: HashSet::default(),
                         paths_to_scan: HashSet::default(),
+                        missing_paths_in_ignored_dirs: HashSet::default(),
                         removed_entries: RemovedEntries::default(),
                         changed_paths: Vec::new(),
                         scanning_enabled: true,

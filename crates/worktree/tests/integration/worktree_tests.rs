@@ -3698,6 +3698,71 @@ async fn test_create_file_in_expanded_gitignored_dir(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_missing_file_in_new_gitignored_subdir_is_picked_up(cx: &mut TestAppContext) {
+    // A buffer can be opened for a path that doesn't exist yet, inside a directory under a
+    // gitignored directory that doesn't exist yet either. Once both are created, the worktree
+    // should have an entry for the file.
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "ignored_dir\n",
+            "ignored_dir": {
+                "existing_file.txt": "existing content",
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let load_result = tree
+        .update(cx, |tree, cx| {
+            tree.load_file(rel_path("ignored_dir/new_dir/new_file.txt"), cx)
+        })
+        .await;
+    assert!(load_result.is_err(), "the file shouldn't exist yet");
+    cx.executor().run_until_parked();
+
+    fs.create_dir(Path::new("/root/ignored_dir/new_dir"))
+        .await
+        .unwrap();
+    fs.insert_file(
+        "/root/ignored_dir/new_dir/new_file.txt",
+        b"new content".to_vec(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        let new_dir = tree
+            .entry_for_path(rel_path("ignored_dir/new_dir"))
+            .unwrap();
+        assert!(new_dir.is_ignored);
+        assert_eq!(new_dir.kind, EntryKind::Dir);
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/new_dir/new_file.txt"))
+                .is_some(),
+            "new_file.txt should be visible once created"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_fs_event_for_gitignored_dir_does_not_lose_contents(cx: &mut TestAppContext) {
     // Tests the behavior of our worktree refresh when a directory modification for a gitignored directory
     // is triggered.
