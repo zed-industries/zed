@@ -1,6 +1,5 @@
 use std::{
     any::Any,
-    fs::{File, OpenOptions, TryLockError},
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
     time::Duration,
@@ -8,7 +7,7 @@ use std::{
 
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
-use fs::{Fs, RemoveOptions};
+use fs::{FileLock, FileLockKind, Fs, RemoveOptions};
 use futures::StreamExt;
 use github_releases::AssetKind;
 use gpui::{
@@ -140,35 +139,28 @@ impl From<AgentServerCommand> for ResolvedAgentServerCommand {
 #[derive(Clone, Debug)]
 pub struct AgentInstallationLease {
     path: Arc<Path>,
-    _file: Arc<File>,
+    _lock: Arc<FileLock>,
 }
 
 impl AgentInstallationLease {
-    pub fn acquire(version_dir: &Path) -> Result<Self> {
+    pub async fn acquire(fs: &dyn Fs, version_dir: &Path) -> Result<Self> {
         let base_dir = version_dir
             .parent()
             .with_context(|| format!("{version_dir:?} has no parent directory"))?;
         let path = installation_lease_path(version_dir)?;
-        let _leases_lock = lock_installation_leases(base_dir)?;
-        let file = open_lock_file(&path)?;
-        file.lock_shared()
-            .with_context(|| format!("locking {path:?}"))?;
+        let _leases_lock = lock_installation_leases(fs, base_dir).await?;
+        let lock = fs.lock_file(&path, FileLockKind::Shared).await?;
         Ok(Self {
             path: path.into(),
-            _file: Arc::new(file),
+            _lock: Arc::new(lock),
         })
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn is_held_for(version_dir: &Path) -> Result<bool> {
+    pub async fn is_held_for(fs: &dyn Fs, version_dir: &Path) -> Result<bool> {
         let path = installation_lease_path(version_dir)?;
-        match open_lock_file(&path)?.try_lock() {
-            Ok(()) => Ok(false),
-            Err(TryLockError::WouldBlock) => Ok(true),
-            Err(TryLockError::Error(error)) => {
-                Err(error).with_context(|| format!("locking {path:?}"))
-            }
-        }
+        let lock = fs.try_lock_file(&path, FileLockKind::Exclusive).await?;
+        Ok(lock.is_none())
     }
 }
 
@@ -1149,23 +1141,14 @@ fn leased_version_dir(lease_path: &Path) -> Option<PathBuf> {
     Some(lease_path.with_file_name(version_dir_name))
 }
 
-fn open_lock_file(path: &Path) -> Result<File> {
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .with_context(|| format!("opening {path:?}"))
-}
-
-/// Serializes taking and removing the leases in `base_dir` until the returned file is
+/// Serializes taking and removing the leases in `base_dir` until the returned lock is
 /// dropped, so that a lease file is never removed between being opened and locked.
-fn lock_installation_leases(base_dir: &Path) -> Result<File> {
-    let path = base_dir.join(INSTALLATION_LEASES_LOCK_FILE_NAME);
-    let file = open_lock_file(&path)?;
-    file.lock().with_context(|| format!("locking {path:?}"))?;
-    Ok(file)
+async fn lock_installation_leases(fs: &dyn Fs, base_dir: &Path) -> Result<FileLock> {
+    fs.lock_file(
+        &base_dir.join(INSTALLATION_LEASES_LOCK_FILE_NAME),
+        FileLockKind::Exclusive,
+    )
+    .await
 }
 
 async fn remove_stale_versioned_archive_cache_dirs(
@@ -1175,43 +1158,43 @@ async fn remove_stale_versioned_archive_cache_dirs(
 ) -> Result<()> {
     let stale_dirs =
         stale_versioned_archive_cache_dirs(fs.as_ref(), base_dir, current_version_dir).await?;
-    remove_unleased_archive_cache_dirs(base_dir, stale_dirs)
+    remove_unleased_archive_cache_dirs(fs.as_ref(), base_dir, stale_dirs).await
 }
 
-// Synchronous so that the lock on the leases is never held across an await point, where
-// another task on the same thread could block forever trying to take it.
-fn remove_unleased_archive_cache_dirs(base_dir: &Path, version_dirs: Vec<PathBuf>) -> Result<()> {
+async fn remove_unleased_archive_cache_dirs(
+    fs: &dyn Fs,
+    base_dir: &Path,
+    version_dirs: Vec<PathBuf>,
+) -> Result<()> {
     if version_dirs.is_empty() {
         return Ok(());
     }
 
-    let _leases_lock = lock_installation_leases(base_dir)?;
+    let _leases_lock = lock_installation_leases(fs, base_dir).await?;
     for version_dir in version_dirs {
         let lease_path = installation_lease_path(&version_dir)?;
-        let lease_file = open_lock_file(&lease_path)?;
-        match lease_file.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => {
-                log::info!("keeping {version_dir:?}: an agent is still running from it");
-                continue;
-            }
-            Err(TryLockError::Error(error)) => {
-                return Err(error).with_context(|| format!("locking {lease_path:?}"));
-            }
-        }
+        let Some(_lease_lock) = fs
+            .try_lock_file(&lease_path, FileLockKind::Exclusive)
+            .await?
+        else {
+            log::info!("keeping {version_dir:?}: an agent is still running from it");
+            continue;
+        };
 
         // The lease file goes first so that an interrupted removal leaves a directory
         // that the next cleanup retries, rather than a lease file with no directory.
-        std::fs::remove_file(&lease_path).with_context(|| format!("removing {lease_path:?}"))?;
-        match std::fs::remove_dir_all(&version_dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("removing stale archive cache directory {version_dir:?}")
-                });
-            }
-        }
+        fs.remove_file(&lease_path, RemoveOptions::default())
+            .await
+            .with_context(|| format!("removing {lease_path:?}"))?;
+        fs.remove_dir(
+            &version_dir,
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+        .with_context(|| format!("removing stale archive cache directory {version_dir:?}"))?;
     }
 
     Ok(())
@@ -1367,11 +1350,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 
             // Taken before looking for the installation, so that a cleanup in another
             // process can't remove it between this check and the agent starting.
-            let installation_lease = cx
-                .background_spawn({
-                    let version_dir = version_dir.clone();
-                    async move { AgentInstallationLease::acquire(&version_dir) }
-                })
+            let installation_lease = AgentInstallationLease::acquire(fs.as_ref(), &version_dir)
                 .await
                 // Not every file system supports locking. The agent still works without
                 // a lease, and cleanup never removes a version it can't lock.
@@ -2450,6 +2429,7 @@ mod tests {
             static_http_client(contents.to_vec()),
             None,
         );
+        let fs = agent.fs.clone();
         let version_dir =
             versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None);
 
@@ -2464,15 +2444,33 @@ mod tests {
         let cloned_lease = installation_lease.clone();
 
         // What another connection does once it has installed a newer version.
-        remove_unleased_archive_cache_dirs(&installation_dir, vec![version_dir.clone()]).unwrap();
+        remove_unleased_archive_cache_dirs(
+            fs.as_ref(),
+            &installation_dir,
+            vec![version_dir.clone()],
+        )
+        .await
+        .unwrap();
         assert_eq!(std::fs::read(&resolved.command.path).unwrap(), contents);
 
         drop(installation_lease);
-        remove_unleased_archive_cache_dirs(&installation_dir, vec![version_dir.clone()]).unwrap();
+        remove_unleased_archive_cache_dirs(
+            fs.as_ref(),
+            &installation_dir,
+            vec![version_dir.clone()],
+        )
+        .await
+        .unwrap();
         assert_eq!(std::fs::read(&resolved.command.path).unwrap(), contents);
 
         drop(cloned_lease);
-        remove_unleased_archive_cache_dirs(&installation_dir, vec![version_dir.clone()]).unwrap();
+        remove_unleased_archive_cache_dirs(
+            fs.as_ref(),
+            &installation_dir,
+            vec![version_dir.clone()],
+        )
+        .await
+        .unwrap();
         assert!(!version_dir.exists());
         assert!(!installation_lease_path(&version_dir).unwrap().exists());
 
@@ -2482,11 +2480,15 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         assert_eq!(std::fs::read(&reinstalled.command.path).unwrap(), contents);
-        assert!(AgentInstallationLease::is_held_for(&version_dir).unwrap());
+        assert!(
+            AgentInstallationLease::is_held_for(fs.as_ref(), &version_dir)
+                .await
+                .unwrap()
+        );
     }
 
     #[gpui::test]
-    async fn test_stale_versioned_archive_cache_dirs(cx: &mut TestAppContext) {
+    async fn test_remove_stale_versioned_archive_cache_dirs(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor());
         let base_dir = Path::new("/cache");
 
@@ -2496,7 +2498,6 @@ mod tests {
             base_dir,
             serde_json::json!({
                 "v_old_1": {},
-                "v_old_1.lease": "",
                 "v_old_2": {},
                 "v_failed_install.lease": "",
                 "other": {},
@@ -2507,25 +2508,75 @@ mod tests {
             .await;
         let current_version_dir = base_dir.join("v_current");
         fs.create_dir(&current_version_dir).await.unwrap();
-        fs.insert_file(base_dir.join("v_current.lease"), Vec::new())
-            .await;
         // Sibling that "finished extracting" after the current dir was cached.
         fs.create_dir(&base_dir.join("v_newer")).await.unwrap();
 
-        let mut stale_dirs =
-            stale_versioned_archive_cache_dirs(fs.as_ref(), base_dir, &current_version_dir)
-                .await
-                .unwrap();
-        stale_dirs.sort();
+        let _current_lease = AgentInstallationLease::acquire(fs.as_ref(), &current_version_dir)
+            .await
+            .unwrap();
+        // An agent that is still running from an older version.
+        let old_lease = AgentInstallationLease::acquire(fs.as_ref(), &base_dir.join("v_old_1"))
+            .await
+            .unwrap();
 
+        remove_stale_versioned_archive_cache_dirs(
+            fs.clone() as Arc<dyn Fs>,
+            base_dir,
+            &current_version_dir,
+        )
+        .await
+        .unwrap();
         assert_eq!(
-            stale_dirs,
-            vec![
-                base_dir.join("v_failed_install"),
-                base_dir.join("v_old_1"),
-                base_dir.join("v_old_2"),
+            entry_names(fs.as_ref(), base_dir).await,
+            [
+                "leases.lock",
+                "other",
+                "v_current",
+                "v_current.lease",
+                "v_newer",
+                "v_not_a_dir",
+                "v_old_1",
+                "v_old_1.lease",
             ]
         );
+
+        drop(old_lease);
+        remove_stale_versioned_archive_cache_dirs(
+            fs.clone() as Arc<dyn Fs>,
+            base_dir,
+            &current_version_dir,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            entry_names(fs.as_ref(), base_dir).await,
+            [
+                "leases.lock",
+                "other",
+                "v_current",
+                "v_current.lease",
+                "v_newer",
+                "v_not_a_dir",
+            ]
+        );
+    }
+
+    async fn entry_names(fs: &dyn Fs, dir: &Path) -> Vec<String> {
+        let mut names = fs
+            .read_dir(dir)
+            .await
+            .unwrap()
+            .filter_map(|entry| async move { entry.ok() })
+            .map(|path| {
+                path.file_name()
+                    .expect("entry has a name")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>()
+            .await;
+        names.sort();
+        names
     }
 
     #[gpui::test]

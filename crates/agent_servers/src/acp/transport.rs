@@ -176,11 +176,13 @@ mod tests {
     #[gpui::test]
     async fn installation_lease_is_released_when_the_agent_exits(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
+        let fs = fs::RealFs::new(None, cx.executor());
         let directory = tempfile::tempdir().expect("create installation directory");
         let version_dir = directory.path().join("v_1");
         std::fs::create_dir(&version_dir).expect("create version directory");
-        let installation_lease =
-            AgentInstallationLease::acquire(&version_dir).expect("acquire installation lease");
+        let installation_lease = AgentInstallationLease::acquire(fs.as_ref(), &version_dir)
+            .await
+            .expect("acquire installation lease");
 
         let mut command = std::process::Command::new("/bin/sh");
         command.args(["-c", "read -r line"]);
@@ -191,7 +193,9 @@ mod tests {
         let stdin = child.0.stdin.take().expect("take stdin");
         let exit_status = child.exit_status(Some(installation_lease));
         assert!(
-            AgentInstallationLease::is_held_for(&version_dir).expect("check lease"),
+            AgentInstallationLease::is_held_for(fs.as_ref(), &version_dir)
+                .await
+                .expect("check lease"),
             "the lease must be held while the agent is running"
         );
 
@@ -199,7 +203,9 @@ mod tests {
         exit_status.await.expect("wait for agent exit");
 
         assert!(
-            !AgentInstallationLease::is_held_for(&version_dir).expect("check lease"),
+            !AgentInstallationLease::is_held_for(fs.as_ref(), &version_dir)
+                .await
+                .expect("check lease"),
             "the lease must be released once the agent exits, even though its owner is alive"
         );
         drop(child);

@@ -133,6 +133,17 @@ pub trait Fs: Send + Sync {
     /// trash.
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
 
+    /// Takes an advisory lock on the file at `path`, creating the file if it doesn't
+    /// exist, and waits for conflicting locks to be released first.
+    ///
+    /// The lock is honored by every process that locks the same file, and is released
+    /// when the returned [`FileLock`] is dropped or this process exits.
+    async fn lock_file(&self, path: &Path, kind: FileLockKind) -> Result<FileLock>;
+
+    /// Like [`Fs::lock_file`], but returns `None` instead of waiting when a conflicting
+    /// lock is held.
+    async fn try_lock_file(&self, path: &Path, kind: FileLockKind) -> Result<Option<FileLock>>;
+
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
@@ -316,6 +327,35 @@ pub struct RenameOptions {
 pub struct RemoveOptions {
     pub recursive: bool,
     pub ignore_if_not_exists: bool,
+}
+
+/// Whether a lock taken with [`Fs::lock_file`] can be held at the same time as others.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FileLockKind {
+    /// Can be held together with other shared locks on the same file.
+    Shared,
+    /// Can't be held together with any other lock on the same file.
+    Exclusive,
+}
+
+/// An advisory lock on a file, taken with [`Fs::lock_file`] or [`Fs::try_lock_file`]
+/// and released when dropped.
+pub struct FileLock {
+    _release_on_drop: Box<dyn std::any::Any + Send + Sync>,
+}
+
+impl FileLock {
+    fn new(release_on_drop: impl std::any::Any + Send + Sync) -> Self {
+        Self {
+            _release_on_drop: Box::new(release_on_drop),
+        }
+    }
+}
+
+impl std::fmt::Debug for FileLock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("FileLock").finish_non_exhaustive()
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -927,6 +967,41 @@ impl Fs for RealFs {
         }
     }
 
+    async fn lock_file(&self, path: &Path, kind: FileLockKind) -> Result<FileLock> {
+        let path = path.to_owned();
+        // Another process can hold a conflicting lock for a long time, so the wait
+        // must not occupy one of the executor's threads.
+        smol::unblock(move || {
+            let file = open_lock_file(&path)?;
+            match kind {
+                FileLockKind::Shared => file.lock_shared(),
+                FileLockKind::Exclusive => file.lock(),
+            }
+            .with_context(|| format!("locking {path:?}"))?;
+            Ok(FileLock::new(file))
+        })
+        .await
+    }
+
+    async fn try_lock_file(&self, path: &Path, kind: FileLockKind) -> Result<Option<FileLock>> {
+        let path = path.to_owned();
+        smol::unblock(move || {
+            let file = open_lock_file(&path)?;
+            let result = match kind {
+                FileLockKind::Shared => file.try_lock_shared(),
+                FileLockKind::Exclusive => file.try_lock(),
+            };
+            match result {
+                Ok(()) => Ok(Some(FileLock::new(file))),
+                Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+                Err(std::fs::TryLockError::Error(error)) => {
+                    Err(error).with_context(|| format!("locking {path:?}"))
+                }
+            }
+        })
+        .await
+    }
+
     async fn trash(&self, path: &Path, _options: RemoveOptions) -> Result<TrashId> {
         // We must make the path absolute or trash will make a weird abomination
         // of the zed working directory (not usually the worktree) and whatever
@@ -1472,6 +1547,31 @@ struct FakeFsState {
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
     case_sensitive: bool,
+    // Keyed by inode because, as on a real file system, a lock belongs to the file
+    // rather than its path: a file created in place of a removed one is unlocked.
+    file_locks: std::collections::HashMap<u64, FakeFileLockHolders>,
+    file_lock_waiters: Vec<futures::channel::oneshot::Sender<()>>,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Default)]
+struct FakeFileLockHolders {
+    shared: usize,
+    exclusive: bool,
+}
+
+#[cfg(feature = "test-support")]
+struct FakeFileLock {
+    state: Arc<Mutex<FakeFsState>>,
+    inode: u64,
+    kind: FileLockKind,
+}
+
+#[cfg(feature = "test-support")]
+impl Drop for FakeFileLock {
+    fn drop(&mut self) {
+        self.state.lock().release_file_lock(self.inode, self.kind);
+    }
 }
 
 /// The kernel's side of file watching, as far as the real watcher code above
@@ -1722,6 +1822,67 @@ impl FakeFsState {
         callback(new_entry)
     }
 
+    /// Returns the inode of the locked file, or `None` if a conflicting lock is held.
+    fn try_lock_file(&mut self, path: &Path, kind: FileLockKind) -> Result<Option<u64>> {
+        let new_inode = self.get_and_increment_inode();
+        let mtime = self.get_and_increment_mtime();
+        let mut created = false;
+        let inode = self.write_path(path, |entry| match entry {
+            btree_map::Entry::Occupied(entry) => match entry.get() {
+                FakeFsEntry::File { inode, .. } => Ok(*inode),
+                _ => anyhow::bail!("cannot lock {path:?}: not a file"),
+            },
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(FakeFsEntry::File {
+                    inode: new_inode,
+                    mtime,
+                    len: 0,
+                    content: Vec::new(),
+                    git_dir_path: None,
+                });
+                created = true;
+                Ok(new_inode)
+            }
+        })?;
+        if created {
+            self.emit_event([(path, Some(PathEventKind::Created))]);
+        }
+
+        let holders = self.file_locks.entry(inode).or_default();
+        let conflicts = match kind {
+            FileLockKind::Shared => holders.exclusive,
+            FileLockKind::Exclusive => holders.exclusive || holders.shared > 0,
+        };
+        if conflicts {
+            return Ok(None);
+        }
+        match kind {
+            FileLockKind::Shared => holders.shared += 1,
+            FileLockKind::Exclusive => holders.exclusive = true,
+        }
+        Ok(Some(inode))
+    }
+
+    fn release_file_lock(&mut self, inode: u64, kind: FileLockKind) {
+        if let std::collections::hash_map::Entry::Occupied(mut holders) =
+            self.file_locks.entry(inode)
+        {
+            match kind {
+                FileLockKind::Shared => {
+                    holders.get_mut().shared = holders.get().shared.saturating_sub(1);
+                }
+                FileLockKind::Exclusive => holders.get_mut().exclusive = false,
+            }
+            if holders.get().shared == 0 && !holders.get().exclusive {
+                holders.remove();
+            }
+        }
+        for waiter in self.file_lock_waiters.drain(..) {
+            // A waiter that stopped waiting has dropped its receiver.
+            waiter.send(()).ok();
+        }
+    }
+
     fn emit_event<I, T>(&mut self, paths: I)
     where
         I: IntoIterator<Item = (T, Option<PathEventKind>)>,
@@ -1868,6 +2029,8 @@ impl FakeFs {
             trash: Mutex::new(SlotMap::with_key()),
             remove_dir_errors: Default::default(),
             case_sensitive: true,
+            file_locks: Default::default(),
+            file_lock_waiters: Vec::new(),
         }));
         let native_watcher = fs_watcher::OsWatcher::with_backend(
             fs_watcher::OsWatcherKind::Native,
@@ -2834,6 +2997,14 @@ impl FakeFs {
         self.executor.simulate_random_delay()
     }
 
+    fn held_file_lock(&self, inode: u64, kind: FileLockKind) -> FileLock {
+        FileLock::new(FakeFileLock {
+            state: self.state.clone(),
+            inode,
+            kind,
+        })
+    }
+
     async fn remove_dir_inner(
         &self,
         path: &Path,
@@ -3276,6 +3447,29 @@ impl Fs for FakeFs {
         self.remove_file_inner(path, options).await.map(|_| ())
     }
 
+    async fn lock_file(&self, path: &Path, kind: FileLockKind) -> Result<FileLock> {
+        self.simulate_random_delay().await;
+        loop {
+            let released = {
+                let mut state = self.state.lock();
+                if let Some(inode) = state.try_lock_file(path, kind)? {
+                    return Ok(self.held_file_lock(inode, kind));
+                }
+                let (released_tx, released_rx) = futures::channel::oneshot::channel();
+                state.file_lock_waiters.push(released_tx);
+                released_rx
+            };
+            // Whether or not a lock was released, the next attempt decides.
+            released.await.ok();
+        }
+    }
+
+    async fn try_lock_file(&self, path: &Path, kind: FileLockKind) -> Result<Option<FileLock>> {
+        self.simulate_random_delay().await;
+        let inode = self.state.lock().try_lock_file(path, kind)?;
+        Ok(inode.map(|inode| self.held_file_lock(inode, kind)))
+    }
+
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>> {
         let bytes = self.load_internal(path).await?;
         Ok(Box::new(io::Cursor::new(bytes)))
@@ -3669,6 +3863,16 @@ fn read_recursive<'a>(
         Ok(())
     }
     .boxed()
+}
+
+fn open_lock_file(path: &Path) -> Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .with_context(|| format!("opening {path:?}"))
 }
 
 // todo(windows)

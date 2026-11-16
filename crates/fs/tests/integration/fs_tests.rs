@@ -5,7 +5,10 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -784,6 +787,129 @@ async fn test_fake_fs_copy_and_remove_semantics(executor: BackgroundExecutor) {
     let root = Path::new(path!("/root"));
     assert_copy_and_remove_semantics(root, fs.as_ref()).await;
     assert_remove_file_unlinks_symlink(root, fs.as_ref()).await;
+}
+
+#[gpui::test]
+async fn test_realfs_file_locks(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let fs = RealFs::new(None, cx.executor());
+    let temp_dir = TempDir::new().unwrap();
+    let lock_path = temp_dir.path().join("file.lock");
+
+    let shared = fs
+        .lock_file(&lock_path, FileLockKind::Shared)
+        .await
+        .unwrap();
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Shared)
+            .await
+            .unwrap()
+            .is_some(),
+        "shared locks can be held together"
+    );
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_none(),
+        "an exclusive lock conflicts with a shared one"
+    );
+
+    let exclusive = cx.executor().spawn({
+        let fs = fs.clone();
+        let lock_path = lock_path.clone();
+        async move {
+            fs.lock_file(&lock_path, FileLockKind::Exclusive)
+                .await
+                .unwrap()
+        }
+    });
+    drop(shared);
+    let exclusive = exclusive.await;
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Shared)
+            .await
+            .unwrap()
+            .is_none(),
+        "a shared lock conflicts with an exclusive one"
+    );
+
+    drop(exclusive);
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_some(),
+        "dropping a lock releases it"
+    );
+}
+
+#[gpui::test]
+async fn test_fake_fs_file_locks(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor.clone());
+    let root = Path::new(path!("/root"));
+    let lock_path = root.join("file.lock");
+    fs.create_dir(root).await.unwrap();
+
+    let shared = fs
+        .lock_file(&lock_path, FileLockKind::Shared)
+        .await
+        .unwrap();
+    assert!(fs.is_file(&lock_path).await, "locking creates the file");
+    let other_shared = fs
+        .try_lock_file(&lock_path, FileLockKind::Shared)
+        .await
+        .unwrap()
+        .expect("shared locks can be held together");
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_none(),
+        "an exclusive lock conflicts with a shared one"
+    );
+
+    let acquired = Arc::new(AtomicBool::new(false));
+    let exclusive = executor.spawn({
+        let fs = fs.clone();
+        let lock_path = lock_path.clone();
+        let acquired = acquired.clone();
+        async move {
+            let lock = fs
+                .lock_file(&lock_path, FileLockKind::Exclusive)
+                .await
+                .unwrap();
+            acquired.store(true, Ordering::SeqCst);
+            lock
+        }
+    });
+    drop(shared);
+    executor.run_until_parked();
+    assert!(
+        !acquired.load(Ordering::SeqCst),
+        "an exclusive lock waits for every shared lock to be released"
+    );
+    drop(other_shared);
+    let exclusive = exclusive.await;
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Shared)
+            .await
+            .unwrap()
+            .is_none(),
+        "a shared lock conflicts with an exclusive one"
+    );
+
+    fs.remove_file(&lock_path, RemoveOptions::default())
+        .await
+        .unwrap();
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_some(),
+        "a file created in place of a removed one is not locked"
+    );
+    drop(exclusive);
 }
 
 #[gpui::test]
