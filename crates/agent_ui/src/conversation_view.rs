@@ -2302,8 +2302,6 @@ impl ConversationView {
                             native_available_skills(&native_connection, &session_id, cx)
                         })
                         .unwrap_or_default();
-                    let has_slash_completions =
-                        !available_commands.is_empty() || !available_skills.is_empty();
 
                     let agent_display_name = self
                         .agent_server_store
@@ -2311,13 +2309,15 @@ impl ConversationView {
                         .agent_display_name(&self.agent.agent_id())
                         .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
 
-                    let new_placeholder =
-                        placeholder_text(agent_display_name.as_ref(), has_slash_completions);
-
                     thread_view.update(cx, |thread_view, cx| {
-                        let mut session_capabilities = thread_view.session_capabilities.write();
-                        session_capabilities.set_available_commands(available_commands.clone());
-                        session_capabilities.set_available_skills(available_skills);
+                        let has_slash_completions = {
+                            let mut session_capabilities = thread_view.session_capabilities.write();
+                            session_capabilities.set_available_commands(available_commands.clone());
+                            session_capabilities.set_available_skills(available_skills);
+                            session_capabilities.has_slash_completions()
+                        };
+                        let new_placeholder =
+                            placeholder_text(agent_display_name.as_ref(), has_slash_completions);
                         thread_view.message_editor.update(cx, |editor, cx| {
                             editor.set_placeholder_text(&new_placeholder, window, cx);
                         });

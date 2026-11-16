@@ -1,6 +1,7 @@
 # Community PR Board — daily signal fields refresh
 #
-# Walks every open PR on the community board and recomputes its signal
+# Copies the High MR contributors from Snowflake into the board's README, then
+# walks every open PR on the community board and recomputes its signal
 # fields. Backstop for changes that don't reach the event-driven workflow,
 # either because the relevant webhook isn't subscribed or doesn't fire at all.
 
@@ -44,6 +45,7 @@ jobs:
           sparse-checkout: |
             script/github-community-pr-board.py
             script/github_helpers.py
+            script/snowflake_helpers.py
           sparse-checkout-cone-mode: false
 
       - name: Set up Python
@@ -52,9 +54,23 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests cryptography==50.0.2
+
+      - name: Publish High MR contributors
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PROJECT_NUMBER: "85"
+          PUBLISH_HIGH_MR: "1"
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_BOARD_USER }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_BOARD_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_BOARD_WAREHOUSE }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_BOARD_PRIVATE_KEY }}
+        run: python script/github-community-pr-board.py
 
       - name: Refresh all board items
+        # Also when publishing failed, with the High MR list already on the board.
+        if: ${{ !cancelled() }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           PROJECT_NUMBER: "85"
