@@ -51,54 +51,72 @@ The rough flow would then become:
 - when the untrusted program tries to make a syscall that is sensitive, the supervisor approves/denies/prompts the user, depending on the policy, and the specific syscall made
 - when the user changes the policy (either manually, or by approving a prompt), the new policy is uploaded to the supervisor, and takes effect immediately
 
-## Tradeoffs
+### Implementation
 
-There is one major tradeoff - performance. This design imposes an overhead on all syscalls that may be blocked (e.g. opening files/sockets/etc.). We can probably mitigate this by allowing `stat` and friends. How impactful this is not yet clear, and will need to be measured. My guess is that this will be acceptable, given that it's only "already slow" IO operations that will be affected, but this is too hand-wavey. We just need to benchmark it.
+I will refer to three processes:
+- the owner process - the process that sets up the sandbox (i.e. Zed)
+- the sandbox process - the process that the untrusted command runs in
+  - technically this is actually two processes, an in-sandbox helper that then spawns the untrusted command
+- the supervisor process - the process that is registered with the kernel to validate syscalls made by the sandbox process
 
-## Implementation ideas (ai generated)
-
-### Performance
-
-Every trapped syscall evaluates the policy before it can complete, so rule matching is on the critical path even though the round trip to the supervisor (~10µs) dominates.
-
-The current matcher scans rules newest first using the segments already parsed into `PathPattern`. It validates the path once and caches up to 32 components on the stack; deeper paths use a borrowed streaming iterator without imposing a limit. Both `**` matching and component globs use a bookmark at the latest star rather than allocating state sets or recursively backtracking. Read, write and connect use the same matcher. The residual-state calculation used to check directory moves still uses state sets, since it needs to compare unmatched suffixes, not just decide whether a path matches.
-
-The following is a possible future representation for large policies, not the current implementation. Benchmarks favored an allocation-free linear scan for ordinary policy sizes; a trie mainly helped with thousands of mostly literal rules.
-
-**Source form: `PathPattern`.** Parsed once when a policy is built. One buffer holding the pattern text, plus a small-vector of packed segment descriptors:
-
+There is a `SandboxPolicy` object which contains a list of rules. For example, for filesystem sandboxing a rule looks like:
 ```rust
-pub struct PathPattern {
-    source: String,
-    segments: SmallVec<[Segment; 8]>,
+struct FsRule {
+  path: PathPattern,
+  read: Option<Access>,    // read a file at this path
+  write: Option<Access>,   // write a file at this path
+  connect: Option<Access>, // connect to a socket at this path
 }
 
-/// Private wrapper: the top 3 bits tag the kind, the low 29 bits hold the
-/// segment's start offset in `source`. A segment ends at the next `/` or at
-/// the end of `source`.
-#[derive(Clone, Copy)]
-struct Segment(u32);
-
-enum SegmentKind {
-    /// No wildcards: compared byte-for-byte.
-    Literal,
-    /// Contains `*` and/or `?`, matched within the segment.
-    Wildcard,
-    /// `**`: any number of segments.
-    AnyDepth,
+enum Access {
+  Allow,
+  Deny,
+  Ask,
 }
 ```
 
-Patterns are split on `/` first: `*` and `?` never match `/`, so every segment boundary is a slash and no separator token is needed. Typical patterns have under 8 segments, so they need no allocation beyond `source`. The tag lets the matcher skip wildcard handling for literal segments without rescanning the text.
+The owner process sets the policy, and a more cache-friendly representation gets sent to the supervisor. When the sandbox process tries to make a syscall that is not explicitly allowed to run untrapped, the arguments get sent to the supervisor.
 
-**Compiled form: the matcher.** Built from the ordered rule list when a policy is created or updated, and swapped atomically so running syscalls see either the old or the new rules, never a mix.
+The supervisor makes the call on behalf of the sandboxed program, and copies arguments into its own memory to close a TOCTOU where the sandboxed process can pass a pointer to the supervisor, get the data validated, then change the data behind that pointer before the syscall is actually executed.
 
-- A trie keyed on literal segments. Each node holds the rules whose patterns end there, plus the wildcard and `**` segments that continue from it.
-- A query walks the path's segments once, following the literal edge (a hash lookup) and any wildcard or `**` edges. It collects the indices of matching rules.
-- Conflict resolution needs only the indices: for each permission, take the highest-indexed match that sets it (last match wins). If none sets it, the permission is denied.
-- Rules with literal paths, the common case, cost one hash lookup per segment. Cost grows with the number of wildcard edges at each visited node, not with the total rule count.
+### Network-specific considerations
 
-The policy can be updated while commands run, so the compiled matcher is immutable and shared (`Arc`), and an update builds a new one rather than editing it in place.
+The same principle applies to network sandboxing, with some extra machinery.
+
+In particular, the kernel deals only with IP addresses, but we would like to be able to grant permission to access domain names such as `google.com`. We do this by (loosely):
+- configuring the namespace such that DNS queries go to a resolver running in the supervisor process
+- when the sandboxed process makes a DNS request for `google.com`, we return a synthetic IP address
+- the supervisor records the mapping between `google.com` and the synthetic IP address
+- when the sandboxed process tries to connect to that synthetic IP address, the supervisor can convert it back to `google.com`, and look at the policy to understand how to react (allow, deny, ask)
+  - the real DNS lookup also goes through a rebinding check, so I can't grant access to `attacker_controlled_domain.com` and have that grant access to `127.0.0.1` for example
+
+There is then a relay, that maps these synthetic IP addresses outside the sandbox. This lives in the supervisor. It creates real connections to the actual IP addresses for the domains (using the system DNS resolver). So when it succeeds, there are two legs:
+- sandbox <-> supervisor
+- supervisor <-> `google.com`
+
+The relay just plainly copies bytes from one to the other.
+
+### `Ask` mode
+
+When a permission is in `Ask` mode, it blocks the syscall indefinitely(ish) until the owner process responds. The `Handler` type in a `Ask` variant is created by providing a callback that takes a `Responder`. This type is how the custom user code can indicate to the supervisor what the result was. It *must* do this using the dedicated methods. Dropping it is considered an error, which:
+- panics in debug mode
+- fails closed and warns in release mode
+
+When it responds, by default it responds *only for the current syscall*. Unlike the old sandbox implementation, there's no obvious way to say "allow this syscall again in the future", because it often refers to ephemeral state (e.g. file descriptors). For example, if you allow writes to `/foo/bar/baz.rs`, and you want that approval to persist for the rest of the sandbox, should that apply to:
+- only `/foo/bar/baz.rs`
+- `/foo/bar`
+- `/foo`
+- `/`
+
+The `linux_sandbox` crate doesn't address this issue, but provides the `Decision` type, which is what a `Responder` actually responds with. It contains a decision for this syscall, but also a list of rules to remember for the rest of this session. It is up zed to determine what options to show to the user.
+
+It's almost always wrong to not supply any extra rules to remember.
+
+## Tradeoffs
+
+The one major tradeoff is performance: this design imposes a round trip to the supervisor on every syscall that may be blocked (opening files and sockets, writing, connecting). On a 9950x3d, a trapped `open` costs ~10 microseconds compared to ~0.4 microseconds untrapped. Relaying a 1 gigabit stream cost about 2.5% of a CPU core.. `stat` and friends, directory listing, and `execve` are not restricted, so don't get the overhead.
+
+## Implementation ideas (ai generated)
 
 ### Future improvements
 
@@ -130,7 +148,9 @@ Port 53 of every address in the sandbox is answered by the supervisor's DNS. Tha
 
 #### Async supervisor
 
-Every relayed TCP connection takes two threads, and every UDP flow and DNS query one, so a busy `npm install` can mean hundreds of threads. An event loop in the supervisor (`smol`, which Zed already uses: `async-io` plus a small executor) would make these tasks instead. Seccomp notifications would stay on the worker pool, since prompts block. Measure first.
+Every relayed TCP connection takes two threads, and every UDP flow and DNS query one, so a busy `npm install` can mean hundreds of threads. An event loop in the supervisor (`smol`, which Zed already uses: `async-io` plus a small executor) would make these tasks instead; seccomp notifications would stay with their leader/follower receivers, since prompts block.
+
+Measured (9950X3D; benchmark harness in the benchmarking thread): at 1 Gbit/s every relay model costs 2.5–3% of a core, so throughput alone doesn't motivate this. For bursts of short connections, async halves the relay's CPU per exchange (21 vs 48 µs) and replaces 626 threads at 1000 concurrent connections with 3. Not urgent; revisit if supervisor resource usage becomes a problem.
 
 #### Exact errors for non-blocking connects
 
@@ -138,9 +158,13 @@ A `connect` on a non-blocking socket succeeds as soon as it's allowed, and the h
 
 #### Sandbox differences skill
 
+In-sandbox behaviour is subtly different from unsandboxed Linux (exact error codes on denied operations, resets instead of refusals after non-blocking connects, `getsockname` paths, `SO_PEERCRED` pids). Collect the differences into a documented "skill" that agents can be given, so tools don't misread sandbox artefacts as environment failures.
+
 #### Datagram unix sockets
 
-`socket` and `socketpair` refuse `SOCK_DGRAM` unix sockets: one could send to any socket by path with `sendmsg`, whose address is behind a pointer, and trapping every `sendmsg` would slow all UDP. This breaks `sd_notify`, syslog clients and datagram pairs used for IPC. If those matter, trap `sendmsg`/`sendmmsg` (continuing for IP sockets) and measure the cost.
+`socket` and `socketpair` refuse `SOCK_DGRAM` unix sockets: one could send to any socket by path with `sendmsg`, whose address is behind a pointer, and seccomp can't read the address to notice. The same trap would also let unconnected UDP `sendto` reach ports no rule names: today those datagrams go nowhere, because a relay socket only exists for ports the policy names. This breaks `sd_notify`, syslog clients and datagram pairs used for IPC.
+
+Measured (9950X3D; benchmark harness in the benchmarking thread): trapping every `send*` costs +10.8 µs of CPU per send with the current notification path — the supervisor saturates a core at 1 Gbit/s of QUIC-sized datagrams. An optimized path (answer on the receiving thread, `SYNC_WAKE_UP`, cached pidfds) brings it to ~+2.2 µs per send: +28% of a core at 1 Gbit/s, and +1% or less with GSO or `sendmmsg` batches of 16. Whether that budget is acceptable is a product call.
 
 #### Unix socket peer credentials
 
