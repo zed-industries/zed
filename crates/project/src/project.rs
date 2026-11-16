@@ -343,6 +343,18 @@ pub struct ToastLink {
     pub url: &'static str,
 }
 
+#[derive(Clone, Debug)]
+pub struct ResourceApprovalRequest {
+    pub description: String,
+    pub response: async_channel::Sender<bool>,
+}
+
+impl PartialEq for ResourceApprovalRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.description == other.description && self.response.same_channel(&other.response)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
@@ -374,6 +386,7 @@ pub enum Event {
         notification_id: SharedString,
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
+    ResourceApproval(ResourceApprovalRequest),
     LanguageServerShowDocument(LanguageServerShowDocumentRequest),
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
@@ -1765,6 +1778,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_toast);
             remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
+            remote_proto.add_entity_request_handler(Self::handle_resource_approval_request);
             remote_proto
                 .add_entity_request_handler(Self::handle_language_server_show_document_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
@@ -5904,6 +5918,24 @@ impl Project {
                 .log_err();
         });
         Ok(())
+    }
+
+    async fn handle_resource_approval_request(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ResourceApprovalRequest>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ResourceApprovalResponse> {
+        let (response, receiver) = async_channel::bounded(1);
+        this.update(&mut cx, |_, cx| {
+            cx.emit(Event::ResourceApproval(ResourceApprovalRequest {
+                description: envelope.payload.description,
+                response,
+            }));
+        });
+        drop(this);
+        Ok(proto::ResourceApprovalResponse {
+            allowed: receiver.recv().await.unwrap_or(false),
+        })
     }
 
     async fn handle_language_server_prompt_request(

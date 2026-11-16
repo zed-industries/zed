@@ -6483,6 +6483,179 @@ async fn test_log_store_keys_remote_events_by_primary_kind_on_supplementary_id_c
     });
 }
 
+#[gpui::test]
+async fn managed_resource_approvals_reach_the_client(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use managed_resources::{ExecutionBillRoot, ResourceAccessError, ResourceExecutionBill};
+    use node_runtime::{InstallNpmPackages, NodeBinaryOptions, Npm, NpmContext};
+
+    let fs = FakeFs::new(server_cx.executor());
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let store = headless.read_with(server_cx, |project, _| project.managed_resources.clone());
+    let cx = cx.add_empty_window();
+    let _workspace = cx.new_window_entity(|window, cx| {
+        workspace::Workspace::test_new(project.clone(), window, cx)
+    });
+    for (settings, answer, denied) in [
+        (r#"{}"#, None, false),
+        (
+            r#"{"experimental.permissions":{"default":"prompt"}}"#,
+            Some("Deny"),
+            true,
+        ),
+        (
+            r#"{"experimental.permissions":{"default":"prompt"}}"#,
+            Some("Allow"),
+            false,
+        ),
+        (
+            r#"{"experimental.permissions":{"default":"allowed","resources":[{"resource":"npm","obtain":"prompt"}]}}"#,
+            Some("Deny"),
+            true,
+        ),
+        (
+            r#"{"experimental.permissions":{"default":"denied"}}"#,
+            None,
+            true,
+        ),
+    ] {
+        server_cx.update_global(|store: &mut SettingsStore, cx| {
+            store
+                .set_server_settings(settings, cx)
+                .expect("server settings");
+        });
+        server_cx.run_until_parked();
+        let mut task = store.update(server_cx, |store, cx| {
+            store.execute_command::<Npm>(
+                "remote-runtime".into(),
+                Rc::new(NpmContext {
+                    http: Arc::new(BlockedHttpClient),
+                    options: NodeBinaryOptions {
+                        allow_path_lookup: false,
+                        allow_binary_download: false,
+                        use_paths: None,
+                    },
+                }),
+                ResourceExecutionBill {
+                    root: ExecutionBillRoot::Extension {
+                        id: "remote-extension".into(),
+                    },
+                    reasoning: vec!["Install dependencies".into()],
+                },
+                InstallNpmPackages {
+                    directory: PathBuf::from(path!("/unused")),
+                    packages: vec![],
+                },
+                cx,
+            )
+        });
+        if let Some(answer) = answer {
+            cx.run_until_parked();
+            assert!(
+                (&mut task).now_or_never().is_none(),
+                "must wait for the client"
+            );
+            let (title, detail) = cx.pending_prompt().expect("client approval prompt");
+            assert!(title.contains("remote host"));
+            assert!(detail.contains("remote-runtime"));
+            assert!(detail.contains("remote-extension"));
+            cx.simulate_prompt_answer(answer);
+        }
+        let result = task.await;
+        if denied {
+            assert!(matches!(result, Err(ResourceAccessError::Denied)));
+        } else {
+            assert!(
+                matches!(result, Err(ResourceAccessError::Obtain(_))),
+                "approval must reach acquisition, which has no runtime available"
+            );
+        }
+        assert!(!cx.has_pending_prompt());
+    }
+}
+
+#[gpui::test]
+async fn managed_resource_snapshots_use_server_settings(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use managed_resources::{NpmResourceId, ResourceId, ResourcePermission, StateUpdated};
+
+    let fs = FakeFs::new(server_cx.executor());
+    let (_project, headless) = init_test(&fs, cx, server_cx).await;
+    let store = headless.read_with(server_cx, |project, _| project.managed_resources.clone());
+    fs.create_dir(paths::settings_file().parent().expect("settings directory"))
+        .await
+        .expect("create settings directory");
+    let initial = r#"{"proxy":"http://remote:1234","experimental.permissions":{"default":"allowed","resources":[]}}"#;
+    fs.insert_file(paths::settings_file(), initial.as_bytes().to_vec())
+        .await;
+    server_cx.update_global(|settings: &mut SettingsStore, cx| {
+        settings
+            .set_server_settings(initial, cx)
+            .expect("server settings");
+    });
+    server_cx.run_until_parked();
+    let user_settings = server_cx.read(|cx| {
+        serde_json::to_value(cx.global::<SettingsStore>().raw_user_settings())
+            .expect("user settings")
+    });
+    let id = ResourceId::Npm {
+        payload: NpmResourceId {
+            name: "remote-runtime".into(),
+        },
+    };
+    assert_eq!(
+        store.read_with(server_cx, |store, _| store.permission(&id)),
+        Some(ResourcePermission::Allowed)
+    );
+    store.update(server_cx, |store, cx| {
+        store.set_permission(id.clone(), ResourcePermission::Denied, cx)
+    });
+    server_cx.run_until_parked();
+    let persisted: serde_json::Value = serde_json::from_str(
+        &fs.load(paths::settings_file())
+            .await
+            .expect("persisted settings"),
+    )
+    .expect("valid settings");
+    assert_eq!(persisted["proxy"], "http://remote:1234");
+    assert_eq!(
+        persisted["experimental.permissions"],
+        serde_json::to_value(store.read_with(server_cx, |store, _| store.permissions()))
+            .expect("snapshot")
+    );
+    server_cx.read(|cx| {
+        assert_eq!(
+            serde_json::to_value(cx.global::<SettingsStore>().raw_user_settings())
+                .expect("user settings"),
+            user_settings,
+            "server writes must not overwrite client user settings"
+        )
+    });
+
+    let updates = Rc::new(RefCell::new(0));
+    let _subscription = server_cx.update(|cx| {
+        cx.subscribe(&store, {
+            let updates = updates.clone();
+            move |_, _: &StateUpdated, _| *updates.borrow_mut() += 1
+        })
+    });
+    server_cx.update_global(|settings: &mut SettingsStore, cx| {
+        settings
+            .set_server_settings(initial, cx)
+            .expect("external server edit");
+    });
+    server_cx.run_until_parked();
+    assert_eq!(
+        store.read_with(server_cx, |store, _| store.permission(&id)),
+        Some(ResourcePermission::Allowed)
+    );
+    assert_eq!(*updates.borrow(), 0, "incoming snapshots must not echo");
+}
+
 pub async fn init_test(
     server_fs: &Arc<FakeFs>,
     cx: &mut TestAppContext,

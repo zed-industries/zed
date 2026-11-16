@@ -15,15 +15,13 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-lock.workspace = true
-fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-settings.workspace = true
+settings_content.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-paths.workspace = true
+settings.workspace = true

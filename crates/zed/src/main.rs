@@ -653,6 +653,7 @@ fn main() {
         let app_session = cx.new(|cx| AppSession::new(session, cx));
 
         let app_state = Arc::new(AppState {
+            managed_resources: AppState::create_managed_resources(fs.clone(), cx),
             languages,
             client: client.clone(),
             user_store,

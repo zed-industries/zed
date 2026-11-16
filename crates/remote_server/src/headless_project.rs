@@ -13,6 +13,9 @@ use futures::{channel::oneshot, stream::StreamExt as _};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, Task, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
+use managed_resources::{
+    ManagedResourceStore, ResourcePermission, ResourcePermissions, StateUpdated,
+};
 use node_runtime::NodeRuntime;
 use project::{
     AgentRegistryStore, LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment,
@@ -38,7 +41,7 @@ use rpc::{
 };
 use smol::process::Child;
 
-use settings::{Settings as _, SettingsLocation, initial_server_settings_content};
+use settings::{Settings as _, SettingsLocation, SettingsStore, initial_server_settings_content};
 use std::{
     mem,
     num::NonZeroU64,
@@ -56,6 +59,7 @@ use worktree::Worktree;
 
 pub struct HeadlessProject {
     pub fs: Arc<dyn Fs>,
+    pub managed_resources: Entity<ManagedResourceStore>,
     pub session: AnyProtoClient,
     pub worktree_store: Entity<WorktreeStore>,
     pub buffer_store: Entity<BufferStore>,
@@ -78,6 +82,22 @@ pub struct HeadlessProject {
     pub kernels: HashMap<String, Child>,
     search_buffer_batches: async_channel::Sender<SearchBufferBatch>,
     _search_buffer_sender: Task<()>,
+    _resource_settings_subscriptions: [gpui::Subscription; 2],
+}
+
+#[derive(settings::RegisterSetting)]
+struct ManagedResourceSettings(ResourcePermissions);
+
+impl settings::Settings for ManagedResourceSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(
+            content
+                .experimental_permissions
+                .clone()
+                .expect("default resource permissions")
+                .into(),
+        )
+    }
 }
 
 pub struct HeadlessAppState {
@@ -122,6 +142,45 @@ impl HeadlessProject {
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
+
+        let managed_resources = cx.new(|cx| {
+            ManagedResourceStore::new(ManagedResourceSettings::get_global(cx).0.clone(), {
+                let session = session.clone();
+                move |request, cx| {
+                    let response = session.request(proto::ResourceApprovalRequest {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        description: request.description(),
+                    });
+                    cx.spawn(async move |_| {
+                        if response
+                            .await
+                            .log_err()
+                            .is_some_and(|response| response.allowed)
+                        {
+                            ResourcePermission::Allowed
+                        } else {
+                            ResourcePermission::Denied
+                        }
+                    })
+                }
+            })
+        });
+        let outgoing = cx.subscribe(&managed_resources, |this, _, event: &StateUpdated, cx| {
+            let snapshot = event.0.clone().into_content();
+            let written = cx.global::<SettingsStore>().update_server_settings_file(
+                this.fs.clone(),
+                move |settings| {
+                    settings.experimental_permissions = Some(snapshot);
+                },
+            );
+            cx.spawn(async move |_, _| written.await?)
+                .detach_and_log_err(cx);
+        });
+        let incoming = cx.observe_global::<SettingsStore>(|this, cx| {
+            let snapshot = ManagedResourceSettings::get_global(cx).0.clone();
+            this.managed_resources
+                .update(cx, |store, cx| store.replace_state(snapshot, cx));
+        });
 
         let worktree_store = cx.new(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone(), WorktreeIdCounter::get(cx));
@@ -413,6 +472,8 @@ impl HeadlessProject {
 
         HeadlessProject {
             next_entry_id: Default::default(),
+            managed_resources,
+            _resource_settings_subscriptions: [incoming, outgoing],
             session,
             settings_observer,
             fs,

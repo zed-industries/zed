@@ -75,6 +75,9 @@ pub use item::{
 };
 use itertools::Itertools;
 use language::{Buffer, LanguageRegistry, Rope, language_settings::all_language_settings};
+use managed_resources::{
+    ManagedResourceStore, ResourcePermission, ResourcePermissions, StateUpdated,
+};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
@@ -1398,6 +1401,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn(Option<Uuid>, &mut App) -> WindowOptions,
     pub node_runtime: NodeRuntime,
+    pub managed_resources: Entity<ManagedResourceStore>,
     pub session: Entity<AppSession>,
 }
 
@@ -1452,7 +1456,80 @@ struct Follower {
     peer_id: PeerId,
 }
 
+#[derive(settings::RegisterSetting)]
+struct ManagedResourceSettings(ResourcePermissions);
+
+impl Settings for ManagedResourceSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(
+            content
+                .experimental_permissions
+                .clone()
+                .expect("default resource permissions")
+                .into(),
+        )
+    }
+}
+
 impl AppState {
+    pub fn create_managed_resources(
+        fs: Arc<dyn fs::Fs>,
+        cx: &mut App,
+    ) -> Entity<ManagedResourceStore> {
+        let store = cx.new(|cx| {
+            ManagedResourceStore::new(
+                ManagedResourceSettings::get_global(cx).0.clone(),
+                |request, cx| {
+                    let description = request.description();
+                    let window = cx.active_window().or_else(|| cx.windows().first().copied());
+                    let Some(answer) = window.and_then(|window| {
+                        window
+                            .update(cx, |_, window, cx| {
+                                window.prompt(
+                                    PromptLevel::Warning,
+                                    "Allow managed resource operation?",
+                                    Some(&description),
+                                    &["Allow", "Deny"],
+                                    cx,
+                                )
+                            })
+                            .log_err()
+                    }) else {
+                        return Task::ready(ResourcePermission::Denied);
+                    };
+                    cx.spawn(async move |_| {
+                        if answer.await.log_err() == Some(0) {
+                            ResourcePermission::Allowed
+                        } else {
+                            ResourcePermission::Denied
+                        }
+                    })
+                },
+            )
+        });
+        let outgoing = cx.subscribe(&store, move |_, event: &StateUpdated, cx| {
+            let snapshot = event.0.clone().into_content();
+            cx.global::<SettingsStore>()
+                .update_settings_file(fs.clone(), move |settings, _| {
+                    settings.experimental_permissions = Some(snapshot);
+                });
+        });
+        let incoming = cx.observe_global::<SettingsStore>({
+            let store = store.downgrade();
+            move |cx| {
+                if let Some(store) = store.upgrade() {
+                    let snapshot = ManagedResourceSettings::get_global(cx).0.clone();
+                    store.update(cx, |store, cx| store.replace_state(snapshot, cx));
+                }
+            }
+        });
+        store.update(cx, |_, cx| {
+            cx.on_release(move |_, _| drop((incoming, outgoing)))
+                .detach();
+        });
+        store
+    }
+
     #[track_caller]
     pub fn global(cx: &App) -> Arc<Self> {
         cx.global::<GlobalAppState>().0.clone()
@@ -1492,6 +1569,7 @@ impl AppState {
 
         Arc::new(Self {
             client,
+            managed_resources: Self::create_managed_resources(fs.clone(), cx),
             fs,
             languages,
             user_store,
@@ -1917,6 +1995,22 @@ impl Workspace {
 
                 project::Event::HideToast { notification_id } => {
                     this.dismiss_notification(&NotificationId::named(notification_id.clone()), cx)
+                }
+
+                project::Event::ResourceApproval(request) => {
+                    let answer = window.prompt(
+                        PromptLevel::Warning,
+                        "Allow managed resource operation on the remote host?",
+                        Some(&request.description),
+                        &["Allow", "Deny"],
+                        cx,
+                    );
+                    let response = request.response.clone();
+                    cx.spawn(async move |_, _| {
+                        let allowed = answer.await.log_err() == Some(0);
+                        response.send(allowed).await.log_err();
+                    })
+                    .detach();
                 }
 
                 project::Event::LanguageServerPrompt(request) => {
@@ -8935,6 +9029,10 @@ impl Workspace {
         window.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
+            managed_resources: AppState::create_managed_resources(
+                project.read(cx).fs().clone(),
+                cx,
+            ),
             workspace_store,
             client,
             user_store,
@@ -13241,6 +13339,238 @@ mod tests {
     use settings::{SettingsStore, SplicingVec};
     use util::path;
     use util::rel_path::rel_path;
+
+    #[gpui::test]
+    async fn managed_resource_approvals_respect_user_settings(cx: &mut TestAppContext) {
+        use managed_resources::{
+            ExecutionBillRoot, ManagedResource, ManagedResourceCommand, NpmResourceId,
+            ResourceAccessError, ResourceAcquisition, ResourceExecutionBill, ResourceId,
+        };
+
+        struct TestResource;
+        impl ManagedResource for TestResource {
+            type Key = ();
+            type Context = ();
+            type Command = Self;
+            type CommandKind = ();
+            fn id(_: &()) -> ResourceId {
+                ResourceId::Npm {
+                    payload: NpmResourceId {
+                        name: "approval-test".into(),
+                    },
+                }
+            }
+            async fn obtain(_: &(), _: &()) -> Result<ResourceAcquisition<Self>> {
+                Ok(ResourceAcquisition::Ready {
+                    resource: Self,
+                    action: None,
+                })
+            }
+        }
+        impl ManagedResourceCommand<Self> for TestResource {
+            type Output = bool;
+            type PermissionSettings = serde_json::Value;
+            fn command_kind(&self) {}
+            fn permission(&self, settings: &serde_json::Value) -> Option<ResourcePermission> {
+                settings.get("execute").map(|permission| {
+                    serde_json::from_value(permission.clone()).expect("valid permission")
+                })
+            }
+            fn permission_description(&self, _: &Self) -> String {
+                "Run test command".into()
+            }
+            async fn run(self, _: &Self) -> bool {
+                true
+            }
+        }
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+        });
+        cx.add_empty_window();
+        let store = cx.update(|cx| AppState::create_managed_resources(fs, cx));
+        for (settings, answers, expected) in [
+            (r#"{}"#, vec![], Ok(true)),
+            (
+                r#"{"experimental.permissions":{"default":"prompt"}}"#,
+                vec!["Deny"],
+                Err(false),
+            ),
+            (
+                r#"{"experimental.permissions":{"default":"prompt"}}"#,
+                vec!["Allow", "Deny"],
+                Err(true),
+            ),
+            (
+                r#"{"experimental.permissions":{"default":"prompt"}}"#,
+                vec!["Allow", "Allow"],
+                Ok(true),
+            ),
+            (
+                r#"{"experimental.permissions":{"default":"allowed","resources":[{"resource":"npm","obtain":"prompt"}]}}"#,
+                vec!["Allow"],
+                Ok(true),
+            ),
+            (
+                r#"{"experimental.permissions":{"resources":[{"resource":"npm","execute":"prompt"}]}}"#,
+                vec!["Deny"],
+                Err(true),
+            ),
+            (
+                r#"{"experimental.permissions":{"resources":[{"resource":"npm","execute":"allowed"}]}}"#,
+                vec![],
+                Ok(true),
+            ),
+            (
+                r#"{"experimental.permissions":{"default":"denied"}}"#,
+                vec![],
+                Err(false),
+            ),
+        ] {
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store
+                    .set_user_settings(settings, cx)
+                    .expect("valid settings");
+            });
+            cx.run_until_parked();
+            let mut task = store.update(cx, |store, cx| {
+                store.execute_command::<TestResource>(
+                    (),
+                    Rc::new(()),
+                    ResourceExecutionBill {
+                        root: ExecutionBillRoot::Extension {
+                            id: "test-extension".into(),
+                        },
+                        reasoning: vec!["Test approval".into()],
+                    },
+                    TestResource,
+                    cx,
+                )
+            });
+            for answer in answers {
+                cx.run_until_parked();
+                assert!(
+                    (&mut task).now_or_never().is_none(),
+                    "must await the answer"
+                );
+                let (_, detail) = cx.pending_prompt().expect("approval prompt");
+                assert!(detail.contains("approval-test"));
+                assert!(detail.contains("test-extension"));
+                cx.simulate_prompt_answer(answer);
+            }
+            match expected {
+                Ok(_) => assert!(task.await.expect("allowed")),
+                Err(true) => assert!(matches!(
+                    task.await,
+                    Err(ResourceAccessError::CommandDenied)
+                )),
+                Err(false) => assert!(matches!(task.await, Err(ResourceAccessError::Denied))),
+            }
+            assert!(!cx.has_pending_prompt());
+        }
+    }
+
+    #[gpui::test]
+    async fn managed_resource_snapshots_persist_in_user_settings(cx: &mut TestAppContext) {
+        use fs::Fs as _;
+        use managed_resources::{NpmResourceId, ResourceId};
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(paths::settings_file().parent().expect("settings directory"))
+            .await
+            .expect("create settings directory");
+        fs.insert_file(
+            paths::settings_file(),
+            br#"{"proxy":"http://localhost:1234"}"#.to_vec(),
+        )
+        .await;
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+        });
+        let store = cx.update(|cx| AppState::create_managed_resources(fs.clone(), cx));
+        let id = ResourceId::Npm {
+            payload: NpmResourceId {
+                name: "test-runtime".into(),
+            },
+        };
+        assert_eq!(
+            store.read_with(cx, |store, _| store.permission(&id)),
+            Some(ResourcePermission::Allowed),
+            "missing user settings must allow resource access"
+        );
+        store.update(cx, |store, cx| {
+            store.set_permission(id.clone(), ResourcePermission::Denied, cx)
+        });
+        cx.run_until_parked();
+        let persisted = fs
+            .load(paths::settings_file())
+            .await
+            .expect("settings persisted");
+        let persisted: serde_json::Value =
+            serde_json::from_str(&persisted).expect("valid settings");
+        assert_eq!(persisted["proxy"], "http://localhost:1234");
+        assert_eq!(
+            persisted["experimental.permissions"],
+            serde_json::to_value(store.read_with(cx, |store, _| store.permissions()))
+                .expect("snapshot")
+        );
+
+        let updates = Rc::new(RefCell::new(0));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&store, {
+                let updates = updates.clone();
+                move |_, _: &StateUpdated, _| *updates.borrow_mut() += 1
+            })
+        });
+        let written = cx.update(|cx| {
+            cx.global::<SettingsStore>()
+                .update_settings_file_with_completion(fs.clone(), |settings, _| {
+                    settings.experimental_permissions = Some(
+                        serde_json::from_value(json!({"default":"allowed","resources":[]}))
+                            .expect("replacement state"),
+                    );
+                })
+        });
+        written
+            .await
+            .expect("write completed")
+            .expect("write succeeded");
+        cx.run_until_parked();
+        assert_eq!(
+            store.read_with(cx, |store, _| store.permission(&id)),
+            Some(ResourcePermission::Allowed)
+        );
+        assert_eq!(*updates.borrow(), 0, "settings updates must not echo");
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|settings, cx| {
+                settings
+                    .set_local_settings(
+                        WorktreeId::from_usize(1),
+                        settings::LocalSettingsPath::InWorktree(rel_path("project").into()),
+                        settings::LocalSettingsKind::Settings,
+                        Some(r#"{"experimental.permissions":{"default":"denied"}}"#),
+                        cx,
+                    )
+                    .expect("project settings");
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            store.read_with(cx, |store, _| store.permission(&id)),
+            Some(ResourcePermission::Allowed),
+            "project settings must not override global permissions"
+        );
+        let weak = store.downgrade();
+        drop(store);
+        cx.run_until_parked();
+        assert!(
+            weak.upgrade().is_none(),
+            "settings subscriptions must not retain the store"
+        );
+    }
 
     #[test]
     fn test_render_window_title_format_omits_empty_segments() {
