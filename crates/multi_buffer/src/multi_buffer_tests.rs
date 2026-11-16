@@ -857,6 +857,61 @@ fn test_excerpt_events(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_dirty_state_across_buffers(cx: &mut App) {
+    let buffers = (0..3)
+        .map(|_| cx.new(|cx| Buffer::local(sample_text(3, 3, 'a'), cx)))
+        .collect::<Vec<_>>();
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        for (ix, buffer) in buffers.iter().enumerate() {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(ix as u64),
+                buffer.clone(),
+                [Point::zero()..Point::new(1, 0)],
+                0,
+                cx,
+            );
+        }
+    });
+    let is_dirty = |cx: &App| multibuffer.read(cx).is_dirty(cx);
+    let edit = |buffer: &Entity<Buffer>, cx: &mut App| {
+        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "x")], None, cx));
+    };
+    assert!(!is_dirty(cx));
+
+    edit(&buffers[0], cx);
+    edit(&buffers[1], cx);
+    assert!(is_dirty(cx));
+    buffers[0].update(cx, |buffer, cx| buffer.did_save(buffer.version(), None, cx));
+    assert!(is_dirty(cx));
+    buffers[1].update(cx, |buffer, cx| buffer.did_save(buffer.version(), None, cx));
+    assert!(!is_dirty(cx));
+
+    edit(&buffers[2], cx);
+    assert!(is_dirty(cx));
+    buffers[2].update(cx, |buffer, cx| {
+        buffer.did_reload(buffer.version(), buffer.line_ending(), None, cx)
+    });
+    assert!(!is_dirty(cx));
+
+    edit(&buffers[1], cx);
+    assert!(is_dirty(cx));
+    buffers[1].update(cx, |buffer, cx| {
+        buffer.set_capability(Capability::ReadOnly, cx)
+    });
+    assert!(!is_dirty(cx));
+    buffers[1].update(cx, |buffer, cx| {
+        buffer.set_capability(Capability::ReadWrite, cx)
+    });
+    assert!(is_dirty(cx));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(1), cx);
+    });
+    assert!(!is_dirty(cx));
+}
+
+#[gpui::test]
 fn test_set_excerpts_for_path_reuses_excerpts_when_only_primary_changes(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local(sample_text(10, 6, 'a'), cx));
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
