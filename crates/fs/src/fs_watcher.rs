@@ -570,6 +570,11 @@ impl WatchKey {
         #[cfg(target_os = "macos")]
         {
             use unicode_normalization::UnicodeNormalization as _;
+
+            if lossy.is_ascii() {
+                return lossy.to_ascii_lowercase();
+            }
+
             lossy.chars().nfc().collect::<String>().to_lowercase()
         }
 
