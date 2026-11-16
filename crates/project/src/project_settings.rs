@@ -457,6 +457,10 @@ impl GoToDiagnosticSeverityFilter {
 
 #[derive(Clone, Debug)]
 pub struct GitSettings {
+    /// How absolute dates are shown across Git views.
+    ///
+    /// Default: locale
+    pub date_format: GitDateFormat,
     /// Whether or not git integration is enabled.
     ///
     /// Default: true
@@ -480,6 +484,8 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: BranchPickerSettings,
+    /// Stash picker configuration.
+    pub stash_picker: StashPickerSettings,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
@@ -566,6 +572,10 @@ impl From<settings::InlineBlameLocation> for InlineBlameLocation {
 
 #[derive(Clone, Copy, Debug)]
 pub struct InlineBlameSettings {
+    /// Whether dates are shown as relative or absolute.
+    ///
+    /// Default: relative
+    pub date_style: settings::GitDateStyle,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
@@ -597,10 +607,58 @@ pub struct InlineBlameSettings {
 
 #[derive(Clone, Copy, Debug)]
 pub struct BlameSettings {
+    /// Whether dates are shown as relative or absolute.
+    ///
+    /// Default: relative
+    pub date_style: settings::GitDateStyle,
     /// Whether to show the avatar of the author of the commit.
     ///
     /// Default: true
     pub show_avatar: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StashPickerSettings {
+    /// Whether dates are shown as relative or absolute.
+    ///
+    /// Default: relative
+    pub date_style: settings::GitDateStyle,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum GitDateFormat {
+    #[default]
+    Locale,
+    Iso,
+    Custom(Arc<time::format_description::OwnedFormatItem>),
+}
+
+impl GitDateFormat {
+    pub fn parse(format: &str) -> Self {
+        match format {
+            "locale" => Self::Locale,
+            format if format.trim().is_empty() => Self::Locale,
+            "iso" => Self::Iso,
+            format => match time::format_description::parse_strftime_owned(format) {
+                Ok(format) => Self::Custom(Arc::new(format)),
+                Err(error) => {
+                    log::warn!("Invalid git.date_format: {error}");
+                    Self::Locale
+                }
+            },
+        }
+    }
+
+    pub fn format(&self, timestamp: time::OffsetDateTime) -> Option<String> {
+        let result = match self {
+            Self::Locale => return None,
+            Self::Iso => timestamp.format(time::macros::format_description!(
+                "[year]-[month]-[day] [hour]:[minute]"
+            )),
+            Self::Custom(format) => timestamp.format(format.as_ref()),
+        };
+        result.log_err()
+    }
 }
 
 impl GitSettings {
@@ -616,6 +674,11 @@ impl GitSettings {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct BranchPickerSettings {
+    #[serde(default)]
+    /// Whether dates are shown as relative or absolute.
+    ///
+    /// Default: relative
+    pub date_style: settings::GitDateStyle,
     /// Whether to show author name as part of the commit information.
     ///
     /// Default: false
@@ -627,6 +690,7 @@ impl Default for BranchPickerSettings {
     fn default() -> Self {
         Self {
             show_author_name: true,
+            date_style: settings::GitDateStyle::Relative,
         }
     }
 }
@@ -700,12 +764,14 @@ impl Settings for ProjectSettings {
             }
         };
         let git_settings = GitSettings {
+            date_format: GitDateFormat::parse(git.date_format.as_deref().unwrap()),
             enabled: git_enabled,
             git_gutter: git.git_gutter.unwrap(),
             gutter_debounce: git.gutter_debounce.unwrap_or_default(),
             inline_blame: {
                 let inline = git.inline_blame.unwrap();
                 InlineBlameSettings {
+                    date_style: inline.date_style.unwrap(),
                     enabled: inline.enabled.unwrap(),
                     delay_ms: inline.delay_ms.unwrap(),
                     location: inline.location.unwrap().into(),
@@ -717,14 +783,19 @@ impl Settings for ProjectSettings {
             blame: {
                 let blame = git.blame.unwrap();
                 BlameSettings {
+                    date_style: blame.date_style.unwrap(),
                     show_avatar: blame.show_avatar.unwrap(),
                 }
             },
             branch_picker: {
                 let branch_picker = git.branch_picker.unwrap();
                 BranchPickerSettings {
+                    date_style: branch_picker.date_style.unwrap(),
                     show_author_name: branch_picker.show_author_name.unwrap(),
                 }
+            },
+            stash_picker: StashPickerSettings {
+                date_style: git.stash_picker.unwrap().date_style.unwrap(),
             },
             hunk_style: git.hunk_style.unwrap(),
             diff_base: git.diff_base.unwrap_or_default(),

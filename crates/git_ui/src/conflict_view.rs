@@ -216,7 +216,7 @@ fn conflicts_updated(
             let Some(range) = snapshot.buffer_anchor_range_to_anchor_range(conflict_range) else {
                 continue;
             };
-            removed_highlighted_ranges.push(range.clone());
+            removed_highlighted_ranges.push(range);
             removed_block_ids.insert(block_id);
         }
 

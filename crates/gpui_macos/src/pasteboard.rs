@@ -1,7 +1,7 @@
 use std::ffi::CStr;
 use std::path::PathBuf;
 
-use objc2::{Message, rc::Retained};
+use objc2::{Message, class, msg_send, rc::Retained};
 #[expect(
     deprecated,
     reason = "Preserve the existing file-copy pasteboard format"
@@ -28,14 +28,16 @@ pub struct Pasteboard {
 }
 
 impl Pasteboard {
-    pub fn general() -> Self {
-        Self::new(NSPasteboard::generalPasteboard())
+    pub fn general() -> Option<Self> {
+        let pasteboard: Option<Retained<NSPasteboard>> =
+            unsafe { msg_send![class!(NSPasteboard), generalPasteboard] };
+        pasteboard.map(Self::new)
     }
 
-    pub fn find() -> Self {
-        Self::new(NSPasteboard::pasteboardWithName(unsafe {
-            NSPasteboardNameFind
-        }))
+    pub fn find() -> Option<Self> {
+        let pasteboard: Option<Retained<NSPasteboard>> =
+            unsafe { msg_send![class!(NSPasteboard), pasteboardWithName: NSPasteboardNameFind] };
+        pasteboard.map(Self::new)
     }
 
     #[cfg(test)]

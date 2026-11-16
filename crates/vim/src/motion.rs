@@ -11,7 +11,7 @@ use language::{CharKind, Point, Selection, SelectionGoal, TextObject, TreeSitter
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::{f64, ops::Range};
+use std::ops::Range;
 
 use workspace::searchable::Direction;
 

@@ -586,7 +586,8 @@ pub struct LanguageSettingsContent {
     /// Default: same
     pub soft_wrap_indent: Option<SoftWrapIndent>,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
-    /// is enabled.
+    /// is enabled. The `editor::Rewrap` action also wraps to this column by
+    /// default, whether or not soft-wrap is enabled.
     ///
     /// Default: 80
     pub preferred_line_length: Option<u32>,

@@ -507,6 +507,7 @@ mod imp {
             fs: if permissions.allow_fs_write {
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: Vec::new(),
+                    protected_file_names: Vec::new(),
                 }
             } else {
                 SandboxFsPolicy::Restricted {
@@ -517,6 +518,7 @@ mod imp {
                         .filter_map(|path| HostFilesystemLocation::capture(path).ok())
                         .collect(),
                     protected_paths: Vec::new(),
+                    protected_file_names: Vec::new(),
                 }
             },
             network: match permissions.network {
