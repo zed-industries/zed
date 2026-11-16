@@ -12020,12 +12020,28 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         changes: Vec<PathEvent>,
+        cx: &App,
     ) {
         maybe!({
             let server = self.language_server_for_id(server_id)?;
             let changes = changes
                 .into_iter()
                 .filter_map(|event| {
+                    if let Some((worktree, path)) =
+                        self.worktree_store.read(cx).find_worktree(&event.path, cx)
+                    {
+                        let settings = WorktreeSettings::get(
+                            Some(SettingsLocation {
+                                worktree_id: worktree.read(cx).id(),
+                                path: RelPath::empty(),
+                            }),
+                            cx,
+                        );
+                        // Absolute watchers bypass the worktree scanner's exclusion filter.
+                        if settings.is_path_excluded(&path) {
+                            return None;
+                        }
+                    }
                     let typ = match event.kind? {
                         PathEventKind::Created => lsp::FileChangeType::CREATED,
                         PathEventKind::Removed => lsp::FileChangeType::DELETED,
@@ -16493,7 +16509,7 @@ impl LanguageServerWatchedPaths {
                         .await;
                     while let Some(update) = push_updates.0.next().await {
                         let action = lsp_store
-                            .update(cx, |this, _| {
+                            .update(cx, |this, cx| {
                                 let Some(local) = this.as_local_mut() else {
                                     return ControlFlow::Break(());
                                 };
@@ -16513,6 +16529,7 @@ impl LanguageServerWatchedPaths {
                                 this.lsp_notify_abs_paths_changed(
                                     language_server_id,
                                     matching_entries,
+                                    cx,
                                 );
                                 ControlFlow::Continue(())
                             })

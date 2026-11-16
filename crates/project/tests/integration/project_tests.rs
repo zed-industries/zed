@@ -3232,6 +3232,149 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+async fn test_absolute_lsp_watchers_respect_worktree_exclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "**/.git".to_string(),
+                    "**/excluded".to_string(),
+                ]));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/watch-root"),
+        json!({
+            "project": {
+                ".git": {"fsmonitor--daemon": {"cookies": {}}},
+                ".gitignore": "target\n",
+                "excluded": {},
+                "target": {},
+                "src": {"a.rs": ""},
+            },
+            "dependency": {},
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/watch-root/project").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        },
+    );
+    cx.executor().run_until_parked();
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/watch-root/project/src/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let file_changes = Arc::new(Mutex::new(Vec::new()));
+    fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
+        let file_changes = file_changes.clone();
+        move |params, _| {
+            let mut file_changes = file_changes.lock();
+            file_changes.extend(params.changes);
+            file_changes.sort_by(|left, right| left.uri.cmp(&right.uri));
+        }
+    });
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "absolute-watcher".to_string(),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                    register_options: serde_json::to_value(
+                        lsp::DidChangeWatchedFilesRegistrationOptions {
+                            watchers: vec![lsp::FileSystemWatcher {
+                                // Watching a parent of the worktree uses the absolute watcher.
+                                glob_pattern: lsp::GlobPattern::String(
+                                    path!("/watch-root/**/*").to_string(),
+                                ),
+                                kind: None,
+                            }],
+                        },
+                    )
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(file_changes.lock().is_empty());
+
+    let cookie_path = path!("/watch-root/project/.git/fsmonitor--daemon/cookies/cookie");
+    fs.create_file(cookie_path.as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert_eq!(&*file_changes.lock(), &[]);
+    fs.remove_file(cookie_path.as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert_eq!(&*file_changes.lock(), &[]);
+
+    let paths = [
+        cookie_path,
+        path!("/watch-root/project/excluded/generated.rs"),
+        path!("/watch-root/project/target/generated.rs"),
+        path!("/watch-root/project/src/new.rs"),
+        path!("/watch-root/dependency/new.rs"),
+    ];
+    for typ in [
+        lsp::FileChangeType::CREATED,
+        lsp::FileChangeType::CHANGED,
+        lsp::FileChangeType::DELETED,
+    ] {
+        for path in paths {
+            if typ == lsp::FileChangeType::CREATED {
+                fs.create_file(path.as_ref(), Default::default())
+                    .await
+                    .unwrap();
+            } else if typ == lsp::FileChangeType::CHANGED {
+                fs.save(path.as_ref(), &"updated".into(), Default::default())
+                    .await
+                    .unwrap();
+            } else {
+                fs.remove_file(path.as_ref(), Default::default())
+                    .await
+                    .unwrap();
+            }
+        }
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            mem::take(&mut *file_changes.lock()),
+            [
+                path!("/watch-root/dependency/new.rs"),
+                path!("/watch-root/project/src/new.rs"),
+                path!("/watch-root/project/target/generated.rs"),
+            ]
+            .map(|path| lsp::FileEvent {
+                uri: lsp::Uri::from_file_path(path).unwrap(),
+                typ,
+            }),
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
