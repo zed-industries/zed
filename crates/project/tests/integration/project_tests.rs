@@ -15974,6 +15974,93 @@ async fn test_staged_diff_without_unstaged_diff(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_diffs_opened_together(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "same.txt": "same working\n",
+            "staged.txt": "staged working\n",
+            "untracked.txt": "untracked working\n",
+            "unstaged.txt": "unstaged working\n",
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[
+            ("same.txt", "same head\n".into()),
+            ("staged.txt", "staged head\n".into()),
+            ("unstaged.txt", "unstaged head\n".into()),
+        ],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[
+            ("same.txt", "same head\n".into()),
+            ("staged.txt", "staged index\n".into()),
+            ("unstaged.txt", "unstaged index\n".into()),
+        ],
+    );
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let mut buffers = Vec::new();
+    for name in ["same.txt", "staged.txt", "untracked.txt", "unstaged.txt"] {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(Path::new(path!("/dir")).join(name), cx)
+            })
+            .await
+            .unwrap();
+        buffers.push(buffer);
+    }
+
+    // Requested in one update, so all four loads share one job.
+    let (uncommitted_diffs, unstaged_diff) = project.update(cx, |project, cx| {
+        (
+            buffers[..3]
+                .iter()
+                .map(|buffer| project.open_uncommitted_diff(buffer.clone(), cx))
+                .collect::<Vec<_>>(),
+            project.open_unstaged_diff(buffers[3].clone(), cx),
+        )
+    });
+    let uncommitted_diffs = future::try_join_all(uncommitted_diffs).await.unwrap();
+    let unstaged_diff = unstaged_diff.await.unwrap();
+    cx.run_until_parked();
+
+    let base_texts = uncommitted_diffs
+        .iter()
+        .map(|diff| {
+            diff.read_with(cx, |diff, cx| {
+                let index_text = diff
+                    .secondary_diff()
+                    .and_then(|unstaged_diff| unstaged_diff.read(cx).base_text_string(cx));
+                (diff.base_text_string(cx), index_text)
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        base_texts,
+        [
+            (Some("same head\n".into()), Some("same head\n".into())),
+            (Some("staged head\n".into()), Some("staged index\n".into())),
+            (None, None),
+        ]
+    );
+    unstaged_diff.read_with(cx, |diff, cx| {
+        assert_eq!(
+            diff.base_text_string(cx).as_deref(),
+            Some("unstaged index\n")
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
