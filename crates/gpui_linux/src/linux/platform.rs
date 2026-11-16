@@ -1005,8 +1005,9 @@ impl Platform for LinuxPlatform {
         });
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         self.with_common(|common| common.system_notifications.dismiss(tag));
+        Task::ready(())
     }
 
     fn on_system_notification_response(

@@ -89,6 +89,7 @@ When focus is in the message editor, you can also use {#kb agent::ScrollOutputPa
 
 Thread titles are auto-generated based on the content of the conversation.
 But you can also edit them manually by clicking the title and typing, or regenerate them by clicking the "Regenerate Thread Title" button in the ellipsis menu in the top right of the panel.
+To stop Zed Agent thread titles from being generated automatically, set `agent.auto_generate_thread_titles` to `false`. Threads then use the first line of your first message as their title.
 
 ### Following the Agent {#following-the-agent}
 

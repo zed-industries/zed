@@ -6,8 +6,9 @@ use crate::{
 };
 use gpui::{
     Action, Anchor, AnchoredPositionMode, AnyElement, AnyView, App, Bounds, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point,
-    Role, Size, Subscription, TaskExt, anchored, canvas, deferred, point, prelude::*, px, relative,
+    EventEmitter, FocusHandle, Focusable, HoverListenerMode, MouseButton, MouseDownEvent,
+    MouseUpEvent, Pixels, Point, Role, Size, Subscription, TaskExt, anchored, canvas, deferred,
+    point, prelude::*, px, relative,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
@@ -1734,6 +1735,57 @@ impl ContextMenu {
                     this.submenu_trigger_mouse_down = false;
                 }
             }))
+            // Hovering opens and focuses the submenu, so the pointer usually still rests here
+            // while the user types. A keypress must not count as the pointer leaving.
+            .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
+            .on_hover(cx.listener(move |this, hovered, window, cx| {
+                if disabled {
+                    return;
+                }
+                if *hovered {
+                    this.clear_selected();
+                    this.suppress_focus_selection = true;
+                    window.focus(&this.focus_handle.clone(), cx);
+                    this.hover_target = HoverTarget::MainMenu;
+                    if let Some(ContextMenuItem::Submenu(submenu)) = this.items.get(ix) {
+                        if !submenu.disabled {
+                            this.open_submenu(
+                                ix,
+                                submenu.builder.clone(),
+                                SubmenuOpenTrigger::Pointer,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+
+                    cx.notify();
+                } else {
+                    if this.submenu_trigger_mouse_down {
+                        return;
+                    }
+
+                    let is_open_for_this_item = matches!(
+                        &this.submenu_state,
+                        SubmenuState::Open(open_submenu) if open_submenu.item_index == ix
+                    );
+
+                    let mouse_in_submenu_zone = this
+                        .padded_submenu_bounds()
+                        .is_some_and(|bounds| bounds.contains(&window.mouse_position()));
+
+                    if is_open_for_this_item
+                        && this.hover_target != HoverTarget::Submenu
+                        && !mouse_in_submenu_zone
+                    {
+                        this.close_submenu(false, cx);
+                        this.clear_selected();
+                        this.suppress_focus_selection = true;
+                        window.focus(&this.focus_handle.clone(), cx);
+                        cx.notify();
+                    }
+                }
+            }))
             .child(
                 canvas(
                     {
@@ -1758,54 +1810,6 @@ impl ContextMenu {
                     .when(is_active_descendant, |item| item.aria_active_descendant())
                     .aria_label(label.clone())
                     .toggle_state(toggle_state)
-                    .on_hover(cx.listener(move |this, hovered, window, cx| {
-                        if disabled {
-                            return;
-                        }
-                        if *hovered {
-                            this.clear_selected();
-                            this.suppress_focus_selection = true;
-                            window.focus(&this.focus_handle.clone(), cx);
-                            this.hover_target = HoverTarget::MainMenu;
-                            if let Some(ContextMenuItem::Submenu(submenu)) = this.items.get(ix) {
-                                if !submenu.disabled {
-                                    this.open_submenu(
-                                        ix,
-                                        submenu.builder.clone(),
-                                        SubmenuOpenTrigger::Pointer,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            }
-
-                            cx.notify();
-                        } else {
-                            if this.submenu_trigger_mouse_down {
-                                return;
-                            }
-
-                            let is_open_for_this_item = matches!(
-                                &this.submenu_state,
-                                SubmenuState::Open(open_submenu) if open_submenu.item_index == ix
-                            );
-
-                            let mouse_in_submenu_zone = this
-                                .padded_submenu_bounds()
-                                .is_some_and(|bounds| bounds.contains(&window.mouse_position()));
-
-                            if is_open_for_this_item
-                                && this.hover_target != HoverTarget::Submenu
-                                && !mouse_in_submenu_zone
-                            {
-                                this.close_submenu(false, cx);
-                                this.clear_selected();
-                                this.suppress_focus_selection = true;
-                                window.focus(&this.focus_handle.clone(), cx);
-                                cx.notify();
-                            }
-                        }
-                    }))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if matches!(
                             &this.submenu_state,
@@ -3357,6 +3361,91 @@ mod tests {
         for _ in 0..3 {
             cx.update(|window, cx| window.draw(cx).clear(cx));
         }
+    }
+
+    fn submenu_trigger_bounds(
+        menu: &Entity<ContextMenu>,
+        index: usize,
+        cx: &mut VisualTestContext,
+    ) -> Bounds<Pixels> {
+        menu.read_with(cx, |menu, _| {
+            menu.submenu_trigger_bounds
+                .borrow()
+                .get(&index)
+                .copied()
+                .expect("trigger bounds")
+        })
+    }
+
+    fn opened_submenu_index(
+        menu: &Entity<ContextMenu>,
+        cx: &mut VisualTestContext,
+    ) -> Option<usize> {
+        menu.read_with(cx, |menu, _| match &menu.submenu_state {
+            SubmenuState::Open(open_submenu) => Some(open_submenu.item_index),
+            SubmenuState::Closed => None,
+        })
+    }
+
+    #[gpui::test]
+    fn typing_with_pointer_on_submenu_trigger_keeps_submenu_open(cx: &mut TestAppContext) {
+        let content_focus = cx.update(|cx| cx.focus_handle());
+        let content_bounds = Rc::new(Cell::new(None));
+        let (menu, mut visual) =
+            open_window_with_embedded_view_submenu(&content_focus, &content_bounds, cx);
+        let trigger = submenu_trigger_bounds(&menu, 0, &mut visual);
+
+        visual.simulate_mouse_move(trigger.center(), None, Modifiers::default());
+        draw_frames(&mut visual);
+        visual.simulate_keystrokes("a b");
+        draw_frames(&mut visual);
+
+        assert_eq!(opened_submenu_index(&menu, &mut visual), Some(0));
+        assert!(visual.update(|window, _| content_focus.is_focused(window)));
+    }
+
+    #[gpui::test]
+    fn arrow_key_with_pointer_on_submenu_trigger_navigates_the_submenu(cx: &mut TestAppContext) {
+        let (menu, mut visual) = open_window_with_submenu(cx, |menu, _, _| {
+            menu.entry("A", None, |_, _| {}).entry("B", None, |_, _| {})
+        });
+        visual.update(|_, cx| {
+            cx.bind_keys([gpui::KeyBinding::new("down", SelectNext, Some("menu"))])
+        });
+        let trigger = submenu_trigger_bounds(&menu, 0, &mut visual);
+
+        visual.simulate_mouse_move(trigger.center(), None, Modifiers::default());
+        draw_frames(&mut visual);
+        visual.simulate_keystrokes("down");
+        draw_frames(&mut visual);
+
+        let submenu = menu
+            .read_with(&visual, |menu, _| match &menu.submenu_state {
+                SubmenuState::Open(open_submenu) => Some(open_submenu.entity.clone()),
+                SubmenuState::Closed => None,
+            })
+            .expect("submenu stays open");
+        let selected = submenu.read_with(&visual, |submenu, _| submenu.selected_index());
+        assert_eq!(selected, Some(0));
+        assert!(visual.update(|window, cx| submenu.focus_handle(cx).is_focused(window)));
+    }
+
+    #[gpui::test]
+    fn pointer_leaving_submenu_trigger_after_keypress_closes_submenu(cx: &mut TestAppContext) {
+        let (menu, mut visual) = open_window_with_submenu(cx, |menu, _, _| {
+            menu.entry("A", None, |_, _| {}).entry("B", None, |_, _| {})
+        });
+        let trigger = submenu_trigger_bounds(&menu, 0, &mut visual);
+
+        visual.simulate_mouse_move(trigger.center(), None, Modifiers::default());
+        draw_frames(&mut visual);
+        visual.simulate_keystrokes("a");
+        draw_frames(&mut visual);
+        assert_eq!(opened_submenu_index(&menu, &mut visual), Some(0));
+
+        visual.simulate_mouse_move(point(px(680.), px(380.)), None, Modifiers::default());
+        draw_frames(&mut visual);
+        assert_eq!(opened_submenu_index(&menu, &mut visual), None);
     }
 
     #[gpui::test]

@@ -196,6 +196,7 @@ mod imp {
         let fs = match check.fs {
             FsMode::Unrestricted => SandboxFsPolicy::Unrestricted {
                 protected_paths: capture_protected_paths(&check.protected_paths),
+                protected_file_names: Vec::new(),
             },
             FsMode::Restricted => {
                 let mut writable_paths = Vec::new();
@@ -213,6 +214,7 @@ mod imp {
                 SandboxFsPolicy::Restricted {
                     writable_paths,
                     protected_paths,
+                    protected_file_names: Vec::new(),
                 }
             }
         };

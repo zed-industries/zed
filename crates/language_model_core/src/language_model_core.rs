@@ -66,6 +66,36 @@ pub enum LanguageModelCompletionEvent {
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
     Compaction(CompactionUpdate),
+    /// Transformations the provider applied or flagged while processing the request.
+    InputTransformations(Vec<InputTransformation>),
+}
+
+/// Provider-reported refusal metadata, not an inferred content classification.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct RefusalDetails {
+    pub reason: String,
+    /// Only categories explicitly identified as blocking; empty means unavailable.
+    pub categories: Vec<String>,
+    pub stage: Option<RefusalStage>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalStage {
+    Input,
+    Output,
+}
+
+/// A provider-reported transformation or mismatch affecting request content.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct InputTransformation {
+    /// Provider-specific transformation type, including unrecognized future types.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Provider-specific location, such as `messages.1.content.0`.
+    pub path: String,
+    /// Provider-specific reason, such as `prefix_binding_mismatch`.
+    pub reason: String,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -515,13 +545,19 @@ fn is_invalid_encrypted_content_message(message: &str) -> bool {
         == Some("invalid_encrypted_content")
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
-    Refusal,
+    Refusal(Option<RefusalDetails>),
+}
+
+impl StopReason {
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, Self::Refusal(_))
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]

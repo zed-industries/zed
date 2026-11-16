@@ -1560,7 +1560,7 @@ impl MultiBuffer {
                             original_indent_columns.push(original_indent_column);
                             insertions.push((
                                 buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                                new_text.clone(),
+                                new_text,
                             ));
                         } else if !range.is_empty() {
                             deletions.push((
@@ -3012,7 +3012,7 @@ impl MultiBuffer {
 
                                 new_diff_transforms.push(
                                     DiffTransform::DeletedHunk {
-                                        base_text_byte_range: hunk.diff_base_byte_range.clone(),
+                                        base_text_byte_range: hunk.diff_base_byte_range,
                                         summary: base_text_summary,
                                         buffer_id: buffer_snapshot.remote_id(),
                                         hunk_info,

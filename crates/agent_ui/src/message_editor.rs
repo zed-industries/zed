@@ -60,7 +60,7 @@ impl SessionCapabilities {
     ) -> Self {
         Self {
             prompt_capabilities,
-            available_commands,
+            available_commands: slash_commands(available_commands),
             available_skills,
         }
     }
@@ -137,7 +137,7 @@ impl SessionCapabilities {
     }
 
     pub fn set_available_commands(&mut self, available_commands: Vec<acp_v2::AvailableCommand>) {
-        self.available_commands = available_commands;
+        self.available_commands = slash_commands(available_commands);
     }
 
     pub fn set_available_skills(&mut self, available_skills: Vec<AvailableSkill>) {
@@ -249,7 +249,16 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
-/// Command kinds Zed doesn't know are offered as plain commands without input.
+/// Each command type defines how its entries are invoked, and only `command` entries are
+/// invoked as `/name`. ACP forbids showing any other type as a slash command, including
+/// types Zed doesn't know. `AcpThread` keeps the complete list.
+fn slash_commands(commands: Vec<acp_v2::AvailableCommand>) -> Vec<acp_v2::AvailableCommand> {
+    commands
+        .into_iter()
+        .filter(|command| matches!(command, acp_v2::AvailableCommand::Command(_)))
+        .collect()
+}
+
 fn command_input(command: &acp_v2::AvailableCommand) -> Option<&acp_v2::AvailableCommandInput> {
     match command {
         acp_v2::AvailableCommand::Command(command) => command.input.as_ref(),
@@ -750,7 +759,13 @@ impl MessageEditor {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).text(cx).trim().is_empty()
+        self.editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .chars_at(MultiBufferOffset(0))
+            .all(char::is_whitespace)
     }
 
     pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
@@ -2411,17 +2426,17 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_commands_offer_unknown_command_kinds_without_input() {
-        let command: acp_v2::AvailableCommand = serde_json::from_value(json!({
-            "type": "_future_kind",
-            "name": "future",
-            "description": "Future command",
-            "input": {"type": "text", "hint": "not a known input"},
-        }))
+    fn test_only_command_entries_are_slash_commands() {
+        let commands: Vec<acp_v2::AvailableCommand> = serde_json::from_value(json!([
+            {"type": "command", "name": "help", "description": "Get help"},
+            {"type": "_future_kind", "name": "future", "description": "Future command",
+                "input": {"type": "text", "hint": "not a known input"}},
+            {"type": "skill", "name": "pdf", "description": "Read PDFs"},
+        ]))
         .expect("unknown command kinds parse");
-        let session_capabilities = SessionCapabilities::new(
+        let mut session_capabilities = SessionCapabilities::new(
             acp_v2::PromptCapabilities::default(),
-            vec![command],
+            commands.clone(),
             Vec::new(),
         );
 
@@ -2431,9 +2446,18 @@ mod tests {
             .unwrap_or_else(|commands: Vec<_>| {
                 panic!("expected one command, got {}", commands.len())
             });
-        assert_eq!(command.name.as_ref(), "future");
-        assert_eq!(command.description.as_ref(), "Future command");
-        assert!(!command.requires_argument);
+        assert_eq!(command.name.as_ref(), "help");
+
+        session_capabilities.set_available_commands(commands[1..].to_vec());
+        assert!(session_capabilities.completion_commands().is_empty());
+        assert!(!session_capabilities.has_slash_completions());
+        MessageEditor::validate_slash_commands(
+            "/future",
+            session_capabilities.available_commands(),
+            session_capabilities.available_skills(),
+            &AgentId::from("Zed"),
+        )
+        .expect_err("other command kinds are not invoked as slash commands");
     }
 
     #[test]

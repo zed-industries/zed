@@ -8,6 +8,8 @@ use url::Url;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(pub i32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TeamId(pub i32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VersionId(pub i32);
 #[derive(
     Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
@@ -111,6 +113,60 @@ pub struct User {
     pub id: UserId,
     pub login: String,
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Team {
+    pub id: TeamId,
+    /// For example `github:zed-industries:crates-io`.
+    pub login: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Owner {
+    User(User),
+    Team(Team),
+}
+
+/// Identifies an owner to add or remove.
+#[derive(Debug, Display, Clone, PartialEq, Eq, Hash)]
+pub enum OwnerLogin {
+    /// A crates.io user, or a GitHub user when removing owners. crates.io
+    /// rejects names that match different accounts.
+    #[display("{_0}")]
+    Username(String),
+    #[display("crates.io:{_0}")]
+    CratesIoUser(String),
+    #[display("github:{_0}")]
+    GitHubUser(String),
+    #[display("github:{organization}:{team}")]
+    GitHubTeam { organization: String, team: String },
+}
+
+/// The outcome of adding one owner, as crates.io describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnerAddition {
+    /// The user becomes an owner once they accept the invitation.
+    UserInvited {
+        username: String,
+    },
+    UserAlreadyInvited {
+        username: String,
+    },
+    /// Teams become owners immediately.
+    TeamAdded {
+        login: String,
+    },
+    /// A message this client does not recognize.
+    Other(String),
+}
+
+impl Serialize for OwnerLogin {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
