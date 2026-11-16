@@ -126,13 +126,12 @@ fn fallback_failure(failure: anyhow::Error, negotiation: anyhow::Error) -> anyho
 pub async fn connect(
     agent_id: AgentId,
     project: Entity<Project>,
-    command: impl Into<ResolvedAgentServerCommand>,
+    command: ResolvedAgentServerCommand,
     agent_server_store: WeakEntity<AgentServerStore>,
     default_mode: Option<acp_v2::SessionConfigValueId>,
     default_config_options: HashMap<String, settings::AgentConfigOptionValue>,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn acp_thread::AgentConnection>> {
-    let command = command.into();
     let negotiation_error = if cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>()) {
         match AcpV2Connection::stdio(
             agent_id.clone(),
@@ -1311,7 +1310,7 @@ done
                     connect(
                         AgentId::new("selection"),
                         project,
-                        command,
+                        ResolvedAgentServerCommand::without_installation_lease(command),
                         WeakEntity::new_invalid(),
                         None,
                         HashMap::default(),
@@ -1467,7 +1466,7 @@ done
                     connect(
                         AgentId::new("claude-acp"),
                         project,
-                        command,
+                        ResolvedAgentServerCommand::without_installation_lease(command),
                         WeakEntity::new_invalid(),
                         None,
                         HashMap::default(),

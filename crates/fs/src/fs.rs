@@ -3455,9 +3455,9 @@ impl Fs for FakeFs {
                 if let Some(inode) = state.try_lock_file(path, kind)? {
                     return Ok(self.held_file_lock(inode, kind));
                 }
-                let (released_tx, released_rx) = futures::channel::oneshot::channel();
-                state.file_lock_waiters.push(released_tx);
-                released_rx
+                let (released_sender, released_receiver) = futures::channel::oneshot::channel();
+                state.file_lock_waiters.push(released_sender);
+                released_receiver
             };
             // Whether or not a lock was released, the next attempt decides.
             released.await.ok();

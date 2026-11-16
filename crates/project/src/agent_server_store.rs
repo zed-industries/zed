@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
-use fs::{FileLock, FileLockKind, Fs, RemoveOptions};
+use fs::{FileLock, FileLockKind, Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt;
 use github_releases::AssetKind;
 use gpui::{
@@ -123,8 +123,9 @@ pub struct ResolvedAgentServerCommand {
     pub installation_lease: Option<AgentInstallationLease>,
 }
 
-impl From<AgentServerCommand> for ResolvedAgentServerCommand {
-    fn from(command: AgentServerCommand) -> Self {
+impl ResolvedAgentServerCommand {
+    /// For a command that doesn't run from an installation that Zed removes.
+    pub fn without_installation_lease(command: AgentServerCommand) -> Self {
         Self {
             command,
             installation_lease: None,
@@ -1124,6 +1125,12 @@ const INSTALLATION_LEASES_LOCK_FILE_NAME: &str = "leases.lock";
 
 const INSTALLATION_LEASE_FILE_SUFFIX: &str = ".lease";
 
+const INSTALLATION_LOCK_FILE_NAME: &str = "install.lock";
+
+// A stale version is renamed with this prefix before it is deleted, so that a version
+// is never left half-deleted under a name that still looks installed.
+const RETIRED_ARCHIVE_CACHE_DIR_PREFIX: &str = "retired_";
+
 fn installation_lease_path(version_dir: &Path) -> Result<PathBuf> {
     let mut file_name = version_dir
         .file_name()
@@ -1141,6 +1148,16 @@ fn leased_version_dir(lease_path: &Path) -> Option<PathBuf> {
     Some(lease_path.with_file_name(version_dir_name))
 }
 
+fn retired_archive_cache_dir(version_dir: &Path) -> Result<PathBuf> {
+    let mut file_name = std::ffi::OsString::from(RETIRED_ARCHIVE_CACHE_DIR_PREFIX);
+    file_name.push(
+        version_dir
+            .file_name()
+            .with_context(|| format!("{version_dir:?} has no directory name"))?,
+    );
+    Ok(version_dir.with_file_name(file_name))
+}
+
 /// Serializes taking and removing the leases in `base_dir` until the returned lock is
 /// dropped, so that a lease file is never removed between being opened and locked.
 async fn lock_installation_leases(fs: &dyn Fs, base_dir: &Path) -> Result<FileLock> {
@@ -1151,14 +1168,28 @@ async fn lock_installation_leases(fs: &dyn Fs, base_dir: &Path) -> Result<FileLo
     .await
 }
 
+#[derive(Default)]
+struct StaleArchiveCacheEntries {
+    /// Versions installed before the current one.
+    version_dirs: Vec<PathBuf>,
+    /// Lease files without a version. They are left by a failed installation, or by a
+    /// Zed build that removes versions without taking leases.
+    orphaned_lease_paths: Vec<PathBuf>,
+    /// Versions that an interrupted cleanup retired but didn't finish deleting.
+    retired_dirs: Vec<PathBuf>,
+}
+
 async fn remove_stale_versioned_archive_cache_dirs(
     fs: Arc<dyn Fs>,
     base_dir: &Path,
     current_version_dir: &Path,
 ) -> Result<()> {
-    let stale_dirs =
-        stale_versioned_archive_cache_dirs(fs.as_ref(), base_dir, current_version_dir).await?;
-    remove_unleased_archive_cache_dirs(fs.as_ref(), base_dir, stale_dirs).await
+    let fs = fs.as_ref();
+    let stale = stale_archive_cache_entries(fs, base_dir, current_version_dir).await?;
+    // These go first so that a version retired again doesn't collide with them.
+    remove_retired_archive_cache_dirs(fs, stale.retired_dirs).await;
+    remove_orphaned_installation_leases(fs, base_dir, stale.orphaned_lease_paths).await?;
+    remove_unleased_archive_cache_dirs(fs, base_dir, stale.version_dirs).await
 }
 
 async fn remove_unleased_archive_cache_dirs(
@@ -1170,43 +1201,114 @@ async fn remove_unleased_archive_cache_dirs(
         return Ok(());
     }
 
-    let _leases_lock = lock_installation_leases(fs, base_dir).await?;
-    for version_dir in version_dirs {
-        let lease_path = installation_lease_path(&version_dir)?;
-        let Some(_lease_lock) = fs
-            .try_lock_file(&lease_path, FileLockKind::Exclusive)
-            .await?
-        else {
-            log::info!("keeping {version_dir:?}: an agent is still running from it");
-            continue;
-        };
+    let mut retired_dirs = Vec::new();
+    {
+        let _leases_lock = lock_installation_leases(fs, base_dir).await?;
+        for version_dir in version_dirs {
+            // A version that can't be retired must not keep the others on disk.
+            if let Some(retired_dir) = retire_unleased_archive_cache_dir(fs, &version_dir)
+                .await
+                .log_err()
+                .flatten()
+            {
+                retired_dirs.push(retired_dir);
+            }
+        }
+    }
+    // Launching an agent waits for the lock on the leases, and deleting a version can
+    // take a while, so the versions are deleted only after the lock is released.
+    remove_retired_archive_cache_dirs(fs, retired_dirs).await;
+    Ok(())
+}
 
-        // The lease file goes first so that an interrupted removal leaves a directory
-        // that the next cleanup retries, rather than a lease file with no directory.
-        fs.remove_file(&lease_path, RemoveOptions::default())
-            .await
-            .with_context(|| format!("removing {lease_path:?}"))?;
+/// Moves `version_dir` aside unless an agent is still running from it, and returns where
+/// it was moved to. The installation leases must be locked.
+async fn retire_unleased_archive_cache_dir(
+    fs: &dyn Fs,
+    version_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    let lease_path = installation_lease_path(version_dir)?;
+    let Some(_lease_lock) = fs
+        .try_lock_file(&lease_path, FileLockKind::Exclusive)
+        .await?
+    else {
+        log::info!("keeping {version_dir:?}: an agent is still running from it");
+        return Ok(None);
+    };
+
+    let retired_dir = retired_archive_cache_dir(version_dir)?;
+    fs.rename(version_dir, &retired_dir, RenameOptions::default())
+        .await
+        .with_context(|| format!("retiring stale archive cache directory {version_dir:?}"))?;
+    // A lease file that stays behind is removed as an orphan by a later cleanup.
+    fs.remove_file(&lease_path, RemoveOptions::default())
+        .await
+        .with_context(|| format!("removing {lease_path:?}"))
+        .log_err();
+    Ok(Some(retired_dir))
+}
+
+async fn remove_retired_archive_cache_dirs(fs: &dyn Fs, retired_dirs: Vec<PathBuf>) {
+    for retired_dir in retired_dirs {
         fs.remove_dir(
-            &version_dir,
+            &retired_dir,
             RemoveOptions {
                 recursive: true,
                 ignore_if_not_exists: true,
             },
         )
         .await
-        .with_context(|| format!("removing stale archive cache directory {version_dir:?}"))?;
+        .with_context(|| format!("removing retired archive cache directory {retired_dir:?}"))
+        .log_err();
+    }
+}
+
+async fn remove_orphaned_installation_leases(
+    fs: &dyn Fs,
+    base_dir: &Path,
+    lease_paths: Vec<PathBuf>,
+) -> Result<()> {
+    if lease_paths.is_empty() {
+        return Ok(());
     }
 
+    let _leases_lock = lock_installation_leases(fs, base_dir).await?;
+    for lease_path in lease_paths {
+        remove_orphaned_installation_lease(fs, &lease_path)
+            .await
+            .log_err();
+    }
     Ok(())
 }
 
-async fn stale_versioned_archive_cache_dirs(
+/// The installation leases must be locked.
+async fn remove_orphaned_installation_lease(fs: &dyn Fs, lease_path: &Path) -> Result<()> {
+    let Some(_lease_lock) = fs
+        .try_lock_file(lease_path, FileLockKind::Exclusive)
+        .await?
+    else {
+        // The version is being installed.
+        return Ok(());
+    };
+    // The version may have been installed since the lease files were listed.
+    if let Some(version_dir) = leased_version_dir(lease_path)
+        && fs.is_dir(&version_dir).await
+    {
+        return Ok(());
+    }
+    fs.remove_file(lease_path, RemoveOptions::default())
+        .await
+        .with_context(|| format!("removing {lease_path:?}"))
+}
+
+async fn stale_archive_cache_entries(
     fs: &dyn Fs,
     base_dir: &Path,
     current_version_dir: &Path,
-) -> Result<Vec<PathBuf>> {
+) -> Result<StaleArchiveCacheEntries> {
+    let mut stale = StaleArchiveCacheEntries::default();
     let Some(current_dir_name) = current_version_dir.file_name() else {
-        return Ok(Vec::new());
+        return Ok(stale);
     };
 
     let current_mtime = fs
@@ -1221,31 +1323,34 @@ async fn stale_versioned_archive_cache_dirs(
         .await
         .with_context(|| format!("reading archive cache directory {base_dir:?}"))?;
 
-    let mut stale_dirs = Vec::new();
     while let Some(entry) = entries.next().await {
         let entry = entry.with_context(|| format!("reading entry in {base_dir:?}"))?;
         let Some(entry_name) = entry.file_name() else {
             continue;
         };
-
-        if entry_name == current_dir_name
-            || !entry_name
-                .to_string_lossy()
-                .starts_with(VERSIONED_ARCHIVE_CACHE_DIR_PREFIX)
-        {
+        if entry_name == current_dir_name {
+            continue;
+        }
+        let entry_name = entry_name.to_string_lossy();
+        let is_retired = entry_name.starts_with(RETIRED_ARCHIVE_CACHE_DIR_PREFIX);
+        if !is_retired && !entry_name.starts_with(VERSIONED_ARCHIVE_CACHE_DIR_PREFIX) {
             continue;
         }
 
         let Some(entry_metadata) = fs.metadata(&entry).await.log_err().flatten() else {
             continue;
         };
+        if is_retired {
+            if entry_metadata.is_dir {
+                stale.retired_dirs.push(entry);
+            }
+            continue;
+        }
         if !entry_metadata.is_dir {
-            // A lease file is left without its version when an installation fails, or
-            // when a Zed build that doesn't take leases removes the directory.
             if let Some(version_dir) = leased_version_dir(&entry)
                 && !fs.is_dir(&version_dir).await
             {
-                stale_dirs.push(version_dir);
+                stale.orphaned_lease_paths.push(entry);
             }
             continue;
         }
@@ -1256,10 +1361,10 @@ async fn stale_versioned_archive_cache_dirs(
             continue;
         }
 
-        stale_dirs.push(entry);
+        stale.version_dirs.push(entry);
     }
 
-    Ok(stale_dirs)
+    Ok(stale)
 }
 
 struct LocalRegistryArchiveAgent {
@@ -1363,59 +1468,73 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                         .ok();
                 }
 
-                let sha256 = if let Some(provided_sha) = &target_config.sha256 {
-                    Some(provided_sha.clone())
-                } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
-                    if let Ok(release) = github_releases::get_release_by_tag_name(
-                        &github_archive.repo_name_with_owner,
-                        &github_archive.tag,
-                        http_client.clone(),
+                // Installing replaces the version directory. If another connection or
+                // Zed process installed this version at the same time, it would remove
+                // the directory that the first agent is already running from.
+                let _installation_lock = fs
+                    .lock_file(
+                        &dir.join(INSTALLATION_LOCK_FILE_NAME),
+                        FileLockKind::Exclusive,
                     )
                     .await
+                    .log_err();
+                if !fs.is_dir(&version_dir).await {
+                    let sha256 = if let Some(provided_sha) = &target_config.sha256 {
+                        Some(provided_sha.clone())
+                    } else if let Some(github_archive) =
+                        github_release_archive_from_url(archive_url)
                     {
-                        if let Some(asset) = release
-                            .assets
-                            .iter()
-                            .find(|a| a.name == github_archive.asset_name)
+                        if let Ok(release) = github_releases::get_release_by_tag_name(
+                            &github_archive.repo_name_with_owner,
+                            &github_archive.tag,
+                            http_client.clone(),
+                        )
+                        .await
                         {
-                            asset.digest.as_ref().and_then(|d| {
-                                d.strip_prefix("sha256:")
-                                    .map(|s| s.to_string())
-                                    .or_else(|| Some(d.clone()))
-                            })
+                            if let Some(asset) = release
+                                .assets
+                                .iter()
+                                .find(|a| a.name == github_archive.asset_name)
+                            {
+                                asset.digest.as_ref().and_then(|d| {
+                                    d.strip_prefix("sha256:")
+                                        .map(|s| s.to_string())
+                                        .or_else(|| Some(d.clone()))
+                                })
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
+                    };
 
-                let executor = cx.background_executor();
-                match registry_archive_kind_for_url(archive_url)? {
-                    RegistryArchiveKind::Archive(asset_kind) => {
-                        github_releases::download_server_binary(
-                            executor,
-                            http_client.clone(),
-                            archive_url,
-                            sha256.as_deref(),
-                            &version_dir,
-                            asset_kind,
-                        )
-                        .await?;
-                    }
-                    RegistryArchiveKind::RawBinary { file_name } => {
-                        github_releases::download_server_raw_binary(
-                            executor,
-                            http_client.clone(),
-                            archive_url,
-                            sha256.as_deref(),
-                            &version_dir,
-                            &file_name,
-                        )
-                        .await?;
+                    let executor = cx.background_executor();
+                    match registry_archive_kind_for_url(archive_url)? {
+                        RegistryArchiveKind::Archive(asset_kind) => {
+                            github_releases::download_server_binary(
+                                executor,
+                                http_client.clone(),
+                                archive_url,
+                                sha256.as_deref(),
+                                &version_dir,
+                                asset_kind,
+                            )
+                            .await?;
+                        }
+                        RegistryArchiveKind::RawBinary { file_name } => {
+                            github_releases::download_server_raw_binary(
+                                executor,
+                                http_client.clone(),
+                                archive_url,
+                                sha256.as_deref(),
+                                &version_dir,
+                                &file_name,
+                            )
+                            .await?;
+                        }
                     }
                 }
             }
@@ -2487,19 +2606,61 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_archive_version_is_installed_once_by_concurrent_launches(
+        cx: &mut TestAppContext,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let download_count = Arc::new(AtomicUsize::new(0));
+        let http_client: Arc<dyn HttpClient> = FakeHttpClient::create({
+            let download_count = download_count.clone();
+            move |_| {
+                download_count.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(b"agent".to_vec()))?)
+                }
+            }
+        });
+        let mut first_agent =
+            make_registry_archive_agent(cx, installation_dir.clone(), http_client.clone(), None);
+        let mut second_agent = make_registry_archive_agent(cx, installation_dir, http_client, None);
+
+        let first = cx.update(|cx| {
+            first_agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async())
+        });
+        let second = cx.update(|cx| {
+            second_agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async())
+        });
+        let (first, second) = futures::join!(first, second);
+        cx.run_until_parked();
+
+        assert_eq!(first.unwrap().command.path, second.unwrap().command.path);
+        assert_eq!(download_count.load(Ordering::SeqCst), 1);
+    }
+
     #[gpui::test]
     async fn test_remove_stale_versioned_archive_cache_dirs(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor());
         let base_dir = Path::new("/cache");
 
-        // FakeFs increments mtime on every create, so creation order is
-        // ascending mtime: v_old_1 < v_old_2 < other < v_not_a_dir < v_current < v_newer.
+        // FakeFs increments mtime on every create, so everything in this tree is older
+        // than v_not_a_dir, v_current and v_newer, which are created after it.
         fs.insert_tree(
             base_dir,
             serde_json::json!({
                 "v_old_1": {},
                 "v_old_2": {},
+                "v_old_3": {},
                 "v_failed_install.lease": "",
+                "retired_v_interrupted": { "agent": "" },
                 "other": {},
             }),
         )
@@ -2518,6 +2679,11 @@ mod tests {
         let old_lease = AgentInstallationLease::acquire(fs.as_ref(), &base_dir.join("v_old_1"))
             .await
             .unwrap();
+        // A version that can't be deleted must not keep the ones after it on disk.
+        fs.set_remove_dir_error(
+            base_dir.join("retired_v_old_2"),
+            "directory is busy".to_string(),
+        );
 
         remove_stale_versioned_archive_cache_dirs(
             fs.clone() as Arc<dyn Fs>,
@@ -2531,6 +2697,7 @@ mod tests {
             [
                 "leases.lock",
                 "other",
+                "retired_v_old_2",
                 "v_current",
                 "v_current.lease",
                 "v_newer",
@@ -2541,6 +2708,7 @@ mod tests {
         );
 
         drop(old_lease);
+        fs.clear_remove_dir_error(base_dir.join("retired_v_old_2"));
         remove_stale_versioned_archive_cache_dirs(
             fs.clone() as Arc<dyn Fs>,
             base_dir,
@@ -2559,6 +2727,14 @@ mod tests {
                 "v_not_a_dir",
             ]
         );
+
+        // A lease file is kept if its version was installed after the leases were listed.
+        let newer_lease_path = base_dir.join("v_newer.lease");
+        fs.insert_file(&newer_lease_path, Vec::new()).await;
+        remove_orphaned_installation_leases(fs.as_ref(), base_dir, vec![newer_lease_path.clone()])
+            .await
+            .unwrap();
+        assert!(fs.is_file(&newer_lease_path).await);
     }
 
     async fn entry_names(fs: &dyn Fs, dir: &Path) -> Vec<String> {

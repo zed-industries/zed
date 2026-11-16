@@ -383,7 +383,7 @@ pub async fn connect(
     let conn = AcpConnection::stdio(
         agent_id,
         project,
-        command.clone(),
+        command,
         agent_server_store,
         default_mode,
         default_config_options,
@@ -555,7 +555,7 @@ impl AcpConnection {
     pub async fn stdio(
         agent_id: AgentId,
         project: Entity<Project>,
-        command: impl Into<ResolvedAgentServerCommand>,
+        command: ResolvedAgentServerCommand,
         agent_server_store: WeakEntity<AgentServerStore>,
         default_mode: Option<acp_v2::SessionConfigValueId>,
         default_config_options: HashMap<String, AgentConfigOptionValue>,
@@ -564,7 +564,7 @@ impl AcpConnection {
         let ResolvedAgentServerCommand {
             command,
             installation_lease,
-        } = command.into();
+        } = command;
         let original_command = command.clone();
         let transport::StdioProcess {
             child,
@@ -7253,7 +7253,7 @@ mod tests {
         let startup = AcpConnection::stdio(
             AgentId::new("test-agent"),
             project,
-            command,
+            ResolvedAgentServerCommand::without_installation_lease(command),
             agent_server_store,
             None,
             HashMap::default(),
@@ -7366,7 +7366,7 @@ exec cat >/dev/null
                 let connection = AcpConnection::stdio(
                     AgentId::new("subagent-agent"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     agent_server_store.clone(),
                     None,
                     HashMap::default(),
@@ -7529,7 +7529,7 @@ exit 7
                 AcpConnection::stdio(
                     AgentId::new("exiting-agent"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     agent_server_store,
                     None,
                     HashMap::default(),
