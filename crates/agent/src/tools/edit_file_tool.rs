@@ -3231,8 +3231,13 @@ mod tests {
             "path": "root/safe/file.txt",
             "edits": [{"old_text": "original", "new_text": "pwned"}]
         }));
-        task.await.ok();
+        let result = task.await;
         cx.run_until_parked();
+
+        assert!(
+            result.is_err_and(|output| output.to_string().contains("not saved")),
+            "the tool should report that the edit was not saved"
+        );
 
         let mut authorization_count = 0;
         while let Ok(event) = receiver.try_recv() {
@@ -3241,11 +3246,13 @@ mod tests {
             }
         }
         let external = fs.load(path!("/outside/file.txt").as_ref()).await.unwrap();
-        assert_eq!(
-            (external.as_str(), authorization_count),
-            ("original external", 0),
-            "external file was overwritten without authorization"
-        );
+        assert_eq!(external, "original external");
+        let moved = fs
+            .load(path!("/root/safe_moved/file.txt").as_ref())
+            .await
+            .unwrap();
+        assert_eq!(moved, "original project");
+        assert_eq!(authorization_count, 0);
     }
 
     async fn setup_test_with_fs(

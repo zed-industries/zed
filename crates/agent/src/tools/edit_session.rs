@@ -186,7 +186,7 @@ impl EditSessionContext {
         }
     }
 
-    async fn ensure_buffer_saved(&self, buffer: &Entity<Buffer>, cx: &mut AsyncApp) {
+    async fn format_buffer(&self, buffer: &Entity<Buffer>, cx: &mut AsyncApp) {
         let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
             let settings = language_settings::LanguageSettings::for_buffer(buffer, cx);
             settings.format_on_save != FormatOnSave::Off
@@ -206,7 +206,9 @@ impl EditSessionContext {
                 .await
                 .log_err();
         }
+    }
 
+    async fn save_buffer(&self, buffer: &Entity<Buffer>, cx: &mut AsyncApp) {
         self.project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
             .await
@@ -283,11 +285,12 @@ pub(crate) async fn run_session(
         EditSessionResult::Completed(session) => {
             if let Err(error) = session.save(cx).await {
                 let error = error.to_string();
+                let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
                 event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
                 return Err(EditSessionOutput::Error {
                     error,
                     input_path: Some(session.input_path),
-                    diff: String::new(),
+                    diff,
                 });
             }
             let (new_text, diff) = session.compute_new_text_and_diff(cx).await;
@@ -302,9 +305,14 @@ pub(crate) async fn run_session(
             error,
             session: Some(session),
         } => {
-            session.save(cx).await.log_err();
+            let save_result = session.save(cx).await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
-            if diff.is_empty() {
+            let save_failed = save_result.is_err();
+            let error = match save_result {
+                Ok(()) => error,
+                Err(save_error) => format!("{error}\n{save_error}"),
+            };
+            if diff.is_empty() || save_failed {
                 event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             }
             Err(EditSessionOutput::Error {
@@ -796,23 +804,28 @@ impl EditSession {
     /// resolves to the location that was authorized (e.g. a directory in its
     /// path was replaced by a symlink while the edit was streaming).
     async fn save(&self, cx: &mut AsyncApp) -> Result<()> {
+        // Formatting can take a while, so it has to finish before the path is
+        // checked to keep the check as close to the write as possible.
+        self.context.format_buffer(&self.buffer, cx).await;
+
         let save_path = self.buffer.read_with(cx, |buffer, cx| {
             let file = buffer.file()?.as_local()?;
             Some(file.abs_path(cx))
         });
         if let Some(save_path) = save_path {
             let fs = cx.update(|cx| self.context.project.read(cx).fs().clone());
-            if canonicalize_with_ancestors(&save_path, fs.as_ref()).await
-                != self.authorized_canonical_path
+            let canonical_save_path = canonicalize_with_ancestors(&save_path, fs.as_ref()).await;
+            if canonical_save_path.is_none()
+                || canonical_save_path != self.authorized_canonical_path
                 || leads_through_dangling_symlink(&save_path, fs.as_ref()).await
             {
                 bail!(
-                    "{} changed on disk while it was being edited, so the edit was not saved.",
+                    "{} changed on disk while it was being edited, so the edit was applied to the buffer but not saved.",
                     self.input_path.display()
                 );
             }
         }
-        self.context.ensure_buffer_saved(&self.buffer, cx).await;
+        self.context.save_buffer(&self.buffer, cx).await;
         Ok(())
     }
 

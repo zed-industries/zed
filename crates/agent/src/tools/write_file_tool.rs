@@ -1419,8 +1419,18 @@ mod tests {
         cx.run_until_parked();
 
         sender.send_full(json!({ "path": "root/safe/settings.json", "content": "pwned" }));
-        task.await.ok();
+        let result = task.await;
         cx.run_until_parked();
+
+        assert!(
+            result.is_err_and(|output| output.to_string().contains("not saved")),
+            "the tool should report that the edit was not saved"
+        );
+        assert!(
+            !fs.is_file(path!("/root/safe_moved/settings.json").as_ref())
+                .await,
+            "the renamed directory should be left untouched"
+        );
 
         let mut authorization_count = 0;
         while let Ok(event) = receiver.try_recv() {
@@ -1439,11 +1449,8 @@ mod tests {
             .load(path!("/outside/settings.json").as_ref())
             .await
             .unwrap();
-        assert_eq!(
-            (external.as_str(), authorization_count),
-            ("original external", 0),
-            "external file was overwritten without authorization"
-        );
+        assert_eq!(external, "original external");
+        assert_eq!(authorization_count, 0);
     }
 
     #[gpui::test]
@@ -1454,11 +1461,8 @@ mod tests {
             .load(path!("/root/.zed/settings.json").as_ref())
             .await
             .unwrap();
-        assert_eq!(
-            (settings.as_str(), authorization_count),
-            ("original settings", 0),
-            "local settings were overwritten without authorization"
-        );
+        assert_eq!(settings, "original settings");
+        assert_eq!(authorization_count, 0);
     }
 
     async fn setup_test_with_fs(
