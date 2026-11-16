@@ -842,6 +842,11 @@ pub struct TurnFields {
     pub reported_activity_generation: Option<u64>,
 }
 
+enum QueuedMessageDispatchSource {
+    Automatic,
+    Manual,
+}
+
 enum ThreadControlsPosition {
     /// Below a finalized assistant message.
     TurnEnd {
@@ -2216,8 +2221,7 @@ impl ThreadView {
                 return;
             }
             if let Some(entry) = self.message_queue.try_fast_track(is_generating) {
-                self.message_editor.focus_handle(cx).focus(window, cx);
-                self.dispatch_queued_entry(entry, window, cx);
+                self.dispatch_queued_entry(entry, QueuedMessageDispatchSource::Manual, window, cx);
             }
             return;
         }
@@ -3103,7 +3107,7 @@ impl ThreadView {
             .message_queue
             .on_generation_stopped(is_first_editor_focused)
         {
-            self.dispatch_queued_entry(entry, window, cx);
+            self.dispatch_queued_entry(entry, QueuedMessageDispatchSource::Automatic, window, cx);
             true
         } else {
             false
@@ -3121,8 +3125,7 @@ impl ThreadView {
         }
         let is_generating = self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
         if let Some(entry) = self.message_queue.send_now(id, is_generating) {
-            self.message_editor.focus_handle(cx).focus(window, cx);
-            self.dispatch_queued_entry(entry, window, cx);
+            self.dispatch_queued_entry(entry, QueuedMessageDispatchSource::Manual, window, cx);
         }
     }
 
@@ -3132,12 +3135,20 @@ impl ThreadView {
     fn dispatch_queued_entry(
         &mut self,
         entry: QueueEntry,
+        source: QueuedMessageDispatchSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.sync_queue_flag_to_native_thread(cx);
 
         cx.emit(AcpThreadViewEvent::Interacted);
+
+        match source {
+            QueuedMessageDispatchSource::Automatic => {}
+            QueuedMessageDispatchSource::Manual => {
+                self.message_editor.focus_handle(cx).focus(window, cx);
+            }
+        }
 
         // A queued message can itself be a built-in command (e.g. the user typed
         // `/compact` while a turn was generating). Detect that so we run it as a
