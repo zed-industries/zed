@@ -1336,6 +1336,29 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_replace_without_g_after_first_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {
+                "x
+                ˇaaaa"
+            },
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": s / a / b");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {
+                "x
+                ˇbaaa"
+            },
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
     async fn test_replace_gdefault(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 

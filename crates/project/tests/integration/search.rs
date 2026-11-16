@@ -192,6 +192,33 @@ async fn test_multiline_regex(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_one_match_per_line_with_subrange(cx: &mut gpui::TestAppContext) {
+    let one_match_per_line = true;
+    let subrange = 2..5;
+
+    let search_query = SearchQuery::regex(
+        "a",
+        false,
+        false,
+        false,
+        one_match_per_line,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .expect("Should be able to create a regex SearchQuery");
+
+    let text = Rope::from("x\naaa");
+    let snapshot = cx
+        .update(|app| Buffer::build_snapshot(text, None, None, None, app))
+        .await;
+
+    let results = search_query.search(&snapshot, Some(subrange)).await;
+    assert_eq!(results, vec![0..1]);
+}
+
+#[gpui::test]
 async fn regex_with_eol_detects_lines() {
     let re = SearchQuery::regex(
         "Bool$",
