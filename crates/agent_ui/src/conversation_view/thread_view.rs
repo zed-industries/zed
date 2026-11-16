@@ -1,7 +1,10 @@
 use crate::{
     CycleResponseSpeed, DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     conversation_view::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent},
-    entry_view_state::TERMINAL_CONTENT_TOP_PADDING,
+    entry_view_state::{
+        TERMINAL_CONTENT_TOP_PADDING, ToolActivityGroup, ToolActivitySummary,
+        entry_needs_user_input, tool_activity_group,
+    },
     open_abs_path_at_point, project_path_for_file_link,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
@@ -758,6 +761,7 @@ pub struct ThreadView {
     pub last_token_limit_telemetry: Option<acp_thread::TokenUsageRatio>,
     thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
+    collapse_tool_activity: bool,
     pub session_capabilities: SharedSessionCapabilities,
     pub expanded_tool_call_raw_inputs: HashSet<acp_v2::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp_v2::ToolCallId>,
@@ -1050,6 +1054,15 @@ impl ThreadView {
 
         subscriptions.push(cx.observe(&thread, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&conversation, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe_global::<SettingsStore>(|this, cx| {
+            let collapse_tool_activity = AgentSettings::get_global(cx).collapse_tool_activity;
+            if this.collapse_tool_activity != collapse_tool_activity {
+                this.collapse_tool_activity = collapse_tool_activity;
+                this.list_state
+                    .remeasure_items(0..this.list_state.item_count());
+                cx.notify();
+            }
+        }));
         subscriptions.push(cx.subscribe(&thread, |this, _, event, cx| {
             if matches!(
                 event,
@@ -1301,6 +1314,7 @@ impl ThreadView {
             model_selector,
             profile_selector,
             list_state,
+            collapse_tool_activity: AgentSettings::get_global(cx).collapse_tool_activity,
             session_capabilities,
             resumed_without_history,
             _subscriptions: subscriptions,
@@ -7638,7 +7652,13 @@ impl ThreadView {
 
         let mut assistant_message_is_blank = false;
 
+        let tool_activity = self.collapsed_tool_activity_group(entry_ix, cx);
+        let is_hidden_tool_activity = tool_activity.as_ref().is_some_and(|(_, is_expanded)| {
+            !is_expanded && !entry_needs_user_input(entry, self.thread.read(cx))
+        });
+
         let primary = match &entry {
+            _ if is_hidden_tool_activity => Empty.into_any(),
             AgentThreadEntry::UserMessage(message) => {
                 if message.content.source_blocks().is_empty() {
                     return Empty.into_any_element();
@@ -7964,6 +7984,15 @@ impl ThreadView {
                     session_message.into_any()
                 }
             }
+        };
+
+        let primary = match tool_activity {
+            Some((group, is_expanded)) if group.range.start == entry_ix => v_flex()
+                .w_full()
+                .child(self.render_tool_activity_summary(&group, is_expanded, window, cx))
+                .child(primary)
+                .into_any_element(),
+            _ => primary,
         };
 
         let is_subagent_output = self.is_subagent()
@@ -8989,6 +9018,145 @@ impl ThreadView {
                         ))
                 }),
         )
+    }
+
+    fn collapsed_tool_activity_group(
+        &self,
+        entry_ix: usize,
+        cx: &App,
+    ) -> Option<(ToolActivityGroup, bool)> {
+        if !self.collapse_tool_activity {
+            return None;
+        }
+        let group = tool_activity_group(self.thread.read(cx).entries(), entry_ix)?;
+        let is_expanded = self
+            .entry_view_state
+            .read(cx)
+            .is_tool_activity_group_expanded(&group.id);
+        Some((group, is_expanded))
+    }
+
+    pub(crate) fn remeasure_tool_activity_group(&self, entry_ix: usize, cx: &App) {
+        if !self.collapse_tool_activity {
+            return;
+        }
+        // The summary row at the start of the group shows totals of the whole group,
+        // so a change to any entry changes the height and content of the first row.
+        let entries = self.thread.read(cx).entries();
+        let start = tool_activity_group(entries, entry_ix)
+            .or_else(|| tool_activity_group(entries, entry_ix.checked_sub(1)?))
+            .map_or(entry_ix.saturating_sub(1), |group| group.range.start);
+        let end = (entry_ix + 1).min(self.list_state.item_count());
+        if start < end {
+            self.list_state.remeasure_items(start..end);
+        }
+    }
+
+    fn toggle_tool_activity_group(
+        &mut self,
+        group: &ToolActivityGroup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.entry_view_state.update(cx, |entry_view_state, _| {
+            entry_view_state.toggle_tool_activity_group_expansion(&group.id);
+        });
+        self.list_state.remeasure_items(group.range.clone());
+        self.refresh_thread_search(window, cx);
+        cx.notify();
+    }
+
+    fn render_tool_activity_summary(
+        &self,
+        group: &ToolActivityGroup,
+        is_expanded: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let ToolActivitySummary {
+            tool_count,
+            failed_count,
+            is_running,
+        } = ToolActivitySummary::new(
+            self.thread
+                .read(cx)
+                .entries()
+                .get(group.range.clone())
+                .unwrap_or_default(),
+            cx,
+        );
+
+        let title = match (is_running, tool_count) {
+            (true, 1) => "Using 1 tool".to_string(),
+            (true, count) => format!("Using {count} tools"),
+            (false, 1) => "Used 1 tool".to_string(),
+            (false, count) => format!("Used {count} tools"),
+        };
+
+        let header_id = SharedString::from(format!("tool-activity-header-{}", group.range.start));
+        let card_header_id =
+            SharedString::from(format!("tool-activity-group-{}", group.range.start));
+        let font_size = self.tool_name_font_size();
+
+        let icon = if is_running {
+            SpinnerLabel::new()
+                .size(LabelSize::Small)
+                .into_any_element()
+        } else if failed_count > 0 {
+            Icon::new(IconName::XCircle)
+                .size(IconSize::Small)
+                .color(Color::Error)
+                .into_any_element()
+        } else {
+            Icon::new(IconName::ToolHammer)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        };
+
+        let toggle_group = group.clone();
+        let disclosure_group = group.clone();
+
+        h_flex()
+            .id(header_id)
+            .group(&card_header_id)
+            .px_5()
+            .py_1()
+            .w_full()
+            .justify_between()
+            .cursor_pointer()
+            .child(
+                h_flex()
+                    .h(window.line_height() - px(2.))
+                    .gap_1p5()
+                    .overflow_hidden()
+                    .child(h_flex().w_4().justify_center().child(icon))
+                    .child(
+                        Label::new(title)
+                            .size(LabelSize::Custom(font_size))
+                            .color(Color::Muted),
+                    )
+                    .when(failed_count > 0, |this| {
+                        this.child(
+                            Label::new(format!("· {failed_count} failed"))
+                                .size(LabelSize::Custom(font_size))
+                                .color(Color::Error),
+                        )
+                    }),
+            )
+            .child(
+                Disclosure::new(("tool-activity-disclosure", group.range.start), is_expanded)
+                    .opened_icon(IconName::ChevronUp)
+                    .closed_icon(IconName::ChevronDown)
+                    .visible_on_hover(&card_header_id)
+                    .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                        this.toggle_tool_activity_group(&disclosure_group, window, cx);
+                    })),
+            )
+            .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                this.toggle_tool_activity_group(&toggle_group, window, cx);
+            }))
+            .into_any_element()
     }
 
     fn render_thinking_block(

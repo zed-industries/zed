@@ -52,7 +52,7 @@ use crate::{
     AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow, LoadThreadFromClipboard,
     NewTerminalThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, RenameSelectedThread,
     ResetFastModeWarnings, ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata,
-    ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
+    ShowThreadMetadata, ToggleCollapseToolActivity, ToggleNewThreadMenu, ToggleOptionsMenu,
     conversation_view::{
         AcpThreadViewEvent, RootThreadUpdated, ThreadView, reset_fast_mode_warnings,
     },
@@ -560,6 +560,20 @@ pub fn init(cx: &mut App) {
                     if let Some(thread) = thread {
                         AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                     }
+                })
+                .register_action(|workspace, _: &ToggleCollapseToolActivity, _window, cx| {
+                    let collapse_tool_activity =
+                        !AgentSettings::get_global(cx).collapse_tool_activity;
+                    update_settings_file(
+                        workspace.app_state().fs.clone(),
+                        cx,
+                        move |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .collapse_tool_activity = Some(collapse_tool_activity);
+                        },
+                    );
                 })
                 .register_action(|workspace, _: &ToggleOptionsMenu, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
@@ -5853,6 +5867,19 @@ impl AgentPanel {
                                         }
                                     });
                                 }
+
+                                menu = menu.toggleable_entry(
+                                    "Collapse Tool Activity",
+                                    AgentSettings::get_global(cx).collapse_tool_activity,
+                                    IconPosition::Start,
+                                    Some(ToggleCollapseToolActivity.boxed_clone()),
+                                    |window, cx| {
+                                        window.dispatch_action(
+                                            ToggleCollapseToolActivity.boxed_clone(),
+                                            cx,
+                                        );
+                                    },
+                                );
 
                                 menu = menu.separator();
                             }
