@@ -2703,7 +2703,6 @@ impl Sidebar {
                             {
                                 let this = this.clone();
                                 let key = key.clone();
-                                let workspace = workspace.clone();
                                 move |window, cx| {
                                     this.update(cx, |sidebar, cx| {
                                         sidebar.set_group_expanded(&key, true, cx);
@@ -3061,13 +3060,12 @@ impl Sidebar {
                                 let activate_weak_menu = weak_menu.clone();
                                 let close_weak_menu = weak_menu.clone();
                                 let activate_workspace = workspace.clone();
-                                let close_workspace = workspace.clone();
 
                                 menu = menu.custom_entry(
                                     move |_window, _cx| {
                                         let close_multi_workspace = close_multi_workspace.clone();
                                         let close_weak_menu = close_weak_menu.clone();
-                                        let close_workspace = close_workspace.clone();
+                                        let close_workspace = workspace.clone();
                                         let row_group_name = SharedString::from(format!(
                                             "workspace-menu-row-{workspace_index}"
                                         ));
@@ -6081,9 +6079,9 @@ impl Sidebar {
         if let Some(thread_switcher) = &self.thread_switcher {
             thread_switcher.update(cx, |switcher, cx| {
                 if select_last {
-                    switcher.select_last(cx);
+                    switcher.select_previous(&SelectPrevious, window, cx);
                 } else {
-                    switcher.cycle_selection(cx);
+                    switcher.select_next(&SelectNext, window, cx);
                 }
             });
             return;

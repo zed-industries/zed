@@ -402,6 +402,71 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_write_always_confirm_in_project(cx: &mut TestAppContext) {
+        let (write_tool, _project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"secrets": {"key.pem": "old"}})).await;
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                WriteFileTool::NAME.into(),
+                agent_settings::ToolRules {
+                    always_confirm: vec![
+                        agent_settings::CompiledRegex::new("^root/secrets/", false).unwrap(),
+                    ],
+                    ..Default::default()
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "root/secrets/key.pem".into(),
+                    content: "new".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        event_rx.expect_update_fields().await;
+        let auth = event_rx.expect_authorization().await;
+        assert_eq!(
+            auth.tool_call.title.value().map(String::as_str),
+            Some("Edit `root/secrets/key.pem`")
+        );
+
+        cx.run_until_parked();
+        assert_eq!(
+            fs.load(path!("/root/secrets/key.pem").as_ref())
+                .await
+                .unwrap(),
+            "old",
+            "the file must not be written before the prompt is answered"
+        );
+
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let EditSessionOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new");
+        assert_eq!(
+            fs.load(path!("/root/secrets/key.pem").as_ref())
+                .await
+                .unwrap(),
+            "new"
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_path_completeness_heuristic(cx: &mut TestAppContext) {
         let (write_tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "hello world"})).await;

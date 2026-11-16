@@ -511,6 +511,8 @@ pub struct GenerateContentResponse {
 pub struct GenerateContentCandidate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
+    // Blocked candidates can omit content entirely.
+    #[serde(default)]
     pub content: Content,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
@@ -528,6 +530,15 @@ pub struct Content {
     #[serde(default)]
     pub parts: Vec<Part>,
     pub role: Role,
+}
+
+impl Default for Content {
+    fn default() -> Self {
+        Self {
+            parts: Vec::new(),
+            role: Role::Model,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -768,8 +779,11 @@ pub enum HarmProbability {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SafetyRating {
-    pub category: HarmCategory,
+    /// Preserve provider categories beyond the configurable safety settings.
+    pub category: String,
     pub probability: HarmProbability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -5245,7 +5245,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn v2_plan_sdk_markdown_file_and_removal(cx: &mut gpui::TestAppContext) {
+    async fn v2_plan_sdk_markdown_path_and_removal(cx: &mut gpui::TestAppContext) {
         use serde_json::json;
 
         let harness = V2SessionHarness::new(cx).await;
@@ -5253,25 +5253,31 @@ mod tests {
             json!({"sessionUpdate": "plan_update",
                 "plan": {"type": "markdown", "planId": "design", "content": "# Design\n- step"}}),
             json!({"sessionUpdate": "plan_update",
-                "plan": {"type": "file", "planId": "doc", "uri": "file:///tmp/plan.md"}}),
+                "plan": {"type": "markdown", "planId": "doc", "content": "# Doc",
+                    "path": util::path!("/tmp/plan.md")}}),
         ] {
             harness.send(update, None);
         }
         harness.drain(cx).await;
         harness.thread.read_with(cx, |thread, cx| {
-            let Some(acp_thread::PlanContent::Markdown(markdown)) = thread
+            let Some(acp_thread::PlanContent::Markdown { markdown, path }) = thread
                 .plan_by_id(&"design".into())
                 .map(|plan| &plan.content)
             else {
                 panic!("markdown plan");
             };
             assert_eq!(markdown.read(cx).source(), "# Design\n- step");
-            let Some(acp_thread::PlanContent::File { uri }) =
+            assert_eq!(path, &None);
+            let Some(acp_thread::PlanContent::Markdown { markdown, path }) =
                 thread.plan().map(|plan| &plan.content)
             else {
-                panic!("file plan is visible");
+                panic!("the plan with a file is visible");
             };
-            assert_eq!(uri.as_ref(), "file:///tmp/plan.md");
+            assert_eq!(markdown.read(cx).source(), "# Doc");
+            assert_eq!(
+                path.as_deref(),
+                Some(std::path::Path::new(util::path!("/tmp/plan.md")))
+            );
         });
 
         harness.send(
@@ -5284,7 +5290,7 @@ mod tests {
             assert!(
                 matches!(
                     thread.plan().map(|plan| &plan.content),
-                    Some(acp_thread::PlanContent::Markdown(_))
+                    Some(acp_thread::PlanContent::Markdown { .. })
                 ),
                 "removing the visible plan falls back to the remaining one"
             );
@@ -5350,17 +5356,12 @@ mod tests {
 
         let harness = V2SessionHarness::new(cx).await;
         let plan_id = acp_v2::PlanId::new("plan");
-        let is_file = |content: &PlanContent| matches!(content, PlanContent::File { .. });
-        let is_markdown = |content: &PlanContent| matches!(content, PlanContent::Markdown(_));
+        let is_markdown = |content: &PlanContent| matches!(content, PlanContent::Markdown { .. });
         let is_empty_items = |content: &PlanContent| matches!(content, PlanContent::Items(entries) if entries.is_empty());
         for (replacement, expected) in [
             (
-                json!({"type": "file", "planId": "plan", "uri": "file:///tmp/plan.md"}),
-                &is_file as &dyn Fn(&PlanContent) -> bool,
-            ),
-            (
                 json!({"type": "markdown", "planId": "plan", "content": "# Plan"}),
-                &is_markdown,
+                &is_markdown as &dyn Fn(&PlanContent) -> bool,
             ),
             // An unknown type still replaces the plan, so the stale entries stop showing.
             (

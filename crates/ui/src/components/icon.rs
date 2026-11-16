@@ -3,11 +3,12 @@ mod icon_decoration;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use decorated_icon::*;
 use gpui::{
     AnimationElement, AnyElement, Hsla, ImgResourceLoader, IntoElement, Rems, Resource,
-    Transformation, img, svg,
+    TimedTransformation, Transformation, img, svg,
 };
 pub use icon_decoration::*;
 pub use icons::*;
@@ -151,6 +152,7 @@ pub struct Icon {
     group_hover_color: Option<Color>,
     size: Rems,
     transformation: Transformation,
+    rotation_period: Option<Duration>,
 }
 
 impl Icon {
@@ -161,6 +163,7 @@ impl Icon {
             group_hover_color: None,
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
+            rotation_period: None,
         }
     }
 
@@ -180,6 +183,7 @@ impl Icon {
             group_hover_color: None,
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
+            rotation_period: None,
         }
     }
 
@@ -190,6 +194,7 @@ impl Icon {
             group_hover_color: None,
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
+            rotation_period: None,
         }
     }
 
@@ -232,6 +237,12 @@ impl Transformable for Icon {
         self.transformation = transformation;
         self
     }
+
+    /// Has no effect on icons loaded from raster image files.
+    fn animate_rotation(mut self, period: Duration) -> Self {
+        self.rotation_period = Some(period);
+        self
+    }
 }
 
 impl RenderOnce for Icon {
@@ -251,6 +262,12 @@ impl RenderOnce for Icon {
         let group_hover_color = self.group_hover_color.map(|color| color.color(cx));
 
         svg.with_transformation(self.transformation)
+            .when_some(self.rotation_period, |svg, period| {
+                svg.with_timed_transformation(TimedTransformation::rotation(
+                    period,
+                    self.transformation,
+                ))
+            })
             .size(self.size)
             .flex_none()
             .text_color(color)
