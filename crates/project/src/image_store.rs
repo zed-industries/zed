@@ -9,7 +9,7 @@ use gpui::{
     App, Asset, AssetLogger, AsyncApp, Context, Entity, EventEmitter, ImageCacheError, ImageSource,
     Img, RenderImage, Subscription, Task, WeakEntity, prelude::*,
 };
-pub use image::ImageFormat;
+pub use image::ImageFormat as RasterImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _, TypedEnvelope, proto};
@@ -56,6 +56,12 @@ pub enum ImageStoreEvent {
 }
 
 impl EventEmitter<ImageStoreEvent> for ImageStore {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    Raster(RasterImageFormat),
+    Svg,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ImageMetadata {
@@ -150,7 +156,20 @@ pub fn project_image_source(project: WeakEntity<Project>, path: ProjectPath) -> 
 
 impl ImageItem {
     pub fn compute_metadata_from_bytes(image_bytes: &[u8]) -> Result<ImageMetadata> {
-        let image_format = image::guess_format(image_bytes)?;
+        let image_format = match image::guess_format(image_bytes) {
+            Ok(format) => format,
+            Err(_) => {
+                let svg = usvg::Tree::from_data(image_bytes, &usvg::Options::default())?;
+                let size = svg.size().to_int_size();
+                return Ok(ImageMetadata {
+                    width: size.width(),
+                    height: size.height(),
+                    file_size: image_bytes.len() as u64,
+                    format: ImageFormat::Svg,
+                    colors: None,
+                });
+            }
+        };
 
         let mut image_reader = ImageReader::new(std::io::Cursor::new(image_bytes));
         image_reader.set_format(image_format);
@@ -162,7 +181,7 @@ impl ImageItem {
             width,
             height,
             file_size: image_bytes.len() as u64,
-            format: image_format,
+            format: ImageFormat::Raster(image_format),
             colors: ImageColorInfo::from_color_type(image.color()),
         })
     }
@@ -932,7 +951,16 @@ impl LocalImageStore {
 }
 
 fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
-    let format = image::guess_format(&content)?;
+    let format = match image::guess_format(&content) {
+        Ok(format) => format,
+        Err(_) => {
+            usvg::Tree::from_data(&content, &usvg::Options::default())?;
+            return Ok(Arc::new(gpui::Image::from_bytes(
+                gpui::ImageFormat::Svg,
+                content,
+            )));
+        }
+    };
 
     Ok(Arc::new(gpui::Image::from_bytes(
         match format {

@@ -173,9 +173,14 @@ This ensures the debugger doesn't disrupt your workflow when stepping through co
 
 ## Settings
 
+In the Settings Editor, open **Panels → Debugger Panel** to configure the panel's
+dock position, default width, and default height.
+
 The settings for the debugger are grouped under the `debugger` key in `settings.json`:
 
 - `dock`: Determines the position of the debug panel in the UI.
+- `default_width`: Default width in pixels when docked to the left or right (default: `300`).
+- `default_height`: Default height in pixels when docked to the bottom (default: `300`).
 - `stepping_granularity`: Determines the stepping granularity.
 - `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
 - `button`: Whether to show the debug button in the status bar.

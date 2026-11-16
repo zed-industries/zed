@@ -35,6 +35,7 @@ use crate::provider::x_ai_subscribed::XAiSubscribedProvider;
 pub use crate::settings::*;
 
 pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
+    language_model::set_credentials_read_gate::<SettingsStore>(ai_disabled, cx);
     let credentials_provider = client.credentials_provider();
     let registry = LanguageModelRegistry::global(cx);
     registry.update(cx, |registry, cx| {
@@ -137,6 +138,16 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         }
     })
     .detach();
+}
+
+fn ai_disabled(cx: &App) -> bool {
+    cx.try_global::<SettingsStore>().is_some_and(|store| {
+        store
+            .merged_settings()
+            .project
+            .disable_ai
+            .is_some_and(|disabled| disabled.0)
+    })
 }
 
 #[derive(Default, PartialEq, Eq)]

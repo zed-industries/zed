@@ -92,10 +92,18 @@ impl State {
             .spawn({
                 let credentials_provider = credentials_provider.clone();
                 async move |this, cx| {
-                    let result = credentials_provider
-                        .read_credentials(CREDENTIALS_KEY, cx)
-                        .await;
+                    let result = language_model::read_credentials(
+                        credentials_provider.as_ref(),
+                        CREDENTIALS_KEY,
+                        cx,
+                    )
+                    .await;
                     this.update(cx, |state, cx| {
+                        state.load_task = None;
+                        cx.notify();
+                        if state.auth_generation != 0 {
+                            return;
+                        }
                         match result {
                             Ok(Some((_, bytes))) => {
                                 match serde_json::from_slice::<SuperGrokCredentials>(&bytes) {
@@ -116,8 +124,6 @@ impl State {
                                 log::error!("Failed to load SuperGrok credentials: {error:#}");
                             }
                         }
-                        state.load_task = None;
-                        cx.notify();
                     })?;
                     Ok::<(), Arc<anyhow::Error>>(())
                 }
@@ -422,7 +428,10 @@ fn stream_open_ai_completion(
 ) -> BoxFuture<
     'static,
     Result<
-        futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+        futures::stream::BoxStream<
+            'static,
+            Result<ResponseStreamEvent, LanguageModelCompletionError>,
+        >,
         LanguageModelCompletionError,
     >,
 > {
@@ -1321,7 +1330,7 @@ mod tests {
                 .status(200)
                 .body(http_client::AsyncBody::default())?)
         });
-        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        let state = cx.new(|cx| State::new(http.clone(), creds_provider.clone(), cx));
         let load_task = cx
             .read(|cx| state.read(cx).load_task())
             .expect("constructor should start the credentials load");
@@ -1332,6 +1341,25 @@ mod tests {
         cx.read(|cx| {
             let state = state.read(cx);
             assert!(state.is_authenticated());
+            assert!(state.load_task().is_none());
+        });
+
+        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        state.update(cx, |state, _| state.auth_generation += 1);
+        let load_task = cx
+            .read(|cx| state.read(cx).load_task())
+            .expect("constructor should start the credentials load");
+        cx.run_until_parked();
+        load_task.await.expect("stale load should complete");
+        cx.read(|cx| {
+            let state = state.read(cx);
+            assert_eq!(
+                state
+                    .credentials
+                    .as_ref()
+                    .map(|creds| creds.access_token.as_str()),
+                None
+            );
             assert!(state.load_task().is_none());
         });
     }

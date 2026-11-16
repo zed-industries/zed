@@ -5,8 +5,11 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
+use github_releases::{
+    AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
+    latest_github_release,
+};
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
-use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 use language::language_settings::LanguageSettings;
 use language::{
     Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol,
@@ -39,7 +42,6 @@ use util::fs::{make_file_executable, remove_matching};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
@@ -573,7 +575,8 @@ impl LspInstaller for TyLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,
@@ -2663,7 +2666,8 @@ impl LspInstaller for RuffLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,
@@ -2965,7 +2969,8 @@ impl LspInstaller for PyreflyLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,

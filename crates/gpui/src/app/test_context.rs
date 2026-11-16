@@ -1,12 +1,13 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DisplayId, DrawPhase,
-    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
-    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, Decorations, DisplayId,
+    DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global,
+    InputEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result,
+    SharedString, Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode,
+    window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -477,6 +478,16 @@ impl TestAppContext {
             .simulate_visibility_change(visibility);
     }
 
+    /// Simulates the platform changing how the window is decorated.
+    pub fn simulate_window_decorations_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        decorations: Decorations,
+    ) {
+        self.test_window(window_handle)
+            .simulate_decorations_change(decorations);
+    }
+
     /// Simulates connecting a display.
     pub fn simulate_display_added(
         &self,
@@ -757,7 +768,7 @@ impl<T: 'static> Entity<T> {
         Event: Send + Clone + 'static,
         T: EventEmitter<Event>,
     {
-        let (tx, mut rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         let mut tx = Some(tx);
         let subscription = self.update(cx, |_, cx| {
             cx.subscribe(self, move |_, _, event, _| {
@@ -1413,7 +1424,7 @@ mod tests {
             }]
         );
 
-        cx.update(|cx| cx.dismiss_system_notification("thread-1"));
+        cx.update(|cx| cx.dismiss_system_notification("thread-1").detach());
         assert!(cx.delivered_system_notifications().is_empty());
         assert_eq!(cx.dismissed_system_notifications(), ["thread-1"]);
     }
@@ -1488,7 +1499,7 @@ mod tests {
                 actions: Vec::new(),
             });
             cx.on_system_notification_response(|response, cx| {
-                cx.dismiss_system_notification(&response.tag);
+                cx.dismiss_system_notification(&response.tag).detach();
             });
         });
 
