@@ -10,7 +10,7 @@ use std::fmt;
 use std::net::IpAddr;
 use std::ops::RangeInclusive;
 use std::os::unix::ffi::OsStrExt as _;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Components, Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -716,11 +716,15 @@ impl WirePolicy {
     }
 
     pub fn fs_access(&self, path: &Path, permission: Permission) -> WireAccess {
+        let mut buffer = [&[][..]; 32];
+        let Some(components) = matching_components(path, &mut buffer) else {
+            return WireAccess::Deny;
+        };
         self.fs
             .iter()
             .rev()
             .filter_map(|rule| Some((rule, rule.sets(permission)?)))
-            .find(|(rule, _)| rule.path.matches(path))
+            .find(|(rule, _)| rule.path.matches_components(components.clone()))
             .map_or(WireAccess::Deny, |(_, access)| access)
     }
 
@@ -804,6 +808,64 @@ enum Segment {
     AnyDepth,
 }
 
+impl Segment {
+    fn matches(&self, component: &[u8]) -> bool {
+        match self {
+            Segment::Literal(name) => name == component,
+            Segment::Wildcard(pattern) => wildcard_matches(pattern, component),
+            Segment::AnyDepth => true,
+        }
+    }
+}
+
+#[derive(Clone)]
+enum MatchingComponents<'a> {
+    Cached(std::iter::Copied<std::slice::Iter<'a, &'a [u8]>>),
+    Streaming(Components<'a>),
+}
+
+impl<'a> Iterator for MatchingComponents<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Cached(components) => components.next(),
+            Self::Streaming(components) => components.find_map(|component| match component {
+                Component::Normal(name) => Some(name.as_bytes()),
+                _ => None,
+            }),
+        }
+    }
+}
+
+/// Validate the whole path before a pattern can return early: `/a` must not
+/// match `/a/../secret`. Cache typical paths on the stack so each rule needn't
+/// split them again. Deep paths use a borrowed iterator, not a heap allocation
+/// or a depth limit.
+fn matching_components<'a>(
+    path: &'a Path,
+    buffer: &'a mut [&'a [u8]; 32],
+) -> Option<MatchingComponents<'a>> {
+    let mut length = 0;
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => {
+                if let Some(slot) = buffer.get_mut(length) {
+                    *slot = name.as_bytes();
+                }
+                length += 1;
+            }
+            _ => return None,
+        }
+    }
+    Some(if length <= buffer.len() {
+        MatchingComponents::Cached(buffer[..length].iter().copied())
+    } else {
+        MatchingComponents::Streaming(path.components())
+    })
+}
+
 /// Where matching stands after consuming some leading path components.
 #[derive(Debug, PartialEq, Eq)]
 enum MatchState {
@@ -861,7 +923,43 @@ impl PathPattern {
     /// Whether `path` (absolute and normalized) is matched by this pattern or
     /// lies beneath a match.
     pub fn matches(&self, path: &Path) -> bool {
-        self.state_after(path) == MatchState::Matched
+        let mut buffer = [&[][..]; 32];
+        matching_components(path, &mut buffer)
+            .is_some_and(|components| self.matches_components(components))
+    }
+
+    fn matches_components(&self, mut components: MatchingComponents<'_>) -> bool {
+        let mut position = 0;
+        // Only the latest `**` needs a bookmark. Earlier ones can stop as
+        // soon as their suffix reaches this one: extending an earlier `**`
+        // can't match anything the later one couldn't consume instead.
+        let mut restart = None;
+        loop {
+            if position == self.segments.len() {
+                // A matched pattern also covers every descendant.
+                return true;
+            }
+            if matches!(self.segments.get(position), Some(Segment::AnyDepth)) {
+                position += 1;
+                restart = Some((position, components.clone()));
+                continue;
+            }
+            match components.next() {
+                Some(component) if self.segments[position].matches(component) => {
+                    position += 1;
+                }
+                _ => {
+                    let Some((after_star, saved)) = &mut restart else {
+                        return false;
+                    };
+                    if saved.next().is_none() {
+                        return false;
+                    }
+                    position = *after_star;
+                    components = saved.clone();
+                }
+            }
+        }
     }
 
     fn state_after(&self, path: &Path) -> MatchState {
@@ -939,12 +1037,29 @@ impl From<PathPattern> for String {
 }
 
 fn wildcard_matches(pattern: &[u8], text: &[u8]) -> bool {
-    match pattern.split_first() {
-        None => text.is_empty(),
-        Some((b'*', rest)) => (0..=text.len()).any(|skip| wildcard_matches(rest, &text[skip..])),
-        Some((b'?', rest)) => !text.is_empty() && wildcard_matches(rest, &text[1..]),
-        Some((byte, rest)) => text.first() == Some(byte) && wildcard_matches(rest, &text[1..]),
+    let (mut position, mut consumed) = (0, 0);
+    let mut restart = None;
+    while consumed < text.len() {
+        match pattern.get(position) {
+            Some(b'*') => {
+                position += 1;
+                restart = Some((position, consumed));
+            }
+            Some(byte) if *byte == b'?' || *byte == text[consumed] => {
+                position += 1;
+                consumed += 1;
+            }
+            _ => {
+                let Some((after_star, saved)) = &mut restart else {
+                    return false;
+                };
+                *saved += 1;
+                position = *after_star;
+                consumed = *saved;
+            }
+        }
     }
+    pattern[position..].iter().all(|byte| *byte == b'*')
 }
 
 #[cfg(test)]
@@ -953,12 +1068,230 @@ mod tests {
     use Access::{Allow, Deny};
     use Permission::*;
 
+    struct CountingAllocator;
+
+    thread_local! {
+        static ALLOCATIONS: std::cell::Cell<Option<usize>> = const {
+            std::cell::Cell::new(None)
+        };
+    }
+
+    // Count only the calling test thread, not other tests running alongside it.
+    #[global_allocator]
+    static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+    unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+            ALLOCATIONS.with(|count| count.set(count.get().map(|count| count + 1)));
+            // SAFETY: forward the allocator contract unchanged.
+            unsafe { std::alloc::System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+            ALLOCATIONS.with(|count| count.set(count.get().map(|count| count + 1)));
+            // SAFETY: forward the allocator contract unchanged.
+            unsafe { std::alloc::System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn realloc(
+            &self,
+            pointer: *mut u8,
+            layout: std::alloc::Layout,
+            size: usize,
+        ) -> *mut u8 {
+            ALLOCATIONS.with(|count| count.set(count.get().map(|count| count + 1)));
+            // SAFETY: forward the allocator contract unchanged.
+            unsafe { std::alloc::System.realloc(pointer, layout, size) }
+        }
+
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: std::alloc::Layout) {
+            // SAFETY: forward the allocator contract unchanged.
+            unsafe { std::alloc::System.dealloc(pointer, layout) }
+        }
+    }
+
     fn pattern(source: &str) -> PathPattern {
         PathPattern::new(source).unwrap()
     }
 
     fn rule(source: &str) -> FsRule {
         FsRule::new(source).unwrap()
+    }
+
+    #[test]
+    fn test_allocation_free_matcher_equivalence() {
+        fn combinations(parts: &[&str], depth: usize) -> Vec<String> {
+            let mut all = vec![String::new()];
+            let mut level = vec![String::new()];
+            for _ in 0..depth {
+                level = level
+                    .iter()
+                    .flat_map(|prefix| parts.iter().map(move |part| format!("{prefix}/{part}")))
+                    .collect();
+                all.extend(level.iter().cloned());
+            }
+            all
+        }
+        let patterns = combinations(&["a", "b", "*a", "?", "**"], 4);
+        let mut paths = combinations(&["a", "b", "aa", "ab"], 4);
+        paths.extend(["a", "./a", "/a/../b", "/a/./b", "//a//b/", "/", ""].map(str::to_owned));
+        let patterns: Vec<_> = patterns
+            .iter()
+            .map(|source| pattern(&format!("/{source}")))
+            .collect();
+        for pattern in &patterns {
+            for path in &paths {
+                let path = Path::new(path);
+                assert_eq!(
+                    pattern.matches(path),
+                    pattern.state_after(path) == MatchState::Matched,
+                    "{}: {path:?}",
+                    pattern.as_str(),
+                );
+            }
+        }
+        for patterns in patterns.chunks(9) {
+            let policy = wire(
+                patterns
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| {
+                        let access = match index % 3 {
+                            0 => Allow,
+                            1 => Deny,
+                            _ => Access::Ask(Handler::new(|_, _| {})),
+                        };
+                        let mut rule = FsRule::new(path.as_str()).unwrap();
+                        match index % 4 {
+                            0 => rule.read = Some(access),
+                            1 => rule.write = Some(access),
+                            2 => rule.connect = Some(access),
+                            _ => {
+                                rule.read = Some(access.clone());
+                                rule.write = Some(access.clone());
+                                rule.connect = Some(access);
+                            }
+                        }
+                        rule
+                    })
+                    .collect(),
+            );
+            for path in &paths {
+                let path = Path::new(path);
+                for permission in Permission::ALL {
+                    let expected = policy
+                        .fs
+                        .iter()
+                        .rev()
+                        .filter_map(|rule| Some((rule, rule.sets(permission)?)))
+                        .find(|(rule, _)| rule.path.state_after(path) == MatchState::Matched)
+                        .map_or(WireAccess::Deny, |(_, access)| access);
+                    assert_eq!(policy.fs_access(path, permission), expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_long_patterns_and_non_utf8_paths() {
+        for length in [31, 32, 33, 63, 64, 65, 128, 256] {
+            let prefix = "/a".repeat(length);
+            let source = format!("{prefix}/**/b?*/**/tail");
+            let pattern = pattern(&source);
+            for suffix in ["/b0/tail", "/c/b12/c/tail/child", "/b/tail", "/wrong"] {
+                let path = format!("{prefix}{suffix}");
+                assert_eq!(
+                    pattern.matches(Path::new(&path)),
+                    pattern.state_after(Path::new(&path)) == MatchState::Matched,
+                );
+            }
+            let path = format!("{prefix}/b0/tail");
+            assert!(pattern.matches(Path::new(&path)));
+        }
+        let path = Path::new(std::ffi::OsStr::from_bytes(b"/a/\xff/tail"));
+        assert!(pattern("/a/?/tail").matches(path));
+        assert!(pattern("/**/tail").matches(path));
+        assert!(!pattern("/a/a*/tail").matches(path));
+        let prefix = "/a".repeat(33);
+        for source in ["/**/a/*b/**/tail", "/**/a/**/b*/tail", "/**/tail"] {
+            let pattern = pattern(source);
+            for suffix in ["/ab/c/tail", "/a/b/tail", "/tail", "/wrong"] {
+                let path = format!("{prefix}{suffix}");
+                assert_eq!(
+                    pattern.matches(Path::new(&path)),
+                    pattern.state_after(Path::new(&path)) == MatchState::Matched,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_policy_queries_do_not_allocate() {
+        use std::hint::black_box;
+
+        let prefix = "/a".repeat(256);
+        let policy = wire(vec![
+            rule("/").read(Allow),
+            rule("/**/*.env").read(Deny),
+            rule("/proj/**/socket?").connect(Allow),
+            rule(&format!("{prefix}/**/b?*/**/tail")).write(Allow),
+        ]);
+        let paths = [
+            "/proj/.env".to_owned(),
+            "/proj/sub/socket1".to_owned(),
+            "/other/file".to_owned(),
+            format!("{prefix}/b0/tail"),
+        ];
+        ALLOCATIONS.with(|count| count.set(Some(0)));
+        for path in &paths {
+            let path = black_box(Path::new(path));
+            for rule in &policy.fs {
+                black_box(rule.path.matches(path));
+            }
+            for permission in Permission::ALL {
+                black_box(policy.fs_access(path, permission));
+            }
+        }
+        let allocations = ALLOCATIONS.with(|count| count.replace(None)).unwrap();
+        assert_eq!(allocations, 0);
+    }
+
+    #[test]
+    fn test_component_glob_equivalence() {
+        fn reference(pattern: &[u8], text: &[u8]) -> bool {
+            match pattern.split_first() {
+                None => text.is_empty(),
+                Some((b'*', rest)) => (0..=text.len()).any(|skip| reference(rest, &text[skip..])),
+                Some((b'?', rest)) => !text.is_empty() && reference(rest, &text[1..]),
+                Some((byte, rest)) => text.first() == Some(byte) && reference(rest, &text[1..]),
+            }
+        }
+        for encoded in 0..4096usize {
+            let mut value = encoded;
+            let mut pattern = Vec::new();
+            for _ in 0..6 {
+                pattern.push(b"ab*?"[value % 4]);
+                value /= 4;
+            }
+            for length in 0..=5 {
+                for encoded in 0..1usize << length {
+                    let text: Vec<_> = (0..length)
+                        .map(|position| b"ab"[(encoded >> position) & 1])
+                        .collect();
+                    assert_eq!(
+                        wildcard_matches(&pattern, &text),
+                        reference(&pattern, &text),
+                        "{pattern:?}: {text:?}",
+                    );
+                }
+            }
+        }
+        assert!(wildcard_matches(b"*", b""));
+        assert!(!wildcard_matches(b"?", b""));
+        // No recursive backtracking or call-stack limit.
+        let mut pattern = b"*a".repeat(1024);
+        pattern.push(b'b');
+        assert!(!wildcard_matches(&pattern, &vec![b'a'; 2048]));
     }
 
     /// Convert as `Sandbox` does, numbering handlers in order of appearance.

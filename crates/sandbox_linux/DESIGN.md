@@ -59,7 +59,11 @@ There is one major tradeoff - performance. This design imposes an overhead on al
 
 ### Performance
 
-Every trapped syscall evaluates the policy before it can complete, so rule matching is on the critical path even though the round trip to the supervisor (~10µs) dominates. Two representations, each optimized for its job:
+Every trapped syscall evaluates the policy before it can complete, so rule matching is on the critical path even though the round trip to the supervisor (~10µs) dominates.
+
+The current matcher scans rules newest first using the segments already parsed into `PathPattern`. It validates the path once and caches up to 32 components on the stack; deeper paths use a borrowed streaming iterator without imposing a limit. Both `**` matching and component globs use a bookmark at the latest star rather than allocating state sets or recursively backtracking. Read, write and connect use the same matcher. The residual-state calculation used to check directory moves still uses state sets, since it needs to compare unmatched suffixes, not just decide whether a path matches.
+
+The following is a possible future representation for large policies, not the current implementation. Benchmarks favored an allocation-free linear scan for ordinary policy sizes; a trie mainly helped with thousands of mostly literal rules.
 
 **Source form: `PathPattern`.** Parsed once when a policy is built. One buffer holding the pattern text, plus a small-vector of packed segment descriptors:
 
