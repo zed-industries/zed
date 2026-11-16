@@ -520,7 +520,7 @@ mod numbered_code_block_tests {
 ///
 /// Default (no entry in the map) means the last dropdown choice is selected,
 /// which is typically "Only this time".
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) enum PermissionSelection {
     /// A specific choice from the dropdown (e.g., "Always for terminal", "Only this time").
     /// The index corresponds to the position in the `choices` list from `PermissionOptions`.

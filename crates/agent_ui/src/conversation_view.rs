@@ -14380,153 +14380,51 @@ pub(crate) mod tests {
         });
     }
 
-    /// Regression test for #55523: a `ToggleCommandPattern` action for an
-    /// unselected pipeline pattern must only check that one pattern, not all of
-    /// them. The original behavior pre-checked every pattern on first toggle,
-    /// which silently allow-listed commands the user never explicitly approved.
-    ///
-    /// The action handler and the dropdown's click handler both delegate to
-    /// `Conversation::toggle_permission_pattern`. The rendered dropdown is
-    /// exercised by `select_embedded_child_permission`.
     #[gpui::test]
-    async fn test_toggle_command_pattern_first_click_checks_only_clicked_pattern(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_toggle_command_pattern_toggles_only_clicked_pattern(cx: &mut TestAppContext) {
         init_test(cx);
-
-        let tool_call_id = acp_v1::ToolCallId::new("pattern-toggle-test-1");
-        let tool_call =
-            acp_v1::ToolCall::new(tool_call_id.clone(), "Run `ls && git status && git log`")
-                .kind(acp_v1::ToolKind::Edit);
-
-        // Pipeline command — produces `DropdownWithPatterns` with one pattern
-        // per distinct sub-command.
-        let permission_options = ToolPermissionContext::new(
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let (thread, conversation) = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| {
+                (view.thread.clone(), view.conversation.clone())
+            });
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        // A chained command gets one pattern row per sub-command (`ls`, `git status`, `git log`).
+        let options = ToolPermissionContext::new(
             TerminalTool::NAME,
-            vec!["ls && git status && git log".to_string()],
+            vec!["ls && git status && git log".into()],
         )
         .build_permission_options();
+        let (request_id, _response) =
+            request_test_tool_authorization_with_options(&thread, "pipeline", options, cx);
 
-        let PermissionOptions::DropdownWithPatterns { patterns, .. } = &permission_options else {
-            panic!("Expected DropdownWithPatterns for pipeline command");
+        let toggle = |pattern_index, cx: &mut VisualTestContext| {
+            conversation.update(cx, |conversation, cx| {
+                conversation.toggle_permission_pattern(&session_id, request_id, pattern_index, cx);
+                match conversation.permission_selections.get(&request_id) {
+                    Some(thread_view::PermissionSelection::SelectedPatterns(checked)) => {
+                        let mut checked = checked.clone();
+                        checked.sort();
+                        Some(checked)
+                    }
+                    Some(thread_view::PermissionSelection::Choice(_)) => {
+                        panic!("toggling a pattern must not select a dropdown choice")
+                    }
+                    None => None,
+                }
+            })
         };
-        assert!(
-            patterns.len() >= 2,
-            "Pipeline should produce multiple patterns to make this test meaningful"
-        );
-
-        let connection =
-            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-                tool_call_id.clone(),
-                permission_options.clone(),
-            )]));
-        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(tool_call)]);
-
-        let (thread_view, cx) = setup_conversation_view(StubAgentServer::new(connection), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
-
-        cx.update(|_window, cx| {
-            AgentSettings::override_global(
-                AgentSettings {
-                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-                    ..AgentSettings::get_global(cx).clone()
-                },
-                cx,
-            );
-        });
-
-        let message_editor = message_editor(&thread_view, cx);
-        message_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("Inspect the repo", window, cx);
-        });
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
-        cx.run_until_parked();
-
-        // First click: toggle pattern index 0 (e.g., "Always for `ls` commands").
-        thread_view.update_in(cx, |_, window, cx| {
-            window.dispatch_action(
-                crate::ToggleCommandPattern {
-                    tool_call_id: "pattern-toggle-test-1".to_string(),
-                    request_id: None,
-                    session_id: None,
-                    pattern_index: 0,
-                }
-                .boxed_clone(),
-                cx,
-            );
-        });
-        cx.run_until_parked();
-
-        // Only the clicked pattern (0) is checked. Any other patterns must remain
-        // unchecked — the user did not approve them.
-        thread_view.read_with(cx, |thread_view, cx| {
-            let state = thread_view.active_thread().unwrap();
-            let state = state.read(cx);
-            let request_id = state
-                .thread
-                .read(cx)
-                .permission_request_for_tool(&tool_call_id)
-                .expect("permission request exists")
-                .id;
-            let selected = state
-                .conversation
-                .read(cx)
-                .permission_selections
-                .get(&request_id);
-            match selected {
-                Some(thread_view::PermissionSelection::SelectedPatterns(checked)) => {
-                    assert_eq!(
-                        checked,
-                        &vec![0],
-                        "First click must check only the clicked pattern, not all patterns"
-                    );
-                }
-                other => panic!("Expected SelectedPatterns([0]), got {other:?}"),
-            }
-        });
-
-        // Second click on a different pattern: that pattern is added to the checked set.
-        thread_view.update_in(cx, |_, window, cx| {
-            window.dispatch_action(
-                crate::ToggleCommandPattern {
-                    tool_call_id: "pattern-toggle-test-1".to_string(),
-                    request_id: None,
-                    session_id: None,
-                    pattern_index: 1,
-                }
-                .boxed_clone(),
-                cx,
-            );
-        });
-        cx.run_until_parked();
-
-        thread_view.read_with(cx, |thread_view, cx| {
-            let state = thread_view.active_thread().unwrap();
-            let state = state.read(cx);
-            let request_id = state
-                .thread
-                .read(cx)
-                .permission_request_for_tool(&tool_call_id)
-                .expect("permission request exists")
-                .id;
-            let selected = state
-                .conversation
-                .read(cx)
-                .permission_selections
-                .get(&request_id);
-            match selected {
-                Some(thread_view::PermissionSelection::SelectedPatterns(checked)) => {
-                    let mut sorted = checked.clone();
-                    sorted.sort();
-                    assert_eq!(
-                        sorted,
-                        vec![0, 1],
-                        "Second click must add the clicked pattern to the checked set"
-                    );
-                }
-                other => panic!("Expected SelectedPatterns([0, 1]), got {other:?}"),
-            }
-        });
+        // An index with no matching row must not enter pattern mode.
+        assert_eq!(toggle(99, cx), None);
+        // The first click on a row other than the first checks only that row.
+        assert_eq!(toggle(1, cx), Some(vec![1]));
+        // Later clicks add only their own row...
+        assert_eq!(toggle(0, cx), Some(vec![0, 1]));
+        // ...and remove only their own row.
+        assert_eq!(toggle(1, cx), Some(vec![0]));
+        // Unchecking the last row goes back to the default selection.
+        assert_eq!(toggle(0, cx), None);
     }
 
     #[gpui::test]
