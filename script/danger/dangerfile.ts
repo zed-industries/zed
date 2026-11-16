@@ -130,14 +130,20 @@ if (readmeModified) {
   });
 }
 
-if (danger.git.deleted_files.includes("AGENTS.md")) {
+// GitHub reports a symlink replaced by a regular file as a removal plus an addition.
+const agentsMdDeleted =
+  danger.git.deleted_files.includes("AGENTS.md") && !danger.git.created_files.includes("AGENTS.md");
+const agentsMdChanged =
+  danger.git.modified_files.includes("AGENTS.md") || danger.git.created_files.includes("AGENTS.md");
+
+if (agentsMdDeleted) {
   fail(
     [
       "This PR deletes `AGENTS.md`, which contains the mandatory agent self-review rule (the `> [!IMPORTANT]` README marker rule).",
       "If the deletion is intentional, move that rule to another rules file in the same PR.",
     ].join("\n"),
   );
-} else if (danger.git.modified_files.includes("AGENTS.md")) {
+} else if (agentsMdChanged) {
   schedule(async () => {
     const rulesDiff = await danger.git.diffForFile("AGENTS.md");
     if (rulesDiff && rulesDiff.removed.includes(SELF_REVIEW_MARKER) && !rulesDiff.added.includes(SELF_REVIEW_MARKER)) {
