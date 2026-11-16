@@ -387,21 +387,23 @@ impl Conversation {
         pattern_index: usize,
         cx: &mut Context<Self>,
     ) {
-        if self
+        let Some(PermissionOptions::DropdownWithPatterns { patterns, .. }) = self
             .permission_request(session_id, request_id, cx)
             .and_then(PermissionRequest::legacy_options)
-            .is_none()
-        {
+        else {
+            return;
+        };
+        if pattern_index >= patterns.len() {
             return;
         }
         match self.permission_selections.get_mut(&request_id) {
             Some(selection @ thread_view::PermissionSelection::SelectedPatterns(_)) => {
                 selection.toggle_pattern(pattern_index);
+                if !selection.has_any_checked_patterns() {
+                    self.permission_selections.remove(&request_id);
+                }
             }
             _ => {
-                // First click: activate "Select options" with only the clicked pattern checked.
-                // Checking the rest is left to the user — checking one pattern must not
-                // implicitly grant the others.
                 self.permission_selections.insert(
                     request_id,
                     thread_view::PermissionSelection::SelectedPatterns(vec![pattern_index]),

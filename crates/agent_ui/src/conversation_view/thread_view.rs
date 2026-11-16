@@ -549,7 +549,7 @@ impl PermissionSelection {
         }
     }
 
-    fn has_any_checked_patterns(&self) -> bool {
+    pub(super) fn has_any_checked_patterns(&self) -> bool {
         match self {
             Self::SelectedPatterns(checked) => !checked.is_empty(),
             _ => false,
