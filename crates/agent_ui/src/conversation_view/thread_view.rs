@@ -1229,7 +1229,7 @@ impl ThreadView {
                 this._draft_resolve_task.take();
                 return;
             }
-            let is_empty = editor.read(cx).text(cx).is_empty();
+            let is_empty = editor.read(cx).editor().read(cx).is_empty(cx);
             let draft_contents_task = if is_empty {
                 None
             } else {
