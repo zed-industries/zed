@@ -1248,6 +1248,33 @@ fn load_commit_files(
         .buffered(max_concurrent_loads)
 }
 
+/// Runs [`load_commit_files`] to completion, dropping the loaded files, so
+/// benchmarks can measure it without it being public.
+#[cfg(feature = "test-support")]
+pub async fn bench_load_commit_files(
+    files: Vec<CommitFile>,
+    repository: Entity<Repository>,
+    project: Entity<Project>,
+    commit_sha: Arc<str>,
+    language_registry: Arc<LanguageRegistry>,
+    max_concurrent_loads: usize,
+    cx: &AsyncWindowContext,
+) -> Result<()> {
+    let mut loads = load_commit_files(
+        files,
+        repository,
+        project,
+        commit_sha,
+        language_registry,
+        max_concurrent_loads,
+        cx,
+    );
+    while let Some(loaded) = loads.next().await {
+        loaded?;
+    }
+    Ok(())
+}
+
 /// Builds the buffer and diff for one file of a commit. Most of the time goes into
 /// parsing the old text, so callers run several of these concurrently.
 async fn load_commit_file(
