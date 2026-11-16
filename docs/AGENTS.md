@@ -31,12 +31,14 @@
 ### Section Patterns
 
 For how-to content:
+
 1. Brief context (1-2 sentences max)
 2. Steps or instructions
 3. Example (code block or screenshot reference)
 4. Tips or gotchas (if any)
 
 For reference content:
+
 1. What it is (definition)
 2. How to access/configure it
 3. Options/parameters table
@@ -65,6 +67,7 @@ brew install --cask zed
 ```
 
 Not:
+
 ```
 brew install --cask zed
 ```
@@ -74,11 +77,13 @@ For single inline commands in prose, backticks are fine: `zed .`
 ### Tables
 
 Use tables for:
+
 - Keybinding comparisons between editors
 - Settings mappings (e.g., VS Code → Zed)
 - Feature comparisons with clear columns
 
 Format:
+
 ```
 | Action | Shortcut | Notes |
 | --- | --- | --- |
@@ -88,6 +93,7 @@ Format:
 ### Tips and Notes
 
 Use blockquote format with bold label:
+
 ```
 > **Tip:** Practical advice that helps bridge gaps or saves time.
 ```
@@ -117,18 +123,19 @@ Reserve tips for genuinely useful information, not padding.
 
 ## Terminology
 
-| Use | Instead of |
-| --- | --- |
-| folder | directory (in user-facing text) |
-| project | workspace (Zed doesn't have workspaces) |
-| Settings Editor | settings UI, preferences |
-| command palette | command bar, action search |
-| language server | LSP (spell out first use, then LSP is fine) |
-| panel | tool window, sidebar (be specific: "Project Panel," "Terminal Panel") |
+| Use             | Instead of                                                            |
+| --------------- | --------------------------------------------------------------------- |
+| folder          | directory (in user-facing text)                                       |
+| project         | workspace (Zed doesn't have workspaces)                               |
+| Settings Editor | settings UI, preferences                                              |
+| command palette | command bar, action search                                            |
+| language server | LSP (spell out first use, then LSP is fine)                           |
+| panel           | tool window, sidebar (be specific: "Project Panel," "Terminal Panel") |
 
 ## Examples
 
 ### Good: Direct and actionable
+
 ```
 To format on save, open the Settings Editor (`Cmd+,`) and search for `format_on_save`. Set it to `on`.
 
@@ -139,11 +146,13 @@ Or add this to your settings.json:
 ```
 
 ### Bad: Wordy and promotional
+
 ```
 Zed provides a powerful and seamless formatting experience. Simply navigate to the settings and you'll find the format_on_save option which enables Zed's incredible auto-formatting capabilities.
 ```
 
 ### Good: Honest about limitations
+
 ```
 Zed doesn't index your project like IntelliJ does. You open a folder and start working immediately—no waiting. The trade-off: cross-project analysis relies on language servers, which may not go as deep.
 
@@ -153,6 +162,7 @@ Zed doesn't index your project like IntelliJ does. You open a folder and start w
 ```
 
 ### Bad: Defensive or dismissive
+
 ```
 While some users might miss indexing, Zed's approach is actually better because it's faster.
 ```
