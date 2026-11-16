@@ -3,16 +3,16 @@
     "corgi-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1794574964,
-        "narHash": "sha256-7gH/NPJfa0wsUzGtio1D/8MbAdMJ2O83iCD2LrNmo8c=",
+        "lastModified": 1794843493,
+        "narHash": "sha256-7u2xDExDg1qdR+OEDH70kU9gn7P/3rFfT1suN1oJb1A=",
         "owner": "ConradIrwin",
         "repo": "corgi",
-        "rev": "0757f1e32f32a3fc3efe7b4e14d2489b6c995e7a",
+        "rev": "968df8d21c5ce23e3c4094faac6c0a0bb529358c",
         "type": "github"
       },
       "original": {
         "owner": "ConradIrwin",
-        "ref": "v0.1.106",
+        "ref": "v0.1.107",
         "repo": "corgi",
         "type": "github"
       }
