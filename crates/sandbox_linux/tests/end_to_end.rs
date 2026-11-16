@@ -455,6 +455,7 @@ mod imp {
         check_stop(&sandbox, &proj, &mut failures);
         drop(sandbox);
         check_network(&context, &work, &mut failures);
+        check_early_connect(&context, &work, &mut failures);
 
         drop(context);
         if !failures.is_empty() {
@@ -501,7 +502,10 @@ def main(command, *args):
     if command == "tcp-error":
         host, port, expected = args[0], int(args[1]), getattr(errno, args[2])
         try:
-            socket.create_connection((host, port), timeout=10)
+            # Without a timeout, so the socket stays blocking: Python makes
+            # sockets with timeouts non-blocking, and the sandbox reports
+            # failures to connect those as resets.
+            socket.create_connection((host, port))
         except OSError as error:
             print(error, file=sys.stderr)
             return error.errno == expected
@@ -516,6 +520,19 @@ def main(command, *args):
             writer.write(b"ping")
             return await reader.readexactly(4) == b"ping"
         return asyncio.run(run())
+    if command == "asyncio-refused":
+        # Check the two stages independently: a refused connect must not
+        # satisfy this test in place of the later reset.
+        import select
+        stream = socket.socket()
+        stream.setblocking(False)
+        assert stream.connect_ex((args[0], int(args[1]))) == 0
+        assert select.select([stream], [], [], 5)[0]
+        try:
+            stream.recv(1)
+        except ConnectionResetError:
+            return True
+        return False
     if command == "local-server":
         server = socket.create_server(("127.0.0.1", 0))
         client = socket.create_connection(server.getsockname(), timeout=5)
@@ -631,6 +648,112 @@ sys.exit(0 if main(*sys.argv[1:]) else 1)
         port
     }
 
+    /// Hold the rebinding prompt open to deterministically stall the host
+    /// connection. The app must get its local connection (and run another
+    /// event-loop task) before we approve the host leg. No network latency
+    /// assumptions or privileged netem setup are needed.
+    fn check_early_connect(context: &SandboxContext, work: &Path, failures: &mut Vec<String>) {
+        use std::io::{BufRead as _, BufReader};
+        use std::sync::mpsc;
+
+        let port = tcp_echo_server();
+        for cancel in [false, true] {
+            let (prompts, pending) = mpsc::channel();
+            let handler = Handler::new(move |request, responder| {
+                assert!(request.items.iter().all(|item| matches!(
+                    item,
+                    RequestedAccess::Net {
+                        host: NetHost::Ip(_),
+                        ..
+                    }
+                )));
+                if let Err(error) = prompts.send(responder) {
+                    error.0.respond(Decision::deny());
+                }
+            });
+            let sandbox = context
+                .create_sandbox(SandboxPolicy {
+                    fs: vec![FsRule::new("/").unwrap().read(Allow)],
+                    net: vec![
+                        NetRule::new(
+                            NetTarget::Domain(DomainPattern::new("localhost").unwrap()),
+                            Allow,
+                        )
+                        .tcp_only(),
+                        NetRule::new(NetTarget::Loopback, Access::Ask(handler)).tcp_only(),
+                        NetRule::new(NetTarget::Ip("::1".parse().unwrap()), Allow).tcp_only(),
+                    ],
+                })
+                .unwrap();
+            // Use the sandbox's raw DNS query helper: libc resolves
+            // localhost from /etc/hosts, which would bypass fake-IP mapping.
+            let dns_helpers = NET_CLIENT
+                .split("def main(command, *args):")
+                .next()
+                .unwrap();
+            let script = format!(
+                r#"python3 - <<'PY'
+{dns_helpers}
+code, address = dns('localhost')
+assert code == 0
+async def main():
+    reader, writer = await asyncio.open_connection(address, {port})
+    await asyncio.sleep(0)
+    print('connected and responsive', flush=True)
+    writer.write(b'ping')
+    assert await reader.readexactly(4) == b'ping'
+    writer.close()
+    await writer.wait_closed()
+asyncio.run(main())
+PY"#
+            );
+            let mut prepared = sandbox.prepare(&command(&script, work)).unwrap();
+            prepared
+                .command_mut()
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let mut helper = prepared.spawn().unwrap();
+            let stdout = helper.stdout.take().unwrap();
+            let (lines, output) = mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines() {
+                    if lines.send(line).is_err() {
+                        break;
+                    }
+                }
+            });
+            let responder = pending.recv_timeout(Duration::from_secs(5)).unwrap();
+            let responsive = output
+                .recv_timeout(Duration::from_secs(5))
+                .is_ok_and(|line| line.is_ok_and(|line| line == "connected and responsive"));
+            if cancel {
+                // The prompt belongs to the background host connection,
+                // not a still-blocked seccomp notification.
+                unsafe { libc::kill(helper.id() as i32, libc::SIGTERM) };
+                let status = helper.wait().unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !responder.is_cancelled() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                host_check(
+                    "early connect is cancelled when its execution ends",
+                    responsive && status.code() == Some(143) && responder.is_cancelled(),
+                    failures,
+                );
+                responder.respond(Decision::deny());
+            } else {
+                responder.respond(Decision::allow());
+                let output = helper.wait_with_output().unwrap();
+                host_check(
+                    "event loop progresses before the host connection is approved",
+                    responsive && output.status.success(),
+                    failures,
+                );
+            }
+            reader.join().unwrap();
+        }
+    }
+
     /// Connections to echo servers on the host's loopback, by address and by
     /// name, through rules, a prompt, and DNS.
     fn check_network(context: &SandboxContext, work: &Path, failures: &mut Vec<String>) {
@@ -640,6 +763,11 @@ sys.exit(0 if main(*sys.argv[1:]) else 1)
         let unlisted = tcp_echo_server();
         let udp_allowed = udp_echo_server();
         let udp_unlisted = udp_echo_server();
+        // Allowed, but nothing listens there.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("finding a free port")
+            .port();
         let sockets = work.join("sockets");
         std::fs::create_dir_all(&sockets).unwrap();
         let allowed_socket = sockets.join("allowed.sock");
@@ -678,7 +806,7 @@ sys.exit(0 if main(*sys.argv[1:]) else 1)
             ],
             net: vec![
                 NetRule::new(host_loopback(), Allow)
-                    .ports(PortSet::single(allowed))
+                    .ports(ports(&[allowed, closed]))
                     .tcp_only(),
                 NetRule::new(host_loopback(), Allow)
                     .ports(PortSet::single(udp_allowed))
@@ -714,6 +842,16 @@ sys.exit(0 if main(*sys.argv[1:]) else 1)
             case(
                 "non-blocking tcp to an allowed host port",
                 client(&format!("asyncio 127.0.0.1 {allowed}")),
+                true,
+            ),
+            case(
+                "blocking tcp to an allowed closed port is refused",
+                client(&format!("tcp-error 127.0.0.1 {closed} ECONNREFUSED")),
+                true,
+            ),
+            case(
+                "non-blocking tcp to an allowed closed port is reset",
+                client(&format!("asyncio-refused 127.0.0.1 {closed}")),
                 true,
             ),
             case(

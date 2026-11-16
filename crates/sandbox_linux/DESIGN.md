@@ -128,9 +128,11 @@ Port 53 of every address in the sandbox is answered by the supervisor's DNS. Tha
 
 Every relayed TCP connection takes two threads, and every UDP flow and DNS query one, so a busy `npm install` can mean hundreds of threads. An event loop in the supervisor (`smol`, which Zed already uses: `async-io` plus a small executor) would make these tasks instead. Seccomp notifications would stay on the worker pool, since prompts block. Measure first.
 
-#### Non-blocking connects that don't block
+#### Exact errors for non-blocking connects
 
-A `connect` on a non-blocking socket is held until the host connection is made (up to 30s), stalling the app's event loop. The app's thread is stuck in the syscall until the notification is answered, and it can only be answered once, so returning early means faking success: connect the app's socket to a temporary listener straight away (the kernel completes the handshake without an `accept`), let its writes buffer, connect to the host in the background, then relay, or reset the connection if the host connect failed. The cost is error fidelity: refused and unreachable hosts look like resets after a successful connect, which confuses apps racing IPv6 against IPv4. Worth doing only for `O_NONBLOCK` sockets, and only after any prompt is answered; blocking sockets keep exact errors.
+A `connect` on a non-blocking socket succeeds as soon as it's allowed, and the host connection is made in the background: holding the syscall instead would freeze the app's event loop for a round trip per connection. A host that refuses or can't be reached then shows up as a reset after a successful connect (`curl: (56) Recv failure: Connection reset by peer` instead of `Connection refused`). Most clients use non-blocking sockets (curl, Go, Node, Python sockets with a timeout), so this is the common case. A middle ground: wait briefly for the host connect (a few milliseconds, enough for local and fast failures) before returning early.
+
+#### Sandbox differences skill
 
 #### Datagram unix sockets
 

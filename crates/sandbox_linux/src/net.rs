@@ -5,11 +5,12 @@
 //! leads out. A packet to any address arrives back in the namespace, where
 //! the supervisor picks it up:
 //!
-//! - TCP: `connect` is trapped. For an allowed destination the supervisor
-//!   connects on the host first, has the helper listen at exactly the
-//!   address the command asked for, connects the command's socket to that
-//!   listener and relays between the two connections. The command sees an
-//!   ordinary connection to the address it asked for.
+//! - TCP: `connect` is trapped. For an allowed destination the helper
+//!   listens at exactly the address the command asked for, and the
+//!   supervisor connects the command's socket to that listener and relays
+//!   to a host connection. Blocking sockets wait for the host first;
+//!   non-blocking sockets connect locally first to avoid stalling the
+//!   command's event loop, and are reset if the host connection fails.
 //! - UDP: the supervisor owns a wildcard socket in the namespace for each
 //!   port a rule might allow, and relays each flow (source, destination)
 //!   through a host socket of its own once the policy allows it. Ports are
@@ -677,8 +678,8 @@ pub(crate) enum TcpOutcome {
 
 /// A trapped `connect` of the TCP socket `socket` to `destination`.
 pub(crate) fn connect_tcp(
-    shared: &Shared,
-    execution: &Execution,
+    shared: &Arc<Shared>,
+    execution: &Arc<Execution>,
     socket: BorrowedFd<'_>,
     destination: SocketAddr,
     caller: &Caller<'_>,
@@ -709,28 +710,99 @@ pub(crate) fn connect_tcp(
         return Err(errno(libc::EACCES));
     }
 
+    if is_nonblocking(socket)? {
+        // Holding the syscall until the host answers would freeze the
+        // caller's event loop for a round trip per connection. Connect it
+        // now and the host in the background instead; if that fails, its
+        // connection is reset (rather than `connect` failing).
+        let inside = network.bridge(socket, destination)?;
+        let shared = shared.clone();
+        let execution = execution.clone();
+        let tid = caller.tid;
+        std::thread::Builder::new()
+            .name("zed-sandbox-connect".to_string())
+            .spawn(move || {
+                let network = &execution.network;
+                let still_valid = || !network.is_closed();
+                let caller = Caller {
+                    tid,
+                    still_valid: &still_valid,
+                };
+                match connect_host(&shared, &execution.sandbox, &host, target.port(), &caller) {
+                    Ok(upstream) if still_valid() => relay(inside, upstream),
+                    _ => reset(&inside),
+                }
+            })?;
+        return Ok(TcpOutcome::Relayed);
+    }
+
+    let upstream = connect_host(shared, sandbox, &host, target.port(), caller)?;
+    let inside = network.bridge(socket, destination)?;
+    relay(inside, upstream);
+    Ok(TcpOutcome::Relayed)
+}
+
+fn is_nonblocking(socket: BorrowedFd<'_>) -> io::Result<bool> {
+    // SAFETY: F_GETFL on a valid descriptor. Our duplicate shares the
+    // target's open file description, and so its flags.
+    let flags = cvt(unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_GETFL) })?;
+    Ok(flags & libc::O_NONBLOCK != 0)
+}
+
+/// Connect on the host to the first of `host`'s addresses that may be
+/// reached and answers.
+fn connect_host(
+    shared: &Shared,
+    sandbox: &SandboxState,
+    host: &NetHost,
+    port: u16,
+    caller: &Caller<'_>,
+) -> io::Result<TcpStream> {
     let mut last_error = errno(libc::EHOSTUNREACH);
-    let mut upstream = None;
-    for address in upstream_addresses(&host, target.port())? {
-        if !may_reach(shared, sandbox, &host, address, Protocol::Tcp, caller) {
+    for address in upstream_addresses(host, port)? {
+        if !(caller.still_valid)() {
+            return Err(errno(libc::ECONNABORTED));
+        }
+        if !may_reach(shared, sandbox, host, address, Protocol::Tcp, caller) {
             last_error = errno(libc::EACCES);
             continue;
         }
+        if !(caller.still_valid)() {
+            return Err(errno(libc::ECONNABORTED));
+        }
         match connect_upstream(address, caller.still_valid) {
-            Ok(stream) => {
-                upstream = Some(stream);
-                break;
-            }
+            Ok(stream) => return Ok(stream),
             Err(error) => last_error = error,
         }
         if !(caller.still_valid)() {
             break;
         }
     }
-    let upstream = upstream.ok_or(last_error)?;
-    let inside = network.bridge(socket, destination)?;
-    relay(inside, upstream);
-    Ok(TcpOutcome::Relayed)
+    Err(last_error)
+}
+
+/// Close `stream` with a reset, as a refused connection would look once
+/// established.
+fn reset(stream: &TcpStream) {
+    let linger = libc::linger {
+        l_onoff: 1,
+        l_linger: 0,
+    };
+    // SAFETY: a `linger` with its length. Closing with a zero linger time
+    // sends a reset.
+    let result = unsafe {
+        libc::setsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_LINGER,
+            (&linger as *const libc::linger).cast(),
+            size_of::<libc::linger>() as libc::socklen_t,
+        )
+    };
+    if result < 0 {
+        // A plain close still ends the connection.
+        stream.shutdown(std::net::Shutdown::Both).ok();
+    }
 }
 
 /// A trapped `connect` of a UDP socket: the kernel does it, but datagrams
