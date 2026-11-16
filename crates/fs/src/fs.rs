@@ -1824,29 +1824,32 @@ impl FakeFsState {
 
     /// Returns the inode of the locked file, or `None` if a conflicting lock is held.
     fn try_lock_file(&mut self, path: &Path, kind: FileLockKind) -> Result<Option<u64>> {
-        let new_inode = self.get_and_increment_inode();
-        let mtime = self.get_and_increment_mtime();
-        let mut created = false;
-        let inode = self.write_path(path, |entry| match entry {
-            btree_map::Entry::Occupied(entry) => match entry.get() {
-                FakeFsEntry::File { inode, .. } => Ok(*inode),
-                _ => anyhow::bail!("cannot lock {path:?}: not a file"),
-            },
-            btree_map::Entry::Vacant(entry) => {
-                entry.insert(FakeFsEntry::File {
-                    inode: new_inode,
-                    mtime,
-                    len: 0,
-                    content: Vec::new(),
-                    git_dir_path: None,
-                });
-                created = true;
-                Ok(new_inode)
+        let inode = match self.try_entry(path, true) {
+            Some((FakeFsEntry::File { inode, .. }, _)) => *inode,
+            Some(_) => anyhow::bail!("cannot lock {path:?}: not a file"),
+            None => {
+                let inode = self.get_and_increment_inode();
+                let mtime = self.get_and_increment_mtime();
+                self.write_path(path, |entry| match entry {
+                    btree_map::Entry::Vacant(entry) => {
+                        entry.insert(FakeFsEntry::File {
+                            inode,
+                            mtime,
+                            len: 0,
+                            content: Vec::new(),
+                            git_dir_path: None,
+                        });
+                        Ok(())
+                    }
+                    // A symlink whose target doesn't exist.
+                    btree_map::Entry::Occupied(_) => {
+                        anyhow::bail!("cannot lock {path:?}: not a file")
+                    }
+                })?;
+                self.emit_event([(path, Some(PathEventKind::Created))]);
+                inode
             }
-        })?;
-        if created {
-            self.emit_event([(path, Some(PathEventKind::Created))]);
-        }
+        };
 
         let holders = self.file_locks.entry(inode).or_default();
         let conflicts = match kind {

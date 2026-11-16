@@ -116,6 +116,7 @@ pub enum ExternalAgentSource {
     Registry,
 }
 
+/// An [`AgentServerCommand`] together with the lease on the installation it runs from.
 #[derive(Clone, Debug)]
 pub struct ResolvedAgentServerCommand {
     pub command: AgentServerCommand,
@@ -942,14 +943,13 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
             response.args.extend(extra_args);
             response.env.extend(extra_env);
 
-            Ok(ResolvedAgentServerCommand {
-                command: AgentServerCommand {
+            Ok(ResolvedAgentServerCommand::without_installation_lease(
+                AgentServerCommand {
                     path: response.path.into(),
                     args: response.args,
                     env: Some(response.env.into_iter().collect()),
                 },
-                installation_lease: None,
-            })
+            ))
         })
     }
 
@@ -1073,6 +1073,27 @@ fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleaseArc
     })
 }
 
+/// The checksum that GitHub published for a release archive, if it published one.
+async fn github_release_asset_sha256(
+    archive_url: &str,
+    http_client: Arc<dyn HttpClient>,
+) -> Option<String> {
+    let github_archive = github_release_archive_from_url(archive_url)?;
+    let release = github_releases::get_release_by_tag_name(
+        &github_archive.repo_name_with_owner,
+        &github_archive.tag,
+        http_client,
+    )
+    .await
+    .ok()?;
+    let asset = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == github_archive.asset_name)?;
+    let digest = asset.digest.as_ref()?;
+    Some(digest.strip_prefix("sha256:").unwrap_or(digest).to_string())
+}
+
 fn sanitize_path_component(input: &str) -> String {
     let sanitized = input
         .chars()
@@ -1180,11 +1201,10 @@ struct StaleArchiveCacheEntries {
 }
 
 async fn remove_stale_versioned_archive_cache_dirs(
-    fs: Arc<dyn Fs>,
+    fs: &dyn Fs,
     base_dir: &Path,
     current_version_dir: &Path,
 ) -> Result<()> {
-    let fs = fs.as_ref();
     let stale = stale_archive_cache_entries(fs, base_dir, current_version_dir).await?;
     // These go first so that a version retired again doesn't collide with them.
     remove_retired_archive_cache_dirs(fs, stale.retired_dirs).await;
@@ -1479,36 +1499,9 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     .await
                     .log_err();
                 if !fs.is_dir(&version_dir).await {
-                    let sha256 = if let Some(provided_sha) = &target_config.sha256 {
-                        Some(provided_sha.clone())
-                    } else if let Some(github_archive) =
-                        github_release_archive_from_url(archive_url)
-                    {
-                        if let Ok(release) = github_releases::get_release_by_tag_name(
-                            &github_archive.repo_name_with_owner,
-                            &github_archive.tag,
-                            http_client.clone(),
-                        )
-                        .await
-                        {
-                            if let Some(asset) = release
-                                .assets
-                                .iter()
-                                .find(|a| a.name == github_archive.asset_name)
-                            {
-                                asset.digest.as_ref().and_then(|d| {
-                                    d.strip_prefix("sha256:")
-                                        .map(|s| s.to_string())
-                                        .or_else(|| Some(d.clone()))
-                                })
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
+                    let sha256 = match &target_config.sha256 {
+                        Some(sha256) => Some(sha256.clone()),
+                        None => github_release_asset_sha256(archive_url, http_client.clone()).await,
                     };
 
                     let executor = cx.background_executor();
@@ -1566,7 +1559,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 let dir = dir.clone();
                 let version_dir = version_dir.clone();
                 async move {
-                    remove_stale_versioned_archive_cache_dirs(fs, &dir, &version_dir)
+                    remove_stale_versioned_archive_cache_dirs(fs.as_ref(), &dir, &version_dir)
                         .await
                         .log_err();
                 }
@@ -1698,10 +1691,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 env: Some(env),
             };
 
-            Ok(ResolvedAgentServerCommand {
-                command,
-                installation_lease: None,
-            })
+            Ok(ResolvedAgentServerCommand::without_installation_lease(command))
         })
     }
 
@@ -1848,10 +1838,9 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(extra_env);
             command.env = Some(env);
             command.args.extend(extra_args);
-            Ok(ResolvedAgentServerCommand {
+            Ok(ResolvedAgentServerCommand::without_installation_lease(
                 command,
-                installation_lease: None,
-            })
+            ))
         })
     }
 
@@ -2685,13 +2674,9 @@ mod tests {
             "directory is busy".to_string(),
         );
 
-        remove_stale_versioned_archive_cache_dirs(
-            fs.clone() as Arc<dyn Fs>,
-            base_dir,
-            &current_version_dir,
-        )
-        .await
-        .unwrap();
+        remove_stale_versioned_archive_cache_dirs(fs.as_ref(), base_dir, &current_version_dir)
+            .await
+            .unwrap();
         assert_eq!(
             entry_names(fs.as_ref(), base_dir).await,
             [
@@ -2709,13 +2694,9 @@ mod tests {
 
         drop(old_lease);
         fs.clear_remove_dir_error(base_dir.join("retired_v_old_2"));
-        remove_stale_versioned_archive_cache_dirs(
-            fs.clone() as Arc<dyn Fs>,
-            base_dir,
-            &current_version_dir,
-        )
-        .await
-        .unwrap();
+        remove_stale_versioned_archive_cache_dirs(fs.as_ref(), base_dir, &current_version_dir)
+            .await
+            .unwrap();
         assert_eq!(
             entry_names(fs.as_ref(), base_dir).await,
             [
