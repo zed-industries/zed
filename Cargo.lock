@@ -15810,11 +15810,22 @@ dependencies = [
  "log",
  "nix 0.30.1",
  "seccompiler",
- "serde",
- "serde_json",
  "smol",
  "tempfile",
  "windows-registry 0.6.1",
+]
+
+[[package]]
+name = "sandbox_linux"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "log",
+ "nix 0.30.1",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -22619,6 +22630,7 @@ dependencies = [
  "reqwest_client",
  "rope",
  "sandbox",
+ "sandbox_linux",
  "search",
  "semver",
  "serde",
