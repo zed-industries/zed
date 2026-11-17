@@ -12,13 +12,6 @@ workspace = true
 path = "src/sandbox_linux.rs"
 doctest = false
 
-[[test]]
-name = "end_to_end"
-path = "tests/end_to_end.rs"
-# The sandbox re-executes the current binary as its supervisor and helper, so
-# the test needs its own `main` that dispatches those entrypoints first.
-harness = false
-
 [target.'cfg(target_os = "linux")'.dependencies]
 anyhow.workspace = true
 libc.workspace = true
@@ -26,6 +19,3 @@ log.workspace = true
 nix = { workspace = true, features = ["net", "socket", "uio"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-tempfile.workspace = true

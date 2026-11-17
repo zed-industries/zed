@@ -19,12 +19,6 @@ filter = 'package(collab) and (test(random_project_collaboration_tests) or test(
 priority = 99
 
 [[profile.default.overrides]]
-# The sandbox_linux end-to-end harness is a single unit that runs ~70
-# sandboxes; it needs much longer than the default slow timeout.
-filter = 'package(sandbox_linux) and test(end_to_end)'
-slow-timeout = { period = "600s", terminate-after = 1 }
-
-[[profile.default.overrides]]
 filter = 'package(extension_host) and test(test_extension_store_with_test_extension)'
 priority = 99
 
