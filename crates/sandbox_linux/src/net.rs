@@ -29,7 +29,7 @@ use std::net::{
     IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, TcpStream,
     ToSocketAddrs as _, UdpSocket,
 };
-use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd};
+use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -367,19 +367,29 @@ pub(crate) fn serve_factory(socket: OwnedFd) {
                 return;
             }
         };
-        let sent = match create_socket(request.kind, request.address) {
-            Ok(created) => send_message(
-                socket.as_fd(),
-                &FactoryResponse::Created,
-                &[created.as_raw_fd()],
-            ),
-            Err(error) => send_message(
-                socket.as_fd(),
-                &FactoryResponse::Failed {
-                    errno: error.raw_os_error().unwrap_or(libc::EIO),
-                },
-                &[],
-            ),
+        let (response, fd) = match request {
+            FactoryRequest::CreateSocket { kind, address } => match create_socket(kind, address) {
+                Ok(created) => (FactoryResponse::Created, Some(created)),
+                Err(error) => (
+                    FactoryResponse::Failed {
+                        errno: error.raw_os_error().unwrap_or(libc::EIO),
+                    },
+                    None,
+                ),
+            },
+            FactoryRequest::FetchFd { pid, fd } => match sys::pidfd_getfd(pid, fd) {
+                Ok(fetched) => (FactoryResponse::Fetched, Some(fetched)),
+                Err(error) => (
+                    FactoryResponse::Failed {
+                        errno: error.raw_os_error().unwrap_or(libc::EIO),
+                    },
+                    None,
+                ),
+            },
+        };
+        let sent = match fd {
+            Some(fd) => send_message(socket.as_fd(), &response, &[fd.as_raw_fd()]),
+            None => send_message(socket.as_fd(), &response, &[]),
         };
         if let Err(error) = sent {
             eprintln!("zed sandbox: {error:#}");
@@ -542,10 +552,27 @@ impl Network {
 
     fn create(&self, kind: SocketKind, address: SocketAddr) -> io::Result<OwnedFd> {
         let factory = lock(&self.factory);
-        send_message(factory.as_fd(), &FactoryRequest { kind, address }, &[])
-            .map_err(|_| errno(libc::ENETDOWN))?;
+        send_message(
+            factory.as_fd(),
+            &FactoryRequest::CreateSocket { kind, address },
+            &[],
+        )
+        .map_err(|_| errno(libc::ENETDOWN))?;
         match receive_message::<FactoryResponse>(factory.as_fd()) {
             Ok(Some((FactoryResponse::Created, mut fds))) if fds.len() == 1 => Ok(fds.remove(0)),
+            Ok(Some((FactoryResponse::Failed { errno: code }, _))) => Err(errno(code)),
+            _ => Err(errno(libc::ENETDOWN)),
+        }
+    }
+
+    /// A duplicate of process `pid`'s descriptor `fd`, fetched by the helper:
+    /// the supervisor may not fetch it itself (see [`FactoryRequest::FetchFd`]).
+    pub(crate) fn fetch_fd(&self, pid: i32, fd: RawFd) -> io::Result<OwnedFd> {
+        let factory = lock(&self.factory);
+        send_message(factory.as_fd(), &FactoryRequest::FetchFd { pid, fd }, &[])
+            .map_err(|_| errno(libc::ENETDOWN))?;
+        match receive_message::<FactoryResponse>(factory.as_fd()) {
+            Ok(Some((FactoryResponse::Fetched, mut fds))) if fds.len() == 1 => Ok(fds.remove(0)),
             Ok(Some((FactoryResponse::Failed { errno: code }, _))) => Err(errno(code)),
             _ => Err(errno(libc::ENETDOWN)),
         }

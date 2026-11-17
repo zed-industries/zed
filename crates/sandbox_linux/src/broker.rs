@@ -331,7 +331,9 @@ impl Broker<'_> {
     /// The target's socket `fd` and its address family, or `None` if `fd`
     /// isn't an open socket (the kernel reports that itself).
     fn target_socket(&self, fd: i32) -> io::Result<Option<(OwnedFd, i32)>> {
-        let socket = match sys::pidfd_getfd(self.tgid()?, fd) {
+        // Through the helper, which can fetch the descriptor where we, the
+        // command's uncle, may be denied the ptrace access it takes.
+        let socket = match self.execution.network.fetch_fd(self.tgid()?, fd) {
             Ok(socket) => socket,
             Err(error) if error.raw_os_error() == Some(libc::EBADF) => return Ok(None),
             Err(error) => return Err(error),

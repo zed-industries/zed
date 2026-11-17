@@ -141,17 +141,27 @@ pub(crate) struct AttachInfo {
 }
 
 /// Asks the helper for a socket in the sandbox's network namespace, where
-/// only it can create them. Answered with a [`FactoryResponse`], carrying
-/// the socket if it was created.
+/// only it can create them, or for a duplicate of a descriptor of one of its
+/// processes. Answered with a [`FactoryResponse`], carrying the socket if
+/// there was one.
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct FactoryRequest {
-    pub kind: SocketKind,
-    pub address: SocketAddr,
+pub(crate) enum FactoryRequest {
+    CreateSocket {
+        kind: SocketKind,
+        address: SocketAddr,
+    },
+    /// Fetching a descriptor is `pidfd_getfd(2)`, which the kernel gates on
+    /// ptrace access. The supervisor may be denied that as a mere sibling of
+    /// the command (by Yama's `ptrace_scope`, or AppArmor's restriction of
+    /// unprivileged user namespaces), so it asks the helper, every command's
+    /// parent, instead.
+    FetchFd { pid: i32, fd: i32 },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum FactoryResponse {
     Created,
+    Fetched,
     Failed { errno: i32 },
 }
 
