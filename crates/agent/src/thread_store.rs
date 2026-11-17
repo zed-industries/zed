@@ -1,5 +1,5 @@
 use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Result, anyhow};
 use futures::{FutureExt, future::Shared};
 use gpui::{App, Context, Entity, Global, Task, prelude::*};

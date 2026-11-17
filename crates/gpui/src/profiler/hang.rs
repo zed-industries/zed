@@ -658,13 +658,13 @@ mod tests {
     use std::time::Duration;
 
     use proptest::prelude::*;
-    use rand::prelude::*;
+    use rand::{Rng as _, rngs::StdRng};
     use scheduler::SpawnTime;
 
     use crate::{
         self as gpui, AnyView, AppContext as _, Context, FocusHandle, InteractiveElement,
         IntoElement, Modifiers, MouseButton, ParentElement as _, Render, Styled, TestAppContext,
-        VisualTestContext, Window, WindowId, div, point, px,
+        VisualTestContext, Window, WindowId, actions, div, point, px,
     };
 
     use crate::profiler::{

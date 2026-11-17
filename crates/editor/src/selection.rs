@@ -1562,7 +1562,7 @@ impl Editor {
                 }
             }
 
-            if !text.is_empty() {
+            if selections.iter().any(|selection| !selection.is_empty()) {
                 cx.write_to_primary(ClipboardItem::new_string(text));
             }
         }

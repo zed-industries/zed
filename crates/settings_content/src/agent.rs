@@ -370,7 +370,7 @@ pub struct AgentSettingsContent {
     pub terminal_init_command: Option<String>,
     /// How thinking blocks should be displayed by default in the agent panel.
     ///
-    /// Default: automatic
+    /// Default: auto
     pub thinking_display: Option<ThinkingBlockDisplay>,
     /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
@@ -394,6 +394,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub show_merge_conflict_indicator: Option<bool>,
+    /// Whether to automatically generate a title for Zed Agent threads using the
+    /// summary model. When disabled, titles are only created when manually
+    /// requested (e.g. via the thread's "Regenerate Thread Title" action).
+    ///
+    /// Default: true
+    pub auto_generate_thread_titles: Option<bool>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
@@ -1138,7 +1144,9 @@ pub enum ToolPermissionMode {
     Allow,
     /// Auto-reject with an error.
     Deny,
-    /// Always prompt for confirmation (default behavior).
+    /// Prompt for confirmation (default behavior).
+    /// The `edit_file` and `write_file` tools don't prompt for files inside
+    /// the project unless an `always_confirm` pattern matches.
     #[default]
     Confirm,
 }

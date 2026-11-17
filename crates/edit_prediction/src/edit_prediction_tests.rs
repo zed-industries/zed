@@ -2254,6 +2254,7 @@ async fn test_zed_cloud_predictions_skip_organizations_without_subscriptions(
         id: OrganizationId(id.into()),
         name: id.into(),
         is_personal: false,
+        ui_permissions: Default::default(),
     };
     let mut authenticated_user = make_get_authenticated_user_response(1, "user".into());
     authenticated_user.organizations = vec![organization("unsubscribed"), organization("paid")];
@@ -3060,6 +3061,7 @@ fn set_test_organization(user_store: &Entity<UserStore>, cx: &mut TestAppContext
                     id: OrganizationId("org_1".into()),
                     name: "Organization 1".into(),
                     is_personal: false,
+                    ui_permissions: Default::default(),
                 }),
                 OrganizationConfiguration {
                     is_zed_model_provider_enabled: true,
@@ -4917,6 +4919,7 @@ async fn test_data_collection_disabled_by_organization_configuration(cx: &mut Te
                     id: OrganizationId("org-1".into()),
                     name: "Org 1".into(),
                     is_personal: false,
+                    ui_permissions: Default::default(),
                 }),
                 OrganizationConfiguration {
                     is_zed_model_provider_enabled: true,

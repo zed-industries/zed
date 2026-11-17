@@ -120,30 +120,30 @@ pub trait Styled: Sized {
     }
 
     /// Sets the text alignment to left
-    fn text_left(mut self) -> Self {
+    fn text_left(self) -> Self {
         self.text_align(TextAlign::Left)
     }
 
     /// Sets the text alignment to center
-    fn text_center(mut self) -> Self {
+    fn text_center(self) -> Self {
         self.text_align(TextAlign::Center)
     }
 
     /// Sets the text alignment to right
-    fn text_right(mut self) -> Self {
+    fn text_right(self) -> Self {
         self.text_align(TextAlign::Right)
     }
 
     /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (…) if needed.
     /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
-    fn truncate(mut self) -> Self {
+    fn truncate(self) -> Self {
         self.overflow_hidden().whitespace_nowrap().text_ellipsis()
     }
 
     /// Sets number of lines to show before truncating the text.
     /// [Docs](https://tailwindcss.com/docs/line-clamp)
     fn line_clamp(mut self, lines: usize) -> Self {
-        let mut text_style = self.text_style();
+        let text_style = self.text_style();
         text_style.line_clamp = Some(lines);
         self.overflow_hidden()
     }
@@ -748,18 +748,23 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Controls whether this element's children are painted as "glass content".
+    /// Controls whether this element's descendants are painted as "glass content".
     ///
-    /// When enabled, the element's own background and border are painted
-    /// normally (the background establishes the translucent surface), while its
-    /// child content only blends RGB and preserves the destination alpha. Use
-    /// this on a translucent surface (e.g. a sidebar over a window glass
+    /// Glass content fills only blend RGB and preserve the destination alpha.
+    /// Use this on a translucent surface (e.g. a sidebar over a window glass
     /// background) so rounded, anti-aliased child elements don't punch through
     /// the glass along their edges.
     ///
-    /// Glass mode is inherited by descendants. Pass `false` to turn it back off
-    /// for an opaque subtree — e.g. a crisp content panel nested inside a glass
-    /// surface — so its fills and borders blend normally again.
+    /// The setting only affects descendants: this element's own background and
+    /// border keep the glass state inherited from its ancestors. So on a
+    /// surface that isn't nested in glass, `glass(true)` paints the surface's
+    /// background normally (establishing the translucent surface) and its
+    /// descendants as glass content.
+    ///
+    /// Descendants inherit the setting until another element overrides it.
+    /// `glass(false)` turns it back off for the descendants of an opaque
+    /// subtree (e.g. a crisp content panel nested inside a glass surface); the
+    /// panel's own background and border are still painted as glass content.
     fn glass(mut self, enabled: bool) -> Self {
         self.style().glass_content = Some(enabled);
         self

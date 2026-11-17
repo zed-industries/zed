@@ -3356,10 +3356,14 @@ impl EditPredictionStore {
                 .edit_preview
                 .as_unified_diff(prediction.snapshot.file(), &prediction.edits);
             async move {
+                let organization_id = organization
+                    .map(|organization| organization.id.clone())
+                    .context("no organization selected")?;
+
                 client
                     .cloud_client()
                     .submit_edit_prediction_feedback(SubmitEditPredictionFeedbackBody {
-                        organization_id: organization.map(|organization| organization.id.clone()),
+                        organization_id,
                         request_id: prediction_id,
                         rating: match rating {
                             EditPredictionRating::Positive => "positive".to_string(),

@@ -7,6 +7,8 @@ pub mod archive;
 pub mod command;
 #[cfg(not(target_family = "wasm"))]
 pub mod fs;
+#[cfg(target_os = "linux")]
+pub mod libc_type;
 #[cfg(not(target_family = "wasm"))]
 pub mod process;
 #[cfg(not(target_family = "wasm"))]
@@ -42,7 +44,6 @@ use unicase::UniCase;
 
 pub use gpui_util::*;
 pub use path::PathExt;
-pub use path::normalize_path;
 pub use path::rel_path;
 
 #[cfg(any(test, feature = "test-support"))]

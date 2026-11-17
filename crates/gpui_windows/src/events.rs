@@ -99,9 +99,7 @@ impl WindowsWindowInner {
                 // glass windows (inactive windows render opaque, see
                 // `WindowsWindow::draw`), so force a redraw to apply it now
                 // instead of waiting for the next app-driven frame.
-                if self.state.background_appearance.get()
-                    != WindowBackgroundAppearance::Opaque
-                {
+                if self.state.background_appearance.get() != WindowBackgroundAppearance::Opaque {
                     self.draw_window(handle, true);
                 }
                 result
@@ -181,7 +179,7 @@ impl WindowsWindowInner {
         }
     }
 
-    fn handle_move_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
+    fn handle_move_msg(self: &Rc<Self>, handle: HWND, lparam: LPARAM) -> Option<isize> {
         let origin = logical_point(
             lparam.signed_loword() as f32,
             lparam.signed_hiword() as f32,
@@ -363,10 +361,10 @@ impl WindowsWindowInner {
         self.start_tracking_mouse(handle, TME_LEAVE);
         self.restore_cursor_after_hide();
 
-        let Some(mut func) = self.state.callbacks.input.take() else {
-            return Some(1);
-        };
+        let x = lparam.signed_loword() as f32;
+        let y = lparam.signed_hiword() as f32;
         let scale_factor = self.state.scale_factor.get();
+        let new_position = logical_point(x, y, scale_factor);
 
         let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
             flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
@@ -380,16 +378,27 @@ impl WindowsWindowInner {
             }
             _ => None,
         };
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
+
+        // Suppress synthetic WM_MOUSEMOVE events that Windows fires when a window
+        // repaints under the cursor (e.g. command palette opening). These are not
+        // real mouse movements and should not move the editor cursor or clobber
+        // selections. A real move always has a different position OR a button held.
+        if pressed_button.is_none() && new_position == self.state.mouse_position.get() {
+            return Some(1);
+        }
+        self.state.mouse_position.set(new_position);
+
+        let Some(mut func) = self.state.callbacks.input.take() else {
+            return Some(1);
+        };
+
         let input = PlatformInput::MouseMove(MouseMoveEvent {
-            position: logical_point(x, y, scale_factor),
+            position: new_position,
             pressed_button,
             modifiers: current_modifiers(),
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
-
         if handled { Some(0) } else { Some(1) }
     }
 
@@ -582,7 +591,7 @@ impl WindowsWindowInner {
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        let input = PlatformInput::Scroll(ScrollEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             delta: ScrollDelta::Lines(match modifiers.shift {
                 true => Point {
@@ -596,6 +605,7 @@ impl WindowsWindowInner {
             }),
             modifiers,
             touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -626,7 +636,7 @@ impl WindowsWindowInner {
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        let event = PlatformInput::Scroll(ScrollEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             delta: ScrollDelta::Lines(Point {
                 x: wheel_distance,
@@ -634,6 +644,7 @@ impl WindowsWindowInner {
             }),
             modifiers: current_modifiers(),
             touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
         });
         let handled = !func(event).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -943,7 +954,7 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_display_change_msg(&self, handle: HWND) -> Option<isize> {
+    fn handle_display_change_msg(self: &Rc<Self>, handle: HWND) -> Option<isize> {
         let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
         if new_monitor.is_invalid() {
             log::error!("No monitor detected!");
@@ -954,12 +965,20 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn set_display(&self, display: WindowsDisplay) {
+    // Windows can deliver `WM_DISPLAYCHANGE` and `WM_MOVE` while GPUI is
+    // updating a window (e.g. a clipboard read during a draw pumps sent
+    // messages), so report the change after that update completes.
+    fn set_display(self: &Rc<Self>, display: WindowsDisplay) {
         self.state.display.set(display);
-        if let Some(mut callback) = self.state.callbacks.display_changed.take() {
-            callback();
-            self.state.callbacks.display_changed.set(Some(callback));
-        }
+        let this = self.clone();
+        self.executor
+            .spawn(async move {
+                if let Some(mut callback) = this.state.callbacks.display_changed.take() {
+                    callback();
+                    this.state.callbacks.display_changed.set(Some(callback));
+                }
+            })
+            .detach();
     }
 
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {

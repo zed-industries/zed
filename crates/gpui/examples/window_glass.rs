@@ -9,17 +9,20 @@ use gpui_platform::application;
 /// A small AI chat client demonstrating [`Styled::glass`].
 ///
 /// The window uses a system glass background, so the wallpaper shows through.
-/// The root element is the glass surface (`.glass(true)`): it has a translucent
-/// fill and glass mode is inherited by its children, so the sidebar's rounded
-/// selected/hover rows only blend RGB and preserve the surface alpha — their
-/// anti-aliased corners stay clean instead of punching through the glass. The
+/// The root element is the glass surface: its translucent fill is painted
+/// normally, and `.glass(true)` makes its descendants glass content, so the
+/// sidebar's rounded selected/hover rows only blend RGB and preserve the
+/// surface alpha — their anti-aliased corners stay clean instead of punching
+/// through the glass. The
 /// system titlebar is hidden (`appears_transparent`), so the glass surface
 /// extends to the top of the window behind the traffic-light buttons.
 ///
 /// Following Apple's Liquid Glass guidance the chat panel stays opaque so its
-/// content reads crisply. It opts out of the inherited glass mode with
-/// `.glass(false)`, so its white fill and border blend normally; without it the
-/// border's alpha would be replaced by the glass backdrop's and wash out.
+/// content reads crisply. `.glass` only affects descendants, so the panel's own
+/// white fill and left border are still glass content inherited from the root.
+/// Its `.glass(false)` turns glass back off for everything inside the panel, so
+/// the input card's fill and border blend normally instead of having their
+/// alpha replaced by the glass backdrop's.
 struct ChatApp {
     selected_item: usize,
 }
@@ -57,9 +60,9 @@ impl Render for ChatApp {
             .size_full()
             .text_color(fg)
             .bg(rgba(0xFBFBFBaa))
-            // The root is the glass surface: its translucent fill lets the
-            // wallpaper through, and glass mode is inherited by the sidebar so
-            // its rounded rows don't punch through the glass.
+            // The root is the glass surface: its own translucent fill lets the
+            // wallpaper through, and its descendants (the sidebar rows) are
+            // glass content so their rounded edges don't punch through it.
             .glass(true)
             .child(
                 // Sidebar
@@ -91,10 +94,9 @@ impl Render for ChatApp {
                     .flex_col()
                     .flex_1()
                     .rounded_l(px(20.))
-                    // Opaque content panel: turn glass back off so its white
-                    // fill and left border blend normally, instead of inheriting
-                    // the root's glass mode (which preserves the backdrop alpha
-                    // and washes the border out).
+                    // Opaque content panel. Its own fill and left border still
+                    // inherit the root's glass mode; this turns glass back off
+                    // for its descendants, such as the input card.
                     .glass(false)
                     .min_w_0()
                     .h_full()

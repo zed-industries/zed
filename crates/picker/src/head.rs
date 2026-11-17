@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{App, Entity, FocusHandle, Focusable, prelude::*};
-use ui::prelude::*;
+use ui::{prelude::*, utils::RetainedFocusExt as _};
 use ui_input::{ErasedEditor, ErasedEditorEvent};
 
 /// The head of a [`Picker`](crate::Picker).
@@ -65,9 +65,8 @@ pub(crate) struct EmptyHead {
 
 impl EmptyHead {
     fn new(cx: &mut Context<Self>) -> Self {
-        Self {
-            focus_handle: cx.focus_handle(),
-        }
+        let focus_handle = cx.retained_focus_handle();
+        Self { focus_handle }
     }
 }
 

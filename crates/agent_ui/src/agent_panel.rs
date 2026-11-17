@@ -12,7 +12,7 @@ use std::{
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, line_range_suffix};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use agent_servers::AgentServer;
 use agent_settings::UserAgentsMd;
 use collections::HashSet;
@@ -1826,7 +1826,7 @@ impl AgentPanel {
 
     fn draft_has_content(&self, draft: &Entity<ConversationView>, cx: &App) -> bool {
         let cv = draft.read(cx);
-        if cv.has_pending_selections() {
+        if cv.has_pending_selections() || cv.has_saved_input() {
             return true;
         }
         if let Some(thread_view) = cv.active_thread() {
@@ -2431,7 +2431,7 @@ impl AgentPanel {
             custom_title: terminal.custom_title(cx),
             created_at: terminal.created_at,
             worktree_paths: project.worktree_paths(cx),
-            remote_connection: project.remote_connection_options(cx),
+            remote_connection: project.remote_connection_options(cx).cloned(),
             working_directory: terminal.working_directory.clone(),
         })
     }
@@ -3527,10 +3527,15 @@ impl AgentPanel {
             .read(cx)
             .entries()
             .find(|t| t.id == session_id)?;
+        // The native thread store has no title for threads whose title was
+        // never generated, e.g. with `auto_generate_thread_titles` off.
+        let title = ThreadMetadataStore::try_global(cx)
+            .and_then(|store| store.read(cx).entry_by_session(&session_id)?.title())
+            .unwrap_or(thread.title);
 
         Some(AgentInitialContent::ThreadSummary {
             session_id: thread.id,
-            title: Some(thread.title),
+            title: Some(title),
         })
     }
 
@@ -4303,7 +4308,7 @@ impl AgentPanel {
             .iter()
             .filter(|(_id, view)| {
                 let view = view.read(cx);
-                if view.has_pending_selections() {
+                if view.has_pending_selections() || view.has_saved_input() {
                     return false;
                 }
                 let Some(thread_view) = view.root_thread_view() else {
@@ -4550,9 +4555,18 @@ impl AgentPanel {
         // also seed the message editor with any prompt text the user had
         // typed before closing the window (persisted in the scoped kvp
         // draft-prompt store).
-        let is_draft = ThreadMetadataStore::try_global(cx)
-            .and_then(|store| store.read(cx).entry(thread_id).map(|m| m.is_draft()))
-            .unwrap_or(false);
+        let (is_draft, saved_title) = ThreadMetadataStore::try_global(cx)
+            .and_then(|store| {
+                store
+                    .read(cx)
+                    .entry(thread_id)
+                    .map(|metadata| (metadata.is_draft(), metadata.title.clone()))
+            })
+            .unwrap_or((false, None));
+        // Callers such as thread mentions pass a title captured when they were
+        // created, which can be stale or the default title. Restoring that on
+        // load would overwrite the title this thread last showed.
+        let title = saved_title.or(title);
         let initial_content = is_draft
             .then(|| crate::draft_prompt_store::read(thread_id, cx))
             .flatten()
@@ -6593,8 +6607,8 @@ impl AgentPanel {
         }
     }
 
-    fn key_context(&self) -> KeyContext {
-        let mut key_context = KeyContext::new_with_defaults();
+    fn key_context(&self, cx: &App) -> KeyContext {
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("AgentPanel");
         key_context
     }
@@ -6612,7 +6626,7 @@ impl Render for AgentPanel {
         // - Scrolling in all views works as expected
         // - Files can be dropped into the panel
         let content = v_flex()
-            .key_context(self.key_context())
+            .key_context(self.key_context(cx))
             .relative()
             .size_full()
             .justify_between()
@@ -7005,7 +7019,7 @@ mod tests {
     };
     use acp_thread::{AgentConnection, StubAgentConnection, ThreadStatus};
     use action_log::ActionLog;
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::v1::schema as acp;
     use anyhow::{Result, anyhow};
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
@@ -7236,7 +7250,9 @@ mod tests {
             Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -11703,6 +11719,78 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_load_agent_thread_prefers_sidebar_title_over_caller_title(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.run_until_parked();
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.connection_store.update(cx, |store, cx| {
+                store.restart_connection(
+                    Agent::Stub,
+                    Rc::new(StubAgentServer::new(
+                        StubAgentConnection::new().with_supports_load_session(true),
+                    )),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        let thread_id = ThreadId::new();
+        cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(
+                    crate::thread_metadata_store::ThreadMetadata {
+                        thread_id,
+                        session_id: Some(acp_v2::SessionId::new("saved-session")),
+                        agent_id: Agent::Stub.id(),
+                        title: Some("Sidebar title".into()),
+                        title_override: None,
+                        updated_at: Utc::now(),
+                        created_at: Some(Utc::now()),
+                        interacted_at: None,
+                        worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+                        remote_connection: None,
+                        archived: false,
+                    },
+                    cx,
+                );
+            });
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.load_agent_thread(
+                Agent::Stub,
+                thread_id,
+                None,
+                Some(crate::DEFAULT_THREAD_TITLE.into()),
+                true,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let thread = panel
+                .active_agent_thread(cx)
+                .expect("saved thread should load");
+            assert_eq!(thread.read(cx).title(), Some("Sidebar title".into()));
+        });
+        cx.update(|_window, cx| {
+            let metadata = ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(thread_id)
+                .cloned()
+                .expect("sidebar entry should still exist");
+            assert_eq!(metadata.title, Some("Sidebar title".into()));
+        });
+    }
+
+    #[gpui::test]
     async fn test_initial_content_for_thread_summary_uses_own_session_id(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
@@ -11772,6 +11860,36 @@ mod tests {
             }
             _ => panic!("expected AgentInitialContent::ThreadSummary"),
         }
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(
+                    crate::thread_metadata_store::ThreadMetadata {
+                        thread_id: ThreadId::new(),
+                        session_id: Some(source_session_id.clone()),
+                        agent_id: Agent::NativeAgent.id(),
+                        title: Some("Sidebar title".into()),
+                        title_override: None,
+                        updated_at: Utc::now(),
+                        created_at: Some(Utc::now()),
+                        interacted_at: None,
+                        worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+                        remote_connection: None,
+                        archived: false,
+                    },
+                    cx,
+                );
+            });
+        });
+        let content = cx
+            .update(|cx| {
+                AgentPanel::initial_content_for_thread_summary(source_session_id.clone(), cx)
+            })
+            .expect("initial content should be produced for a root thread");
+        let AgentInitialContent::ThreadSummary { title, .. } = content else {
+            panic!("expected AgentInitialContent::ThreadSummary");
+        };
+        assert_eq!(title, Some("Sidebar title".into()));
 
         // Unknown session ids should still produce no content.
         let missing = cx.update(|cx| {
@@ -11904,6 +12022,46 @@ mod tests {
             assert!(
                 panel.retained_threads.is_empty(),
                 "changing the retained thread limit should unload idle threads immediately"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_disconnected_saved_input_is_not_evicted_as_idle(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        let connection = StubAgentConnection::new()
+            .with_receipt_submissions(true)
+            .with_supports_load_session(true);
+        open_thread_with_custom_connection(&panel, connection.clone(), &mut cx);
+        let saved = panel.read_with(&cx, |panel, _| {
+            panel
+                .active_conversation_view()
+                .expect("conversation")
+                .clone()
+        });
+        let _response = connection.defer_next_receipt_response();
+        send_message(&panel, &mut cx);
+        let thread = saved.read_with(&cx, |view, cx| view.root_thread(cx).expect("thread"));
+        thread.update(&mut cx, |thread, cx| thread.handle_connection_lost(cx));
+        cx.run_until_parked();
+        assert!(saved.read_with(&cx, |view, _| view.has_saved_input()));
+
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    max_idle_retained_threads: 0,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        open_thread_with_custom_connection(&panel, connection, &mut cx);
+        panel.update(&mut cx, |panel, cx| {
+            panel.cleanup_retained_threads(cx);
+            assert!(
+                panel
+                    .retained_threads
+                    .contains_key(&saved.read(cx).thread_id)
             );
         });
     }
@@ -14101,7 +14259,9 @@ mod tests {
             Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self

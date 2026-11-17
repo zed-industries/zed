@@ -3,13 +3,13 @@ use crate::{
 };
 use anyhow::Context as _;
 use gpui::{
-    AnyEntity, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, ClickEvent, Context,
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
-    Task, TextStyleRefinement, UnderlineStyle, WeakEntity,
+    AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, ClickEvent, Context, DismissEvent,
+    Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task,
+    TextStyleRefinement, UnderlineStyle, WeakEntity,
 };
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
-use project::project_settings::ProjectSettings;
+use project::{LanguageServerPromptRequest, project_settings::ProjectSettings};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 
@@ -117,39 +117,6 @@ impl Workspace {
             })
             .detach();
 
-            if let Ok(prompt) =
-                AnyEntity::from(notification.clone()).downcast::<LanguageServerPrompt>()
-            {
-                let is_prompt_without_actions = prompt
-                    .read(cx)
-                    .request
-                    .as_ref()
-                    .is_some_and(|request| request.actions.is_empty());
-
-                let dismiss_timeout_ms = ProjectSettings::get_global(cx)
-                    .global_lsp_settings
-                    .notifications
-                    .dismiss_timeout_ms;
-
-                if is_prompt_without_actions {
-                    if let Some(dismiss_duration_ms) = dismiss_timeout_ms.filter(|&ms| ms > 0) {
-                        let task = cx.spawn({
-                            let id = id.clone();
-                            async move |this, cx| {
-                                cx.background_executor()
-                                    .timer(Duration::from_millis(dismiss_duration_ms))
-                                    .await;
-                                let _ = this.update(cx, |workspace, cx| {
-                                    workspace.dismiss_notification(&id, cx);
-                                });
-                            }
-                        });
-                        prompt.update(cx, |prompt, _| {
-                            prompt.dismiss_task = Some(task);
-                        });
-                    }
-                }
-            }
             notification.into()
         });
     }
@@ -257,6 +224,34 @@ impl Workspace {
             });
         }
     }
+
+    pub(crate) fn show_language_server_prompt(
+        &mut self,
+        request: &LanguageServerPromptRequest,
+        cx: &mut Context<Self>,
+    ) {
+        if request.actions.is_empty()
+            && self.notifications.iter().any(|(_, view)| {
+                let Ok(prompt) = view.clone().downcast::<LanguageServerPrompt>() else {
+                    return false;
+                };
+                prompt.read(cx).request.as_ref().is_some_and(|existing| {
+                    existing.actions.is_empty()
+                        && existing.level == request.level
+                        && existing.lsp_name == request.lsp_name
+                        && existing.message == request.message
+                })
+            })
+        {
+            return;
+        }
+
+        self.show_notification(
+            NotificationId::composite::<LanguageServerPrompt>(request.id),
+            cx,
+            |cx| cx.new(|cx| LanguageServerPrompt::new(request.clone(), cx)),
+        );
+    }
 }
 
 pub struct LanguageServerPrompt {
@@ -276,15 +271,34 @@ impl Focusable for LanguageServerPrompt {
 impl Notification for LanguageServerPrompt {}
 
 impl LanguageServerPrompt {
-    pub fn new(request: project::LanguageServerPromptRequest, cx: &mut App) -> Self {
+    pub fn new(request: project::LanguageServerPromptRequest, cx: &mut Context<Self>) -> Self {
         let markdown = cx.new(|cx| Markdown::new(request.message.clone().into(), None, None, cx));
+        let dismiss_task = if request.actions.is_empty() {
+            ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .notifications
+                .dismiss_timeout_ms
+                .filter(|&duration| duration > 0)
+                .map(|dismiss_duration_ms| {
+                    cx.spawn(async move |prompt, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(dismiss_duration_ms))
+                            .await;
+                        prompt
+                            .update(cx, |prompt, cx| prompt.dismiss_notification(cx))
+                            .ok();
+                    })
+                })
+        } else {
+            None
+        };
 
         Self {
             focus_handle: cx.focus_handle(),
             request: Some(request),
             scroll_handle: ScrollHandle::new(),
             markdown,
-            dismiss_task: None,
+            dismiss_task,
         }
     }
 
@@ -923,6 +937,12 @@ pub mod simple_message_notification {
         pub fn copy_text<S: Into<SharedString>>(mut self, text: S) -> Self {
             self.copy_text = Some(text.into());
             self
+        }
+
+        /// The text copied to the clipboard; for error notifications, the full message.
+        #[cfg(any(test, feature = "test-support"))]
+        pub fn copied_text(&self) -> Option<&SharedString> {
+            self.copy_text.as_ref()
         }
 
         fn auto_dismiss(mut self, severity: ErrorSeverity, cx: &mut Context<Self>) -> Self {
@@ -1767,8 +1787,10 @@ where
 #[cfg(test)]
 mod tests {
     use fs::FakeFs;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
+    use lsp::MessageActionItem;
     use project::{LanguageServerPromptRequest, Project};
+    use std::collections::HashMap;
 
     use crate::tests::init_test;
 
@@ -1969,5 +1991,156 @@ mod tests {
         // Advance time past the custom duration
         cx.executor().advance_clock(Duration::from_millis(1000));
         assert_eq!(count_notifications(&workspace, cx), 0);
+    }
+
+    #[gpui::test]
+    async fn test_language_server_prompt_deduplication(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_notification(NotificationId::unique::<()>(), cx, |cx| {
+                cx.new(|cx| simple_message_notification::MessageNotification::new("Unrelated", cx))
+            });
+        });
+
+        let long_message = "x".repeat(65536);
+        let prompts = [
+            ("server", PromptLevel::Warning, ""),
+            ("server", PromptLevel::Info, ""),
+            ("server", PromptLevel::Critical, ""),
+            ("other", PromptLevel::Warning, ""),
+            ("server", PromptLevel::Warning, "é🦀"),
+            ("server", PromptLevel::Warning, long_message.as_str()),
+            ("a", PromptLevel::Warning, "b:Warning:c"),
+            ("a:Warning:b", PromptLevel::Warning, "c"),
+        ];
+        for (index, (server, level, message)) in prompts.into_iter().enumerate() {
+            emit_language_server_prompt(&project, server, level, message, Vec::new(), cx);
+            let original_views =
+                workspace.read_with(cx, |workspace, _| workspace.notification_views());
+            assert_eq!(original_views.len(), index + 2);
+            emit_language_server_prompt(&project, server, level, message, Vec::new(), cx);
+            assert_eq!(
+                workspace.read_with(cx, |workspace, _| workspace.notification_views()),
+                original_views
+            );
+        }
+
+        workspace.update(cx, |workspace, cx| workspace.clear_all_notifications(cx));
+        let actions = vec![MessageActionItem {
+            title: String::from("Retry"),
+            properties: HashMap::default(),
+        }];
+        let mut expected_ids = Vec::new();
+        for (actions, should_show) in [
+            (actions.clone(), true),
+            (Vec::new(), true),
+            (Vec::new(), false),
+            (actions, true),
+        ] {
+            let id = emit_language_server_prompt(
+                &project,
+                "server",
+                PromptLevel::Warning,
+                "same message",
+                actions,
+                cx,
+            );
+            if should_show {
+                expected_ids.push(id);
+            }
+            assert_eq!(
+                workspace.read_with(cx, |workspace, _| workspace.notification_ids()),
+                expected_ids
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_language_server_prompt_deduplication_preserves_dismissal(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = ProjectSettings::get_global(cx).clone();
+            settings
+                .global_lsp_settings
+                .notifications
+                .dismiss_timeout_ms = Some(1);
+            ProjectSettings::override_global(settings, cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let emit_prompt = |cx: &mut VisualTestContext| {
+            emit_language_server_prompt(
+                &project,
+                "server",
+                PromptLevel::Warning,
+                "same message",
+                Vec::new(),
+                cx,
+            )
+        };
+        let notification_ids = |cx: &mut VisualTestContext| {
+            workspace.read_with(cx, |workspace, _| workspace.notification_ids())
+        };
+
+        let original_id = emit_prompt(cx);
+        cx.executor().advance_clock(Duration::from_micros(999));
+        emit_prompt(cx);
+        assert_eq!(notification_ids(cx), vec![original_id]);
+        cx.executor().advance_clock(Duration::from_micros(1));
+        assert_eq!(notification_ids(cx), Vec::new());
+
+        let id = emit_prompt(cx);
+        assert_eq!(notification_ids(cx), vec![id.clone()]);
+        workspace.update(cx, |workspace, cx| workspace.dismiss_notification(&id, cx));
+        let id = emit_prompt(cx);
+        assert_eq!(notification_ids(cx), vec![id.clone()]);
+        workspace.update(cx, |workspace, cx| workspace.suppress_notification(&id, cx));
+        let id = emit_prompt(cx);
+        assert_eq!(notification_ids(cx), vec![id]);
+
+        workspace.update(cx, |workspace, cx| workspace.clear_all_notifications(cx));
+        cx.update(|_, cx| {
+            let mut settings = ProjectSettings::get_global(cx).clone();
+            settings
+                .global_lsp_settings
+                .notifications
+                .dismiss_timeout_ms = Some(0);
+            ProjectSettings::override_global(settings, cx);
+        });
+        let id = emit_prompt(cx);
+        emit_prompt(cx);
+        cx.executor().advance_clock(Duration::from_millis(10000));
+        assert_eq!(notification_ids(cx), vec![id]);
+    }
+
+    fn emit_language_server_prompt(
+        project: &Entity<Project>,
+        server: &str,
+        level: PromptLevel,
+        message: &str,
+        actions: Vec<MessageActionItem>,
+        cx: &mut VisualTestContext,
+    ) -> NotificationId {
+        let request = LanguageServerPromptRequest::test(
+            level,
+            message.to_owned(),
+            actions,
+            server.to_owned(),
+        );
+        let id = NotificationId::composite::<LanguageServerPrompt>(request.id);
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::LanguageServerPrompt(request));
+        });
+        cx.run_until_parked();
+        id
     }
 }

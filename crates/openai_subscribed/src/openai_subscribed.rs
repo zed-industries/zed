@@ -13,7 +13,7 @@ use language_model::{
     CompactionResult, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCompletionStream, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
-    LanguageModelToolChoiceSupport, RateLimiter,
+    LanguageModelToolChoiceSupport, PromptCompactionStrategy, RateLimiter,
 };
 use open_ai::{
     ReasoningEffort,
@@ -120,10 +120,16 @@ impl State {
             .spawn({
                 let credentials_provider = credentials_provider.clone();
                 async move |this, cx| {
-                    let result = credentials_provider
-                        .read_credentials(CREDENTIALS_KEY, cx)
-                        .await;
+                    let result = language_model::read_credentials(
+                        credentials_provider.as_ref(),
+                        CREDENTIALS_KEY,
+                        cx,
+                    )
+                    .await;
                     let refresh_models_task = this.update(cx, |state, cx| {
+                        if state.auth_generation != 0 {
+                            return None;
+                        }
                         match result {
                             Ok(Some((_, bytes))) => {
                                 match serde_json::from_slice::<CodexCredentials>(&bytes) {
@@ -740,6 +746,7 @@ pub fn language_model(model: &ChatGptModel) -> LanguageModel {
                 name: name.into(),
                 value: value.into(),
                 is_default: Some(effort) == default_effort,
+                supports_disabling_thinking: None,
             })
         })
         .collect();
@@ -747,6 +754,7 @@ pub fn language_model(model: &ChatGptModel) -> LanguageModel {
         supports_tools: true,
         supports_images: model.supports_images(),
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
         supports_streaming_tools: true,
         supports_thinking: true,
         supports_fast_mode: model.supports_priority(),
@@ -1714,7 +1722,7 @@ mod tests {
                 ))?)
         });
 
-        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        let state = cx.new(|cx| State::new(http.clone(), creds_provider.clone(), cx));
 
         let load_task = cx
             .read(|cx| state.read(cx).load_task())
@@ -1731,6 +1739,25 @@ mod tests {
                 state.available_models().first().map(ChatGptModel::id),
                 Some("gpt-account-default")
             );
+        });
+
+        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        state.update(cx, |state, _| state.auth_generation += 1);
+        let load_task = cx
+            .read(|cx| state.read(cx).load_task())
+            .expect("constructor should start the credentials load");
+        cx.run_until_parked();
+        load_task.await.expect("stale load should complete");
+        cx.read(|cx| {
+            let state = state.read(cx);
+            assert_eq!(
+                state
+                    .credentials
+                    .as_ref()
+                    .map(|creds| creds.access_token.as_str()),
+                None
+            );
+            assert!(state.load_task().is_none());
         });
     }
 

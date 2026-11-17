@@ -3,7 +3,7 @@ use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, ForegroundActivity, SubmissionResponse,
     ToolCallStatus,
 };
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Context as _, Result, anyhow};
 use client::RefreshLlmTokenListener;
 use futures::{FutureExt, StreamExt, channel::mpsc, channel::oneshot, select};
@@ -277,7 +277,10 @@ where
         tool_call.id.clone()
     });
 
-    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    thread
+        .update(cx, |thread, cx| thread.cancel(cx))
+        .await
+        .expect("cancellation succeeds");
     full_turn.await.unwrap();
     thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[first_tool_call_ix] else {
@@ -354,7 +357,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::schema::v2::PermissionOptionId::new($allow_option_id),
+                    ::agent_client_protocol::v2::schema::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;
@@ -531,7 +534,7 @@ pub fn get_zed_path() -> PathBuf {
 mod tests {
     use super::*;
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol::schema::v1 as acp_v1;
+    use agent_client_protocol::v1::schema as acp_v1;
     use std::rc::Rc;
 
     async fn stub_thread(

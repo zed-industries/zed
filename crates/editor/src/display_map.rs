@@ -437,16 +437,12 @@ impl DisplayMap {
             }]);
             self.block_map.deferred_edits.set(edits);
             self.block_map.retain_blocks_raw(&mut |block| {
-                if companion
+                !companion
                     .read(cx)
                     .lhs_custom_block_to_balancing_block
                     .borrow()
                     .values()
                     .any(|id| *id == block.id)
-                {
-                    return false;
-                }
-                true
             });
             return;
         };
@@ -1583,6 +1579,10 @@ impl DisplaySnapshot {
             let offset = self.display_point_to_inlay_offset(point, Bias::Left);
             rendered_range.contains(&offset) && !self.fold_snapshot().is_inlay_offset_folded(offset)
         })
+    }
+
+    pub(crate) fn diagnostics_visible(&self) -> bool {
+        self.diagnostics_max_severity.into_lsp().is_some()
     }
 
     fn diagnostic_severity_is_visible(&self, severity: lsp::DiagnosticSeverity) -> bool {
@@ -4172,7 +4172,6 @@ pub mod tests {
                 ("  ".to_string(), Some(Hsla::red())),
                 ("\n".to_string(), None),
                 ("fn ".to_string(), Some(Hsla::red())),
-                ("i".to_string(), Some(Hsla::blue())),
                 ("\n".to_string(), None)
             ]
         );

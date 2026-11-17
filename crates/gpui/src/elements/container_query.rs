@@ -111,14 +111,6 @@ impl Element for ContainerQuery {
     }
 }
 
-impl IntoElement for ContainerQuery {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Styled for ContainerQuery {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style

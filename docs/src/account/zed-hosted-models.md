@@ -1,6 +1,6 @@
 ---
 title: Zed-Hosted Models - Zed
-description: AI models available via Zed Pro including Claude Fable 5.1, Claude Opus 5.5, GPT-6.1 Sol, and Gemini 3. Pricing, context windows, and tool call support.
+description: AI models available via Zed Pro including Claude Fable 5.2, Claude Opus 5.5, GPT-6.1 Sol, and Gemini 4 Argon. Pricing, context windows, and tool call support.
 ---
 
 # Zed-Hosted Models
@@ -11,6 +11,10 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 
 | Model             | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |
 | ----------------- | --------- | ------------------- | ---------------------------- | ----------------------- |
+| Claude Fable 5.2  | Anthropic | Input               | $8.00                        | $8.80                   |
+|                   | Anthropic | Output              | $40.00                       | $44.00                  |
+|                   | Anthropic | Input - Cache Write | $10.00                       | $11.00                  |
+|                   | Anthropic | Input - Cache Read  | $0.20                        | $0.22                   |
 | Claude Fable 5.1  | Anthropic | Input               | $10.00                       | $11.00                  |
 |                   | Anthropic | Output              | $50.00                       | $55.00                  |
 |                   | Anthropic | Input - Cache Write | $12.50                       | $13.75                  |
@@ -116,6 +120,9 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 | GPT-5 nano        | OpenAI    | Input               | $0.05                        | $0.055                  |
 |                   | OpenAI    | Output              | $0.40                        | $0.44                   |
 |                   | OpenAI    | Cached Input        | $0.005                       | $0.0055                 |
+| Gemini 4 Argon    | Google    | Input               | $2.00                        | $2.20                   |
+|                   | Google    | Output              | $10.00                       | $11.00                  |
+|                   | Google    | Cached Input        | $0.10                        | $0.11                   |
 | Gemini 3.1 Pro    | Google    | Input               | $2.00                        | $2.20                   |
 |                   | Google    | Output              | $12.00                       | $13.20                  |
 | Gemini 3.5 Flash  | Google    | Input               | $1.50                        | $1.65                   |
@@ -123,7 +130,7 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 | Gemini 3 Flash    | Google    | Input               | $0.50                        | $0.55                   |
 |                   | Google    | Output              | $3.00                        | $3.30                   |
 
-> **Warn:** Anthropic retains prompts and outputs sent to Claude Fable 5.1 and Claude Fable 5 for at least 30 days for trust and safety purposes. The no-training commitment still applies, and Zed does not retain your prompts or outputs. See [Provider Safety Retention for Designated Models](../ai/privacy-and-security.md#provider-safety-retention).
+> **Warn:** Anthropic retains prompts and outputs sent to Claude Fable 5.2, Claude Fable 5.1, and Claude Fable 5 for at least 30 days for trust and safety purposes. The no-training commitment still applies, and Zed does not retain your prompts or outputs. See [Provider Safety Retention for Designated Models](../ai/privacy-and-security.md#provider-safety-retention).
 
 ## Recent Model Retirements {#recent-model-retirements}
 
@@ -142,7 +149,9 @@ Zed no longer offers the models below:
 
 Any usage of a Zed-hosted model will be billed at the Zed Price (rightmost column above). See [Plans & Pricing](./plans-and-pricing.md) for details on Zed's plans and limits for use of hosted models.
 
-Because Zed-hosted Gemini models do not use Google context caching, Gemini usage is billed only as input and output tokens; there is no separate cached-input price for these models. This preserves zero-data-retention behavior for hosted Gemini requests. For background, see Google's Vertex AI documentation on [context caching](https://cloud.google.com/vertex-ai/generative-ai/docs/context-cache/context-cache-overview) and [zero data retention](https://cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention).
+For Claude Fable 5.2, the cache-write rate above is for the 5-minute cache. The 1-hour cache costs $16.00 per 1M tokens from Anthropic, or $17.60 through Zed. Fast mode doubles all Fable 5.2 token rates, including cache writes and reads.
+
+Gemini 4 Argon bills implicit cache hits at the cached-input rate above. Gemini 3 models do not use Google context caching and are billed only as input and output tokens, which preserves zero-data-retention behavior for those requests. For background, see Google's Vertex AI documentation on [context caching](https://cloud.google.com/vertex-ai/generative-ai/docs/context-cache/context-cache-overview) and [zero data retention](https://cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention).
 
 > LLMs can enter unproductive loops that require user intervention. Monitor longer-running tasks and interrupt if needed.
 
@@ -152,6 +161,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 
 | Model             | Provider  | Zed-Hosted Context Window |
 | ----------------- | --------- | ------------------------- |
+| Claude Fable 5.2  | Anthropic | 1M                        |
 | Claude Fable 5.1  | Anthropic | 1M                        |
 | Claude Fable 5    | Anthropic | 1M                        |
 | Claude Opus 5.5   | Anthropic | 1M                        |
@@ -181,6 +191,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | GPT-5.2-Codex     | OpenAI    | 272k input / 400k total   |
 | GPT-5 mini        | OpenAI    | 272k input / 400k total   |
 | GPT-5 nano        | OpenAI    | 272k input / 400k total   |
+| Gemini 4 Argon    | Google    | 1M                        |
 | Gemini 3.1 Pro    | Google    | 200k                      |
 | Gemini 3.5 Flash  | Google    | 1M                        |
 | Gemini 3 Flash    | Google    | 1M                        |

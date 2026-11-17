@@ -1,10 +1,8 @@
-use futures::future::join_all;
-use itertools::Itertools;
 use language::language_settings::LanguageSettings;
 use text::BufferId;
 use ui::{Context, Window};
 
-use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT};
+use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, LspDataKind};
 
 impl Editor {
     pub(super) fn refresh_folding_ranges(
@@ -21,62 +19,47 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_buffers(cx)
+            .lsp_data_buffers(for_buffer, cx)
             .into_iter()
-            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
-            .chain(for_buffer.and_then(|id| self.buffer.read(cx).buffer(id)))
             .filter(|buffer| {
-                let id = buffer.read(cx).remote_id();
-                (for_buffer.is_none_or(|target| target == id))
-                    && self.registered_buffers.contains_key(&id)
-                    && LanguageSettings::for_buffer(buffer.read(cx), cx)
-                        .document_folding_ranges
-                        .enabled()
+                LanguageSettings::for_buffer(buffer.read(cx), cx)
+                    .document_folding_ranges
+                    .enabled()
             })
-            .unique_by(|buffer| buffer.read(cx).remote_id())
-            .collect::<Vec<_>>();
+            .collect();
+        self.spawn_lsp_data_tasks(
+            LspDataKind::FoldingRanges,
+            for_buffer,
+            buffers_to_query,
+            cx,
+            |buffer, cx| {
+                let project = project.clone();
+                let buffer_id = buffer.read(cx).remote_id();
+                cx.spawn(async move |editor, cx| {
+                    cx.background_executor()
+                        .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
+                        .await;
 
-        self.refresh_folding_ranges_task = cx.spawn(async move |editor, cx| {
-            cx.background_executor()
-                .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
-                .await;
+                    let Ok(task) = project.update(cx, |project, cx| {
+                        project.lsp_store().update(cx, |lsp_store, cx| {
+                            lsp_store.fetch_folding_ranges(&buffer, cx)
+                        })
+                    }) else {
+                        return;
+                    };
+                    let ranges = task.await;
 
-            let Some(tasks) = editor
-                .update(cx, |_, cx| {
-                    let project = project.upgrade()?;
-                    Some(project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-                        buffers_to_query
-                            .into_iter()
-                            .map(|buffer| {
-                                let buffer_id = buffer.read(cx).remote_id();
-                                let task = lsp_store.fetch_folding_ranges(&buffer, cx);
-                                async move { (buffer_id, task.await) }
-                            })
-                            .collect::<Vec<_>>()
-                    }))
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.display_map.update(cx, |display_map, cx| {
+                                display_map.set_lsp_folding_ranges(buffer_id, ranges, cx);
+                            });
+                            cx.notify();
+                        })
+                        .ok();
                 })
-                .ok()
-                .flatten()
-            else {
-                return;
-            };
-
-            let results = join_all(tasks).await;
-            if results.is_empty() {
-                return;
-            }
-
-            editor
-                .update(cx, |editor, cx| {
-                    editor.display_map.update(cx, |display_map, cx| {
-                        for (buffer_id, ranges) in results {
-                            display_map.set_lsp_folding_ranges(buffer_id, ranges, cx);
-                        }
-                    });
-                    cx.notify();
-                })
-                .ok();
-        });
+            },
+        );
     }
 
     pub fn document_folding_ranges_enabled(&self, cx: &ui::App) -> bool {
@@ -124,7 +107,7 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt as _;
+    use futures::{FutureExt as _, StreamExt as _, channel::oneshot};
     use gpui::TestAppContext;
     use lsp::FoldingRange;
     use multi_buffer::MultiBufferRow;
@@ -132,6 +115,7 @@ mod tests {
     use settings::DocumentFoldingRanges;
 
     use crate::{
+        LSP_REQUEST_DEBOUNCE_TIMEOUT,
         editor_tests::{init_test, update_test_language_settings},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
@@ -328,6 +312,55 @@ mod tests {
                 !editor.document_folding_ranges_enabled(cx),
                 "LSP folding ranges should be cleared after toggling off"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_lsp_folding_ranges_toggling_off_drops_pending_response(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
+        });
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        let (response_sender, response_receiver) = oneshot::channel::<()>();
+        let response_receiver = response_receiver.shared();
+        let mut folding_request = cx
+            .set_request_handler::<lsp::request::FoldingRangeRequest, _, _>(move |_, _, _| {
+                let response_receiver = response_receiver.clone();
+                async move {
+                    response_receiver.await.ok();
+                    Ok(Some(vec![FoldingRange {
+                        start_line: 0,
+                        start_character: Some(10),
+                        end_line: 2,
+                        end_character: Some(1),
+                        kind: None,
+                        collapsed_text: None,
+                    }]))
+                }
+            });
+
+        cx.set_state("ˇfn main() {\n    println!(\"hello\");\n}\n");
+        cx.executor()
+            .advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT * 2);
+        cx.run_until_parked();
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
+            settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::Off);
+        });
+        cx.run_until_parked();
+        response_sender.send(()).unwrap();
+        assert!(folding_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.editor.read_with(&cx.cx.cx, |editor, cx| {
+            assert!(!editor.document_folding_ranges_enabled(cx));
         });
     }
 
