@@ -16713,45 +16713,125 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
+    struct Case {
+        file_name: &'static str,
+        encoding: &'static encoding_rs::Encoding,
+        has_bom: bool,
+        text: &'static str,
+        attributes: &'static str,
+        replacement: &'static str,
+        committed_rows: Vec<Range<u32>>,
+    }
+
     let shift_jis_text = "int a; /* 日本語のコメント */\nint b;\nint c; /* もう一つ */\n";
-    let windows_1252_text = "x = \"café\"\ny = \"crème brûlée\"\nz = 1\n";
-    let utf_16_text = "plain\n上の行\nlast\n";
+    let windows_1252_text = "x = \"café\"\ny = \"crème brûlée\"\nz = \"déjà vu\"\n";
+    let unicode_text = "上の行\nplain\n最後の行\n";
+    // Git skips the comparison for unchanged contents, so every case edits a line.
+    let outer_rows = vec![0..1, 2..3];
+    let case = |file_name, encoding, has_bom, text, attributes| Case {
+        file_name,
+        encoding,
+        has_bom,
+        text,
+        attributes,
+        replacement: "changed",
+        committed_rows: outer_rows.clone(),
+    };
     let cases = [
-        (
-            "sjis.c",
-            encoding_rs::SHIFT_JIS,
-            shift_jis_text,
-            encoding_rs::SHIFT_JIS.encode(shift_jis_text).0.into_owned(),
-            true,
-        ),
-        (
+        case("sjis.c", encoding_rs::SHIFT_JIS, false, shift_jis_text, ""),
+        case(
             "latin.py",
             encoding_rs::WINDOWS_1252,
-            windows_1252_text,
-            encoding_rs::WINDOWS_1252
-                .encode(windows_1252_text)
-                .0
-                .into_owned(),
-            true,
-        ),
-        (
-            "utf_16.txt",
-            encoding_rs::UTF_16LE,
-            utf_16_text,
-            [0xFF, 0xFE]
-                .into_iter()
-                .chain(utf_16_text.encode_utf16().flat_map(u16::to_le_bytes))
-                .collect(),
             false,
+            windows_1252_text,
+            "",
         ),
+        case("utf_8_bom.txt", encoding_rs::UTF_8, true, unicode_text, ""),
+        // Git can't split raw UTF-16 into lines.
+        Case {
+            committed_rows: Vec::new(),
+            ..case("utf_16.txt", encoding_rs::UTF_16LE, true, unicode_text, "")
+        },
+        case(
+            "latin_textconv.py",
+            encoding_rs::WINDOWS_1252,
+            false,
+            windows_1252_text,
+            "-text diff=windows_1252",
+        ),
+        case(
+            "utf_16le_textconv.txt",
+            encoding_rs::UTF_16LE,
+            true,
+            unicode_text,
+            "-text diff=utf_16",
+        ),
+        case(
+            "utf_16be_textconv.txt",
+            encoding_rs::UTF_16BE,
+            true,
+            unicode_text,
+            "-text diff=utf_16",
+        ),
+        case(
+            "sjis_working_tree.c",
+            encoding_rs::SHIFT_JIS,
+            false,
+            shift_jis_text,
+            "text working-tree-encoding=SHIFT_JIS",
+        ),
+        case(
+            "utf_16_working_tree.txt",
+            encoding_rs::UTF_16LE,
+            true,
+            unicode_text,
+            "text working-tree-encoding=UTF-16",
+        ),
+        case(
+            "latin_working_tree_textconv.py",
+            encoding_rs::WINDOWS_1252,
+            false,
+            windows_1252_text,
+            "text working-tree-encoding=WINDOWS-1252 diff=windows_1252",
+        ),
+        // Windows-1252 can't represent the emoji, so the buffer is blamed as UTF-8.
+        Case {
+            replacement: "😀",
+            committed_rows: vec![2..3],
+            ..case(
+                "latin_unrepresentable.py",
+                encoding_rs::WINDOWS_1252,
+                false,
+                "x = \"café\"\n&#128512;\nz = 1\n",
+                "",
+            )
+        },
     ];
 
     let root = TempTree::new(json!({ "project": {} }));
     let work_dir = root.path().join("project");
     git_init(&work_dir);
-    for (file_name, _, _, bytes, _) in &cases {
-        std::fs::write(work_dir.join(file_name), bytes).unwrap();
-        git_add(file_name, &work_dir);
+    git_config(
+        "diff.windows_1252.textconv",
+        "iconv -f WINDOWS-1252 -t UTF-8",
+        &work_dir,
+    );
+    git_config(
+        "diff.utf_16.textconv",
+        "iconv -f UTF-16 -t UTF-8",
+        &work_dir,
+    );
+    let attributes = cases
+        .iter()
+        .filter(|case| !case.attributes.is_empty())
+        .map(|case| format!("{} {}\n", case.file_name, case.attributes))
+        .collect::<String>();
+    std::fs::write(work_dir.join(".gitattributes"), attributes).unwrap();
+    git_add(".gitattributes", &work_dir);
+    for case in &cases {
+        let bytes = file_content::encode_text(case.text.to_owned(), case.encoding, case.has_bom);
+        std::fs::write(work_dir.join(case.file_name), bytes).unwrap();
+        git_add(case.file_name, &work_dir);
     }
     git_commit("Initial commit", &work_dir);
 
@@ -16763,7 +16843,8 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
         .await;
     cx.executor().run_until_parked();
 
-    for (file_name, encoding, text, _, is_blamed) in cases {
+    for case in cases {
+        let file_name = case.file_name;
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(work_dir.join(file_name), cx)
@@ -16771,9 +16852,11 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
             .await
             .unwrap();
         buffer.update(cx, |buffer, cx| {
-            assert_eq!(buffer.encoding(), encoding, "encoding of {file_name}");
-            assert_eq!(buffer.text(), text, "text of {file_name}");
-            buffer.edit([(buffer.len()..buffer.len(), "uncommitted\n")], None, cx);
+            assert_eq!(buffer.encoding(), case.encoding, "encoding of {file_name}");
+            assert_eq!(buffer.has_bom(), case.has_bom, "BOM of {file_name}");
+            assert_eq!(buffer.text(), case.text, "text of {file_name}");
+            let middle_line = Point::new(1, 0)..Point::new(1, buffer.line_len(1));
+            buffer.edit([(middle_line, case.replacement)], None, cx);
         });
 
         let blame = project
@@ -16781,14 +16864,13 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
             .await
             .unwrap()
             .unwrap();
-        let committed_lines = is_blamed.then(|| 0..text.lines().count() as u32);
         assert_eq!(
             blame
                 .entries
                 .iter()
                 .map(|entry| entry.range.clone())
                 .collect::<Vec<_>>(),
-            committed_lines.into_iter().collect::<Vec<_>>(),
+            case.committed_rows,
             "blame of {file_name}"
         );
     }
@@ -20838,6 +20920,20 @@ fn git_init(path: &Path) -> PathBuf {
         String::from_utf8_lossy(&output.stderr)
     );
     path.to_path_buf()
+}
+
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_config(key: &str, value: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["config", key, value])
+        .output()
+        .expect("Failed to run git config");
+    assert!(
+        output.status.success(),
+        "git config failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[allow(clippy::disallowed_methods)]

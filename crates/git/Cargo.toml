@@ -21,6 +21,7 @@ askpass.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 derive_more.workspace = true
+encoding_rs.workspace = true
 file_content.workspace = true
 gpui.workspace = true
 http_client.workspace = true
@@ -29,12 +30,14 @@ log.workspace = true
 parking_lot.workspace = true
 regex.workspace = true
 rand = { workspace = true, optional = true }
+rope.workspace = true
 schemars.workspace = true
 serde.workspace = true
 smallvec.workspace = true
 async-channel.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
+text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 url.workspace = true
@@ -47,6 +50,7 @@ ztracing.workspace = true
 [dev-dependencies]
 pretty_assertions.workspace = true
 serde_json.workspace = true
+text = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 rand.workspace = true

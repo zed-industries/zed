@@ -110,8 +110,27 @@ pub async fn detect_encoding(reader: &mut (dyn Read + Send)) -> io::Result<&'sta
 
 /// Inverse of [`decode_text`]: encodes UTF-8 text into `encoding`, prepending a BOM when asked.
 pub fn encode_text(text: String, encoding: &'static Encoding, has_bom: bool) -> Vec<u8> {
+    let (bytes, _) = encode_text_reporting_replacements(text, encoding, has_bom);
+    bytes
+}
+
+/// Like [`encode_text`], but `None` if `encoding` can't represent a character.
+pub fn encode_text_exact(
+    text: String,
+    encoding: &'static Encoding,
+    has_bom: bool,
+) -> Option<Vec<u8>> {
+    let (bytes, had_replacements) = encode_text_reporting_replacements(text, encoding, has_bom);
+    (!had_replacements).then_some(bytes)
+}
+
+fn encode_text_reporting_replacements(
+    text: String,
+    encoding: &'static Encoding,
+    has_bom: bool,
+) -> (Vec<u8>, bool) {
     if encoding == UTF_8 && !has_bom {
-        return text.into_bytes();
+        return (text.into_bytes(), false);
     }
 
     // encoding_rs follows the WHATWG standard and encodes UTF-16 labels as UTF-8.
@@ -121,7 +140,7 @@ pub fn encode_text(text: String, encoding: &'static Encoding, has_bom: bool) -> 
             bytes.extend_from_slice(&[0xFE, 0xFF]);
         }
         bytes.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
-        return bytes;
+        return (bytes, false);
     }
 
     if encoding == UTF_16LE {
@@ -130,17 +149,17 @@ pub fn encode_text(text: String, encoding: &'static Encoding, has_bom: bool) -> 
             bytes.extend_from_slice(&[0xFF, 0xFE]);
         }
         bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
-        return bytes;
+        return (bytes, false);
     }
 
-    let (encoded, _, _) = encoding.encode(&text);
+    let (encoded, _, had_replacements) = encoding.encode(&text);
     if has_bom && encoding == UTF_8 {
         let mut bytes = Vec::with_capacity(encoded.len() + 3);
         bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
         bytes.extend_from_slice(&encoded);
-        bytes
+        (bytes, had_replacements)
     } else {
-        encoded.into_owned()
+        (encoded.into_owned(), had_replacements)
     }
 }
 
@@ -580,6 +599,40 @@ mod tests {
             assert_eq!(
                 encode_text(decoded.text, decoded.encoding, decoded.has_bom),
                 bytes
+            );
+        }
+    }
+
+    #[test]
+    fn exact_encoding_rejects_unrepresentable_characters() {
+        let representable = "café";
+        for (encoding, has_bom) in [
+            (encoding_rs::WINDOWS_1252, false),
+            (UTF_8, true),
+            (UTF_16LE, true),
+        ] {
+            assert_eq!(
+                encode_text_exact(representable.to_owned(), encoding, has_bom),
+                Some(encode_text(representable.to_owned(), encoding, has_bom)),
+                "{}",
+                encoding.name()
+            );
+        }
+
+        let unrepresentable = "café 😀";
+        assert_eq!(
+            encode_text(unrepresentable.to_owned(), encoding_rs::WINDOWS_1252, false),
+            b"caf\xE9 &#128512;"
+        );
+        assert_eq!(
+            encode_text_exact(unrepresentable.to_owned(), encoding_rs::WINDOWS_1252, false),
+            None
+        );
+        for encoding in [UTF_8, UTF_16LE, UTF_16BE] {
+            assert!(
+                encode_text_exact(unrepresentable.to_owned(), encoding, false).is_some(),
+                "{}",
+                encoding.name()
             );
         }
     }

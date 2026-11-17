@@ -2194,27 +2194,11 @@ impl GitStore {
                 .await
                 .map_err(|err| anyhow::anyhow!(err))?;
             match repository_state {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    // Git splits lines on 0x0A bytes, which UTF-16 can contain inside
-                    // characters, so a file stored as UTF-16 can't be blamed line by line.
-                    if encoding == encoding_rs::UTF_16LE || encoding == encoding_rs::UTF_16BE {
-                        return Ok(Some(Blame::default()));
-                    }
-                    // Git compares the contents with the committed bytes, so they have to be
-                    // in the encoding the file is stored in.
-                    let content = cx
-                        .background_spawn(async move {
-                            let text = text::chunks_with_line_ending(&content, line_ending)
-                                .collect::<String>();
-                            encode_text(text, encoding, has_bom)
-                        })
-                        .await;
-                    backend
-                        .blame(repo_path.clone(), content)
-                        .await
-                        .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
-                        .map(Some)
-                }
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
+                    .blame(repo_path.clone(), content, line_ending, encoding, has_bom)
+                    .await
+                    .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
+                    .map(Some),
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let response = client
                         .request(proto::BlameBuffer {

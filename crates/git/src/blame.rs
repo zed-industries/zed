@@ -3,13 +3,19 @@ use crate::commit::{get_messages, get_tag_names};
 use crate::repository::{GitBinary, RepoPath};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
+use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
+use file_content::encode_text_exact;
+use futures::io::BufWriter;
 use futures::{AsyncWriteExt, TryFutureExt, try_join};
+use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use std::ops::Range;
+use text::{LineEnding, Rope};
 use time::OffsetDateTime;
 use time::UtcOffset;
 use time::macros::format_description;
+use util::ResultExt as _;
 use util::command::Stdio;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -20,8 +26,21 @@ pub struct Blame {
 }
 
 impl Blame {
-    pub(crate) async fn for_path(git: &GitBinary, path: &RepoPath, content: &[u8]) -> Result<Self> {
-        let entries = run_git_blame(git, path, BlameSource::Contents(content)).await?;
+    pub(crate) async fn for_path(
+        git: &GitBinary,
+        path: &RepoPath,
+        content: &Rope,
+        line_ending: LineEnding,
+        encoding: &'static Encoding,
+        has_bom: bool,
+    ) -> Result<Self> {
+        let stored_contents =
+            stored_contents(git, path, content, line_ending, encoding, has_bom).await;
+        let source = match &stored_contents {
+            Some(stored_contents) => BlameSource::StoredContents(stored_contents),
+            None => BlameSource::Contents(content, line_ending),
+        };
+        let entries = run_git_blame(git, path, source).await?;
         Self::with_commit_details(git, entries).await
     }
 
@@ -71,8 +90,83 @@ const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
 
 #[derive(Clone, Copy)]
 enum BlameSource<'a> {
-    Contents(&'a [u8]),
+    Contents(&'a Rope, LineEnding),
+    StoredContents(&'a [u8]),
     Revision(Oid),
+}
+
+/// The contents as stored on disk, if that is what Git compares with history.
+async fn stored_contents(
+    git: &GitBinary,
+    path: &RepoPath,
+    content: &Rope,
+    line_ending: LineEnding,
+    encoding: &'static Encoding,
+    has_bom: bool,
+) -> Option<Vec<u8>> {
+    if encoding == UTF_8 && !has_bom {
+        return None;
+    }
+    let compares_stored_bytes = git_compares_stored_bytes(git, path, encoding)
+        .await
+        .with_context(|| format!("reading git attributes of {:?}", path.as_unix_str()))
+        .log_err()?;
+    if !compares_stored_bytes {
+        return None;
+    }
+    let text = text::chunks_with_line_ending(content, line_ending).collect::<String>();
+    // A replaced character could match committed text.
+    encode_text_exact(text, encoding, has_bom)
+}
+
+/// Git applies textconv to history but not to stdin, and can't split raw UTF-16 into lines.
+/// With a `working-tree-encoding` it converts stdin itself.
+async fn git_compares_stored_bytes(
+    git: &GitBinary,
+    path: &RepoPath,
+    encoding: &'static Encoding,
+) -> Result<bool> {
+    let attributes = git
+        .run_raw(&[
+            "check-attr",
+            "-z",
+            "diff",
+            "working-tree-encoding",
+            "--",
+            path.as_unix_str(),
+        ])
+        .await?;
+    let mut diff_driver = None;
+    let mut has_working_tree_encoding = false;
+    for (_path, attribute, value) in attributes.split('\0').tuples() {
+        if matches!(value, "unspecified" | "unset" | "set") {
+            continue;
+        }
+        match attribute {
+            "diff" => diff_driver = Some(value),
+            // Git ignores a UTF-8 `working-tree-encoding`.
+            "working-tree-encoding" => {
+                has_working_tree_encoding =
+                    !value.eq_ignore_ascii_case("utf-8") && !value.eq_ignore_ascii_case("utf8");
+            }
+            _ => {}
+        }
+    }
+
+    if has_working_tree_encoding {
+        return Ok(true);
+    }
+    if encoding == UTF_16LE || encoding == UTF_16BE {
+        return Ok(false);
+    }
+    let Some(diff_driver) = diff_driver else {
+        return Ok(true);
+    };
+    let textconv_key = format!("diff.{diff_driver}.textconv");
+    let textconv = git
+        .run(&["config", "--default", "", "--get", &textconv_key])
+        .await?;
+    Ok(textconv.is_empty())
 }
 
 async fn run_git_blame(
@@ -86,7 +180,9 @@ async fn run_git_blame(
         let mut args = vec!["blame", "--incremental"];
         let revision_string;
         match source {
-            BlameSource::Contents(..) => args.extend(["--contents", "-"]),
+            BlameSource::Contents(..) | BlameSource::StoredContents(..) => {
+                args.extend(["--contents", "-"])
+            }
             BlameSource::Revision(revision) => {
                 revision_string = revision.to_string();
                 args.push(&revision_string);
@@ -95,10 +191,10 @@ async fn run_git_blame(
         args.push("--");
         git.build_command(&args)
             .arg(path.as_unix_str())
-            .stdin(if matches!(source, BlameSource::Contents(..)) {
-                Stdio::piped()
-            } else {
+            .stdin(if matches!(source, BlameSource::Revision(..)) {
                 Stdio::null()
+            } else {
+                Stdio::piped()
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -118,11 +214,21 @@ async fn run_git_blame(
         .context("failed to get stderr from git blame command")?;
 
     let write_stdin = async move {
-        if let BlameSource::Contents(contents) = source {
-            let mut stdin = stdin.context("failed to get pipe to stdin of git blame command")?;
-            stdin.write_all(contents).await?;
-            stdin.flush().await?;
+        if matches!(source, BlameSource::Revision(..)) {
+            return anyhow::Ok(());
         }
+        let stdin = stdin.context("failed to get pipe to stdin of git blame command")?;
+        let mut stdin = BufWriter::new(stdin);
+        match source {
+            BlameSource::Contents(contents, line_ending) => {
+                for chunk in text::chunks_with_line_ending(contents, line_ending) {
+                    stdin.write_all(chunk.as_bytes()).await?;
+                }
+            }
+            BlameSource::StoredContents(contents) => stdin.write_all(contents).await?,
+            BlameSource::Revision(..) => {}
+        }
+        stdin.flush().await?;
         anyhow::Ok(())
     };
 
@@ -170,8 +276,7 @@ async fn run_git_blame(
             .context("waiting for git blame process")
     };
 
-    // Git closes stdin when it exits early, for example for an untracked path, so a failed
-    // write is only reported once the exit status and stderr have been examined.
+    // Git closes stdin when it exits early, so its status is checked before the write error.
     let (write_result, entries, stderr, status) = try_join!(
         async { anyhow::Ok(write_stdin.await) },
         read_stdout,

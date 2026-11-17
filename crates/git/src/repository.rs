@@ -7,6 +7,7 @@ use crate::{Oid, RunHook, SHA256_HEX_LENGTH, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
 use collections::HashMap;
+use encoding_rs::Encoding;
 use file_content::{ByteContent, decode_byte_header};
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
@@ -14,10 +15,12 @@ use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
+use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use text::LineEnding;
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -927,8 +930,14 @@ pub trait GitRepository: Send + Sync {
         ignore_shallow_boundary: bool,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<CommitDiff>>;
-    fn blame(&self, path: RepoPath, content: Vec<u8>)
-    -> BoxFuture<'_, Result<crate::blame::Blame>>;
+    fn blame(
+        &self,
+        path: RepoPath,
+        content: Rope,
+        line_ending: LineEnding,
+        encoding: &'static Encoding,
+        has_bom: bool,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
     fn blame_at_revision(
         &self,
@@ -2489,14 +2498,18 @@ impl GitRepository for RealGitRepository {
     fn blame(
         &self,
         path: RepoPath,
-        content: Vec<u8>,
+        content: Rope,
+        line_ending: LineEnding,
+        encoding: &'static Encoding,
+        has_bom: bool,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let git = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
                 let git = git?;
-                crate::blame::Blame::for_path(&git, &path, &content).await
+                crate::blame::Blame::for_path(&git, &path, &content, line_ending, encoding, has_bom)
+                    .await
             })
             .boxed()
     }
@@ -5942,10 +5955,15 @@ mod tests {
         )
         .unwrap();
 
-        // Git exits without reading stdin for a path that isn't in HEAD, which breaks the pipe
-        // while the contents are still being written.
+        // Git exits without reading stdin for a path that isn't in HEAD.
         let blame = repo
-            .blame(repo_path("untracked.txt"), b"line\n".repeat(1 << 20))
+            .blame(
+                repo_path("untracked.txt"),
+                Rope::from("line\n".repeat(1 << 20)),
+                LineEnding::Unix,
+                encoding_rs::UTF_8,
+                false,
+            )
             .await
             .unwrap();
         assert_eq!(blame.entries, Vec::new());
