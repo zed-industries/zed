@@ -1912,14 +1912,32 @@ sys.exit(0 if main(*sys.argv[1:]) else 1)
         }
     }
 
+    /// This harness's single test, as `cargo nextest` lists and runs it.
+    const TEST_NAME: &str = "end_to_end";
+
     pub fn main() {
         let arguments: Vec<_> = std::env::args().skip(1).collect();
-        let (require_sandbox, expect_userns_disabled) = match arguments.as_slice() {
-            [] => (false, false),
-            [argument] if argument == "--require-sandbox" => (true, false),
-            [argument] if argument == "--expect-userns-disabled" => (true, true),
-            _ => panic!("expected --require-sandbox, --expect-userns-disabled, or no arguments"),
-        };
+        // `cargo nextest` drives `harness = false` binaries with its own
+        // protocol: `--list --format terse [--ignored]` to discover tests, then
+        // `<test-name> --exact [--nocapture]` to run each one. This harness is
+        // a single unit: one test, none ignored. `cargo test` and the NixOS
+        // checks instead run it bare, or with the flags below.
+        if arguments.iter().any(|argument| argument == "--list") {
+            if !arguments.iter().any(|argument| argument == "--ignored") {
+                println!("{TEST_NAME}: test");
+            }
+            return;
+        }
+        let (mut require_sandbox, mut expect_userns_disabled) = (false, false);
+        for argument in &arguments {
+            match argument.as_str() {
+                "--require-sandbox" => require_sandbox = true,
+                "--expect-userns-disabled" => expect_userns_disabled = true,
+                TEST_NAME | "--nocapture" | "--exact" | "--bench" => {}
+                other => panic!("unexpected argument {other}"),
+            }
+        }
+        let (require_sandbox, expect_userns_disabled) = (require_sandbox, expect_userns_disabled);
         let fixtures = tempfile::Builder::new()
             .prefix("sandbox-escape-test-")
             .tempdir_in("/tmp")
