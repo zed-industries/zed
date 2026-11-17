@@ -3,6 +3,7 @@ pub mod compliance;
 pub mod gpui;
 pub mod licenses;
 pub mod package_conformity;
+pub mod sandbox_tests;
 pub mod setup_webrtc;
 pub mod web_examples;
 pub mod workflow_checks;
