@@ -7359,7 +7359,6 @@ dependencies = [
  "backtrace",
  "bench_metrics",
  "bitflags 2.13.1",
- "chrono",
  "collections",
  "criterion",
  "derive_more",
@@ -7383,6 +7382,7 @@ dependencies = [
  "image",
  "inventory",
  "itertools 0.14.0",
+ "jiff",
  "libc",
  "log",
  "lyon_extra",
@@ -9041,10 +9041,12 @@ checksum = "be1f93b8b1eb69c77f24bbb0afdf66f54b632ee39af40ca21c4365a1d7347e49"
 dependencies = [
  "jiff-static",
  "jiff-tzdb-platform",
+ "js-sys",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde",
+ "wasm-bindgen",
  "windows-sys 0.59.0",
 ]
 
