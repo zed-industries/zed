@@ -1,42 +1,59 @@
-//! Contains the [`VimModeSetting`] and [`HelixModeSetting`] used to enable/disable Vim and Helix modes.
+//! Contains the [`ModalEditing`] setting used to select a modal editing mode.
 //!
-//! This is in its own crate as we want other crates to be able to enable or
-//! disable Vim/Helix modes without having to depend on the `vim` crate in its
-//! entirety.
+//! This is in its own crate so other crates can inspect the modal editing mode
+//! without depending on the `vim` crate in its entirety.
 
 use gpui::App;
-use settings::{RegisterSetting, Settings, SettingsContent};
+use settings::{ModalEditingContent, RegisterSetting, Settings, SettingsContent};
 
-#[derive(RegisterSetting)]
-pub struct VimModeSetting(pub bool);
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, RegisterSetting)]
+pub enum ModalEditing {
+    #[default]
+    None,
+    Vim,
+    Helix,
+}
 
-impl Settings for VimModeSetting {
+impl Settings for ModalEditing {
     fn from_settings(content: &SettingsContent) -> Self {
-        Self(content.vim_mode.unwrap())
+        content.modal_editing.unwrap().into()
     }
 }
 
-impl VimModeSetting {
-    pub fn is_enabled(cx: &App) -> bool {
-        Self::try_get(cx)
-            .map(|vim_mode| vim_mode.0)
-            .unwrap_or(false)
+impl From<ModalEditingContent> for ModalEditing {
+    fn from(value: ModalEditingContent) -> Self {
+        match value {
+            ModalEditingContent::None => Self::None,
+            ModalEditingContent::Vim => Self::Vim,
+            ModalEditingContent::Helix => Self::Helix,
+        }
     }
 }
 
-#[derive(RegisterSetting)]
-pub struct HelixModeSetting(pub bool);
-
-impl HelixModeSetting {
-    pub fn is_enabled(cx: &App) -> bool {
-        Self::try_get(cx)
-            .map(|helix_mode| helix_mode.0)
-            .unwrap_or(false)
+impl From<ModalEditing> for ModalEditingContent {
+    fn from(value: ModalEditing) -> Self {
+        match value {
+            ModalEditing::None => Self::None,
+            ModalEditing::Vim => Self::Vim,
+            ModalEditing::Helix => Self::Helix,
+        }
     }
 }
 
-impl Settings for HelixModeSetting {
-    fn from_settings(content: &SettingsContent) -> Self {
-        Self(content.helix_mode.unwrap())
+impl ModalEditing {
+    pub fn is_enabled(self) -> bool {
+        self != Self::None
+    }
+
+    pub fn is_vim(self) -> bool {
+        self == Self::Vim
+    }
+
+    pub fn is_helix(self) -> bool {
+        self == Self::Helix
+    }
+
+    pub fn is_enabled_in(cx: &App) -> bool {
+        Self::try_get(cx).is_some_and(|mode| mode.is_enabled())
     }
 }

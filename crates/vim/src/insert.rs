@@ -4,7 +4,7 @@ use gpui::{Action, Context, Window, actions};
 use language::SelectionGoal;
 use settings::Settings;
 use text::Point;
-use vim_mode_setting::HelixModeSetting;
+use vim_mode_setting::ModalEditing;
 use workspace::searchable::Direction;
 
 actions!(
@@ -50,7 +50,7 @@ impl Vim {
         if count <= 1 || Vim::globals(cx).dot_replaying {
             self.create_mark("^".into(), window, cx);
 
-            if HelixModeSetting::get_global(cx).0 {
+            if ModalEditing::get_global(cx).is_helix() {
                 // Restore the pre-append selections only if nothing happened in
                 // insert mode: no edits (tracked by current_tx/current_anchor)
                 // and the cursors are still where the append left them.

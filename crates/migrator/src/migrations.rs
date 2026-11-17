@@ -388,3 +388,11 @@ pub(crate) mod m_2026_09_29 {
 
     pub(crate) use settings::move_copilot_enterprise_uri;
 }
+
+pub(crate) mod m_2026_11_03 {
+    mod settings;
+
+    pub(crate) use settings::{
+        combine_modal_editing_settings, combine_modal_editing_settings_for_context,
+    };
+}

@@ -10,7 +10,8 @@ use project::agent_server_store::AllAgentServersSettings;
 use project::project_settings::ProjectSettings;
 use project::{AgentRegistryStore, RegistryAgent};
 use settings::{
-    BaseKeymap, CustomAgentServerSettings, Settings, SettingsStore, update_settings_file,
+    BaseKeymap, CustomAgentServerSettings, ModalEditingContent, Settings, SettingsStore,
+    update_settings_file,
 };
 use theme::{Appearance, SystemAppearance, ThemeRegistry};
 use theme_settings::{ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings};
@@ -19,7 +20,7 @@ use ui::{
     ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, Tooltip,
     prelude::*,
 };
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::ModalEditing;
 
 use crate::{
     ImportCursorSettings, ImportVsCodeSettings, SettingsImportState,
@@ -395,7 +396,7 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
 }
 
 fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
-    let toggle_state = if VimModeSetting::get_global(cx).0 {
+    let toggle_state = if ModalEditing::get_global(cx).is_vim() {
         ui::ToggleState::Selected
     } else {
         ui::ToggleState::Unselected
@@ -408,20 +409,24 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
         {
             let fs = <dyn Fs>::global(cx);
             move |&selection, _, cx| {
-                let vim_mode = match selection {
-                    ToggleState::Selected => true,
-                    ToggleState::Unselected => false,
+                let modal_editing = match selection {
+                    ToggleState::Selected => ModalEditingContent::Vim,
+                    ToggleState::Unselected => ModalEditingContent::None,
                     ToggleState::Indeterminate => {
                         return;
                     }
                 };
                 update_settings_file(fs.clone(), cx, move |setting, _| {
-                    setting.vim_mode = Some(vim_mode);
+                    setting.modal_editing = Some(modal_editing);
                 });
 
                 telemetry::event!(
                     "Welcome Vim Mode Toggled",
-                    options = if vim_mode { "on" } else { "off" },
+                    options = if modal_editing == ModalEditingContent::Vim {
+                        "on"
+                    } else {
+                        "off"
+                    },
                 );
             }
         },

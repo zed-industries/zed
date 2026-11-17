@@ -42,7 +42,7 @@ use object::Object;
 use schemars::JsonSchema;
 use search::BufferSearchBar;
 use serde::Deserialize;
-use settings::RegisterSetting;
+use settings::{ModalEditingContent, RegisterSetting};
 pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
@@ -53,8 +53,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme_settings::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
-use vim_mode_setting::HelixModeSetting;
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::ModalEditing;
 use workspace::{self, Pane, Workspace};
 
 use crate::{
@@ -291,23 +290,27 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
-            let currently_enabled = VimModeSetting::get_global(cx).0;
+            let current = *ModalEditing::get_global(cx);
+            let new_mode = if current.is_vim() {
+                ModalEditingContent::None
+            } else {
+                ModalEditingContent::Vim
+            };
             update_settings_file(fs, cx, move |setting, _| {
-                setting.vim_mode = Some(!currently_enabled);
-                if let Some(helix_mode) = &mut setting.helix_mode {
-                    *helix_mode = false;
-                }
+                setting.modal_editing = Some(new_mode);
             })
         });
 
         workspace.register_action(|workspace, _: &ToggleHelixMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
-            let currently_enabled = HelixModeSetting::get_global(cx).0;
+            let current = *ModalEditing::get_global(cx);
+            let new_mode = if current.is_helix() {
+                ModalEditingContent::None
+            } else {
+                ModalEditingContent::Helix
+            };
             update_settings_file(fs, cx, move |setting, _| {
-                setting.helix_mode = Some(!currently_enabled);
-                if let Some(vim_mode) = &mut setting.vim_mode {
-                    *vim_mode = false;
-                }
+                setting.modal_editing = Some(new_mode);
             })
         });
 
@@ -571,7 +574,7 @@ impl Vim {
         let editor = cx.entity();
 
         let initial_vim_mode = VimSettings::get_global(cx).default_mode;
-        let (mode, last_mode) = if HelixModeSetting::get_global(cx).0 {
+        let (mode, last_mode) = if ModalEditing::get_global(cx).is_helix() {
             let initial_helix_mode = match initial_vim_mode {
                 Mode::Normal => Mode::HelixNormal,
                 Mode::Insert => Mode::Insert,
@@ -626,12 +629,12 @@ impl Vim {
             return;
         }
 
-        let mut was_enabled = Vim::enabled(cx);
-        let mut was_helix_enabled = HelixModeSetting::get_global(cx).0;
+        let mut old_modal_editing = *ModalEditing::get_global(cx);
+        let mut was_enabled = old_modal_editing.is_enabled();
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
         cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
-            let enabled = Vim::enabled(cx);
-            let helix_enabled = HelixModeSetting::get_global(cx).0;
+            let modal_editing = *ModalEditing::get_global(cx);
+            let enabled = modal_editing.is_enabled();
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
             if enabled && was_enabled && (toggle != was_toggle) {
                 if toggle {
@@ -643,14 +646,13 @@ impl Vim {
                     editor.set_relative_line_number(None, cx)
                 }
             }
-            let helix_changed = was_helix_enabled != helix_enabled;
             was_toggle = toggle;
-            was_helix_enabled = helix_enabled;
 
-            let state_changed = (was_enabled != enabled) || (was_enabled && helix_changed);
+            let state_changed = old_modal_editing != modal_editing;
             if !state_changed {
                 return;
             }
+            old_modal_editing = modal_editing;
             if was_enabled {
                 Self::deactivate(editor, cx);
             }
@@ -1077,7 +1079,7 @@ impl Vim {
     }
 
     pub fn enabled(cx: &mut App) -> bool {
-        VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
+        ModalEditing::get_global(cx).is_enabled()
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions
@@ -1261,7 +1263,7 @@ impl Vim {
                 editor.set_relative_line_number(Some(is_relative), cx)
             });
         }
-        if HelixModeSetting::get_global(cx).0 {
+        if ModalEditing::get_global(cx).is_helix() {
             if self.mode == Mode::Normal {
                 self.mode = Mode::HelixNormal
             } else if self.mode == Mode::Visual {
@@ -2293,7 +2295,7 @@ impl Vim {
         VimEditorSettingsState {
             cursor_shape: self.cursor_shape(cx),
             clip_at_line_ends: self.clip_at_line_ends(),
-            collapse_matches: !HelixModeSetting::get_global(cx).0 && !self.search.cmd_f_search,
+            collapse_matches: !ModalEditing::get_global(cx).is_helix() && !self.search.cmd_f_search,
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),

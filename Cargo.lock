@@ -19703,6 +19703,7 @@ dependencies = [
  "nvim-rs",
  "outline_panel",
  "parking_lot",
+ "paths",
  "perf",
  "picker",
  "project",

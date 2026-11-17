@@ -32,12 +32,12 @@ When you first open Zed, you'll see a checkbox on the welcome screen that allows
 
 If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command {#action workspace::ToggleVimMode}.
 
-> **Note**: This command toggles the following
-> [`vim_mode` setting](./reference/all-settings.md#vim) in your user settings:
+> **Note:** This command toggles the following
+> [`modal_editing` setting](./reference/all-settings.md#modal-editing) in your user settings:
 >
 > ```json [settings]
 > {
->   "vim_mode": true
+>   "modal_editing": "vim"
 > }
 > ```
 
