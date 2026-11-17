@@ -36,6 +36,7 @@ pub(crate) struct ParsedMarkdownData {
     pub language_names: HashSet<SharedString>,
     pub language_paths: HashSet<Arc<str>>,
     pub root_block_starts: Vec<usize>,
+    pub details: Vec<ParsedDetails>,
     pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
@@ -45,6 +46,8 @@ pub(crate) struct ParsedMarkdownData {
     pub link_definition_spans: Vec<Range<usize>>,
     pub has_untagged_code_block: bool,
 }
+
+pub(crate) use crate::details::ParsedDetails;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ParsedMetadataBlock {
@@ -318,13 +321,30 @@ pub(crate) fn parse_markdown_with_options(
         .map(|(_, definition)| definition.span.start + body_start..definition.span.end + body_start)
         .collect::<Vec<_>>();
     link_definition_spans.sort_by_key(|span| span.start);
+    let mut details = Vec::new();
+    let mut html_sources = std::collections::BTreeMap::new();
+    let events = if parse_html {
+        crate::details::expand_details(
+            &text[body_start..],
+            body_start,
+            &mut details,
+            &mut html_sources,
+        )
+    } else {
+        parser
+            .into_offset_iter()
+            .map(|(event, range)| {
+                (
+                    event.into_static(),
+                    range.start + body_start..range.end + body_start,
+                )
+            })
+            .collect()
+    };
     let mut parser = frontmatter
         .into_iter()
-        .chain(
-            parser
-                .into_offset_iter()
-                .map(|(event, range)| (event, range.start + body_start..range.end + body_start)),
-        )
+        .map(|(event, range)| (event.into_static(), range))
+        .chain(events)
         .peekable();
     while let Some((pulldown_event, range)) = parser.next() {
         if within_metadata && !parse_metadata_blocks {
@@ -343,9 +363,12 @@ pub(crate) fn parse_markdown_with_options(
                     state.push_event(range.clone(), MarkdownEvent::Start(MarkdownTag::HtmlBlock));
 
                     if parse_html {
-                        if let Some(block) =
-                            html::html_parser::parse_html_block(&text[range.clone()], range.clone())
-                        {
+                        if let Some(block) = html::html_parser::parse_html_block(
+                            html_sources
+                                .get(&range.start)
+                                .map_or(&text[range.clone()], String::as_str),
+                            range.clone(),
+                        ) {
                             html_blocks.insert(range.start, block);
 
                             while let Some((event, end_range)) = parser.next() {
@@ -741,6 +764,7 @@ pub(crate) fn parse_markdown_with_options(
 
     ParsedMarkdownData {
         events: state.events,
+        details,
         language_names,
         language_paths,
         root_block_starts: state.root_block_starts,
@@ -1045,6 +1069,144 @@ mod tests {
     const UNWANTED_OPTIONS: Options = Options::ENABLE_MATH
         .union(Options::ENABLE_DEFINITION_LIST)
         .union(Options::ENABLE_WIKILINKS);
+
+    #[test]
+    fn test_details_reference_links() {
+        let source = "<details><summary>[Summary][ref]</summary>\n\n[Link][ref]\n\n</details>\n\n[ref]: https://example.com";
+        let parsed = parse_markdown_with_options(source, true, false, false);
+        assert_eq!(parsed.events.iter().filter(|(_, event)| matches!(event, MarkdownEvent::Start(MarkdownTag::Link { dest_url, .. }) if dest_url.as_ref() == "https://example.com")).count(), 2);
+    }
+
+    #[test]
+    fn test_details_frontmatter_and_literal_tags() {
+        let source = "---\ntitle: '<details>'\n---\n\nVisible";
+        let parsed = parse_markdown_with_options(source, true, false, true);
+        assert!(parsed.details.is_empty());
+        assert_eq!(parsed.metadata_blocks.len(), 1);
+        for source in [
+            "<details><summary>Use ` in shell</summary>\n\nBody\n\n</details>\n\nAfter `literal`\n\nAfter",
+            "<details><summary>Summary</summary>\n```html\n<details>\n````\n</details>\n\n```html\ncode\n```\n\nAfter",
+            "<details><summary>Approx ~5</summary>\n\nBody\n\n</details>\n\nAfter ~ rest\n\nAfter",
+            "<details><summary>Using `<details>` tags</summary>\n\nBody\n\n</details>\n\nAfter",
+            "<details><summary>Summary</summary>\n`<details>`\n</details>\n\nAfter",
+            "<details><summary>a < b and Bob's label</summary>\n\nBody\n\n</details>\n\nAfter",
+            "<details><summary>A</summary>\n\nbody <summary>B</summary>\n\n</details>\n\nAfter",
+        ] {
+            let parsed = parse_markdown_with_options(source, true, false, false);
+            assert_eq!(parsed.details.len(), 1, "{source}");
+            assert!(
+                parsed
+                    .events
+                    .iter()
+                    .any(|(range, event)| matches!(event, MarkdownEvent::Text)
+                        && &source[range.clone()] == "After"),
+                "{source}"
+            );
+            assert!(source[..parsed.details[0].range.end].ends_with("</details>"));
+            assert!(parsed.details[0].range.end < source.find("After").expect("after disclosure"));
+        }
+    }
+
+    #[test]
+    fn test_details_preserve_containers() {
+        for source in [
+            "- <details>\n  <summary>Summary</summary>\n\n  Hidden\n\n  </details>\n\n  After",
+            "- <details>\n\n  Hidden\n\n  </details>\n\n  After",
+            "> <details>\n> <summary>Summary</summary>\n>\n> Hidden\n>\n> </details>\n>\n> After",
+        ] {
+            let parsed = parse_markdown_with_options(source, true, false, false);
+            assert_eq!(parsed.details.len(), 1, "{source}");
+            assert_eq!(
+                parsed.root_block_starts.len(),
+                1,
+                "{source}: {:?}",
+                parsed.events
+            );
+            assert!(
+                matches!(
+                    parsed.events.get(1),
+                    Some((
+                        _,
+                        MarkdownEvent::Start(MarkdownTag::List(_) | MarkdownTag::BlockQuote(_))
+                    ))
+                ),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_details_markdown_and_offsets() {
+        let source = "<details>\n<summary>Show <b>details</b></summary>\n\n**Hidden** body\n\n```rust\nfn example() {}\n```\n\n</details>\n\nAfter";
+        let parsed = parse_markdown_with_options(source, true, false, false);
+        assert_eq!(parsed.details.len(), 1);
+        let details = &parsed.details[0];
+        assert!(!details.open);
+        assert_eq!(&source[details.summary.clone()], "Show <b>details</b>");
+        assert!(source[details.body.clone()].contains("**Hidden**"));
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::Start(MarkdownTag::Strong)))
+        );
+        assert!(parsed.events.iter().any(|(_, event)| matches!(
+            event,
+            MarkdownEvent::Start(MarkdownTag::CodeBlock { .. })
+        )));
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(range, event)| matches!(event, MarkdownEvent::Text)
+                    && &source[range.clone()] == "After")
+        );
+        assert!(
+            parse_markdown_with_options(source, false, false, false)
+                .details
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_details_nested_and_boolean_open_attribute() {
+        let source = "<DETAILS title=\"open > false\" OPEN=\"false\"><summary>Outer</summary>\n\n<details><summary>Inner</summary>\n\nBody\n\n</details>\n\n</DETAILS>";
+        let parsed = parse_markdown_with_options(source, true, false, false);
+        assert_eq!(parsed.details.len(), 2);
+        assert!(parsed.details[0].open);
+        assert!(!parsed.details[1].open);
+        assert!(
+            parsed.details[0]
+                .body
+                .contains(&parsed.details[1].range.start)
+        );
+    }
+
+    #[test]
+    fn test_details_in_code_and_comments() {
+        for source in [
+            "```html\n<details><summary>Example</summary>\n</details>\n```",
+            "<!--\n<details><summary>Example</summary>\n</details>\n-->",
+            "`<details><summary>Example</summary></details>`",
+            "<pre><details><summary>Example</summary></details></pre>",
+            "<code><details><summary>Example</summary></details></code>",
+        ] {
+            assert!(
+                parse_markdown_with_options(source, true, false, false)
+                    .details
+                    .is_empty(),
+                "{source}"
+            );
+        }
+        for source in [
+            "<details><summary>Outer</summary>\n```html\n<details><summary>Example</summary>\n</details>\n```\n</details>",
+            "<details><summary>Outer</summary>\n```html\n</details>\n```\n</details>",
+        ] {
+            let parsed = parse_markdown_with_options(source, true, false, false);
+            assert_eq!(parsed.details.len(), 1);
+            assert_eq!(parsed.details[0].range.end, source.len());
+        }
+    }
 
     #[test]
     fn all_options_considered() {

@@ -1,3 +1,4 @@
+mod details;
 pub mod html;
 mod mermaid;
 pub mod parser;
@@ -508,6 +509,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    details_open: HashMap<usize, bool>,
     _mermaid_theme_subscription: Option<Subscription>,
     /// Per-diagram view state (current tab, zoom, scroll position, and pending
     /// debounced re-raster) keyed by source offset. Distinct from
@@ -729,6 +731,7 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
+            details_open: HashMap::default(),
             _mermaid_theme_subscription: theme_subscription,
             mermaid_views: HashMap::default(),
             copied_code_blocks: HashSet::default(),
@@ -1259,6 +1262,7 @@ impl Markdown {
             };
             self.active_root_block = None;
             self.images_by_source_offset.clear();
+            self.details_open.clear();
             self.mermaid_state.clear(cx);
             cx.notify();
             cx.refresh_windows();
@@ -1292,6 +1296,7 @@ impl Markdown {
                         languages_by_name: TreeMap::default(),
                         languages_by_path: TreeMap::default(),
                         root_block_starts: Arc::default(),
+                        details: Vec::new(),
                         html_blocks: BTreeMap::default(),
                         metadata_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
@@ -1389,6 +1394,7 @@ impl Markdown {
                 languages_by_name,
                 languages_by_path,
                 root_block_starts: Arc::from(root_block_starts),
+                details: parsed.details,
                 html_blocks,
                 metadata_blocks,
                 mermaid_diagrams,
@@ -1406,6 +1412,42 @@ impl Markdown {
             let (parsed, images_by_source_offset) = parsed.await;
 
             this.update(cx, |this, cx| {
+                let mut details_open = HashMap::default();
+                let mut matched_old = HashSet::default();
+                let mut matched_new = HashSet::default();
+                for match_body in [true, false] {
+                    for (new_index, new) in parsed.details.iter().enumerate() {
+                        if matched_new.contains(&new_index) {
+                            continue;
+                        }
+                        let new_range = if match_body {
+                            new.range.clone()
+                        } else {
+                            new.summary.clone()
+                        };
+                        if let Some((old_index, old)) =
+                            this.parsed_markdown.details.iter().enumerate().find(
+                                |(old_index, old)| {
+                                    let old_range = if match_body {
+                                        old.range.clone()
+                                    } else {
+                                        old.summary.clone()
+                                    };
+                                    !matched_old.contains(old_index)
+                                        && this.parsed_markdown.source.get(old_range)
+                                            == parsed.source.get(new_range.clone())
+                                },
+                            )
+                        {
+                            matched_old.insert(old_index);
+                            matched_new.insert(new_index);
+                            if let Some(open) = this.details_open.get(&old.range.start) {
+                                details_open.insert(new.range.start, *open);
+                            }
+                        }
+                    }
+                }
+                this.details_open = details_open;
                 this.parsed_markdown = parsed;
                 this.images_by_source_offset = images_by_source_offset;
                 if this.active_root_block.is_some_and(|block_index| {
@@ -1538,6 +1580,7 @@ pub struct ParsedMarkdown {
     pub languages_by_name: TreeMap<SharedString, Arc<Language>>,
     pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
     pub root_block_starts: Arc<[usize]>,
+    pub(crate) details: Vec<parser::ParsedDetails>,
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub(crate) metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
@@ -2723,6 +2766,7 @@ impl Element for MarkdownElement {
         } else {
             0
         };
+        let details_open = self.markdown.read(cx).details_open.clone();
         let mut code_block_ids = HashSet::default();
         let mut current_code_block_text = None;
 
@@ -2731,6 +2775,16 @@ impl Element for MarkdownElement {
         let mut rendered_mermaid_block = false;
         let mut rendered_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
+            if parsed_markdown.details.iter().any(|details| {
+                details.body.contains(&range.start)
+                    && !(details.summary.start <= range.start && range.start <= details.summary.end)
+                    && !details_open
+                        .get(&details.range.start)
+                        .copied()
+                        .unwrap_or(details.open)
+            }) {
+                continue;
+            }
             let event_index = MarkdownEventIndex(index);
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
@@ -2822,6 +2876,39 @@ impl Element for MarkdownElement {
                                 markdown_end,
                                 text_align_override,
                             );
+                            if let Some(details) = parsed_markdown
+                                .details
+                                .iter()
+                                .find(|details| details.summary == *range)
+                            {
+                                let start = details.range.start;
+                                let open =
+                                    details_open.get(&start).copied().unwrap_or(details.open);
+                                let markdown = self.markdown.clone();
+                                builder.push_div(
+                                    div()
+                                        .id(("details-summary", start))
+                                        .h_flex()
+                                        .items_start()
+                                        .cursor_pointer()
+                                        .child(if open { "▾ " } else { "▸ " })
+                                        .on_click(move |_, _, cx| {
+                                            if markdown.read(cx).pressed_link.is_some()
+                                                || markdown.read(cx).pressed_footnote_ref.is_some()
+                                                || markdown.read(cx).selection.start
+                                                    != markdown.read(cx).selection.end
+                                            {
+                                                return;
+                                            }
+                                            markdown.update(cx, |markdown, cx| {
+                                                markdown.details_open.insert(start, !open);
+                                                cx.notify();
+                                            });
+                                        }),
+                                    range,
+                                    markdown_end,
+                                );
+                            }
                         }
                         MarkdownTag::Heading { level, .. } => {
                             let text_align_override = builder
@@ -3217,6 +3304,14 @@ impl Element for MarkdownElement {
                         current_img_block_range.take();
                     }
                     MarkdownTagEnd::Paragraph => {
+                        if parsed_markdown
+                            .details
+                            .iter()
+                            .any(|details| details.summary == *range)
+                        {
+                            builder.pop_div();
+                        }
+
                         self.pop_markdown_paragraph(&mut builder);
                     }
                     MarkdownTagEnd::Heading(_) => {
@@ -5314,6 +5409,248 @@ mod tests {
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+
+    #[gpui::test]
+    fn test_details_open_and_default_summary(cx: &mut TestAppContext) {
+        for (source, summary, visible_body) in [
+            (
+                "<details open><summary>Summary</summary>\n\nVisible **body**\n\n</details>",
+                "Summary",
+                true,
+            ),
+            ("<details>\n\nVisible body\n\n</details>", "Details", false),
+            (
+                "<details open><summary>Outer</summary>\n\n<details><summary>Inner</summary>\n\nVisible body\n\n</details>\n\n</details>",
+                "Inner",
+                false,
+            ),
+        ] {
+            let rendered = render_markdown_with_options(
+                source,
+                None,
+                MarkdownOptions {
+                    parse_html: true,
+                    ..Default::default()
+                },
+                cx,
+            );
+            let text: String = rendered
+                .lines
+                .iter()
+                .map(|line| line.layout.wrapped_text())
+                .collect();
+            assert!(text.contains(summary), "{text}");
+            assert_eq!(text.contains("Visible"), visible_body, "{text}");
+        }
+    }
+
+    #[gpui::test]
+    fn test_details_html_and_summary_rendering(cx: &mut TestAppContext) {
+        for (source, expected, excluded) in [
+            (
+                "<details><summary>S</summary>Body</details><p>After</p>",
+                "After",
+                "Body",
+            ),
+            (
+                "<details><summary>A</summary>Body</details>\n<details><summary>B</summary>Body</details>",
+                "B",
+                "Body",
+            ),
+            (
+                "<details open>\n    <summary>Click</summary>\n    <p>Body</p>\n</details>",
+                "Body",
+                "<p>",
+            ),
+            (
+                "<details><summary>a < b</summary>\n\nBody\n\n</details>\n\nAfter",
+                "a < b",
+                "Body",
+            ),
+            (
+                "<details><summary>Using `<details>` tags</summary>\n\nBody\n\n</details>\n\nAfter",
+                "After",
+                "Body",
+            ),
+            (
+                "<details><summary>A</summary>\n\nbody <summary>B</summary>\n\n</details>\n\nAfter",
+                "A",
+                "body",
+            ),
+            ("<details><summary></summary>Body</details>", "", "Details"),
+            (
+                "<div align=\"center\"><details><summary>Summary</summary><p>Body</p></details></div>",
+                "Body",
+                "<details>",
+            ),
+        ] {
+            let rendered = render_markdown_with_options(
+                source,
+                None,
+                MarkdownOptions {
+                    parse_html: true,
+                    ..Default::default()
+                },
+                cx,
+            );
+            let text: String = rendered
+                .lines
+                .iter()
+                .map(|line| line.layout.wrapped_text())
+                .collect();
+            assert!(text.contains(expected), "{source}: {text}");
+            assert!(!text.contains(excluded), "{source}: {text}");
+        }
+    }
+
+    #[gpui::test]
+    fn test_details_summary_link(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let source =
+            "<details><summary>[Docs](https://example.com)</summary>\n\nBody\n\n</details>";
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                source.into(),
+                None,
+                None,
+                MarkdownOptions {
+                    parse_html: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view(|_, cx| {
+            cx.observe(&markdown, |_, _, cx| cx.notify()).detach();
+            MarkdownTestView {
+                markdown: markdown.clone(),
+                style: MarkdownStyle::default(),
+                code_span_link: None,
+                rendered_text: rendered_text.clone(),
+            }
+        });
+        cx.run_until_parked();
+        let start = source.find("Docs").expect("link label");
+        let position = rendered_text
+            .borrow()
+            .as_ref()
+            .expect("rendered markdown")
+            .bounds_for_source_range(start..start + 4)
+            .first()
+            .expect("link bounds")
+            .center();
+        cx.simulate_click(position, Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(cx.opened_url(), Some("https://example.com".to_string()));
+        assert!(markdown.read_with(cx, |markdown, _| markdown.details_open.is_empty()));
+    }
+
+    #[gpui::test]
+    fn test_details_state_survives_edits(cx: &mut TestAppContext) {
+        let source = "<details><summary>Summary</summary>\n\nBody\n\n</details>";
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                source.into(),
+                None,
+                None,
+                MarkdownOptions {
+                    parse_html: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        markdown.update(cx, |markdown, cx| {
+            markdown.details_open.insert(0, true);
+            markdown.reset(format!("Before\n\n{source}").into(), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.details_open.get(&8).copied()),
+            Some(true)
+        );
+        markdown.update(cx, |markdown, cx| markdown.reset("".into(), cx));
+        cx.run_until_parked();
+        markdown.update(cx, |markdown, cx| markdown.reset(source.into(), cx));
+        cx.run_until_parked();
+        assert!(markdown.read_with(cx, |markdown, _| markdown.details_open.is_empty()));
+    }
+
+    #[gpui::test]
+    fn test_details_toggle(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        for source in [
+            "<details><summary>Show details</summary>\n\nHidden **body**\n\n</details>\n\nAfter",
+            "- <details>\n  <summary>Show details</summary>\n\n  Hidden **body**\n\n  </details>\n\n  After",
+            "> <details>\n> <summary>Show details</summary>\n>\n> Hidden **body**\n>\n> </details>\n>\n> After",
+            "- <details>\n\n  Hidden **body**\n\n  </details>\n\n  After",
+        ] {
+            let markdown = cx.new(|cx| {
+                Markdown::new_with_options(
+                    source.into(),
+                    None,
+                    None,
+                    MarkdownOptions {
+                        parse_html: true,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            let rendered_text = Rc::new(RefCell::new(None));
+            let (_, cx) = cx.add_window_view(|_, cx| {
+                cx.observe(&markdown, |_, _, cx| cx.notify()).detach();
+                MarkdownTestView {
+                    markdown: markdown.clone(),
+                    style: MarkdownStyle::default(),
+                    code_span_link: None,
+                    rendered_text: rendered_text.clone(),
+                }
+            });
+            let text = || {
+                rendered_text
+                    .borrow()
+                    .as_ref()
+                    .map(|rendered: &RenderedText| {
+                        rendered
+                            .lines
+                            .iter()
+                            .map(|line| line.layout.wrapped_text())
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default()
+            };
+            cx.run_until_parked();
+            assert!(
+                text().contains("details") || text().contains("Details"),
+                "{source}: {}",
+                text()
+            );
+            assert!(!text().contains("Hidden"));
+            assert!(text().contains("After"));
+            let summary = markdown.read_with(cx, |markdown, _| {
+                markdown.parsed_markdown.details[0].summary.clone()
+            });
+            let position = rendered_text
+                .borrow()
+                .as_ref()
+                .expect("rendered markdown")
+                .bounds_for_source_range(summary)
+                .first()
+                .expect("summary bounds")
+                .center();
+            cx.simulate_click(position, Modifiers::default());
+            cx.run_until_parked();
+            assert!(text().contains("Hidden"));
+            cx.simulate_click(position, Modifiers::default());
+            cx.run_until_parked();
+            assert!(!text().contains("Hidden"));
+        }
+    }
 
     #[gpui::test]
     fn test_deferred_parsing_preserves_updates_and_autoscroll(cx: &mut TestAppContext) {
