@@ -99,11 +99,16 @@ impl SeatbeltConfigFile {
     /// `allowed_unix_socket_paths` lists Unix domain sockets the command may
     /// connect to for local IPC even when IP network access is otherwise
     /// disabled. This does not permit sending packets to other machines.
+    ///
+    /// `allowed_tcp_ports` lists destination ports the command may open raw
+    /// outbound TCP connections to, on any host, when `permissions.network` is
+    /// [`NetworkAccess::LocalhostPort`]. It is ignored for the other modes.
     pub fn new(
         writable_directories: &[&Path],
         protected_paths: &[&Path],
         protected_file_names: &[ProtectedFileName],
         allowed_unix_socket_paths: &[&Path],
+        allowed_tcp_ports: &[u16],
         permissions: SandboxPermissions,
     ) -> Result<Self> {
         let mut file =
@@ -114,6 +119,7 @@ impl SeatbeltConfigFile {
             protected_paths,
             protected_file_names,
             allowed_unix_socket_paths,
+            allowed_tcp_ports,
             permissions,
         )?;
         file.write_all(config.as_bytes())
@@ -151,6 +157,9 @@ impl SeatbeltConfigFile {
 /// * `allowed_unix_socket_paths` - Unix domain sockets the command may
 ///   connect to for local IPC even when IP network access is otherwise
 ///   disabled. This does not permit sending packets to other machines.
+/// * `allowed_tcp_ports` - Destination ports the command may open raw outbound
+///   TCP connections to, on any host, when `permissions.network` is
+///   [`NetworkAccess::LocalhostPort`]. Ignored for the other modes.
 /// * `permissions` - Sandbox relaxations requested for this command.
 ///
 /// # Returns
@@ -163,6 +172,7 @@ pub fn wrap_invocation(
     protected_paths: &[&Path],
     protected_file_names: &[ProtectedFileName],
     allowed_unix_socket_paths: &[&Path],
+    allowed_tcp_ports: &[u16],
     permissions: SandboxPermissions,
 ) -> Result<(String, Vec<String>, SeatbeltConfigFile)> {
     let config_file = SeatbeltConfigFile::new(
@@ -170,6 +180,7 @@ pub fn wrap_invocation(
         protected_paths,
         protected_file_names,
         allowed_unix_socket_paths,
+        allowed_tcp_ports,
         permissions,
     )?;
 
@@ -205,7 +216,8 @@ pub fn wrap_invocation(
 /// any path whose final component matches one of `protected_file_names`. Unix
 /// domain socket paths in `allowed_unix_socket_paths` are reachable for local
 /// IPC even when IP network access is otherwise blocked. This does not permit
-/// sending packets to other machines.
+/// sending packets to other machines. With [`NetworkAccess::LocalhostPort`],
+/// raw outbound TCP to each of `allowed_tcp_ports` is also allowed, on any host.
 ///
 /// Network access and unrestricted filesystem writes must be requested via
 /// [`SandboxPermissions`].
@@ -217,6 +229,7 @@ fn generate_seatbelt_config(
     protected_paths: &[&Path],
     protected_file_names: &[ProtectedFileName],
     allowed_unix_socket_paths: &[&Path],
+    allowed_tcp_ports: &[u16],
     permissions: SandboxPermissions,
 ) -> Result<String> {
     // These paths are already the canonical identities captured once, at
@@ -233,10 +246,9 @@ fn generate_seatbelt_config(
         .iter()
         .map(|path| path.to_path_buf())
         .collect();
-    // Unlike file paths, Unix socket literals are emitted verbatim: it isn't
-    // guaranteed whether Seatbelt resolves symlinks before matching a
-    // `remote unix-socket` literal, so the caller passes both the path the
-    // child connects to and its canonical form, and we keep them as given.
+    // Unix socket literals are emitted verbatim too. Seatbelt matches a
+    // `remote unix-socket` literal against the resolved socket path, so only a
+    // canonical path ever matches.
 
     let mut config = r#"(version 1)
 
@@ -406,6 +418,28 @@ fn generate_seatbelt_config(
 (allow network-bind (local ip "localhost:*"))
 "#,
             ));
+            for allowed_tcp_port in allowed_tcp_ports {
+                config.push_str(&format!(
+                    r#"
+; Allow raw outbound TCP to a granted destination port, on any host
+(allow network-outbound (remote tcp "*:{allowed_tcp_port}"))
+"#,
+                ));
+            }
+            if !allowed_tcp_ports.is_empty() {
+                config.push_str(
+                    r#"
+; A raw TCP grant means the command resolves hostnames itself (the proxy
+; resolves them for proxied requests), and getaddrinfo on macOS asks
+; mDNSResponder over this Unix socket rather than sending DNS packets.
+(allow system-socket
+    (socket-domain AF_UNIX))
+(allow network-outbound
+    (remote unix-socket
+        (literal "/private/var/run/mDNSResponder")))
+"#,
+                );
+            }
         }
     }
 
@@ -538,6 +572,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -554,6 +589,7 @@ mod tests {
         let dir = PathBuf::from("/Users/test/projects/myproject");
         let config = generate_seatbelt_config(
             &[dir.as_path()],
+            &[],
             &[],
             &[],
             &[],
@@ -579,6 +615,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -593,6 +630,7 @@ mod tests {
         let dir = PathBuf::from("/Users/test/projects/myproject");
         let config = generate_seatbelt_config(
             &[dir.as_path()],
+            &[],
             &[],
             &[],
             &[],
@@ -629,6 +667,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::All,
                 allow_fs_write: false,
@@ -654,6 +693,7 @@ mod tests {
             &[],
             &[],
             &[socket_path.as_path()],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -721,6 +761,7 @@ mod tests {
             &[],
             &[],
             &[socket_path.as_path(), canonical_socket_path.as_path()],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -746,6 +787,7 @@ mod tests {
         let config = generate_seatbelt_config(
             &[dir.as_path()],
             &[protected.as_path()],
+            &[],
             &[],
             &[],
             SandboxPermissions::default(),
@@ -784,6 +826,7 @@ mod tests {
             ],
             &[dir.as_path()],
             &[protected_file.as_path()],
+            &[],
             &[],
             &[],
             SandboxPermissions::default(),
@@ -830,6 +873,7 @@ mod tests {
             ],
             &[dir.as_path()],
             &[protected_file.as_path()],
+            &[],
             &[],
             &[],
             SandboxPermissions {
@@ -937,6 +981,7 @@ mod tests {
                     &[],
                     &protected_names,
                     &[],
+                    &[],
                     SandboxPermissions {
                         network: NetworkAccess::None,
                         allow_fs_write,
@@ -998,6 +1043,7 @@ mod tests {
             &[],
             &[name],
             &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -1025,6 +1071,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::All,
                 allow_fs_write: false,
@@ -1046,6 +1093,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::LocalhostPort(54321),
                 allow_fs_write: false,
@@ -1057,6 +1105,39 @@ mod tests {
         assert!(config.contains("(allow network-outbound (remote tcp \"localhost:54321\"))"));
         assert!(config.contains("(allow network-bind (local ip \"localhost:*\"))"));
         assert!(!config.contains("(allow network*)"));
+        assert!(!seatbelt_rules_only(&config).contains("mDNSResponder"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_allows_granted_tcp_ports_and_dns_with_proxy() {
+        let config = seatbelt_rules_only(
+            &generate_seatbelt_config(
+                &[],
+                &[],
+                &[],
+                &[],
+                &[22, 5432],
+                SandboxPermissions {
+                    network: NetworkAccess::LocalhostPort(54321),
+                    allow_fs_write: false,
+                },
+            )
+            .unwrap(),
+        );
+
+        assert!(config.contains("(allow network-outbound (remote tcp \"localhost:54321\"))"));
+        assert!(config.contains("(allow network-outbound (remote tcp \"*:22\"))"));
+        assert!(config.contains("(allow network-outbound (remote tcp \"*:5432\"))"));
+        assert!(config.contains("(literal \"/private/var/run/mDNSResponder\")"));
+        assert!(!config.contains("(allow network*)"));
+
+        // Port grants only widen a proxy-restricted network.
+        let blocked = seatbelt_rules_only(
+            &generate_seatbelt_config(&[], &[], &[], &[], &[22], SandboxPermissions::default())
+                .unwrap(),
+        );
+        assert!(!blocked.contains("*:22"));
+        assert!(!blocked.contains("mDNSResponder"));
     }
 
     #[test]
@@ -1065,6 +1146,7 @@ mod tests {
         let scratch_dir = PathBuf::from("/private/tmp/zed-agent-command");
         let config = generate_seatbelt_config(
             &[project_dir.as_path(), scratch_dir.as_path()],
+            &[],
             &[],
             &[],
             &[],
@@ -1106,6 +1188,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -1127,6 +1210,7 @@ mod tests {
             "/bin/sh",
             &["-c".to_string(), "cat /etc/hosts".to_string()],
             &[temp_dir.path()],
+            &[],
             &[],
             &[],
             &[],
@@ -1158,6 +1242,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -1183,6 +1268,7 @@ mod tests {
             "/bin/sh",
             &["-c".to_string(), "echo test 2>/dev/null".to_string()],
             &[temp_dir.path()],
+            &[],
             &[],
             &[],
             &[],
@@ -1219,6 +1305,7 @@ mod tests {
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
             &[temp_dir.path()],
+            &[],
             &[],
             &[],
             &[],
@@ -1264,6 +1351,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -1301,6 +1389,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -1333,6 +1422,7 @@ mod tests {
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
             &[project_dir.path()],
+            &[],
             &[],
             &[],
             &[],
@@ -1374,6 +1464,7 @@ mod tests {
                 format!("echo 'hello' > '{}'", forbidden_file.display()),
             ],
             &[project_dir.path()],
+            &[],
             &[],
             &[],
             &[],

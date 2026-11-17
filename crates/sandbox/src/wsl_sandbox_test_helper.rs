@@ -525,6 +525,7 @@ mod imp {
                 NetworkAccess::None => SandboxNetPolicy::Blocked,
                 NetworkAccess::All => SandboxNetPolicy::Unrestricted,
             },
+            allowed_unix_sockets: Vec::new(),
         };
         let command = CommandAndArgs {
             program: program.to_string(),

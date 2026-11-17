@@ -317,9 +317,14 @@ impl SandboxWrap {
                     .iter()
                     .map(|pattern| pattern.to_string())
                     .collect(),
+                allowed_tcp_ports: Vec::new(),
             },
         };
-        Ok(sandbox::SandboxPolicy { fs, network })
+        Ok(sandbox::SandboxPolicy {
+            fs,
+            network,
+            allowed_unix_sockets: Vec::new(),
+        })
     }
 }
 

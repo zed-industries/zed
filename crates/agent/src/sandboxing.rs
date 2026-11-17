@@ -187,9 +187,14 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
     } else {
         SandboxNetPolicy::Restricted {
             allowed_domains: persistent.network_hosts.clone(),
+            allowed_tcp_ports: Vec::new(),
         }
     };
-    SandboxPolicy { fs, network }
+    SandboxPolicy {
+        fs,
+        network,
+        allowed_unix_sockets: Vec::new(),
+    }
 }
 
 /// Whether the sandboxed terminal can be exposed for this project.
@@ -471,9 +476,14 @@ impl ThreadSandboxGrants {
                     .iter()
                     .map(|host| host.to_string())
                     .collect(),
+                allowed_tcp_ports: Vec::new(),
             }
         };
-        SandboxPolicy { fs, network }
+        SandboxPolicy {
+            fs,
+            network,
+            allowed_unix_sockets: Vec::new(),
+        }
     }
 
     /// Serialize these grants for persistence in the thread's database row.
@@ -710,8 +720,10 @@ mod tests {
             } else {
                 SandboxNetPolicy::Restricted {
                     allowed_domains: hosts.iter().map(|h| h.to_string()).collect(),
+                    allowed_tcp_ports: Vec::new(),
                 }
             },
+            allowed_unix_sockets: Vec::new(),
         };
 
         // Unsandboxed on either side wins — the agent runs with ambient access.
@@ -824,7 +836,8 @@ mod tests {
         assert_eq!(
             policy.network,
             SandboxNetPolicy::Restricted {
-                allowed_domains: vec!["github.com".to_string()]
+                allowed_domains: vec!["github.com".to_string()],
+                allowed_tcp_ports: Vec::new(),
             }
         );
 
@@ -879,7 +892,8 @@ mod tests {
         assert_eq!(
             policy.network,
             SandboxNetPolicy::Restricted {
-                allowed_domains: vec!["*.npmjs.org".to_string()]
+                allowed_domains: vec!["*.npmjs.org".to_string()],
+                allowed_tcp_ports: Vec::new(),
             }
         );
 
