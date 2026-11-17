@@ -7,7 +7,7 @@ use debugger_ui::debugger_panel::DebugPanel;
 use editor::{Editor, EditorMode, LSP_REQUEST_DEBOUNCE_TIMEOUT, MultiBuffer};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _, RemoveOptions};
-use futures::StreamExt as _;
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal as _, VisualContext as _,
 };
@@ -40,12 +40,13 @@ use settings::{
 use std::{
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
 use task::TcpArgumentsTemplate;
+use text::OffsetRangeExt as _;
 use util::{path, rel_path::rel_path};
 
 #[gpui::test(iterations = 10)]
@@ -1815,5 +1816,373 @@ async fn test_ssh_document_links_resolve(
     let executor = cx_a.executor();
     client_ssh.update(cx_a, |a, _| {
         a.shutdown_processes(Some(proto::ShutdownRemoteServer {}), executor)
+    });
+}
+
+#[gpui::test]
+async fn test_ssh_collaboration_language_server_requests(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    cx_a.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let capabilities = lsp::ServerCapabilities {
+        hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+        definition_provider: Some(lsp::OneOf::Left(true)),
+        call_hierarchy_provider: Some(lsp::CallHierarchyServerCapability::Simple(true)),
+        rename_provider: Some(lsp::OneOf::Left(true)),
+        semantic_tokens_provider: Some(
+            lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                lsp::SemanticTokensOptions {
+                    legend: lsp::SemanticTokensLegend {
+                        token_types: vec!["function".into()],
+                        token_modifiers: Vec::new(),
+                    },
+                    full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                    ..lsp::SemanticTokensOptions::default()
+                },
+            ),
+        ),
+        ..lsp::ServerCapabilities::default()
+    };
+
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "main.rs": "fn main() { other::one(); }",
+                "other.rs": "pub fn one() {}\n",
+                "reexport.rs": "pub use other::one;\n",
+            }),
+        )
+        .await;
+
+    for client in [&client_a, &client_b] {
+        client.language_registry().add(rust_lang());
+        client.language_registry().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    }
+
+    server_cx.update(HeadlessProject::init);
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    languages.add(rust_lang());
+    let mut fake_language_servers = languages.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+    let _headless_project = server_cx.new(|cx| {
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: Arc::new(BlockedHttpClient),
+                node_runtime: NodeRuntime::unavailable(),
+                languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_ssh_project(path!("/code"), client_ssh, false, cx_a)
+        .await;
+    let (buffer_a, _handle) = project_a
+        .update(cx_a, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+
+    let hover_gate = Arc::new(Mutex::new(
+        None::<futures::future::Shared<futures::channel::oneshot::Receiver<()>>>,
+    ));
+    let hover_requests = Arc::new(AtomicUsize::new(0));
+    fake_language_server.set_request_handler::<lsp::request::HoverRequest, _, _>({
+        let hover_gate = hover_gate.clone();
+        let hover_requests = hover_requests.clone();
+        move |_, _| {
+            hover_requests.fetch_add(1, Ordering::SeqCst);
+            let gate = hover_gate.lock().unwrap().clone();
+            async move {
+                if let Some(gate) = gate {
+                    gate.await.ok();
+                }
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
+                        "remote hover".to_string(),
+                    )),
+                    range: None,
+                }))
+            }
+        }
+    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Uri::from_file_path(path!("/code/other.rs")).unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 10)),
+                ),
+            )))
+        },
+    );
+    let item = lsp::CallHierarchyItem {
+        name: "one".to_string(),
+        kind: lsp::SymbolKind::FUNCTION,
+        tags: None,
+        detail: None,
+        uri: lsp::Uri::from_file_path(path!("/code/other.rs")).unwrap(),
+        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 15)),
+        selection_range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 10)),
+        data: None,
+    };
+    fake_language_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+        let item = item.clone();
+        move |_, _| {
+            let item = item.clone();
+            async move { Ok(Some(vec![item])) }
+        }
+    });
+    fake_language_server.set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
+        let item = item.clone();
+        move |_, _| {
+            let from = item.clone();
+            async move {
+                Ok(Some(vec![lsp::CallHierarchyIncomingCall {
+                    from,
+                    from_ranges: vec![lsp::Range::new(
+                        lsp::Position::new(0, 12),
+                        lsp::Position::new(0, 15),
+                    )],
+                }]))
+            }
+        }
+    });
+    executor.run_until_parked();
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let buffer_b = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    project_b.read_with(cx_b, |project, cx| {
+        assert_eq!(
+            project
+                .language_server_statuses(cx)
+                .map(|(_, status)| status.name.0.to_string())
+                .collect::<Vec<_>>(),
+            ["the-fake-language-server"],
+            "the guest should learn about the language servers of the remote project",
+        );
+    });
+
+    let hovers = project_b
+        .update(cx_b, |project, cx| project.hover(&buffer_b, 14, cx))
+        .await
+        .unwrap();
+    assert_eq!(hovers.len(), 1, "unexpected hovers: {hovers:?}");
+    assert_eq!(hovers[0].contents[0].text, "remote hover");
+
+    // The definition lies in a file that the host has not opened.
+    let definitions = project_b
+        .update(cx_b, |project, cx| project.definitions(&buffer_b, 14, cx))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        definitions.len(),
+        1,
+        "unexpected definitions: {definitions:?}"
+    );
+    cx_b.read(|cx| {
+        let target_buffer = definitions[0].target.buffer.read(cx);
+        assert_eq!(target_buffer.text(), "pub fn one() {}\n");
+        assert_eq!(
+            definitions[0].target.range.to_point(target_buffer),
+            text::Point::new(0, 7)..text::Point::new(0, 10)
+        );
+    });
+
+    let items = project_b
+        .update(cx_b, |project, cx| {
+            project.prepare_call_hierarchy(&buffer_b, 14, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(items.len(), 1);
+    let incoming_calls = project_b
+        .update(cx_b, |project, cx| {
+            project.incoming_calls(items[0].clone(), cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(incoming_calls.len(), 1);
+    assert_eq!(incoming_calls[0].from.name, "one");
+
+    // Requests that the host and the guest make for the same buffer at the same time
+    // must not supersede each other on the remote server.
+    let (release_hover, hover_gate_receiver) = futures::channel::oneshot::channel::<()>();
+    *hover_gate.lock().unwrap() = Some(hover_gate_receiver.shared());
+    let hover_requests_before = hover_requests.load(Ordering::SeqCst);
+    let host_hover = project_a.update(cx_a, |project, cx| project.hover(&buffer_a, 14, cx));
+    let guest_hover = project_b.update(cx_b, |project, cx| project.hover(&buffer_b, 14, cx));
+    executor.run_until_parked();
+    assert_eq!(
+        hover_requests.load(Ordering::SeqCst) - hover_requests_before,
+        2
+    );
+    release_hover.send(()).unwrap();
+    executor.run_until_parked();
+    assert_eq!(host_hover.await.unwrap().len(), 1);
+    assert_eq!(guest_hover.await.unwrap().len(), 1);
+
+    let (release_semantic_tokens, semantic_tokens_gate) =
+        futures::channel::oneshot::channel::<()>();
+    let semantic_tokens_gate = semantic_tokens_gate.shared();
+    let semantic_tokens_requests = Arc::new(AtomicUsize::new(0));
+    fake_language_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
+        let semantic_tokens_requests = semantic_tokens_requests.clone();
+        move |_, _| {
+            semantic_tokens_requests.fetch_add(1, Ordering::SeqCst);
+            let semantic_tokens_gate = semantic_tokens_gate.clone();
+            async move {
+                semantic_tokens_gate.await.ok();
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![0, 3, 4, 0, 0],
+                        result_id: None,
+                    },
+                )))
+            }
+        }
+    });
+    let lsp_store_a = project_a.read_with(cx_a, |project, _| project.lsp_store());
+    let lsp_store_b = project_b.read_with(cx_b, |project, _| project.lsp_store());
+    let host_tokens = lsp_store_a.update(cx_a, |lsp_store, cx| {
+        lsp_store.semantic_tokens(buffer_a.clone(), cx)
+    });
+    let guest_tokens = lsp_store_b.update(cx_b, |lsp_store, cx| {
+        lsp_store.semantic_tokens(buffer_b.clone(), cx)
+    });
+    executor.run_until_parked();
+    assert_eq!(semantic_tokens_requests.load(Ordering::SeqCst), 2);
+    release_semantic_tokens.send(()).unwrap();
+    executor.run_until_parked();
+    for tokens in [host_tokens.await.unwrap(), guest_tokens.await.unwrap()] {
+        assert_eq!(tokens.tokens.as_ref().map_or(0, HashMap::len), 1);
+    }
+
+    // The rename edits a file that neither the host nor the guest has opened.
+    fake_language_server.set_request_handler::<lsp::request::Rename, _, _>(|_, _| async move {
+        Ok(Some(lsp::WorkspaceEdit {
+            changes: Some(
+                [
+                    (
+                        lsp::Uri::from_file_path(path!("/code/main.rs")).unwrap(),
+                        vec![lsp::TextEdit::new(
+                            lsp::Range::new(lsp::Position::new(0, 19), lsp::Position::new(0, 22)),
+                            "two".to_string(),
+                        )],
+                    ),
+                    (
+                        lsp::Uri::from_file_path(path!("/code/reexport.rs")).unwrap(),
+                        vec![lsp::TextEdit::new(
+                            lsp::Range::new(lsp::Position::new(0, 15), lsp::Position::new(0, 18)),
+                            "two".to_string(),
+                        )],
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            ..lsp::WorkspaceEdit::default()
+        }))
+    });
+    let transaction = project_b
+        .update(cx_b, |project, cx| {
+            project.perform_rename(buffer_b.clone(), 14, "two".to_string(), None, cx)
+        })
+        .await
+        .unwrap();
+    cx_b.read(|cx| {
+        let mut texts = transaction
+            .0
+            .keys()
+            .map(|buffer| buffer.read(cx).text())
+            .collect::<Vec<_>>();
+        texts.sort();
+        assert_eq!(
+            texts,
+            ["fn main() { other::two(); }", "pub use other::two;\n"]
+        );
+    });
+
+    // Servers that the remote project starts and stops after sharing reach the guest too.
+    let first_server_id = fake_language_server.server.server_id();
+    project_a.update(cx_a, |project, cx| {
+        project.restart_language_servers_for_buffers(
+            vec![buffer_a.clone()],
+            HashSet::default(),
+            cx,
+        );
+    });
+    let restarted_server_id = fake_language_servers
+        .next()
+        .await
+        .unwrap()
+        .server
+        .server_id();
+    assert_ne!(restarted_server_id, first_server_id);
+    executor.run_until_parked();
+
+    project_b.read_with(cx_b, |project, cx| {
+        assert_eq!(
+            project
+                .language_server_statuses(cx)
+                .map(|(server_id, _)| server_id)
+                .collect::<Vec<_>>(),
+            [restarted_server_id],
+            "the guest should see the restarted server in place of the stopped one",
+        );
     });
 }
