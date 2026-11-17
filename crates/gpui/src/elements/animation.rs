@@ -511,6 +511,15 @@ mod easing {
         move |delta| 1.0 - (1.0 - delta).powi(5)
     }
 
+    /// A heartbeat: a strong beat, a weaker one, then a rest. Starts and ends at 0 and peaks at 1.
+    pub fn heartbeat(delta: f32) -> f32 {
+        let beat = |center: f32, width: f32, height: f32| {
+            let x = (delta - center) / width;
+            height * (-x * x).exp()
+        };
+        beat(0.2, 0.06, 1.0) + beat(0.4, 0.05, 0.58)
+    }
+
     /// Apply the given easing function, first in the forward direction and then in the reverse direction
     pub fn bounce(easing: impl Fn(f32) -> f32) -> impl Fn(f32) -> f32 {
         move |delta| {

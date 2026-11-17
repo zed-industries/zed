@@ -3199,6 +3199,7 @@ pub enum ToolCallContent {
         source: acp_v2::Diff,
         render: DiffPatch,
     },
+    SessionReference(acp_v2::SessionReference),
     Other {
         source: acp_v2::ToolCallContent,
         markdown: Entity<Markdown>,
@@ -3213,6 +3214,7 @@ enum PreparedToolCallContent {
         meta: Option<acp_v2::Meta>,
     },
     DiffPatch(acp_v2::Diff),
+    SessionReference(acp_v2::SessionReference),
     Other(acp_v2::ToolCallContent),
 }
 
@@ -3235,6 +3237,13 @@ impl PreparedToolCallContent {
                     terminal: terminals.resolve(&acp_v2::TerminalId::new(terminal_id.0), cx)?,
                     meta,
                 },
+                acp_v1::ToolCallContent::Session(acp_v1::SessionReference {
+                    session_id,
+                    meta,
+                    ..
+                }) => {
+                    Self::SessionReference(acp_v2::SessionReference::new(session_id.0).meta(meta))
+                }
                 _ => continue,
             };
             prepared.push(content);
@@ -3265,6 +3274,7 @@ impl PreparedToolCallContent {
                 terminal: terminals.resolve(&terminal.terminal_id, cx)?,
                 meta: terminal.meta,
             }),
+            acp_v2::ToolCallContent::Session(reference) => Ok(Self::SessionReference(reference)),
             other => Ok(Self::Other(other)),
         }
     }
@@ -3314,6 +3324,9 @@ impl ToolCallContent {
                 render: DiffPatch::new(&source, language_registry, cx),
                 source,
             },
+            PreparedToolCallContent::SessionReference(reference) => {
+                Self::SessionReference(reference)
+            }
             PreparedToolCallContent::Other(source) => Self::Other {
                 source,
                 markdown: ContentBlock::create_markdown(
@@ -3371,6 +3384,10 @@ impl ToolCallContent {
                 }
                 *source = new_source;
             }
+            (
+                Self::SessionReference(reference),
+                PreparedToolCallContent::SessionReference(new_reference),
+            ) => *reference = new_reference,
             (Self::Other { source, .. }, PreparedToolCallContent::Other(new_source)) => {
                 *source = new_source;
             }
@@ -3388,6 +3405,7 @@ impl ToolCallContent {
                 source.changes.iter().map(diff_change_label).join("\n"),
                 Self::patch_preview(source)
             ),
+            Self::SessionReference(reference) => format!("Session {}", reference.session_id),
             Self::Other { markdown, .. } => markdown.read(cx).source().to_string(),
         }
     }
@@ -3397,7 +3415,10 @@ impl ToolCallContent {
             Self::ContentBlock { block, .. } => block.markdown(),
             Self::DiffPatch { render, .. } => render.fallback.as_ref(),
             Self::Other { markdown, .. } => Some(markdown),
-            Self::Diff(_) | Self::LegacyDiff { .. } | Self::Terminal { .. } => None,
+            Self::Diff(_)
+            | Self::LegacyDiff { .. }
+            | Self::Terminal { .. }
+            | Self::SessionReference(_) => None,
         }
     }
 
@@ -3472,8 +3493,11 @@ pub struct Plan {
 #[derive(Debug)]
 pub enum PlanContent {
     Items(Vec<PlanEntry>),
-    Markdown(Entity<Markdown>),
-    File { uri: SharedString },
+    Markdown {
+        markdown: Entity<Markdown>,
+        /// The file the agent keeps this plan in. `markdown` is the plan to show either way.
+        path: Option<PathBuf>,
+    },
 }
 
 impl Default for PlanContent {
@@ -3484,8 +3508,10 @@ impl Default for PlanContent {
 
 enum PlanContentUpdate {
     Items(Vec<acp_v2::PlanEntry>),
-    Markdown(String),
-    File(String),
+    Markdown {
+        content: String,
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug)]
@@ -3500,16 +3526,15 @@ impl Plan {
     pub fn is_empty(&self, cx: &App) -> bool {
         match &self.content {
             PlanContent::Items(entries) => entries.is_empty(),
-            PlanContent::Markdown(markdown) => markdown.read(cx).source().trim().is_empty(),
-            PlanContent::File { uri } => uri.is_empty(),
+            PlanContent::Markdown { markdown, .. } => markdown.read(cx).source().trim().is_empty(),
         }
     }
 
-    /// Structured entries for item-based plans. Markdown and file plans have none.
+    /// Structured entries for item-based plans. Markdown plans have none.
     pub fn entries(&self) -> &[PlanEntry] {
         match &self.content {
             PlanContent::Items(entries) => entries,
-            PlanContent::Markdown(_) | PlanContent::File { .. } => &[],
+            PlanContent::Markdown { .. } => &[],
         }
     }
 
@@ -3551,17 +3576,20 @@ impl Plan {
             (PlanContent::Items(old_entries), PlanContentUpdate::Items(entries)) => {
                 replace_plan_entries(old_entries, entries, cx)
             }
-            (PlanContent::Markdown(markdown), PlanContentUpdate::Markdown(text)) => {
-                let changed = markdown.read(cx).source() != text.as_str();
-                if changed {
-                    update_markdown_in_place(markdown, &text, cx);
+            (
+                PlanContent::Markdown { markdown, path },
+                PlanContentUpdate::Markdown {
+                    content,
+                    path: new_path,
+                },
+            ) => {
+                let content_changed = markdown.read(cx).source() != content.as_str();
+                if content_changed {
+                    update_markdown_in_place(markdown, &content, cx);
                 }
-                changed
-            }
-            (PlanContent::File { uri }, PlanContentUpdate::File(new_uri)) => {
-                let changed = uri.as_ref() != new_uri.as_str();
-                *uri = new_uri.into();
-                changed
+                let path_changed = *path != new_path;
+                *path = new_path;
+                content_changed || path_changed
             }
             (_, PlanContentUpdate::Items(entries)) => {
                 self.content = PlanContent::Items(
@@ -3572,13 +3600,11 @@ impl Plan {
                 );
                 true
             }
-            (_, PlanContentUpdate::Markdown(text)) => {
-                self.content =
-                    PlanContent::Markdown(cx.new(|cx| Markdown::new(text.into(), None, None, cx)));
-                true
-            }
-            (_, PlanContentUpdate::File(uri)) => {
-                self.content = PlanContent::File { uri: uri.into() };
+            (_, PlanContentUpdate::Markdown { content, path }) => {
+                self.content = PlanContent::Markdown {
+                    markdown: cx.new(|cx| Markdown::new(content.into(), None, None, cx)),
+                    path,
+                };
                 true
             }
         };
@@ -7249,12 +7275,8 @@ impl AcpThread {
             }
             acp_v1::PlanUpdateContent::Markdown(plan) => self.upsert_plan_markdown(
                 acp_v2::PlanMarkdown::new(plan_id_from_v1(plan.plan_id), plan.content)
+                    .path(plan.path.map(acp_v2::AbsolutePath::new))
                     .meta(plan.meta),
-                update_meta,
-                cx,
-            ),
-            acp_v1::PlanUpdateContent::File(plan) => self.upsert_plan_file(
-                acp_v2::PlanFile::new(plan_id_from_v1(plan.plan_id), plan.uri).meta(plan.meta),
                 update_meta,
                 cx,
             ),
@@ -7284,24 +7306,25 @@ impl AcpThread {
         update_meta: Option<acp_v2::Meta>,
         cx: &mut Context<Self>,
     ) {
+        let path_style = self.project.read(cx).path_style(cx);
+        // ACP requires an absolute path. Like a malformed one, a relative path means the
+        // plan has no file.
+        let path = plan
+            .path
+            .map(acp_v2::AbsolutePath::into_inner)
+            .filter(|path| {
+                let is_absolute = path_style.is_absolute(path);
+                if !is_absolute {
+                    log::warn!("Ignoring relative plan file path {path:?}");
+                }
+                is_absolute
+            });
         self.replace_plan(
             PlanIdentity::Keyed(plan.plan_id),
-            PlanContentUpdate::Markdown(plan.content),
-            plan.meta,
-            update_meta,
-            cx,
-        );
-    }
-
-    pub fn upsert_plan_file(
-        &mut self,
-        plan: acp_v2::PlanFile,
-        update_meta: Option<acp_v2::Meta>,
-        cx: &mut Context<Self>,
-    ) {
-        self.replace_plan(
-            PlanIdentity::Keyed(plan.plan_id),
-            PlanContentUpdate::File(plan.uri),
+            PlanContentUpdate::Markdown {
+                content: plan.content,
+                path,
+            },
             plan.meta,
             update_meta,
             cx,
@@ -9265,10 +9288,12 @@ mod tests {
                 None,
                 cx,
             );
-            let PlanContent::Markdown(markdown) = &thread.plan().expect("markdown plan").content
+            let PlanContent::Markdown { markdown, path } =
+                &thread.plan().expect("markdown plan").content
             else {
                 panic!("markdown plan is visible");
             };
+            assert_eq!(path, &None);
             let markdown = markdown.clone();
             assert_eq!(markdown.read(cx).source(), "# Design\n- step");
 
@@ -9278,25 +9303,55 @@ mod tests {
                 None,
                 cx,
             );
-            assert!(thread.plan().is_none(), "identical markdown keeps dismissal");
+            assert!(
+                thread.plan().is_none(),
+                "identical markdown keeps dismissal"
+            );
             thread.upsert_plan_markdown(
                 acp_v2::PlanMarkdown::new("doc", "# Design\n- step\n- another"),
                 None,
                 cx,
             );
-            let PlanContent::Markdown(updated) = &thread.plan().expect("changed markdown").content
+            let PlanContent::Markdown {
+                markdown: updated, ..
+            } = &thread.plan().expect("changed markdown").content
             else {
                 panic!("markdown plan is visible");
             };
             assert_eq!(updated, &markdown, "markdown is updated in place");
 
-            thread.upsert_plan_file(acp_v2::PlanFile::new("doc", "file:///tmp/plan.md"), None, cx);
-            let plan = thread.plan().expect("file plan");
-            assert!(
-                matches!(&plan.content, PlanContent::File { uri } if uri.as_ref() == "file:///tmp/plan.md")
+            thread.clear_plan(cx);
+            thread.upsert_plan_markdown(
+                acp_v2::PlanMarkdown::new("doc", "# Design\n- step\n- another")
+                    .path(path!("/tmp/plan.md")),
+                None,
+                cx,
             );
+            let plan = thread.plan().expect("naming the plan's file is a change");
+            let PlanContent::Markdown {
+                markdown: with_path,
+                path,
+            } = &plan.content
+            else {
+                panic!("markdown plan is visible");
+            };
+            assert_eq!(with_path, &markdown, "the content is still shown");
+            assert_eq!(path.as_deref(), Some(Path::new(path!("/tmp/plan.md"))));
             assert!(plan.entries().is_empty());
             assert!(!plan.is_empty(cx));
+
+            thread.upsert_plan_markdown(
+                acp_v2::PlanMarkdown::new("doc", "# Design\n- step\n- another").path("plan.md"),
+                None,
+                cx,
+            );
+            assert!(
+                matches!(
+                    &thread.plan().expect("markdown plan").content,
+                    PlanContent::Markdown { path: None, .. }
+                ),
+                "a relative path means the plan has no file"
+            );
 
             thread.remove_plan("doc".into(), cx);
             assert!(thread.plan_by_id(&"doc".into()).is_none());
@@ -9335,7 +9390,8 @@ mod tests {
                 json!({"sessionUpdate": "plan_update", "plan": {"type": "items", "planId": "a",
                     "entries": [{"content": "Step", "priority": "high", "status": "in_progress"}]}}),
                 json!({"sessionUpdate": "plan_update", "plan": {"type": "markdown", "planId": "b",
-                    "content": "Notes"}, "_meta": {"scope": "update"}}),
+                    "content": "Notes", "path": path!("/tmp/plan.md")},
+                    "_meta": {"scope": "update"}}),
             ] {
                 thread
                     .handle_session_update(serde_json::from_value(update).expect("v1 update"), cx)
@@ -9344,7 +9400,11 @@ mod tests {
             let items = thread.plan_by_id(&"a".into()).expect("items plan");
             assert_eq!(items.stats().pending, 1);
             let markdown = thread.plan().expect("markdown plan is visible");
-            assert!(matches!(markdown.content, PlanContent::Markdown(_)));
+            assert!(matches!(
+                &markdown.content,
+                PlanContent::Markdown { path: Some(path), .. }
+                    if path == Path::new(path!("/tmp/plan.md"))
+            ));
             assert_eq!(
                 markdown.update_meta,
                 Some(acp_v2::Meta::from_iter([("scope".into(), json!("update"))]))
@@ -10654,6 +10714,49 @@ mod tests {
             };
             assert_eq!(source, &unknown);
             assert!(!markdown.read(cx).source().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_content_session_references_are_kept_from_v1_and_v2(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let meta = acp_v2::Meta::from_iter([("revision".into(), 1.into())]);
+            let mut prepared = PreparedToolCallContent::prepare(
+                vec![acp_v1::ToolCallContent::Session(
+                    acp_v1::SessionReference::new("from-v1").meta(meta.clone()),
+                )],
+                ToolTerminalResolver::registered(&HashMap::default()),
+                cx,
+            )
+            .expect("prepare v1 content");
+            prepared.extend(
+                PreparedToolCallContent::prepare_v2(
+                    vec![acp_v2::ToolCallContent::Session(
+                        acp_v2::SessionReference::new("from-v2"),
+                    )],
+                    ToolTerminalResolver::registered(&HashMap::default()),
+                    cx,
+                )
+                .expect("prepare v2 content"),
+            );
+            let content: Vec<_> = prepared
+                .into_iter()
+                .map(|content| ToolCallContent::from_prepared(content, &languages, cx))
+                .collect();
+            let [
+                ToolCallContent::SessionReference(from_v1),
+                ToolCallContent::SessionReference(from_v2),
+            ] = content.as_slice()
+            else {
+                panic!("expected two session references, got {content:?}");
+            };
+            assert_eq!(
+                from_v1,
+                &acp_v2::SessionReference::new("from-v1").meta(meta)
+            );
+            assert_eq!(from_v2, &acp_v2::SessionReference::new("from-v2"));
         });
     }
 
@@ -14211,7 +14314,7 @@ mod tests {
                 ),
                 (
                     json!({"messageId": "patch", "content": replacement}),
-                    replacement.clone(),
+                    replacement,
                     json!({}),
                 ),
                 (
@@ -14226,7 +14329,7 @@ mod tests {
                 ),
                 (
                     json!({"messageId": "patch", "content": original, "_meta": {"restored": true}}),
-                    original.clone(),
+                    original,
                     json!({"restored": true}),
                 ),
                 (
