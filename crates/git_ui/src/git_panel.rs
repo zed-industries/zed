@@ -1711,7 +1711,8 @@ impl GitPanel {
                     cx,
                 )
             });
-            let model_selector = cx.new(|_| LanguageModelSelector::new(picker));
+            let model_selector =
+                cx.new(|_| LanguageModelSelector::new(picker).cycle_favorite_models_enabled(false));
 
             let mut this = Self {
                 active_repository,
@@ -6953,6 +6954,7 @@ impl GitPanel {
             h_flex()
                 .gap_0p5()
                 .child(button)
+                .child(Divider::vertical())
                 .child(self.commit_message_model_selector.clone())
                 .into_any_element(),
         )

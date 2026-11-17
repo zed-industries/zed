@@ -572,14 +572,17 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 pub struct LanguageModelSelector {
     picker: Entity<LanguageModelPicker>,
     menu_handle: PopoverMenuHandle<LanguageModelPicker>,
+    cycle_favorite_models_enabled: bool,
 }
 
 impl LanguageModelSelector {
     pub fn new(picker: Entity<LanguageModelPicker>) -> Self {
         let menu_handle = PopoverMenuHandle::default();
+
         Self {
             picker,
             menu_handle,
+            cycle_favorite_models_enabled: true,
         }
     }
 
@@ -591,12 +594,17 @@ impl LanguageModelSelector {
         self.picker.read(cx).delegate.active_model(cx)
     }
 
-    // TODO!: We need to update this because the Commit Editor doesn't yet
-    // support handling this.
     pub fn cycle_favorite_models(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.picker.update(cx, |selector, cx| {
-            selector.delegate.cycle_favorite_models(window, cx);
-        });
+        if self.cycle_favorite_models_enabled {
+            self.picker.update(cx, |selector, cx| {
+                selector.delegate.cycle_favorite_models(window, cx);
+            });
+        }
+    }
+
+    pub fn cycle_favorite_models_enabled(mut self, enabled: bool) -> Self {
+        self.cycle_favorite_models_enabled = enabled;
+        self
     }
 }
 
@@ -620,7 +628,8 @@ impl Render for LanguageModelSelector {
             Color::Muted
         };
 
-        let show_cycle_row = self.picker.read(cx).delegate.favorites_count() > 1;
+        let show_cycle_row = self.cycle_favorite_models_enabled
+            && self.picker.read(cx).delegate.favorites_count() > 1;
         let tooltip = Tooltip::element({
             move |_window, _cx| {
                 ModelSelectorTooltip::new()
