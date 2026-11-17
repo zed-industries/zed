@@ -2389,6 +2389,7 @@ impl App {
     }
 
     fn apply_refresh_effect(&mut self) {
+        crate::draw_log::record_cause("<refresh windows>");
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_deref_mut() {
                 window.refreshing = true;

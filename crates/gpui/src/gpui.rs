@@ -32,6 +32,7 @@ mod asset_cache;
 mod assets;
 mod bounds_tree;
 mod color;
+mod draw_log;
 mod element;
 mod elements;
 mod executor;
