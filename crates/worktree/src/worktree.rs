@@ -7750,6 +7750,7 @@ mod tests {
                 },
                 "source": {
                     "head": {},
+                    "config": "[core]\n",
                 },
             }),
         )
