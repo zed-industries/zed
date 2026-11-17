@@ -931,8 +931,17 @@ impl TextLayout {
     }
 
     /// The bounds of this layout.
+    ///
+    /// Panics if the text has not been laid out and painted yet; see [`Self::try_bounds`].
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().as_ref().unwrap().bounds.unwrap()
+    }
+
+    /// The bounds of this layout, or `None` if the text has not been laid out
+    /// and painted yet (for example, when hit-testing a text element that is
+    /// not currently on screen).
+    pub fn try_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.0.borrow().as_ref().and_then(|state| state.bounds)
     }
 
     /// The line height for this layout.
@@ -1289,6 +1298,11 @@ mod tests {
         let _ = div().child("String".to_string());
         let _ = div().child(Cow::Borrowed("Cow"));
         let _ = div().child(SharedString::from("SharedString"));
+    }
+
+    #[test]
+    fn try_bounds_is_none_before_layout() {
+        assert_eq!(TextLayout::default().try_bounds(), None);
     }
 
     #[test]
