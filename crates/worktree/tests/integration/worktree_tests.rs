@@ -2267,6 +2267,270 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_nested_ignore_stack_propagation(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "ignored_folder\n",
+            "ignored_folder": {
+                "sub": {
+                    "file.txt": "content",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load file inside the ignored directory
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("ignored_folder/sub/file.txt").into()])
+    })
+    .recv()
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|e| (e.path.as_ref(), e.is_ignored))
+                .collect::<Vec<_>>(),
+            &[
+                (rel_path(""), false),
+                (rel_path(".gitignore"), false),
+                (rel_path("ignored_folder"), true),
+                (rel_path("ignored_folder/sub"), true),
+                (rel_path("ignored_folder/sub/file.txt"), true),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_tracked_file_in_gitignored_directory_worktree(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {},
+            ".gitignore": "bin/\n",
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "bin": {
+                "tracked_script.sh": "echo tracked",
+                "untracked.txt": "untracked",
+            },
+            "bin-sibling": {
+                "other.txt": "other",
+            }
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "bin/\n".into()),
+            ("src/main.rs", "fn main() {}".into()),
+            ("bin/tracked_script.sh", "echo tracked".into()),
+            ("bin-sibling/other.txt", "other".into()),
+        ],
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entry_for_path(rel_path("bin")).unwrap().is_ignored,
+            false
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("bin/tracked_script.sh"))
+                .unwrap()
+                .is_ignored,
+            false
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("bin/untracked.txt"))
+                .unwrap()
+                .is_ignored,
+            true
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("bin-sibling/other.txt"))
+                .unwrap()
+                .is_ignored,
+            false
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_tracked_file_with_sibling_punctuation(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {},
+            ".gitignore": "ignored/\n",
+            "ignored": {
+                "bin-sibling.txt": "sibling",
+                "bin.txt": "dot sibling",
+                "bin": {
+                    "tracked.sh": "echo tracked",
+                    "untracked.txt": "untracked",
+                },
+                "bin_sibling.txt": "underscore sibling",
+            }
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "ignored/\n".into()),
+            ("ignored/bin-sibling.txt", "sibling".into()),
+            ("ignored/bin.txt", "dot sibling".into()),
+            ("ignored/bin/tracked.sh", "echo tracked".into()),
+            ("ignored/bin_sibling.txt", "underscore sibling".into()),
+        ],
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entry_for_path(rel_path("ignored")).unwrap().is_ignored,
+            false
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("ignored/bin"))
+                .unwrap()
+                .is_ignored,
+            false
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("ignored/bin/tracked.sh"))
+                .unwrap()
+                .is_ignored,
+            false
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("ignored/bin/untracked.txt"))
+                .unwrap()
+                .is_ignored,
+            true
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_ignored_directory_nested_gitignore_whitelist_has_no_effect(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {},
+            ".gitignore": "ignored/\n",
+            "ignored": {
+                ".gitignore": "!untracked.txt\n",
+                "tracked.txt": "tracked",
+                "untracked.txt": "untracked",
+            },
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "ignored/\n".into()),
+            ("ignored/tracked.txt", "tracked".into()),
+        ],
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entry_for_path(rel_path("ignored")).unwrap().is_ignored,
+            false
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("ignored/tracked.txt"))
+                .unwrap()
+                .is_ignored,
+            false
+        );
+        // Whitelist pattern in nested .gitignore inside an excluded parent directory must not un-ignore files
+        assert_eq!(
+            tree.entry_for_path(rel_path("ignored/untracked.txt"))
+                .unwrap()
+                .is_ignored,
+            true
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_write_file(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();

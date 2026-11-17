@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
 use async_channel::Sender;
-use collections::{HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet};
 use futures::FutureExt as _;
 use futures::channel::oneshot;
 use futures::future::{self, BoxFuture, join_all};
@@ -674,6 +674,22 @@ impl GitRepository for FakeGitRepository {
 
     fn stash_entries(&self) -> BoxFuture<'static, Result<git::stash::GitStash>> {
         self.with_state_async(false, |state| Ok(state.stash_entries.clone()))
+    }
+
+    fn tracked_files(&self, path_prefixes: &[RepoPath]) -> Task<Result<Vec<RepoPath>>> {
+        let path_prefixes = path_prefixes.to_vec();
+        let result = self.fs.with_git_state(&self.dot_git_path, false, |state| {
+            let mut paths: BTreeSet<RepoPath> = state.index_contents.keys().cloned().collect();
+            if !path_prefixes.is_empty() {
+                paths.retain(|path| {
+                    path_prefixes
+                        .iter()
+                        .any(|prefix| prefix.is_empty() || path.starts_with(prefix))
+                });
+            }
+            paths.into_iter().collect()
+        });
+        Task::ready(result)
     }
 
     fn branches(&self) -> BoxFuture<'_, Result<git::repository::BranchesScanResult>> {

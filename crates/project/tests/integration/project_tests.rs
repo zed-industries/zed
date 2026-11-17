@@ -19061,7 +19061,8 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 
     cx.executor().run_until_parked();
     cx.read(|cx| {
-        assert_entry_git_state(tree.read(cx), repository.read(cx), "a.xml", None, true);
+        // a.xml now matches .gitignore, but it is tracked, so (like git) it is not ignored.
+        assert_entry_git_state(tree.read(cx), repository.read(cx), "a.xml", None, false);
         assert_entry_git_state(
             tree.read(cx),
             repository.read(cx),
@@ -19756,6 +19757,332 @@ async fn test_odd_events_for_ignored_dirs(
         Vec::new(),
         "No further project events should happen, as only ignored dirs received FS events",
     );
+}
+
+#[gpui::test]
+async fn test_tracked_files_in_gitignored_directory(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "bin/\n",
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "bin": {
+                "tracked_script.sh": "echo tracked",
+                "untracked.txt": "untracked",
+            },
+            "bin-sibling": {
+                "other.txt": "other",
+            }
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "bin/\n".into()),
+            ("src/main.rs", "fn main() {}".into()),
+            ("bin/tracked_script.sh", "echo tracked".into()),
+            ("bin-sibling/other.txt", "other".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let git_store = project.read_with(cx, |p, _| p.git_store().clone());
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    cx.run_until_parked();
+
+    // Verify Worktree computes is_ignored correctly
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entry_for_path(rel_path("bin")).unwrap().is_ignored,
+            false
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("bin/tracked_script.sh"))
+                .unwrap()
+                .is_ignored,
+            false
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("bin/untracked.txt"))
+                .unwrap()
+                .is_ignored,
+            true
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("bin-sibling/other.txt"))
+                .unwrap()
+                .is_ignored,
+            false
+        );
+    });
+
+    // Verify GitTraversal reflects ignore status accurately
+    let worktree_snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+    let repo_snapshots =
+        git_store.read_with(cx, |git_store, cx| git_store.display_repo_snapshots(cx));
+    let mut traversal = project::GitTraversal::new(
+        &repo_snapshots,
+        worktree_snapshot.traverse_from_path(true, true, true, RelPath::empty()),
+    );
+
+    let mut entries_with_ignore_status = Vec::new();
+    while let Some(git_entry) = traversal.entry() {
+        entries_with_ignore_status.push((
+            git_entry.path.as_unix_str().to_string(),
+            git_entry.is_ignored,
+        ));
+        traversal.advance();
+    }
+
+    assert!(entries_with_ignore_status.contains(&("bin/tracked_script.sh".to_string(), false)));
+    assert!(entries_with_ignore_status.contains(&("bin/untracked.txt".to_string(), true)));
+    assert!(entries_with_ignore_status.contains(&("bin-sibling/other.txt".to_string(), false)));
+}
+
+#[gpui::test]
+async fn test_tracked_files_in_gitignored_directory_dynamic(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "bin/\n",
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "bin": {
+                "untracked.txt": "untracked",
+            },
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "bin/\n".into()),
+            ("src/main.rs", "fn main() {}".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    cx.run_until_parked();
+
+    // Initially, bin contains no tracked files, so it is ignored and unloaded
+    tree.read_with(cx, |tree, _| {
+        let bin_entry = tree.entry_for_path(rel_path("bin")).unwrap();
+        assert_eq!(bin_entry.is_ignored, true);
+        assert_eq!(bin_entry.kind.is_unloaded(), true);
+    });
+
+    // Dynamically stage a new file inside the ignored directory
+    fs.save(
+        path!("/root/bin/new_tracked.sh").as_ref(),
+        &"echo tracked".into(),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "bin/\n".into()),
+            ("src/main.rs", "fn main() {}".into()),
+            ("bin/new_tracked.sh", "echo tracked".into()),
+        ],
+    );
+
+    fs.emit_fs_event("/root/bin/new_tracked.sh", None);
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        let bin_entry = tree.entry_for_path(rel_path("bin")).unwrap();
+        assert_eq!(bin_entry.is_ignored, false);
+        assert_eq!(bin_entry.kind.is_unloaded(), false);
+
+        let script_entry = tree.entry_for_path(rel_path("bin/new_tracked.sh")).unwrap();
+        assert_eq!(script_entry.is_ignored, false);
+
+        let untracked_entry = tree.entry_for_path(rel_path("bin/untracked.txt")).unwrap();
+        assert_eq!(untracked_entry.is_ignored, true);
+    });
+}
+
+#[gpui::test]
+async fn test_tracked_files_in_gitignored_directory_real_git(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "project": {
+            ".gitignore": "bin/\nbuild/\n",
+            "bin": { "tracked.sh": "", "untracked.txt": "" },
+            "build": { "out.o": "" },
+        },
+    }));
+    let work_dir = root.path().join("project");
+    git_init(&work_dir);
+    git_add(".gitignore", &work_dir);
+    git_add_force("bin/tracked.sh", &work_dir);
+    git_commit("Initial commit", &work_dir);
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [work_dir.as_path()], cx).await;
+    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    let is_ignored = |path: &str, cx: &gpui::TestAppContext| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path(path))
+                .is_none_or(|entry| entry.is_ignored)
+        })
+    };
+    assert!(!is_ignored("bin", cx));
+    assert!(!is_ignored("bin/tracked.sh", cx));
+    assert!(is_ignored("bin/untracked.txt", cx));
+    assert!(is_ignored("build", cx));
+
+    // Git directory events can arrive after the worktree has settled, so poll
+    // until the expected ignore state is reached.
+    let wait_until = async |path: &str, ignored: bool, cx: &mut gpui::TestAppContext| {
+        for _ in 0..50 {
+            if is_ignored(path, cx) == ignored {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(100))
+                .await;
+            cx.run_until_parked();
+        }
+        panic!("expected {path:?} to have is_ignored == {ignored}");
+    };
+
+    // Committing a file inside an ignored, unloaded directory loads it.
+    git_add_force("build/out.o", &work_dir);
+    git_commit("Track build output", &work_dir);
+    wait_until("build/out.o", false, cx).await;
+    assert!(!is_ignored("build", cx));
+
+    // Untracking it makes the directory ignored again.
+    git_remove_index(Path::new("build/out.o"), &work_dir);
+    git_commit("Untrack build output", &work_dir);
+    wait_until("build", true, cx).await;
+
+    // Staging alone (an index-only change) is enough to un-ignore a file...
+    git_add_force("bin/untracked.txt", &work_dir);
+    wait_until("bin/untracked.txt", false, cx).await;
+
+    // ...and unstaging it makes it ignored again.
+    git_remove_index(Path::new("bin/untracked.txt"), &work_dir);
+    wait_until("bin/untracked.txt", true, cx).await;
+    assert!(!is_ignored("bin/tracked.sh", cx));
+}
+
+#[gpui::test]
+async fn test_git_head_and_index_changes_invalidate_tracked_files_cache(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "bin/\n",
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "bin": {
+                "tracked_script.sh": "echo tracked",
+            },
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "bin/\n".into()),
+            ("src/main.rs", "fn main() {}".into()),
+            ("bin/tracked_script.sh", "echo tracked".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    cx.run_until_parked();
+
+    // Initially, bin contains a tracked file, so it is not ignored
+    tree.read_with(cx, |tree, _| {
+        let bin_entry = tree.entry_for_path(rel_path("bin")).unwrap();
+        assert_eq!(bin_entry.is_ignored, false);
+    });
+
+    // Remove bin/tracked_script.sh from git index
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "bin/\n".into()),
+            ("src/main.rs", "fn main() {}".into()),
+        ],
+    );
+
+    // Trigger repository status update so GitStore invalidates worktree cache
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    // Refresh bin directory; with cache invalidated, it queries index again and finds no tracked files
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("bin").into()])
+    })
+    .recv()
+    .await;
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        let bin_entry = tree.entry_for_path(rel_path("bin")).unwrap();
+        assert_eq!(bin_entry.is_ignored, true);
+    });
 }
 
 #[gpui::test]
@@ -20765,6 +21092,20 @@ fn git_add<P: AsRef<Path>>(path: P, work_dir: &Path) {
     assert!(
         output.status.success(),
         "git add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_add_force(path: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["add", "-f", path])
+        .output()
+        .expect("Failed to run git add -f");
+    assert!(
+        output.status.success(),
+        "git add -f failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
