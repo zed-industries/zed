@@ -127,8 +127,8 @@ pub enum SandboxFsPolicy {
         paths_disallowing_reads: Vec<HostFilesystemLocation>,
         paths_allowing_reads: Vec<HostFilesystemLocation>,
     },
-    /// Reads are allowed everywhere except paths disallowing reads; writes are confined to
-    /// these locations (and the standard ephemeral locations the platform
+    /// Reads are allowed everywhere except paths disallowing reads; writes are
+    /// confined to these locations (and the standard ephemeral locations the platform
     /// provides). Each is a [`HostFilesystemLocation`] captured at validation
     /// time, never a bare path the enforcement layer would re-resolve.
     Restricted {
@@ -786,8 +786,8 @@ impl Sandbox {
     /// reads, Unix socket grants,
     /// or TCP port grants, because those backends cannot enforce them yet.
     /// Returns [`SandboxError::InvalidRequest`] for a malformed policy, such as
-    /// a writable path inside a protected path, a path disallowing reads
-    /// inside a path allowing reads, or TCP port 0.
+    /// a writable path inside a protected path, a path disallowing reads that
+    /// is also, or lies inside, a path allowing reads, or TCP port 0.
     pub fn new(policy: SandboxPolicy) -> Result<Self, SandboxError> {
         let (
             allow_fs_write,
