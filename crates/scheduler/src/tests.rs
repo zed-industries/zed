@@ -1068,3 +1068,25 @@ fn test_spawn_dedicated_detached_child_runs_after_root_completes() {
 // The production smoke test for `spawn_dedicated` lives in the `gpui` crate
 // alongside `PlatformScheduler`, which is the real production implementation
 // of the `Scheduler` trait. See `crates/gpui/src/platform_scheduler.rs`.
+
+#[test]
+fn test_test_clock_utc_now() {
+    let clock = TestClock::new();
+    let start = clock.utc_now();
+    assert_eq!(
+        start.duration_since(SystemTime::UNIX_EPOCH).unwrap(),
+        Duration::from_secs(1_751_414_398)
+    );
+
+    let instant_start = clock.now();
+    clock.advance(Duration::from_millis(1500));
+    assert_eq!(
+        clock.utc_now().duration_since(start).unwrap(),
+        Duration::from_millis(1500)
+    );
+    assert_eq!(clock.now() - instant_start, Duration::from_millis(1500));
+
+    let later = start + Duration::from_secs(3600);
+    clock.set_utc_now(later);
+    assert_eq!(clock.utc_now(), later);
+}
