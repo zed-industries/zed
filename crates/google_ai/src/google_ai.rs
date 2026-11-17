@@ -76,9 +76,12 @@ fn supports_minimal_thinking(model_id: &str) -> bool {
     )
 }
 
-/// Level-based models that accept `XHIGH`; the others cap at `HIGH`.
-fn supports_xhigh_thinking(model_id: &str) -> bool {
-    matches!(model_id, "gemini-4-hydrogen")
+/// The most thinking a level-based model accepts. Only some models go past `HIGH`.
+fn highest_thinking_level(model_id: &str) -> ThinkingLevel {
+    match model_id {
+        "gemini-4-hydrogen" => ThinkingLevel::XHigh,
+        _ => ThinkingLevel::High,
+    }
 }
 
 /// The thinking level Zed selects for a level-based model until the user picks another.
@@ -670,7 +673,7 @@ pub struct ThinkingConfig {
     pub include_thoughts: Option<bool>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ThinkingLevel {
     Minimal,
@@ -947,8 +950,7 @@ impl Model {
                         ThinkingLevel::XHigh,
                     ]
                     .into_iter()
-                    .skip_while(|level| *level != lowest)
-                    .filter(|level| *level != ThinkingLevel::XHigh || supports_xhigh_thinking(id))
+                    .filter(|level| (lowest..=highest_thinking_level(id)).contains(level))
                     .collect(),
                     Some(default_thinking_level(id)),
                 ),
