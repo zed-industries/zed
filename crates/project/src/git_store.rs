@@ -124,6 +124,11 @@ const MIN_PARKED_REPOSITORY_DEPTH: usize = 2;
 
 pub const MAX_CONCURRENT_OBJECT_READS: usize = 16;
 
+/// Git matches every pathspec against every index entry, so the cost of a
+/// scoped `git status`/`git diff` grows with the number of paths. On large
+/// repositories a scan of the whole repository is cheaper than this many paths.
+const MAX_SCOPED_STATUS_PATHS: usize = 64;
+
 #[derive(Clone, Debug)]
 pub struct ParkedRepository {
     worktree_id: WorktreeId,
@@ -2446,21 +2451,24 @@ impl GitStore {
                     .iter()
                     .any(|repo_id| self.active_repo_id == Some(*repo_id));
 
-                for repo_id in repos_without_worktree {
-                    self.display_diffs.remove(&repo_id);
-                    self.repositories.remove(&repo_id);
-                    self.worktree_ids.remove(&repo_id);
+                for repo_id in &repos_without_worktree {
+                    self.display_diffs.remove(repo_id);
+                    self.repositories.remove(repo_id);
+                    self.worktree_ids.remove(repo_id);
                     if let Some(updates_tx) =
                         downstream.as_ref().map(|downstream| &downstream.updates_tx)
                     {
                         updates_tx
-                            .unbounded_send(DownstreamUpdate::RemoveRepository(repo_id))
+                            .unbounded_send(DownstreamUpdate::RemoveRepository(*repo_id))
                             .ok();
                     }
                 }
 
                 if is_active_repo_removed {
                     self.select_fallback_active_repository(cx);
+                }
+                for repo_id in repos_without_worktree {
+                    cx.emit(GitStoreEvent::RepositoryRemoved(repo_id));
                 }
             }
             _ => {}
@@ -2669,6 +2677,7 @@ impl GitStore {
                     .unbounded_send(DownstreamUpdate::RemoveRepository(id))
                     .ok();
             }
+            cx.emit(GitStoreEvent::RepositoryRemoved(id));
         }
     }
 
@@ -3155,6 +3164,23 @@ impl GitStore {
 
     pub fn repositories(&self) -> &HashMap<RepositoryId, Entity<Repository>> {
         &self.repositories
+    }
+
+    /// The label to show for each repository, disambiguated against every other
+    /// repository in the workspace. See [`disambiguated_display_names`].
+    pub fn display_names(&self, cx: &App) -> HashMap<RepositoryId, SharedString> {
+        let path_style = self.worktree_store.read(cx).path_style();
+        let (ids, work_directory_abs_paths): (Vec<_>, Vec<_>) = self
+            .repositories
+            .iter()
+            .map(|(id, repository)| (*id, repository.read(cx).work_directory_abs_path.clone()))
+            .unzip();
+        ids.into_iter()
+            .zip(disambiguated_display_names(
+                &work_directory_abs_paths,
+                path_style,
+            ))
+            .collect()
     }
 
     /// Returns the main repository working directory for the given worktree.
@@ -5112,6 +5138,14 @@ impl GitStore {
         coalesced
     }
 
+    fn limit_repo_paths(paths: Vec<RepoPath>) -> Vec<RepoPath> {
+        if paths.len() > MAX_SCOPED_STATUS_PATHS {
+            vec![RepoPath::from_rel_path(RelPath::empty())]
+        } else {
+            paths
+        }
+    }
+
     fn process_updated_entries(
         &self,
         worktree: &Entity<Worktree>,
@@ -6289,6 +6323,67 @@ impl RepositorySnapshot {
             .to_string()
             .into()
     }
+}
+
+/// Computes the label to show for each of the given repositories: the leaf
+/// directory name on its own where that already identifies the repository, and
+/// as many parent components as it takes to tell colliding names apart where it
+/// does not.
+///
+/// A workspace that checks every project out into a directory of the same name
+/// would otherwise render as a list of identical rows — git submodules parked
+/// under `<service>/src`, or worktrees under `<project>/<worktree>`.
+pub fn disambiguated_display_names(
+    work_directory_abs_paths: &[Arc<Path>],
+    path_style: PathStyle,
+) -> Vec<SharedString> {
+    // Leaf first, so a depth counts back from the directory name. `Path` would split
+    // by the host's rules, but a remote project's paths follow the remote's style,
+    // so split on the project's own separators instead.
+    let components: Vec<Vec<String>> = work_directory_abs_paths
+        .iter()
+        .map(|path| {
+            let path = path.to_string_lossy();
+            let mut components: Vec<String> = path
+                .split(path_style.separators_ch())
+                // `.` and `..` are not names a label can be built from, and the
+                // `Path::components` this replaces dropped them too.
+                .filter(|component| !matches!(*component, "" | "." | ".."))
+                .map(str::to_owned)
+                .collect();
+            // A label is a suffix of the path, never the whole of it, which the root
+            // is already excluded from; drop a Windows drive prefix for the same
+            // reason, so a label is never capped at `C:`.
+            if path_style == PathStyle::Windows
+                && components
+                    .first()
+                    .is_some_and(|component| component.ends_with(':'))
+            {
+                components.remove(0);
+            }
+            components.reverse();
+            if components.is_empty() {
+                vec![path.into_owned()]
+            } else {
+                components
+            }
+        })
+        .collect();
+    let label = |components: &Vec<String>, detail: usize| -> String {
+        components
+            .iter()
+            .take(detail + 1)
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(path_style.primary_separator())
+    };
+    let details = util::disambiguate::compute_disambiguation_details(&components, label);
+    components
+        .iter()
+        .zip(details)
+        .map(|(components, detail)| label(components, detail).into())
+        .collect()
 }
 
 pub fn stash_to_proto(entry: &StashEntry) -> proto::StashEntry {
@@ -10434,14 +10529,15 @@ impl Repository {
 
                 let changed_path_statuses = cx
                     .background_spawn(async move {
-                        let changed_paths = GitStore::coalesce_repo_paths(
-                            changed_paths
-                                .into_iter()
-                                .flatten()
-                                .collect::<BTreeSet<_>>()
-                                .into_iter()
-                                .collect(),
-                        );
+                        let changed_paths =
+                            GitStore::limit_repo_paths(GitStore::coalesce_repo_paths(
+                                changed_paths
+                                    .into_iter()
+                                    .flatten()
+                                    .collect::<BTreeSet<_>>()
+                                    .into_iter()
+                                    .collect(),
+                            ));
                         let changed_paths_vec = changed_paths.iter().cloned().collect::<Vec<_>>();
 
                         let status_task = backend.status(&changed_paths_vec);
@@ -11677,6 +11773,73 @@ mod tests {
         );
         assert!(password_request.await.is_err());
         assert!(delegates.lock().is_empty());
+    }
+
+    #[test]
+    fn test_disambiguated_display_names() {
+        fn names_in(path_style: PathStyle, paths: &[&str]) -> Vec<String> {
+            let paths: Vec<Arc<Path>> = paths
+                .iter()
+                .map(|path| Arc::from(Path::new(path)))
+                .collect();
+            disambiguated_display_names(&paths, path_style)
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect()
+        }
+        fn names(paths: &[&str]) -> Vec<String> {
+            names_in(PathStyle::Unix, paths)
+        }
+
+        // Distinct leaf names are left alone, however deeply they are nested.
+        assert_eq!(
+            names(&["/home/me/foo", "/home/me/nested/bar"]),
+            vec!["foo", "bar"]
+        );
+
+        // Submodules parked under a directory of the same name: only the
+        // colliding entries grow a parent component.
+        assert_eq!(
+            names(&[
+                "/work/platform",
+                "/work/platform/services/gateway/src",
+                "/work/platform/services/panel/src",
+            ]),
+            vec!["platform", "gateway/src", "panel/src"]
+        );
+
+        // One parent is not always enough.
+        assert_eq!(
+            names(&["/work/a/lib/protos", "/work/b/lib/protos"]),
+            vec!["a/lib/protos", "b/lib/protos"]
+        );
+
+        // Paths that stay equal all the way up terminate rather than growing
+        // forever, and a label never reaches past the first path component.
+        assert_eq!(
+            names(&["/work/src", "/work/src"]),
+            vec!["work/src", "work/src"]
+        );
+
+        assert!(names(&[]).is_empty());
+
+        // Windows paths are split and rejoined by the project's own separators,
+        // not the host's, so a Windows remote works from a Unix host. The drive
+        // letter is a prefix rather than a component a label can grow into.
+        assert_eq!(
+            names_in(
+                PathStyle::Windows,
+                &[r"C:\work\a\lib\protos", r"C:\work\b\lib\protos"],
+            ),
+            vec![r"a\lib\protos", r"b\lib\protos"]
+        );
+        assert_eq!(
+            names_in(PathStyle::Windows, &[r"C:\src", r"C:\src"]),
+            vec!["src", "src"]
+        );
+
+        // Relative components are not names a label can be built from.
+        assert_eq!(names(&["/work/./a/../b"]), vec!["b"]);
     }
 
     #[test]
@@ -12948,6 +13111,19 @@ mod tests {
         let coalesced = GitStore::coalesce_repo_paths(repo_paths(&["", "src", "src/lib.rs"]));
 
         assert_eq!(coalesced, repo_paths(&[""]));
+    }
+
+    #[test]
+    fn limit_repo_paths_falls_back_to_root_above_threshold() {
+        let at_limit = (0..MAX_SCOPED_STATUS_PATHS)
+            .map(|index| repo_path(&format!("dir{index}/file.rs")))
+            .collect::<Vec<_>>();
+        assert_eq!(GitStore::limit_repo_paths(at_limit.clone()), at_limit);
+
+        let over_limit = (0..=MAX_SCOPED_STATUS_PATHS)
+            .map(|index| repo_path(&format!("dir{index}/file.rs")))
+            .collect::<Vec<_>>();
+        assert_eq!(GitStore::limit_repo_paths(over_limit), repo_paths(&[""]));
     }
 
     #[test]

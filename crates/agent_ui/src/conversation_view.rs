@@ -400,26 +400,26 @@ impl Conversation {
         pattern_index: usize,
         cx: &mut Context<Self>,
     ) {
-        let Some(request) = self.permission_request(session_id, request_id, cx) else {
+        let Some(PermissionOptions::DropdownWithPatterns { patterns, .. }) = self
+            .permission_request(session_id, request_id, cx)
+            .and_then(PermissionRequest::legacy_options)
+        else {
             return;
         };
-        let Some(options) = request.legacy_options() else {
+        if pattern_index >= patterns.len() {
             return;
-        };
-        let pattern_count = match options {
-            PermissionOptions::DropdownWithPatterns { patterns, .. } => patterns.len(),
-            _ => 0,
-        };
+        }
         match self.permission_selections.get_mut(&request_id) {
             Some(selection @ thread_view::PermissionSelection::SelectedPatterns(_)) => {
                 selection.toggle_pattern(pattern_index);
+                if !selection.has_any_checked_patterns() {
+                    self.permission_selections.remove(&request_id);
+                }
             }
             _ => {
                 self.permission_selections.insert(
                     request_id,
-                    thread_view::PermissionSelection::SelectedPatterns(
-                        (0..pattern_count).collect(),
-                    ),
+                    thread_view::PermissionSelection::SelectedPatterns(vec![pattern_index]),
                 );
             }
         }
@@ -2302,8 +2302,6 @@ impl ConversationView {
                             native_available_skills(&native_connection, &session_id, cx)
                         })
                         .unwrap_or_default();
-                    let has_slash_completions =
-                        !available_commands.is_empty() || !available_skills.is_empty();
 
                     let agent_display_name = self
                         .agent_server_store
@@ -2311,13 +2309,15 @@ impl ConversationView {
                         .agent_display_name(&self.agent.agent_id())
                         .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
 
-                    let new_placeholder =
-                        placeholder_text(agent_display_name.as_ref(), has_slash_completions);
-
                     thread_view.update(cx, |thread_view, cx| {
-                        let mut session_capabilities = thread_view.session_capabilities.write();
-                        session_capabilities.set_available_commands(available_commands.clone());
-                        session_capabilities.set_available_skills(available_skills);
+                        let has_slash_completions = {
+                            let mut session_capabilities = thread_view.session_capabilities.write();
+                            session_capabilities.set_available_commands(available_commands.clone());
+                            session_capabilities.set_available_skills(available_skills);
+                            session_capabilities.has_slash_completions()
+                        };
+                        let new_placeholder =
+                            placeholder_text(agent_display_name.as_ref(), has_slash_completions);
                         thread_view.message_editor.update(cx, |editor, cx| {
                             editor.set_placeholder_text(&new_placeholder, window, cx);
                         });
@@ -5080,6 +5080,107 @@ pub(crate) mod tests {
             0,
             "No notification should fire when a queued message will be auto-sent on Stopped"
         );
+    }
+
+    #[gpui::test]
+    async fn test_auto_sending_queued_messages_preserves_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (background_conversation, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(background_conversation.clone(), cx);
+        let background_thread = active_thread(&background_conversation, cx);
+        message_editor(&background_conversation, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("first", window, cx);
+        });
+        background_thread.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let session_id = background_thread.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["second".into()], vec![], window, cx);
+            view.add_to_queue(vec!["third".into()], vec![], window, cx);
+            view.thread.read(cx).session_id().clone()
+        });
+
+        let foreground_conversation = background_conversation.update_in(cx, |view, window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    view.agent.clone(),
+                    view.connection_store.clone(),
+                    view.connection_key.clone(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    view.workspace.clone(),
+                    view.project.clone(),
+                    view.thread_store.clone(),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+        add_to_workspace(foreground_conversation.clone(), cx);
+        let foreground_editor = message_editor(&foreground_conversation, cx);
+        foreground_editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.simulate_input("before");
+
+        for (remaining, expected_text) in [(1, "before typing"), (0, "before typing typing")] {
+            connection.end_turn(session_id.clone(), acp_v1::StopReason::EndTurn);
+            cx.run_until_parked();
+
+            background_thread.read_with(cx, |view, cx| {
+                assert_eq!(view.message_queue.len(), remaining);
+                assert_eq!(view.thread.read(cx).status(), ThreadStatus::Generating);
+            });
+            foreground_editor.update_in(cx, |editor, window, cx| {
+                assert!(editor.focus_handle(cx).is_focused(window));
+            });
+            cx.simulate_input(" typing");
+            assert_eq!(
+                foreground_editor.read_with(cx, |editor, cx| editor.text(cx)),
+                expected_text
+            );
+            assert!(
+                message_editor(&background_conversation, cx)
+                    .read_with(cx, |editor, cx| { editor.is_empty(cx) })
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_manual_queued_message_sends_focus_composer(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for send_now in [false, true] {
+            let (conversation, cx) =
+                setup_conversation_view(StubAgentServer::default_response(), cx).await;
+            add_to_workspace(conversation.clone(), cx);
+            let thread_view = active_thread(&conversation, cx);
+            thread_view.update_in(cx, |view, window, cx| {
+                view.add_to_queue(vec!["queued".into()], vec![], window, cx);
+                let entry = view.message_queue.first().expect("queued message");
+                let id = entry.id;
+                entry.editor.focus_handle(cx).focus(window, cx);
+                if send_now {
+                    view.send_queued_message_now(id, window, cx);
+                } else {
+                    view.send(window, cx);
+                }
+                assert!(view.message_queue.is_empty());
+                assert!(view.message_editor.focus_handle(cx).is_focused(window));
+            });
+            cx.run_until_parked();
+            message_editor(&conversation, cx).update_in(cx, |editor, window, cx| {
+                assert!(editor.focus_handle(cx).is_focused(window));
+            });
+        }
     }
 
     #[gpui::test]
@@ -9840,10 +9941,11 @@ pub(crate) mod tests {
         assert!(cx.debug_bounds("plan-status-All Done").is_none());
         thread.update(cx, |thread, cx| {
             thread.upsert_plan_items(acp_v2::PlanItems::new("status-plan", vec![]), None, cx);
+            assert!(thread.plan().is_none());
             assert!(
                 thread
-                    .plan()
-                    .expect("empty selected plan")
+                    .plan_by_id(&"status-plan".into())
+                    .expect("emptied plan")
                     .entries()
                     .is_empty()
             );
@@ -16858,6 +16960,53 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_toggle_command_pattern_toggles_only_clicked_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let (thread, conversation) = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| {
+                (view.thread.clone(), view.conversation.clone())
+            });
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        // A chained command gets one pattern row per sub-command (`ls`, `git status`, `git log`).
+        let options = ToolPermissionContext::new(
+            TerminalTool::NAME,
+            vec!["ls && git status && git log".into()],
+        )
+        .build_permission_options();
+        let (request_id, _response) =
+            request_test_tool_authorization_with_options(&thread, "pipeline", options, cx);
+
+        let toggle = |pattern_index, cx: &mut VisualTestContext| {
+            conversation.update(cx, |conversation, cx| {
+                conversation.toggle_permission_pattern(&session_id, request_id, pattern_index, cx);
+                match conversation.permission_selections.get(&request_id) {
+                    Some(thread_view::PermissionSelection::SelectedPatterns(checked)) => {
+                        let mut checked = checked.clone();
+                        checked.sort();
+                        Some(checked)
+                    }
+                    Some(thread_view::PermissionSelection::Choice(_)) => {
+                        panic!("toggling a pattern must not select a dropdown choice")
+                    }
+                    None => None,
+                }
+            })
+        };
+        // An index with no matching row must not enter pattern mode.
+        assert_eq!(toggle(99, cx), None);
+        // The first click on a row other than the first checks only that row.
+        assert_eq!(toggle(1, cx), Some(vec![1]));
+        // Later clicks add only their own row...
+        assert_eq!(toggle(0, cx), Some(vec![0, 1]));
+        // ...and remove only their own row.
+        assert_eq!(toggle(1, cx), Some(vec![0]));
+        // Unchecking the last row goes back to the default selection.
+        assert_eq!(toggle(0, cx), None);
+    }
+
+    #[gpui::test]
     async fn test_allow_button_uses_selected_granularity(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -17567,6 +17716,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         if with_patterns {
+            let pattern = cx
+                .debug_bounds("MENU_ITEM-Always for `cargo test` commands")
+                .expect("the rendered persistent dropdown should offer the cargo pattern");
+            cx.simulate_click(pattern.center(), gpui::Modifiers::default());
+            cx.run_until_parked();
+            // Toggling `sort` on and off must leave only `cargo test` checked.
             for _ in 0..2 {
                 let pattern = cx
                     .debug_bounds("MENU_ITEM-Always for `sort` commands")
@@ -20563,6 +20718,64 @@ pub(crate) mod tests {
             scroll_top, 3,
             "the link opens the subagent at its view of the message"
         );
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_session_reference_opens_its_session(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let root =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
+        let child = conversation_view.update(cx, |view, cx| {
+            create_test_acp_subagent(
+                root_session_id.clone(),
+                "child",
+                Rc::new(connection.clone()),
+                view.project.clone(),
+                cx,
+            )
+        });
+        child.update(cx, |child, cx| {
+            child
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").title("Investigator"),
+                    cx,
+                )
+                .expect("ACP subagent")
+        });
+        root.update(cx, |root, cx| root.register_subagent(child.clone(), cx));
+        root.update(cx, |root, cx| {
+            root.upsert_wire_tool_call(
+                acp_v2::ToolCallUpdate::new("delegate")
+                    .title("Delegate")
+                    .status(acp_v2::ToolCallStatus::Completed)
+                    .content(vec![
+                        acp_v2::SessionReference::new("child").into(),
+                        acp_v2::SessionReference::new("unknown").into(),
+                    ]),
+                cx,
+            )
+        })
+        .expect("tool call");
+        conversation_view.update(cx, |view, cx| view.expand_tool_call("delegate".into(), cx));
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("tool-call-session-reference-0-1").is_none(),
+            "an unknown session is not a link"
+        );
+        let link = cx
+            .debug_bounds("tool-call-session-reference-0-0")
+            .expect("the reference links to its session");
+        cx.simulate_click(link.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        let active_session_id = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).session_id().clone());
+        assert_eq!(active_session_id, acp_v2::SessionId::new("child"));
     }
 
     #[gpui::test]
