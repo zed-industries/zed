@@ -2222,6 +2222,48 @@ impl App {
         self.svg_renderer.clone()
     }
 
+    /// Queues a task to draw each dirty window, standing in for the frame a
+    /// platform would deliver.
+    ///
+    /// Updates made before the task runs share one draw, as they share one
+    /// frame in production. Drawing after every update instead made drawing
+    /// most of the CPU time of UI-heavy test suites. Tests that read the
+    /// rendered frame after an update must let the task run first, for
+    /// example with `run_until_parked`; the simulated input helpers draw
+    /// pending frames themselves.
+    #[cfg(any(test, feature = "test-support"))]
+    fn schedule_test_draws(&mut self) {
+        let windows = self
+            .windows
+            .values()
+            .filter_map(|window| {
+                let window = window.as_deref()?;
+                (window.invalidator.is_dirty() && !window.test_draw_scheduled.replace(true))
+                    .then(|| (window.handle, window.test_draw_scheduled.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (window, scheduled) in windows {
+            self.spawn(async move |cx| {
+                scheduled.set(false);
+                // The scheduler can poll this task while an update blocks on
+                // the executor. That update's own flush schedules the draw
+                // again once it releases the app.
+                let Some(app) = cx.app.upgrade() else {
+                    return;
+                };
+                let Ok(mut app) = app.try_borrow_mut() else {
+                    return;
+                };
+                app.update(|cx| {
+                    window
+                        .update(cx, |_, window, cx| window.draw_pending_test_frame(cx))
+                        .ok();
+                });
+            })
+            .detach();
+        }
+    }
+
     pub(crate) fn push_effect(&mut self, effect: Effect) {
         match &effect {
             Effect::Notify { emitter } => {
@@ -2281,18 +2323,7 @@ impl App {
             } else {
                 #[cfg(any(test, feature = "test-support"))]
                 if matches!(self.mode, GpuiMode::Test { .. }) {
-                    for window in self
-                        .windows
-                        .values()
-                        .filter_map(|window| {
-                            let window = window.as_deref()?;
-                            window.invalidator.is_dirty().then_some(window.handle)
-                        })
-                        .collect::<Vec<_>>()
-                    {
-                        self.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
-                            .unwrap();
-                    }
+                    self.schedule_test_draws();
                 }
 
                 if self.pending_effects.is_empty() {

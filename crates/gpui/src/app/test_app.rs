@@ -388,6 +388,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             let mut app = self.app.borrow_mut();
             let any_handle: AnyWindowHandle = self.handle.into();
             app.update_window(any_handle, |_, window, cx| {
+                window.draw_pending_test_frame(cx);
                 window.dispatch_keystroke(keystroke, cx);
             })
             .unwrap();
@@ -463,6 +464,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             let mut app = self.app.borrow_mut();
             let any_handle: AnyWindowHandle = self.handle.into();
             app.update_window(any_handle, |_, window, cx| {
+                window.draw_pending_test_frame(cx);
                 window.dispatch_event(platform_input, cx);
             })
             .unwrap();

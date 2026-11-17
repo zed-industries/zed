@@ -235,6 +235,7 @@ impl VisualTestAppContext {
     /// Dispatches a single keystroke to a window.
     pub fn dispatch_keystroke(&mut self, window: AnyWindowHandle, keystroke: Keystroke) {
         self.update_window(window, |_, window, cx| {
+            window.draw_pending_test_frame(cx);
             window.dispatch_keystroke(keystroke, cx);
         })
         .ok();
@@ -325,6 +326,7 @@ impl VisualTestAppContext {
     /// Simulates an input event on the given window.
     pub fn simulate_event<E: InputEvent>(&mut self, window: AnyWindowHandle, event: E) {
         self.update_window(window, |_, window, cx| {
+            window.draw_pending_test_frame(cx);
             window.dispatch_event(event.to_platform_input(), cx);
         })
         .ok();
@@ -334,6 +336,7 @@ impl VisualTestAppContext {
     /// Dispatches an action to the given window.
     pub fn dispatch_action(&mut self, window: AnyWindowHandle, action: impl Action) {
         self.update_window(window, |_, window, cx| {
+            window.draw_pending_test_frame(cx);
             window.dispatch_action(action.boxed_clone(), cx);
         })
         .ok();

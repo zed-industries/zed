@@ -619,6 +619,7 @@ impl TestAppContext {
     {
         window
             .update(self, |_, window, cx| {
+                window.draw_pending_test_frame(cx);
                 window.dispatch_action(action.boxed_clone(), cx)
             })
             .unwrap();
@@ -663,6 +664,7 @@ impl TestAppContext {
     /// dispatches a single Keystroke (see also `simulate_keystrokes` and `simulate_input`)
     pub fn dispatch_keystroke(&mut self, window: AnyWindowHandle, keystroke: Keystroke) {
         self.update_window(window, |_, window, cx| {
+            window.draw_pending_test_frame(cx);
             window.dispatch_keystroke(keystroke, cx)
         })
         .unwrap();
@@ -1040,7 +1042,10 @@ impl VisualTestContext {
     /// Returns `None` in builds without `debug_assertions`, which don't record
     /// selectors; see [`crate::InteractiveElement::debug_selector`].
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
-        self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
+        self.update(|window, cx| {
+            window.draw_pending_test_frame(cx);
+            window.rendered_frame.debug_bounds.get(selector).copied()
+        })
     }
 
     /// Draw an element to the window. Useful for simulating events or actions
