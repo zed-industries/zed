@@ -96,9 +96,9 @@ impl SeatbeltConfigFile {
     /// `protected_file_names` lists file names whose writes are blocked
     /// wherever they appear (see [`ProtectedFileName`]).
     ///
-    /// `hidden_paths` lists subtrees the command may neither read nor write;
-    /// `hidden_path_exceptions` lists subtrees inside them that behave as if
-    /// they were outside them.
+    /// `paths_disallowing_reads` lists subtrees the command may neither read
+    /// nor write; `paths_allowing_reads` lists subtrees that behave as if none
+    /// of those covered them. Where the two overlap, allowing wins.
     ///
     /// `allowed_unix_socket_paths` lists Unix domain sockets the command may
     /// connect to for local IPC even when IP network access is otherwise
@@ -111,8 +111,8 @@ impl SeatbeltConfigFile {
         writable_directories: &[&Path],
         protected_paths: &[&Path],
         protected_file_names: &[ProtectedFileName],
-        hidden_paths: &[&Path],
-        hidden_path_exceptions: &[&Path],
+        paths_disallowing_reads: &[&Path],
+        paths_allowing_reads: &[&Path],
         allowed_unix_socket_paths: &[&Path],
         allowed_tcp_ports: &[u16],
         permissions: SandboxPermissions,
@@ -124,8 +124,8 @@ impl SeatbeltConfigFile {
             writable_directories,
             protected_paths,
             protected_file_names,
-            hidden_paths,
-            hidden_path_exceptions,
+            paths_disallowing_reads,
+            paths_allowing_reads,
             allowed_unix_socket_paths,
             allowed_tcp_ports,
             permissions,
@@ -162,10 +162,10 @@ impl SeatbeltConfigFile {
 ///   under a writable directory. Contents remain readable.
 /// * `protected_file_names` - File names whose writes should be denied wherever
 ///   they appear (see [`ProtectedFileName`]). Contents remain readable.
-/// * `hidden_paths` - Subtrees the command may neither read nor write.
-/// * `hidden_path_exceptions` - Subtrees inside hidden paths that behave as if
-///   they were outside them: readable, and writable where the write rules
-///   would otherwise allow it.
+/// * `paths_disallowing_reads` - Subtrees the command may neither read nor write.
+/// * `paths_allowing_reads` - Subtrees that behave as if no path disallowing
+///   reads covered them: readable, and writable where the write rules would
+///   otherwise allow it.
 /// * `allowed_unix_socket_paths` - Unix domain sockets the command may
 ///   connect to for local IPC even when IP network access is otherwise
 ///   disabled. This does not permit sending packets to other machines.
@@ -183,8 +183,8 @@ pub fn wrap_invocation(
     writable_directories: &[&Path],
     protected_paths: &[&Path],
     protected_file_names: &[ProtectedFileName],
-    hidden_paths: &[&Path],
-    hidden_path_exceptions: &[&Path],
+    paths_disallowing_reads: &[&Path],
+    paths_allowing_reads: &[&Path],
     allowed_unix_socket_paths: &[&Path],
     allowed_tcp_ports: &[u16],
     permissions: SandboxPermissions,
@@ -193,8 +193,8 @@ pub fn wrap_invocation(
         writable_directories,
         protected_paths,
         protected_file_names,
-        hidden_paths,
-        hidden_path_exceptions,
+        paths_disallowing_reads,
+        paths_allowing_reads,
         allowed_unix_socket_paths,
         allowed_tcp_ports,
         permissions,
@@ -230,8 +230,9 @@ pub fn wrap_invocation(
 /// default. Writes to paths in `protected_paths` are denied even when they
 /// would otherwise be writable; contents remain readable. The same holds for
 /// any path whose final component matches one of `protected_file_names`.
-/// Paths in `hidden_paths` can be neither read nor written, except inside
-/// `hidden_path_exceptions`, which behave as if they were outside them. Unix
+/// Paths in `paths_disallowing_reads` can be neither read nor written, except
+/// inside `paths_allowing_reads`, which behave as if none of those covered
+/// them. Unix
 /// domain socket paths in `allowed_unix_socket_paths` are reachable for local
 /// IPC even when IP network access is otherwise blocked. This does not permit
 /// sending packets to other machines. With [`NetworkAccess::LocalhostPort`],
@@ -246,8 +247,8 @@ fn generate_seatbelt_config(
     writable_directories: &[&Path],
     protected_paths: &[&Path],
     protected_file_names: &[ProtectedFileName],
-    hidden_paths: &[&Path],
-    hidden_path_exceptions: &[&Path],
+    paths_disallowing_reads: &[&Path],
+    paths_allowing_reads: &[&Path],
     allowed_unix_socket_paths: &[&Path],
     allowed_tcp_ports: &[u16],
     permissions: SandboxPermissions,
@@ -352,23 +353,23 @@ fn generate_seatbelt_config(
 "#
     .to_string();
 
-    // Seatbelt applies the last matching rule, so each exception's allow must
-    // follow the hidden paths' denies.
-    for hidden_path in hidden_paths {
-        let escaped_path = escape_sandbox_path(hidden_path)?;
+    // Seatbelt applies the last matching rule, so each allow must follow the
+    // denies for allowing to win.
+    for disallowing in paths_disallowing_reads {
+        let escaped_path = escape_sandbox_path(disallowing)?;
         config.push_str(&format!(
             r#"
-; Block reads of a hidden path
+; Block reads of a path disallowing reads
 (deny file-read*
     (subpath "{escaped_path}"))
 "#
         ));
     }
-    for exception in hidden_path_exceptions {
-        let escaped_path = escape_sandbox_path(exception)?;
+    for allowing in paths_allowing_reads {
+        let escaped_path = escape_sandbox_path(allowing)?;
         config.push_str(&format!(
             r#"
-; Allow reads of an exception inside a hidden path
+; Allow reads of a path allowing reads
 (allow file-read*
     (subpath "{escaped_path}"))
 "#
@@ -409,43 +410,43 @@ fn generate_seatbelt_config(
         );
     }
 
-    for hidden_path in hidden_paths {
-        let escaped_path = escape_sandbox_path(hidden_path)?;
+    for disallowing in paths_disallowing_reads {
+        let escaped_path = escape_sandbox_path(disallowing)?;
         config.push_str(&format!(
             r#"
-; Block writes to a hidden path
+; Block writes to a path disallowing reads
 (deny file-write*
     (subpath "{escaped_path}"))
 "#
         ));
     }
-    // An exception is writable exactly where it would be outside the hidden
-    // path: everywhere with unrestricted writes, otherwise where it overlaps a
+    // A path allowing reads is writable exactly where it would be if no path
+    // disallowing reads covered it: everywhere with unrestricted writes, otherwise where it overlaps a
     // writable directory (whichever of the two is nested in the other).
-    let mut writable_exceptions: Vec<&Path> = Vec::new();
-    for exception in hidden_path_exceptions {
+    let mut writable_allowing_paths: Vec<&Path> = Vec::new();
+    for allowing in paths_allowing_reads {
         if permissions.allow_fs_write {
-            writable_exceptions.push(exception);
+            writable_allowing_paths.push(allowing);
             continue;
         }
         for writable_directory in writable_directories {
-            let overlap = if exception.starts_with(writable_directory) {
-                *exception
-            } else if writable_directory.starts_with(exception) {
+            let overlap = if allowing.starts_with(writable_directory) {
+                *allowing
+            } else if writable_directory.starts_with(allowing) {
                 *writable_directory
             } else {
                 continue;
             };
-            if !writable_exceptions.contains(&overlap) {
-                writable_exceptions.push(overlap);
+            if !writable_allowing_paths.contains(&overlap) {
+                writable_allowing_paths.push(overlap);
             }
         }
     }
-    for writable_exception in writable_exceptions {
-        let escaped_path = escape_sandbox_path(writable_exception)?;
+    for writable_allowing_path in writable_allowing_paths {
+        let escaped_path = escape_sandbox_path(writable_allowing_path)?;
         config.push_str(&format!(
             r#"
-; Allow writes to an exception inside a hidden path
+; Allow writes to a path allowing reads
 (allow file-write*
     (subpath "{escaped_path}"))
 "#

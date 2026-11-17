@@ -162,8 +162,8 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
         SandboxFsPolicy::Unrestricted {
             protected_paths: Vec::new(),
             protected_file_names: Vec::new(),
-            hidden_paths: Vec::new(),
-            hidden_path_exceptions: Vec::new(),
+            paths_disallowing_reads: Vec::new(),
+            paths_allowing_reads: Vec::new(),
         }
     } else {
         SandboxFsPolicy::Restricted {
@@ -180,8 +180,8 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
             ),
             protected_paths: Vec::new(),
             protected_file_names: Vec::new(),
-            hidden_paths: Vec::new(),
-            hidden_path_exceptions: Vec::new(),
+            paths_disallowing_reads: Vec::new(),
+            paths_allowing_reads: Vec::new(),
         }
     };
     let network = if persistent.allow_all_hosts {
@@ -451,8 +451,8 @@ impl ThreadSandboxGrants {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         } else {
             SandboxFsPolicy::Restricted {
@@ -469,8 +469,8 @@ impl ThreadSandboxGrants {
                 ),
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         };
         let network = if self.network_any_host {
@@ -722,8 +722,8 @@ mod tests {
                     .collect(),
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             },
             network: if hosts.is_empty() {
                 SandboxNetPolicy::Blocked
@@ -841,8 +841,8 @@ mod tests {
                 ],
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(
@@ -861,8 +861,8 @@ mod tests {
                 writable_paths: Vec::new(),
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(empty.network, SandboxNetPolicy::Blocked);
@@ -876,8 +876,8 @@ mod tests {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);
@@ -903,8 +903,8 @@ mod tests {
                 ],
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(
@@ -926,8 +926,8 @@ mod tests {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);

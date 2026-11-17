@@ -270,8 +270,8 @@ impl SandboxWrap {
             sandbox::SandboxFsPolicy::Unrestricted {
                 protected_paths,
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         } else {
             // Project worktree paths are captured fresh; user-approved grants are
@@ -308,8 +308,8 @@ impl SandboxWrap {
                 writable_paths,
                 protected_paths,
                 protected_file_names: Vec::new(),
-                hidden_paths: Vec::new(),
-                hidden_path_exceptions: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         };
         let network = match &self.network {
