@@ -347,7 +347,7 @@ impl CommitModal {
             .anchor(Anchor::TopRight)
     }
 
-    pub fn render_footer(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (
             can_commit,
             tooltip,
@@ -696,7 +696,7 @@ impl Render for CommitModal {
                                 ),
                         )
                     })
-                    .child(self.render_footer(window, cx)),
+                    .child(self.render_footer(cx)),
             )
     }
 }

@@ -2,7 +2,7 @@ mod branch_mode;
 
 use git_ui_core::askpass_modal::AskPassModal;
 pub(crate) use git_ui_core::notifications::{open_output, show_error_toast};
-use language_model_selector::{language_model_selector, toggle_in_settings};
+use language_model_selector::{LanguageModelSelector, language_model_picker, toggle_in_settings};
 
 use crate::branch_diff::BranchDiff;
 use crate::commit_context_menu::{
@@ -1370,8 +1370,7 @@ pub struct GitPanel {
     git_access: Option<GitAccess>,
     commit_menu_handle: PopoverMenuHandle<ContextMenu>,
     changes_actions_menu_handle: PopoverMenuHandle<ContextMenu>,
-    commit_message_model_menu_handle:
-        PopoverMenuHandle<language_model_selector::LanguageModelSelector>,
+    commit_message_model_selector: Entity<LanguageModelSelector>,
     remote_action_menu_handle: PopoverMenuHandle<ContextMenu>,
     changes_mode: ChangesMode,
     changes_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1681,6 +1680,39 @@ impl GitPanel {
             )
             .detach();
 
+            let picker = cx.new(|cx| {
+                language_model_picker(
+                    |cx| LanguageModelRegistry::read_global(cx).commit_message_model(cx),
+                    {
+                        let fs = fs.clone();
+
+                        move |model, cx| {
+                            let provider = model.provider_id().0.to_string();
+                            let model_id = model.id().0.to_string();
+
+                            update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                                settings
+                                    .agent
+                                    .get_or_insert_default()
+                                    .set_commit_message_model(provider, model_id);
+                            });
+                        }
+                    },
+                    {
+                        let fs = fs.clone();
+
+                        move |model, should_be_favorite, cx| {
+                            toggle_in_settings(model, should_be_favorite, fs.clone(), cx)
+                        }
+                    },
+                    true,
+                    focus_handle.clone(),
+                    window,
+                    cx,
+                )
+            });
+            let model_selector = cx.new(|_| LanguageModelSelector::new(picker));
+
             let mut this = Self {
                 active_repository,
                 commit_editor,
@@ -1746,7 +1778,7 @@ impl GitPanel {
                 git_access: None,
                 commit_menu_handle: PopoverMenuHandle::default(),
                 changes_actions_menu_handle: PopoverMenuHandle::default(),
-                commit_message_model_menu_handle: PopoverMenuHandle::default(),
+                commit_message_model_selector: model_selector,
                 remote_action_menu_handle: PopoverMenuHandle::default(),
                 changes_mode: ChangesMode::Uncommitted,
                 changes_mode_menu_handle: PopoverMenuHandle::default(),
@@ -6917,63 +6949,13 @@ impl GitPanel {
             return Some(button.into_any_element());
         }
 
-        let menu_open = self.commit_message_model_menu_handle.is_deployed();
-        let fs = self.fs.clone();
-        let commit_editor = self.commit_editor.clone();
-        let model_picker = PopoverMenu::new("commit-message-model-picker")
-            .trigger_with_tooltip(
-                crate::render_split_button_chevron_trigger(
-                    "commit-message-model-picker-trigger",
-                    menu_open,
-                ),
-                Tooltip::text("Select Commit Message Model"),
-            )
-            .with_handle(self.commit_message_model_menu_handle.clone())
-            .menu(move |window, cx| {
-                let focus_handle = commit_editor.focus_handle(cx);
-                let fs = fs.clone();
-
-                let selector = cx.new(move |cx| {
-                    language_model_selector(
-                        |cx| LanguageModelRegistry::read_global(cx).commit_message_model(cx),
-                        {
-                            let fs = fs.clone();
-
-                            move |model, cx| {
-                                let provider = model.provider_id().0.to_string();
-                                let model_id = model.id().0.to_string();
-
-                                update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                                    settings
-                                        .agent
-                                        .get_or_insert_default()
-                                        .set_commit_message_model(provider, model_id);
-                                });
-                            }
-                        },
-                        {
-                            let fs = fs.clone();
-
-                            move |model, should_be_favorite, cx| {
-                                toggle_in_settings(model, should_be_favorite, fs.clone(), cx)
-                            }
-                        },
-                        true,
-                        focus_handle,
-                        window,
-                        cx,
-                    )
-                });
-
-                Some(selector)
-            })
-            .anchor(Anchor::TopRight)
-            .offset(gpui::Point {
-                x: px(0.),
-                y: px(2.),
-            });
-
-        Some(SplitButton::new(button, model_picker.into_any_element()).into_any_element())
+        Some(
+            h_flex()
+                .gap_0p5()
+                .child(button)
+                .child(self.commit_message_model_selector.clone())
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
