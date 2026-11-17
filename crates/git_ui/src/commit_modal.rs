@@ -362,7 +362,8 @@ impl CommitModal {
             let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
             let title = git_panel.commit_button_title();
             let co_authors = git_panel.render_co_authors(cx);
-            let generate_commit_message = git_panel.render_generate_commit_message_button(cx);
+            let generate_commit_message =
+                git_panel.render_generate_commit_message_button(false, cx);
             let active_repo = git_panel.active_repository.clone();
             let commit_options = git_panel.commit_options();
             let is_generating = git_panel.is_generating_commit_message();

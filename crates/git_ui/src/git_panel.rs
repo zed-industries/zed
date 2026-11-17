@@ -6843,6 +6843,7 @@ impl GitPanel {
 
     pub(crate) fn render_generate_commit_message_button(
         &self,
+        model_selector_enabled: bool,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
         if !agent_settings::AgentSettings::get_global(cx).enabled(cx) {
@@ -6911,6 +6912,10 @@ impl GitPanel {
                 }
             })
         };
+
+        if !model_selector_enabled {
+            return Some(button.into_any_element());
+        }
 
         let menu_open = self.commit_message_model_menu_handle.is_deployed();
         let fs = self.fs.clone();
@@ -7565,7 +7570,7 @@ impl GitPanel {
                                 h_flex()
                                     .gap_0p5()
                                     .child(toggle_commit_editor_button)
-                                    .children(self.render_generate_commit_message_button(cx)),
+                                    .children(self.render_generate_commit_message_button(true, cx)),
                             )
                             .child(
                                 h_flex()
