@@ -1,3 +1,4 @@
+use super::deserialize_maybe_stringified;
 use action_log::ActionLog;
 use agent_client_protocol::v2::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -228,10 +229,10 @@ pub struct ReadFileToolInput {
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)
-    #[serde(default, deserialize_with = "super::deserialize_maybe_stringified")]
+    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
     pub start_line: Option<u32>,
     /// Optional line number to end reading on (1-based index, inclusive)
-    #[serde(default, deserialize_with = "super::deserialize_maybe_stringified")]
+    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
     pub end_line: Option<u32>,
 }
 
@@ -981,34 +982,71 @@ mod test {
         );
     }
 
-    #[test]
-    fn test_read_file_input_line_bounds_accept_numbers_and_strings() {
-        let numeric = serde_json::from_value::<ReadFileToolInput>(json!({
-            "path": "root/file.txt",
-            "start_line": 10,
-            "end_line": 20,
-        }))
-        .expect("numeric line bounds should deserialize");
-        assert_eq!(numeric.start_line, Some(10));
-        assert_eq!(numeric.end_line, Some(20));
+    #[gpui::test]
+    async fn test_read_file_line_range_input_formats(cx: &mut TestAppContext) {
+        init_test(cx);
 
-        // Some models serialize numeric tool arguments as strings, so the same
-        // bounds must also deserialize when quoted.
-        let stringified = serde_json::from_value::<ReadFileToolInput>(json!({
-            "path": "root/file.txt",
-            "start_line": "10",
-            "end_line": "20",
-        }))
-        .expect("string line bounds should deserialize");
-        assert_eq!(stringified.start_line, Some(10));
-        assert_eq!(stringified.end_line, Some(20));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "multiline.txt": "Line 1\nLine 2\nLine 3"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
 
-        let omitted = serde_json::from_value::<ReadFileToolInput>(json!({
-            "path": "root/file.txt",
-        }))
-        .expect("missing line bounds should deserialize to None");
-        assert_eq!(omitted.start_line, None);
-        assert_eq!(omitted.end_line, None);
+        let run = |input: serde_json::Value, cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                tool.clone()
+                    .run(ToolInput::ready(input), ToolCallEventStream::test().0, cx)
+            })
+        };
+
+        // Numeric bounds read the requested range.
+        let line_range = "     2\tLine 2\n     3\tLine 3";
+        let result = run(
+            json!({ "path": "root/multiline.txt", "start_line": 2, "end_line": 3 }),
+            cx,
+        )
+        .await;
+        assert_eq!(result.unwrap(), line_range.into());
+
+        // Quoted numeric bounds read the same range.
+        let result = run(
+            json!({ "path": "root/multiline.txt", "start_line": "2", "end_line": "3" }),
+            cx,
+        )
+        .await;
+        assert_eq!(result.unwrap(), line_range.into());
+
+        // Omitted bounds read the whole file.
+        let whole_file = "     1\tLine 1\n     2\tLine 2\n     3\tLine 3";
+        let result = run(json!({ "path": "root/multiline.txt" }), cx).await;
+        assert_eq!(result.unwrap(), whole_file.into());
+
+        // Null bounds read the whole file, same as omitted.
+        let result = run(
+            json!({ "path": "root/multiline.txt", "start_line": null, "end_line": null }),
+            cx,
+        )
+        .await;
+        assert_eq!(result.unwrap(), whole_file.into());
+
+        // Strings that are not valid line numbers are rejected.
+        for invalid_line in ["abc", "-1", "1.5", ""] {
+            let result = run(
+                json!({ "path": "root/multiline.txt", "start_line": invalid_line }),
+                cx,
+            )
+            .await;
+            assert!(
+                result.is_err(),
+                "start_line {invalid_line:?} should be rejected"
+            );
+        }
     }
 
     #[gpui::test]
