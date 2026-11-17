@@ -693,11 +693,7 @@ fn find_worktree_in_store(
 /// path components with case-sensitive `OsStr::eq`. For trust checks that compare
 /// persisted DB paths against current worktree paths, we need case-insensitive matching
 /// on Windows to handle paths that may differ only in casing.
-fn starts_with_case_sensitive_aware(
-    path: &Path,
-    prefix: &Path,
-    path_style: PathStyle,
-) -> bool {
+fn starts_with_case_sensitive_aware(path: &Path, prefix: &Path, path_style: PathStyle) -> bool {
     if path_style == PathStyle::Windows {
         let path_str = path.to_string_lossy().to_ascii_lowercase();
         let prefix_str = prefix.to_string_lossy().to_ascii_lowercase();

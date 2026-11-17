@@ -1381,8 +1381,7 @@ async fn test_project_debug_scenarios_load_with_db_trusted_path(cx: &mut gpui::T
     )
     .await;
 
-    let project =
-        Project::test_with_worktree_trust(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let project = Project::test_with_worktree_trust(fs.clone(), [path!("/dir").as_ref()], cx).await;
     cx.run_until_parked();
     let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
     let worktree_id = worktree_store.read_with(cx, |store, cx| {
@@ -1451,8 +1450,7 @@ async fn test_project_debug_scenarios_load_with_case_different_db_trusted_path(
     )
     .await;
 
-    let project =
-        Project::test_with_worktree_trust(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let project = Project::test_with_worktree_trust(fs.clone(), [path!("/dir").as_ref()], cx).await;
     cx.run_until_parked();
     let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
     let worktree_id = worktree_store.read_with(cx, |store, cx| {
