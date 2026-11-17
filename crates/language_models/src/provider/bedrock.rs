@@ -2711,7 +2711,7 @@ pub fn map_to_language_model_completion_events(
                                 && (message_stop.stop_reason == StopReason::ContentFiltered
                                     || message_stop.stop_reason.as_str() == "refusal")
                             {
-                                language_model::StopReason::Refusal
+                                language_model::StopReason::Refusal(None)
                             } else if state.emitted_tool_use {
                                 // Some models (e.g. Kimi) send EndTurn even when
                                 // they've made tool calls. Trust the content over
@@ -3832,7 +3832,7 @@ mod tests {
                 assert_eq!(
                     events,
                     [LanguageModelCompletionEvent::Stop(
-                        language_model::StopReason::Refusal
+                        language_model::StopReason::Refusal(None)
                     )]
                 );
             }

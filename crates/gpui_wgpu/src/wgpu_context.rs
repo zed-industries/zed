@@ -338,6 +338,18 @@ impl WgpuContext {
         }
     }
 
+    pub fn supports_transient_attachments(&self) -> bool {
+        #[cfg(target_family = "wasm")]
+        if self.backend == WgpuBackend::BrowserWebGpu {
+            // wgpu passes usage bits straight to the browser without knowing
+            // whether it recognizes this one.
+            return js_sys::Reflect::get(&js_sys::global(), &"GPUTextureUsage".into())
+                .and_then(|usage| js_sys::Reflect::has(&usage, &"TRANSIENT_ATTACHMENT".into()))
+                .unwrap_or(false);
+        }
+        true
+    }
+
     #[cfg(target_family = "wasm")]
     pub async fn new_web(
         canvas: &web_sys::HtmlCanvasElement,

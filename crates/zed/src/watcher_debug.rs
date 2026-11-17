@@ -42,10 +42,16 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         }
 
         let app_state = app_state.clone();
+        let display_id = cx.active_display().map(|display| display.id());
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions::default()),
-                window_bounds: Some(WindowBounds::centered(size(px(1000.), px(700.)), cx)),
+                window_bounds: Some(WindowBounds::centered(
+                    display_id,
+                    size(px(1000.), px(700.)),
+                    cx,
+                )),
+                display_id,
                 ..Default::default()
             },
             |window, cx| {
