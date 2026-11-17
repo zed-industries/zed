@@ -188,6 +188,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/sandbox",
+    "crates/sandbox_linux",
     "crates/scheduler",
     "crates/schema_generator",
     "crates/search",
@@ -464,6 +465,7 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev = "3ee9745862279ce1d18
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 sandbox = { path = "crates/sandbox" }
+sandbox_linux = { path = "crates/sandbox_linux" }
 scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
