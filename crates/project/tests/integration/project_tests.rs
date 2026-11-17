@@ -1413,6 +1413,7 @@ async fn test_project_debug_scenarios_load_with_db_trusted_path(cx: &mut gpui::T
     assert_eq!(scenarios[0].1.label, "my-debug");
 }
 
+#[cfg(target_os = "windows")]
 #[gpui::test]
 async fn test_project_debug_scenarios_load_with_case_different_db_trusted_path(
     cx: &mut gpui::TestAppContext,
