@@ -1246,6 +1246,49 @@ impl Markdown {
         self.pending_parse.is_some() || self.mermaid_state.has_pending_render()
     }
 
+    fn preserve_details_state(&mut self, parsed: &ParsedMarkdown) {
+        let mut details_open = HashMap::default();
+        let mut matched_old = HashSet::default();
+        let mut matched_new = HashSet::default();
+        // Match complete blocks first so repeated summaries do not transfer
+        // expansion state between an unchanged block and an edited one.
+        for match_entire_block in [true, false] {
+            for (new_index, new) in parsed.details.iter().enumerate() {
+                if matched_new.contains(&new_index) {
+                    continue;
+                }
+                let new_range = if match_entire_block {
+                    new.range.clone()
+                } else {
+                    new.summary.clone()
+                };
+                if let Some((old_index, old)) = self
+                    .parsed_markdown
+                    .details
+                    .iter()
+                    .enumerate()
+                    .find(|(old_index, old)| {
+                        let old_range = if match_entire_block {
+                            old.range.clone()
+                        } else {
+                            old.summary.clone()
+                        };
+                        !matched_old.contains(old_index)
+                            && self.parsed_markdown.source.get(old_range)
+                                == parsed.source.get(new_range.clone())
+                    })
+                {
+                    matched_old.insert(old_index);
+                    matched_new.insert(new_index);
+                    if let Some(open) = self.details_open.get(&old.range.start) {
+                        details_open.insert(new.range.start, *open);
+                    }
+                }
+            }
+        }
+        self.details_open = details_open;
+    }
+
     fn parse(&mut self, cx: &mut Context<Self>) {
         if self.options.defer_parsing {
             return;
@@ -1412,42 +1455,7 @@ impl Markdown {
             let (parsed, images_by_source_offset) = parsed.await;
 
             this.update(cx, |this, cx| {
-                let mut details_open = HashMap::default();
-                let mut matched_old = HashSet::default();
-                let mut matched_new = HashSet::default();
-                for match_body in [true, false] {
-                    for (new_index, new) in parsed.details.iter().enumerate() {
-                        if matched_new.contains(&new_index) {
-                            continue;
-                        }
-                        let new_range = if match_body {
-                            new.range.clone()
-                        } else {
-                            new.summary.clone()
-                        };
-                        if let Some((old_index, old)) =
-                            this.parsed_markdown.details.iter().enumerate().find(
-                                |(old_index, old)| {
-                                    let old_range = if match_body {
-                                        old.range.clone()
-                                    } else {
-                                        old.summary.clone()
-                                    };
-                                    !matched_old.contains(old_index)
-                                        && this.parsed_markdown.source.get(old_range)
-                                            == parsed.source.get(new_range.clone())
-                                },
-                            )
-                        {
-                            matched_old.insert(old_index);
-                            matched_new.insert(new_index);
-                            if let Some(open) = this.details_open.get(&old.range.start) {
-                                details_open.insert(new.range.start, *open);
-                            }
-                        }
-                    }
-                }
-                this.details_open = details_open;
+                this.preserve_details_state(&parsed);
                 this.parsed_markdown = parsed;
                 this.images_by_source_offset = images_by_source_offset;
                 if this.active_root_block.is_some_and(|block_index| {

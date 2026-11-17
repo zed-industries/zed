@@ -14,29 +14,33 @@ pub(crate) struct ParsedDetails {
 
 // Fragments remove container prefixes and HTML indentation, but every emitted
 // event must still address the original buffer for selection and preview sync.
-struct Source {
+struct MappedSource {
     text: String,
-    offsets: Vec<usize>,
+    original_offsets: Vec<usize>,
     end: usize,
 }
 
-impl Source {
-    fn range(&self, range: Range<usize>) -> Range<usize> {
-        let start = self.offsets.get(range.start).copied().unwrap_or(self.end);
+impl MappedSource {
+    fn original_range(&self, range: Range<usize>) -> Range<usize> {
+        let start = self
+            .original_offsets
+            .get(range.start)
+            .copied()
+            .unwrap_or(self.end);
         if range.is_empty() {
             return start..start;
         }
         let end = range
             .end
             .checked_sub(1)
-            .and_then(|end| self.offsets.get(end))
+            .and_then(|end| self.original_offsets.get(end))
             .map_or(start, |end| end + 1);
         start..end
     }
 
     fn fragment(&self, range: Range<usize>, prefix: &str, indentation: usize) -> Self {
         let mut text = String::new();
-        let mut offsets = Vec::new();
+        let mut original_offsets = Vec::new();
         let mut start = range.start;
         for line in self.text[range.clone()].split_inclusive('\n') {
             let mut content = line;
@@ -60,13 +64,14 @@ impl Source {
             }
             let content_start = start + line.len() - content.len();
             text.push_str(content);
-            offsets.extend_from_slice(&self.offsets[content_start..start + line.len()]);
+            original_offsets
+                .extend_from_slice(&self.original_offsets[content_start..start + line.len()]);
             start += line.len();
         }
         Self {
             text,
-            offsets,
-            end: self.range(range).end,
+            original_offsets,
+            end: self.original_range(range).end,
         }
     }
 }
@@ -164,6 +169,69 @@ fn open_attribute(tag: &str) -> bool {
     visit(&dom.document)
 }
 
+struct DetailsContent {
+    body: Range<usize>,
+    summary: Option<Range<usize>>,
+    summary_tags: Option<Range<usize>>,
+    end: usize,
+}
+
+fn find_details_content(text: &str, opening: &HtmlTag<'_>) -> DetailsContent {
+    let mut depth = 1;
+    let mut cursor = opening.range.end;
+    let mut closing_start = text.len();
+    let mut end = text.len();
+    let mut summary_start = None;
+    let mut summary = None;
+    let mut summary_tags = None;
+    let mut raw_tag: Option<String> = None;
+    while let Some(tag) = next_tag(text, cursor, raw_tag.is_none()) {
+        cursor = tag.range.end;
+        if let Some(raw) = raw_tag.as_ref() {
+            if tag.closing && tag.name.eq_ignore_ascii_case(raw) {
+                raw_tag = None;
+            }
+            continue;
+        }
+        if !tag.closing
+            && ["pre", "code", "script", "style", "textarea"]
+                .iter()
+                .any(|raw| tag.name.eq_ignore_ascii_case(raw))
+        {
+            raw_tag = Some(tag.name.to_string());
+            continue;
+        }
+        if tag.name.eq_ignore_ascii_case("details") {
+            if tag.closing {
+                depth -= 1;
+            } else {
+                depth += 1;
+            }
+            if depth == 0 {
+                closing_start = tag.range.start;
+                end = tag.range.end;
+                break;
+            }
+        } else if depth == 1 && tag.name.eq_ignore_ascii_case("summary") && summary.is_none() {
+            if tag.closing {
+                if let Some(start) = summary_start.take() {
+                    summary = Some(start..tag.range.start);
+                    summary_tags = summary_tags.map(|tags: Range<usize>| tags.start..tag.range.end);
+                }
+            } else if summary_start.is_none() {
+                summary_start = Some(tag.range.end);
+                summary_tags = Some(tag.range.clone());
+            }
+        }
+    }
+    DetailsContent {
+        body: opening.range.end..closing_start,
+        summary,
+        summary_tags,
+        end,
+    }
+}
+
 pub(crate) fn expand_details(
     text: &str,
     start: usize,
@@ -180,9 +248,9 @@ pub(crate) fn expand_details(
             .map(|(event, range)| (event.into_static(), range.start + start..range.end + start))
             .collect();
     }
-    let source = Source {
+    let source = MappedSource {
         text: text.to_string(),
-        offsets: (start..start + text.len()).collect(),
+        original_offsets: (start..start + text.len()).collect(),
         end: start + text.len(),
     };
     let parser = Parser::new_ext(text, PARSE_OPTIONS);
@@ -196,7 +264,7 @@ pub(crate) fn expand_details(
 
 #[stacksafe::stacksafe]
 fn expand(
-    source: &Source,
+    source: &MappedSource,
     details: &mut Vec<ParsedDetails>,
     html_sources: &mut std::collections::BTreeMap<usize, String>,
     definitions: &pulldown_cmark::RefDefs<'_>,
@@ -227,57 +295,7 @@ fn expand(
             && opening.name.eq_ignore_ascii_case("details")
             && !opening.closing
         {
-            let mut depth = 1;
-            let mut cursor = opening.range.end;
-            let mut closing_start = source.text.len();
-            let mut end = source.text.len();
-            let mut summary_start = None;
-            let mut summary = None;
-            let mut summary_tags = None;
-            let mut raw_tag: Option<String> = None;
-            while let Some(tag) = next_tag(&source.text, cursor, raw_tag.is_none()) {
-                cursor = tag.range.end;
-                if let Some(raw) = raw_tag.as_ref() {
-                    if tag.closing && tag.name.eq_ignore_ascii_case(raw) {
-                        raw_tag = None;
-                    }
-                    continue;
-                }
-                if !tag.closing
-                    && ["pre", "code", "script", "style", "textarea"]
-                        .iter()
-                        .any(|raw| tag.name.eq_ignore_ascii_case(raw))
-                {
-                    raw_tag = Some(tag.name.to_string());
-                    continue;
-                }
-                if tag.name.eq_ignore_ascii_case("details") {
-                    if tag.closing {
-                        depth -= 1;
-                    } else {
-                        depth += 1;
-                    }
-                    if depth == 0 {
-                        closing_start = tag.range.start;
-                        end = tag.range.end;
-                        break;
-                    }
-                } else if depth == 1
-                    && tag.name.eq_ignore_ascii_case("summary")
-                    && summary.is_none()
-                {
-                    if tag.closing {
-                        if let Some(start) = summary_start.take() {
-                            summary = Some(start..tag.range.start);
-                            summary_tags =
-                                summary_tags.map(|tags: Range<usize>| tags.start..tag.range.end);
-                        }
-                    } else if summary_start.is_none() {
-                        summary_start = Some(tag.range.end);
-                        summary_tags = Some(tag.range.clone());
-                    }
-                }
-            }
+            let content = find_details_content(&source.text, &opening);
             let line_start = source.text[..opening.range.start]
                 .rfind('\n')
                 .map_or(0, |start| start + 1);
@@ -285,7 +303,7 @@ fn expand(
                 .chars()
                 .map(|character| if character == '>' { '>' } else { ' ' })
                 .collect();
-            let inner = source.fragment(opening.range.end..closing_start, &prefix, 0);
+            let inner = source.fragment(content.body.clone(), &prefix, 0);
             let indentation = inner
                 .text
                 .lines()
@@ -293,16 +311,16 @@ fn expand(
                 .map(|line| line.bytes().take_while(|byte| *byte == b' ').count())
                 .min()
                 .unwrap_or(0);
-            let summary_range = summary.clone().unwrap_or(opening.range.clone());
-            let summary_range = source.range(summary_range);
+            let summary_range = content.summary.clone().unwrap_or(opening.range.clone());
+            let summary_range = source.original_range(summary_range);
             details.push(ParsedDetails {
-                range: source.range(opening.range.start..end),
+                range: source.original_range(opening.range.start..content.end),
                 summary: summary_range.clone(),
-                body: source.range(opening.range.end..closing_start),
+                body: source.original_range(content.body.clone()),
                 open: open_attribute(&source.text[opening.range.clone()]),
             });
             output.push((Event::Start(Tag::Paragraph), summary_range.clone()));
-            if let Some(summary) = summary {
+            if let Some(summary) = content.summary {
                 let summary = source.fragment(summary, &prefix, indentation);
                 let events = expand(&summary, details, html_sources, definitions);
                 let count = events.len();
@@ -318,13 +336,13 @@ fn expand(
                 output.push((Event::Text("Details".into()), summary_range.clone()));
             }
             output.push((Event::End(TagEnd::Paragraph), summary_range));
-            let body_ranges = if let Some(summary_tags) = summary_tags {
+            let body_ranges = if let Some(summary_tags) = content.summary_tags {
                 vec![
                     opening.range.end..summary_tags.start,
-                    summary_tags.end..closing_start,
+                    summary_tags.end..content.body.end,
                 ]
             } else {
-                vec![opening.range.end..closing_start]
+                vec![content.body.clone()]
             };
             for body in body_ranges {
                 if body.start <= body.end {
@@ -332,20 +350,20 @@ fn expand(
                     output.extend(expand(&body, details, html_sources, definitions));
                 }
             }
-            if end < range.end {
-                let remainder = source.fragment(end..range.end, &prefix, 0);
+            if content.end < range.end {
+                let remainder = source.fragment(content.end..range.end, &prefix, 0);
                 output.extend(expand(&remainder, details, html_sources, definitions));
             }
-            consumed = opening.range.start..end.max(range.end);
+            consumed = opening.range.start..content.end.max(range.end);
             continue;
         }
         if matches!(event, Event::Start(Tag::HtmlBlock)) {
             html_sources.insert(
-                source.range(range.clone()).start,
+                source.original_range(range.clone()).start,
                 source.text[range.clone()].to_string(),
             );
         }
-        output.push((event.into_static(), source.range(range)));
+        output.push((event.into_static(), source.original_range(range)));
     }
     output
 }
