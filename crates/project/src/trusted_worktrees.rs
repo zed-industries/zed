@@ -50,6 +50,7 @@ use std::{
     sync::Arc,
 };
 use util::debug_panic;
+use util::paths::PathStyle;
 
 use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
 
@@ -301,7 +302,7 @@ impl TrustedWorktreesStore {
 
         new_trusted_other_worktrees.retain(|(worktree_abs_path, _)| {
             new_trusted_abs_paths.iter().all(|new_trusted_path| {
-                !path_style.starts_with(worktree_abs_path, new_trusted_path)
+                !starts_with_case_sensitive_aware(worktree_abs_path, new_trusted_path, path_style)
             })
         });
         if !new_trusted_other_worktrees.is_empty() {
@@ -329,7 +330,11 @@ impl TrustedWorktreesStore {
                     let restricted_worktree_path = worktree.read(cx).abs_path();
                     let retain = (!is_file || new_trusted_other_worktrees.is_empty())
                         && new_trusted_abs_paths.iter().all(|new_trusted_path| {
-                            !path_style.starts_with(&restricted_worktree_path, new_trusted_path)
+                            !starts_with_case_sensitive_aware(
+                                &restricted_worktree_path,
+                                new_trusted_path,
+                                path_style,
+                            )
                         });
                     if !retain {
                         trusted_paths.insert(PathTrust::Worktree(*restricted_worktree));
@@ -432,6 +437,7 @@ impl TrustedWorktreesStore {
 
         let weak_worktree_store = worktree_store.downgrade();
         let Some(worktree) = worktree_store.read(cx).worktree_for_id(worktree_id, cx) else {
+            log::warn!("Worktree {worktree_id:?} not found in store during trust check");
             return false;
         };
         let worktree_path = worktree.read(cx).abs_path();
@@ -470,15 +476,26 @@ impl TrustedWorktreesStore {
                         .worktree_for_id(*worktree_id, cx)
                         .is_some_and(|worktree| {
                             let worktree = worktree.read(cx);
-                            path_style.starts_with(&worktree_path, &worktree.abs_path())
-                                || (is_file && !worktree.is_single_file())
+                            starts_with_case_sensitive_aware(
+                                &worktree_path,
+                                &worktree.abs_path(),
+                                path_style,
+                            ) || (is_file && !worktree.is_single_file())
                         }),
                     PathTrust::AbsPath(trusted_path) => {
-                        is_file || path_style.starts_with(&worktree_path, trusted_path)
+                        is_file
+                            || starts_with_case_sensitive_aware(
+                                &worktree_path,
+                                trusted_path,
+                                path_style,
+                            )
                     }
                 })
             });
             if auto_trusted {
+                if let Some(trusted_paths) = self.trusted_paths.get_mut(&weak_worktree_store) {
+                    trusted_paths.insert(PathTrust::Worktree(worktree_id));
+                }
                 return true;
             }
         }
@@ -669,5 +686,23 @@ fn find_worktree_in_store(
         Some((worktree.read(cx).id(), worktree.read(cx).is_single_file()))
     } else {
         None
+    }
+}
+
+/// Windows file systems are case-insensitive, but `PathStyle::starts_with` compares
+/// path components with case-sensitive `OsStr::eq`. For trust checks that compare
+/// persisted DB paths against current worktree paths, we need case-insensitive matching
+/// on Windows to handle paths that may differ only in casing.
+fn starts_with_case_sensitive_aware(
+    path: &Path,
+    prefix: &Path,
+    path_style: PathStyle,
+) -> bool {
+    if path_style == PathStyle::Windows {
+        let path_str = path.to_string_lossy().to_ascii_lowercase();
+        let prefix_str = prefix.to_string_lossy().to_ascii_lowercase();
+        PathStyle::Windows.starts_with(Path::new(&path_str), Path::new(&prefix_str))
+    } else {
+        path_style.starts_with(path, prefix)
     }
 }
