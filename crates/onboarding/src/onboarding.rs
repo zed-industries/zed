@@ -301,6 +301,16 @@ impl Onboarding {
     }
 }
 
+/// The pinned header and the scrolling body share this so they stay aligned.
+fn content_column() -> Div {
+    v_flex()
+        .min_w_0()
+        .max_w(rems_from_px(780_f32))
+        .w_full()
+        .mx_auto()
+        .px_12()
+}
+
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
@@ -326,13 +336,8 @@ impl Render for Onboarding {
                 cx.notify();
             }))
             .child(
-                v_flex()
+                content_column()
                     .flex_none()
-                    .min_w_0()
-                    .max_w(rems_from_px(780_f32))
-                    .w_full()
-                    .mx_auto()
-                    .px_12()
                     .pt_12()
                     .gap_6()
                     .child(
@@ -388,17 +393,7 @@ impl Render for Onboarding {
                             .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&self.scroll_handle)
-                            .child(
-                                v_flex()
-                                    .min_w_0()
-                                    .max_w(rems_from_px(780_f32))
-                                    .w_full()
-                                    .mx_auto()
-                                    .px_12()
-                                    .pt_6()
-                                    .pb_12()
-                                    .child(self.render_page(cx)),
-                            ),
+                            .child(content_column().pt_6().pb_12().child(self.render_page(cx))),
                     ),
             )
     }
