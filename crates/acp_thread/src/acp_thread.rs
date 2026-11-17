@@ -2889,6 +2889,7 @@ impl ContentBlock {
                 None,
                 MarkdownOptions {
                     render_mermaid_diagrams: true,
+                    render_math: true,
                     render_metadata_blocks: true,
                     defer_parsing: true,
                     ..Default::default()
