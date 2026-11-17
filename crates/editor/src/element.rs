@@ -9228,7 +9228,7 @@ impl Element for EditorElement {
                     )
                     .width;
 
-                    let scrollbar_layout_information = ScrollbarLayoutInformation::new(
+                    let mut scrollbar_layout_information = ScrollbarLayoutInformation::new(
                         text_hitbox.bounds,
                         glyph_grid_cell,
                         size(
@@ -9240,6 +9240,10 @@ impl Element for EditorElement {
                         scroll_beyond_last_line,
                     );
 
+                    // The character-count longest row may not be the widest after shaping.
+                    scrollbar_layout_information.include_visible_line_widths(
+                        line_layouts.iter().map(|line_layout| line_layout.width),
+                    );
                     let mut scroll_width = scrollbar_layout_information.scroll_range.width;
 
                     let sticky_header_excerpt = if snapshot.buffer_snapshot().show_headers() {
@@ -10233,6 +10237,13 @@ impl ScrollbarLayoutInformation {
             scroll_range: document_size + overscroll,
             glyph_grid_cell,
         }
+    }
+
+    fn include_visible_line_widths(&mut self, visible_line_widths: impl Iterator<Item = Pixels>) {
+        self.scroll_range.width = visible_line_widths
+            .fold(self.scroll_range.width, |width, line_width| {
+                width.max(line_width)
+            });
     }
 }
 
@@ -11424,7 +11435,7 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
+        Crease, Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
         NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects,
         display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
@@ -11885,6 +11896,87 @@ mod tests {
                 "Soft wrapped editor should have no horizontal scrolling!"
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_horizontal_scroll_range_includes_wide_visible_fold(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.gutter.get_or_insert_default().folds = Some(false);
+                });
+            });
+        });
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("aa\nabc", cx);
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::None, cx);
+            editor
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        editor.update_in(cx, |editor, window, cx| {
+            editor.fold_creases(
+                vec![Crease::simple(
+                    Point::new(1, 0)..Point::new(1, 3),
+                    FoldPlaceholder {
+                        render: Arc::new(|_, _, _| {
+                            gpui::canvas(|_, _, _| (), |_, _, _, _| {})
+                                .w(px(180.))
+                                .into_any_element()
+                        }),
+                        constrain_width: false,
+                        merge_adjacent: false,
+                        type_tag: None,
+                        collapsed_text: Some("x".into()),
+                    },
+                )],
+                false,
+                window,
+                cx,
+            );
+        });
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        let (_, state) = cx.draw(Default::default(), size(px(150.), px(200.)), |_, _| {
+            EditorElement::new(&editor, style)
+        });
+
+        assert!(
+            state.position_map.line_layouts[1].width > state.position_map.line_layouts[0].width
+        );
+        assert!(
+            state.position_map.scroll_max.x > 0.,
+            "horizontal scroll range should include the widest visible line"
+        );
+        assert!(
+            state.position_map.scroll_max.x * f64::from(state.position_map.em_layout_width)
+                >= f64::from(
+                    state.position_map.line_layouts[1].width
+                        - state.position_map.content_width
+                        - state.position_map.em_layout_width,
+                ),
+            "horizontal scroll range should reach the widest visible line"
+        );
+    }
+
+    #[test]
+    fn test_scrollbar_range_includes_widest_visible_line() {
+        let mut scrollbar_layout_information = ScrollbarLayoutInformation {
+            editor_bounds: Bounds::default(),
+            scroll_range: size(px(80.), px(0.)),
+            glyph_grid_cell: size(px(8.), px(16.)),
+        };
+
+        scrollbar_layout_information
+            .include_visible_line_widths([px(60.), px(120.), px(100.)].into_iter());
+
+        assert_eq!(scrollbar_layout_information.scroll_range.width, px(120.));
+
+        scrollbar_layout_information.scroll_range.width = px(140.);
+        scrollbar_layout_information.include_visible_line_widths([px(60.), px(120.)].into_iter());
+
+        assert_eq!(scrollbar_layout_information.scroll_range.width, px(140.));
     }
 
     #[gpui::test]
