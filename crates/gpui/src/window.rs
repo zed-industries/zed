@@ -1287,6 +1287,8 @@ pub struct Window {
         SingleSubscriberSet<Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) test_draw_scheduled: Rc<Cell<bool>>,
     /// The rendered scene's [`Scene::animation_frame_interval`]. While it is
     /// `Some`, the scene must keep being presented even when nothing is redrawn.
     scene_animation_interval: Rc<Cell<Option<Duration>>>,
@@ -2283,7 +2285,11 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move |event| {
                 handle
-                    .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
+                    .update(&mut cx, |_, window, cx| {
+                        #[cfg(any(test, feature = "test-support"))]
+                        window.draw_pending_test_frame(cx);
+                        window.dispatch_event(event, cx)
+                    })
                     .with_context(|| {
                         format!("dispatching input for window {:?}", handle.window_id())
                     })
@@ -2441,6 +2447,8 @@ impl Window {
             visibility_observers: SingleSubscriberSet::new(),
             hovered,
             needs_present,
+            #[cfg(any(test, feature = "test-support"))]
+            test_draw_scheduled: Rc::default(),
             scene_animation_interval,
             input_rate_tracker,
             #[cfg(feature = "profiler")]
@@ -2875,6 +2883,8 @@ impl Window {
         cx.defer(move |cx| {
             window
                 .update(cx, |_, window, cx| {
+                    #[cfg(any(test, feature = "test-support"))]
+                    window.draw_pending_test_frame(cx);
                     let node_id = window.focus_node_id_in_rendered_frame(focus_id);
                     window.dispatch_action_on_node(node_id, action.as_ref(), cx);
                 })
@@ -3775,6 +3785,19 @@ impl Window {
     /// The current state of the keyboard's capslock
     pub fn capslock(&self) -> Capslock {
         self.capslock
+    }
+
+    /// Draws a test window whose content changed since its last frame.
+    ///
+    /// Test mode draws windows from a queued task rather than after every
+    /// update, so input dispatched before that task runs would otherwise hit
+    /// a stale frame. On a real platform, frames arrive far more often than
+    /// input, so the frame that input lands on is current.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn draw_pending_test_frame(&mut self, cx: &mut App) {
+        if matches!(cx.mode, crate::app::GpuiMode::Test { .. }) && self.invalidator.is_dirty() {
+            self.draw(cx).clear(cx);
+        }
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
