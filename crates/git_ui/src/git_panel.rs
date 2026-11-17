@@ -2,6 +2,7 @@ mod branch_mode;
 
 use git_ui_core::askpass_modal::AskPassModal;
 pub(crate) use git_ui_core::notifications::{open_output, show_error_toast};
+use language_model_selector::{language_model_selector, toggle_in_settings};
 
 use crate::branch_diff::BranchDiff;
 use crate::commit_context_menu::{
@@ -6925,15 +6926,41 @@ impl GitPanel {
             .with_handle(self.commit_message_model_menu_handle.clone())
             .menu(move |window, cx| {
                 let focus_handle = commit_editor.focus_handle(cx);
-                Some(cx.new(|cx| {
-                    language_model_selector::language_model_selector_for(
-                        fs.clone(),
-                        language_model_selector::ModelUsageContext::CommitMessage,
+                let fs = fs.clone();
+
+                let selector = cx.new(move |cx| {
+                    language_model_selector(
+                        |cx| LanguageModelRegistry::read_global(cx).commit_message_model(cx),
+                        {
+                            let fs = fs.clone();
+
+                            move |model, cx| {
+                                let provider = model.provider_id().0.to_string();
+                                let model_id = model.id().0.to_string();
+
+                                update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                                    settings
+                                        .agent
+                                        .get_or_insert_default()
+                                        .set_commit_message_model(provider, model_id);
+                                });
+                            }
+                        },
+                        {
+                            let fs = fs.clone();
+
+                            move |model, should_be_favorite, cx| {
+                                toggle_in_settings(model, should_be_favorite, fs.clone(), cx)
+                            }
+                        },
+                        true,
                         focus_handle,
                         window,
                         cx,
                     )
-                }))
+                });
+
+                Some(selector)
             })
             .anchor(Anchor::TopRight)
             .offset(gpui::Point {

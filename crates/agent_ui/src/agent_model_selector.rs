@@ -2,8 +2,9 @@ use crate::{ModelUsageContext, ui::ModelSelectorTooltip};
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
 use language_model::{IconOrSvg, LanguageModelRegistry};
-use language_model_selector::{LanguageModelSelector, language_model_selector_for};
+use language_model_selector::{LanguageModelSelector, language_model_selector, toggle_in_settings};
 use picker::popover_menu::PickerPopoverMenu;
+use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{PopoverMenuHandle, Tooltip, prelude::*};
 
@@ -21,10 +22,43 @@ impl AgentModelSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let selector = cx.new(move |cx| {
+            language_model_selector(
+                move |cx| model_usage_context.model(cx),
+                {
+                    let fs = fs.clone();
+
+                    move |model, cx| {
+                        let provider = model.provider_id().0.to_string();
+                        let model_id = model.id().0.to_string();
+
+                        update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                            let agent_settings = settings.agent.get_or_insert_default();
+
+                            match &model_usage_context {
+                                ModelUsageContext::InlineAssistant => {
+                                    agent_settings.set_inline_assistant_model(provider, model_id);
+                                }
+                            }
+                        });
+                    }
+                },
+                {
+                    let fs = fs.clone();
+
+                    move |model, should_be_favorite, cx| {
+                        toggle_in_settings(model, should_be_favorite, fs.clone(), cx)
+                    }
+                },
+                true,
+                focus_handle,
+                window,
+                cx,
+            )
+        });
+
         Self {
-            selector: cx.new(move |cx| {
-                language_model_selector_for(fs, model_usage_context, focus_handle, window, cx)
-            }),
+            selector,
             menu_handle,
         }
     }

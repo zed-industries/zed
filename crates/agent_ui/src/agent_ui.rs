@@ -55,7 +55,9 @@ use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
 };
-use language_model::{LanguageModelId, LanguageModelProviderId, LanguageModelRegistry};
+use language_model::{
+    LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+};
 use project::{AgentId, DisableAiSettings, Project, ProjectPath};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
 use rope::Point;
@@ -83,9 +85,6 @@ pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use conversation_view::open_markdown_in_workspace;
 pub use conversation_view::{ConversationView, StateChange};
 pub use external_source_prompt::ExternalSourcePrompt;
-pub use language_model_selector::{
-    LanguageModelSelector, ModelUsageContext, language_model_selector_for,
-};
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
@@ -626,6 +625,21 @@ impl ManageProfiles {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ModelUsageContext {
+    InlineAssistant,
+}
+
+impl ModelUsageContext {
+    pub fn model(&self, cx: &App) -> Option<LanguageModel> {
+        match self {
+            Self::InlineAssistant => {
+                LanguageModelRegistry::read_global(cx).inline_assistant_model()
+            }
+        }
+    }
+}
+
 pub(crate) fn humanize_token_count(count: u64) -> String {
     match count {
         0..=999 => count.to_string(),
@@ -1035,23 +1049,6 @@ mod tests {
     use settings::{
         DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
     };
-
-    #[gpui::test]
-    fn test_commit_message_usage_context_reads_commit_message_model(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let provider = LanguageModelRegistry::test(cx);
-            let commit_model = provider.model("commit");
-            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.set_commit_message_model(Some(commit_model.clone()), cx);
-            });
-
-            let selected = ModelUsageContext::CommitMessage.model(cx);
-            assert!(selected.is_some_and(|model| model.is_same_as(&commit_model)));
-
-            let inline = ModelUsageContext::InlineAssistant.model(cx);
-            assert!(inline.is_none_or(|model| !model.is_same_as(&commit_model)));
-        });
-    }
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {
