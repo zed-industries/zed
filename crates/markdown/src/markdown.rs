@@ -4721,19 +4721,28 @@ impl RenderedLine {
             .min(segment_end)
     }
 
+    /// Returns the source index for a rendered index.
+    ///
+    /// Rendered text can be longer than its source, such as dashes substituted for a run of
+    /// hyphens, so the result is kept within the source of the segment containing the index.
     fn source_index_for_rendered_index(&self, rendered_index: usize) -> usize {
         if rendered_index >= self.layout.len() {
             return self.source_end;
         }
 
-        let mapping = match self
+        let mapping_ix = match self
             .source_mappings
             .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
         {
-            Ok(ix) => &self.source_mappings[ix],
-            Err(ix) => &self.source_mappings[ix - 1],
+            Ok(ix) => ix,
+            Err(ix) => ix - 1,
         };
-        mapping.source_index + (rendered_index - mapping.rendered_index)
+        let mapping = &self.source_mappings[mapping_ix];
+        let segment_source_end = self
+            .source_mappings
+            .get(mapping_ix + 1)
+            .map_or(self.source_end, |next_mapping| next_mapping.source_index);
+        (mapping.source_index + (rendered_index - mapping.rendered_index)).min(segment_source_end)
     }
 
     /// Returns the source index for use as an exclusive range end at a word/selection boundary.
@@ -4750,10 +4759,7 @@ impl RenderedLine {
             .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
         {
             Ok(ix) => ix,
-            Err(ix) => {
-                return self.source_mappings[ix - 1].source_index
-                    + (rendered_index - self.source_mappings[ix - 1].rendered_index);
-            }
+            Err(_) => return self.source_index_for_rendered_index(rendered_index),
         };
 
         // Exact match at the start of a segment. Check if there's a gap from the previous segment.
@@ -5502,6 +5508,14 @@ mod tests {
             &render_markdown("\"hey\"", cx),
             vec![vec![(0, 0), (3, 1), (4, 2), (5, 3), (6, 4), (9, 5)]],
         );
+
+        // Dashes are longer than the run of hyphens they are substituted for.
+        let rendered = render_markdown("--------я", cx);
+        assert_mappings(
+            &rendered,
+            vec![vec![(0, 0), (3, 3), (6, 6), (12, 8), (14, 10)]],
+        );
+        assert_eq!(rendered.lines[0].source_index_for_rendered_index(9), 8);
 
         // HTML Comments are ignored
         assert_mappings(
