@@ -6289,6 +6289,10 @@ mod tests {
         let word_range = rendered.surrounding_word_range(5); // Simulate click on space between "Hello" and "world", expect highlighting word to the left
         let selected_text = rendered.text_for_range(word_range);
         assert_eq!(selected_text, "Hello");
+
+        // A source index in the list marker, before the line's first rendered text.
+        let rendered = render_markdown("- foo", cx);
+        assert_eq!(rendered.surrounding_word_range(0), 2..5);
     }
 
     #[gpui::test]
