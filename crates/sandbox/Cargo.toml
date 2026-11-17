@@ -24,25 +24,12 @@ nixos-test = [
     "http_proxy/nixos-integration-tests",
 ]
 
-# Builds `wsl-sandbox-test-helper`, the Windows analog of `bwrap-test-helper`.
-# It drives the real WSL/Bubblewrap sandbox end-to-end (see
-# `script/test-wsl-sandbox.ps1` / `cargo xtask wsl-sandbox-tests`). Off by
-# default so normal builds and the workspace test run don't produce it.
-wsl-test = []
-
 # Behavior test helper for the Linux Bubblewrap sandbox. Only built when the
 # `nixos-test` feature is enabled (and only meaningful on Linux).
 [[bin]]
 name = "bwrap-test-helper"
 path = "src/bwrap_test_helper.rs"
 required-features = ["nixos-test"]
-
-# Behavior test helper for the Windows WSL/Bubblewrap sandbox. Only built when
-# the `wsl-test` feature is enabled (and only meaningful on Windows).
-[[bin]]
-name = "wsl-sandbox-test-helper"
-path = "src/wsl_sandbox_test_helper.rs"
-required-features = ["wsl-test"]
 
 [dependencies]
 anyhow.workspace = true
@@ -75,7 +62,21 @@ gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-# Structural WSL-installed check (registered distros under HKCU\...\Lxss)
-# without spawning `wsl.exe`.
-smol.workspace = true
-windows-registry.workspace = true
+base64.workspace = true
+dunce.workspace = true
+flatbuffers.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Environment",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+] }
+windows-core.workspace = true
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+tempfile.workspace = true

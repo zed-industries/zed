@@ -2,7 +2,7 @@
 //!
 //! The public API is intentionally platform-neutral. Internally, macOS uses
 //! Seatbelt (`sandbox-exec`), Linux uses Bubblewrap (`bwrap`), and Windows uses
-//! Bubblewrap inside WSL. Restricted-network policies are enforced by an
+//! a Process Security Environment (an AppContainer). Restricted-network policies are enforced by an
 //! in-process HTTP/HTTPS proxy (the `http_proxy` crate) that this crate
 //! constructs and owns; callers only describe intent via [`SandboxPolicy`].
 
@@ -14,7 +14,6 @@ use std::{
 };
 
 use http_proxy::ProxyHandle;
-#[cfg(not(target_os = "windows"))]
 use http_proxy::{Allowlist, HostPattern, ProxyConfig, ProxyEvent, UpstreamProxy};
 
 #[cfg(target_os = "linux")]
@@ -24,7 +23,7 @@ mod linux_bubblewrap;
 mod macos_seatbelt;
 
 #[cfg(target_os = "windows")]
-mod windows_wsl;
+mod windows_psec;
 
 mod util;
 
@@ -37,10 +36,7 @@ pub use util::{
     resolve_canonical,
 };
 #[cfg(target_os = "windows")]
-pub use windows_wsl::{ResolvedGrant, resolve_canonical_for_grant};
-
-#[cfg(target_os = "windows")]
-pub(crate) const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
+pub use windows_psec::can_launch_packaged_apps;
 
 /// A path *inside the sandbox* — i.e. where a host location is exposed in the
 /// sandboxed process's view of the filesystem (for example, a bind-mount
@@ -123,7 +119,7 @@ pub enum SandboxFsPolicy {
 /// them up by name, such as direnv's `.envrc`, which is read from the working
 /// directory or any of its ancestors.
 ///
-/// Only the macOS backend can enforce this today. The Linux and WSL backends
+/// Only the macOS backend can enforce this today. The Linux and Windows backends
 /// reject any policy that contains protected file names, pending the planned
 /// Linux syscall-interception backend.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -181,40 +177,6 @@ pub enum SandboxNetPolicy {
 /// The caller computes this list because the sandbox layer does not know which
 /// application-specific paths need stronger protection.
 pub type ProtectedPaths = Vec<HostFilesystemLocation>;
-
-/// Whether `path` (a host path) resides on a Windows drive reached through WSL's
-/// DrvFs, where sandbox-integrity guarantees are weaker than on the distro's
-/// native filesystem. Always `false` off Windows, where no such filesystem
-/// exists. This is a cheap structural check on the path shape; the authoritative
-/// per-grant classification is done in WSL by [`resolve_canonical_for_grant`].
-pub fn path_is_on_windows_drive(path: &Path) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        windows_wsl::path_is_on_windows_drive(path)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = path;
-        false
-    }
-}
-
-/// Whether WSL is structurally present (at least one registered distro), via a
-/// cheap registry read with no `wsl.exe` round-trip. Always `false` off
-/// Windows. Suitable only for UI gating (e.g. suppressing DrvFs
-/// sandbox-integrity warnings on machines where no WSL sandbox could ever be
-/// constructed); enforcement paths must keep relying on the real in-WSL probe,
-/// which is authoritative about whether a sandbox can actually be built.
-pub fn wsl_distro_registered() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        windows_wsl::wsl_distro_registered()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        false
-    }
-}
 
 impl SandboxPolicy {
     /// Combine two policy layers. Filesystem/network grants are unioned into the
@@ -510,8 +472,6 @@ pub enum SandboxError {
     SandboxProbeFailed,
     /// The sandbox bridge executable path could not be resolved.
     BridgeExecutableUnavailable(String),
-    /// Windows sandboxing through WSL is unavailable.
-    WslUnavailable(String),
     /// The requested sandbox policy is not supported on this platform.
     UnsupportedPolicy(String),
     /// The sandbox request is invalid (e.g. a malformed allowed-domain).
@@ -545,7 +505,6 @@ impl fmt::Display for SandboxError {
                 formatter,
                 "failed to resolve sandbox bridge executable: {message}"
             ),
-            SandboxError::WslUnavailable(message) => write!(formatter, "{message}"),
             SandboxError::UnsupportedPolicy(message) => write!(formatter, "{message}"),
             SandboxError::InvalidRequest(message) => write!(formatter, "{message}"),
             SandboxError::Io(message) => write!(formatter, "{message}"),
@@ -574,12 +533,7 @@ struct FsSetup {
 enum NetSetup {
     Unrestricted,
     Blocked,
-    // Restricted networking is rejected up front on Windows, so this variant is
-    // never constructed there.
-    #[cfg(not(target_os = "windows"))]
-    Restricted {
-        allowlist: Allowlist,
-    },
+    Restricted { allowlist: Allowlist },
 }
 
 /// A live sandbox: it owns the per-policy resources (the network proxy, and on
@@ -604,13 +558,6 @@ pub struct Sandbox {
     /// with writable binds); a `Sandbox` normally wraps a single command.
     #[cfg(target_os = "linux")]
     validation_fd_sender: Option<linux_bubblewrap::ValidationFdSender>,
-    /// Windows only: `(release channel, version)` of the Linux `zed` to
-    /// provision inside WSL as the `--wsl-sandbox-helper` (version `latest` for
-    /// dev builds). Set by the caller (which has the running release info);
-    /// `None` falls back to exec'ing bwrap directly without in-sandbox bind
-    /// validation.
-    #[cfg(target_os = "windows")]
-    wsl_zed_release: Option<(String, String)>,
     #[cfg(target_os = "macos")]
     seatbelt_config: Option<macos_seatbelt::SeatbeltConfigFile>,
 }
@@ -680,22 +627,9 @@ impl Sandbox {
             proxy: None,
             #[cfg(target_os = "linux")]
             validation_fd_sender: None,
-            #[cfg(target_os = "windows")]
-            wsl_zed_release: None,
             #[cfg(target_os = "macos")]
             seatbelt_config: None,
         })
-    }
-
-    /// Windows only: record the `(release channel, version)` of the Linux `zed`
-    /// to provision inside WSL as the sandbox helper (version `latest` for dev
-    /// builds). The caller resolves these from the running app's release info
-    /// (which this low-level crate can't read) and sets them before `wrap`. When
-    /// unset, the WSL backend falls back to exec'ing bwrap directly without
-    /// in-sandbox bind validation.
-    #[cfg(target_os = "windows")]
-    pub fn set_wsl_zed_release(&mut self, channel: String, version: String) {
-        self.wsl_zed_release = Some((channel, version));
     }
 
     /// Check whether the platform sandbox can be created on this host without
@@ -720,10 +654,8 @@ impl Sandbox {
         }
         #[cfg(target_os = "windows")]
         {
-            if matches!(policy.network, SandboxNetPolicy::Restricted { .. }) {
-                return Err(unsupported_restricted_network_on_windows());
-            }
-            Ok(())
+            let _ = policy;
+            windows_psec::check_available().map_err(map_anyhow_error)
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
@@ -746,7 +678,7 @@ impl Sandbox {
         }
         #[cfg(target_os = "windows")]
         {
-            self.wrap_windows(command).await
+            self.wrap_windows_psec(command)
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
@@ -793,7 +725,6 @@ impl Sandbox {
     /// Spawn the restricted-network proxy if it isn't running yet, point the
     /// command env at it, and return its `(port, host socket path)`. Returns
     /// `None` for non-restricted network policies.
-    #[cfg(not(target_os = "windows"))]
     fn ensure_restricted_proxy(
         &mut self,
         env: &mut HashMap<String, String>,
@@ -832,7 +763,7 @@ impl Sandbox {
 
     /// Return the protected paths for the enforcement layer. Even with broad
     /// filesystem writes, protected paths remain readable but not writable.
-    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn protected_paths(&self) -> Vec<HostFilesystemLocation> {
         self.fs.protected_paths.clone()
     }
@@ -999,46 +930,49 @@ impl Sandbox {
     }
 
     #[cfg(target_os = "windows")]
-    async fn wrap_windows(
+    fn wrap_windows_psec(
         &mut self,
         command: &CommandAndArgs,
     ) -> Result<WrappedCommand, SandboxError> {
-        // Restricted host network access is rejected at `new` time on Windows.
-        let permissions = windows_wsl::SandboxPermissions {
-            allow_network: matches!(self.network, NetSetup::Unrestricted),
-            allow_fs_write: self.fs.allow_fs_write,
+        let mut env = command.env.clone();
+        let proxy = self.ensure_restricted_proxy(&mut env)?;
+        let network = match &self.network {
+            NetSetup::Unrestricted => windows_psec::NetworkAccess::All,
+            NetSetup::Blocked => windows_psec::NetworkAccess::None,
+            NetSetup::Restricted { .. } => proxy
+                .map_or(windows_psec::NetworkAccess::None, |(port, _)| {
+                    windows_psec::NetworkAccess::LocalhostPort(port)
+                }),
         };
-        let writable_paths = self
+        let writable_paths: Vec<&Path> = self
             .fs
             .writable_paths
             .iter()
-            .map(|location| windows_wsl::WritablePath {
-                requested: location.windows_requested_path().to_path_buf(),
-                canonical: location.windows_canonical_path().to_path_buf(),
-            })
+            .map(HostFilesystemLocation::windows_canonical_path)
             .collect();
-        let protected_paths: Vec<PathBuf> = self
-            .protected_paths()
+        let protected_paths: Vec<&Path> = self
+            .fs
+            .protected_paths
             .iter()
-            .map(|location| location.windows_requested_path().to_path_buf())
+            .map(HostFilesystemLocation::windows_requested_path)
             .collect();
-        let (program, args) = windows_wsl::wrap_invocation(
-            command.program.clone(),
-            command.args.clone(),
-            writable_paths,
-            protected_paths,
-            permissions,
-            command.cwd.clone(),
-            command.env.clone(),
-            self.wsl_zed_release.clone(),
+
+        let spec = windows_psec::build_spec(
+            self.fs.allow_fs_write,
+            &writable_paths,
+            &protected_paths,
+            network,
         )
-        .await
         .map_err(map_anyhow_error)?;
+
+        let (program, args) =
+            windows_psec::wrap_invocation(&spec, command.program.clone(), command.args.clone())
+                .map_err(map_anyhow_error)?;
 
         Ok(WrappedCommand {
             program,
             args,
-            env: command.env.clone(),
+            env,
             cwd: command.cwd.clone(),
         })
     }
@@ -1057,25 +991,13 @@ impl Drop for Sandbox {
     }
 }
 
-/// Argv flag that marks the WSL-side sandbox-helper re-exec. Shared so the
-/// Windows side (`windows_wsl`, which builds the `wsl.exe` invocation) and the
-/// Linux side (`linux_bubblewrap`, which parses it inside WSL) can't drift.
-///
-/// Only referenced by those two cfg-gated modules, so it's gated to match;
-/// otherwise it's dead code on macOS.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-pub(crate) const WSL_SANDBOX_HELPER_FLAG: &str = "--wsl-sandbox-helper";
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-pub(crate) const WSL_SANDBOX_RESOLVE_FLAG: &str = "--wsl-sandbox-resolve-path";
-
 /// Handle a possible re-exec of this binary as a sandbox helper.
 ///
-/// Two Linux re-exec modes funnel through here, neither of which returns if it
-/// matches:
-/// - the in-sandbox launcher (bind validator + restricted-network bridge), run
-///   by bwrap before the real command; and
-/// - the WSL-side helper, run inside WSL to capture fds + drive bwrap (the moral
-///   equivalent of `Sandbox::wrap` on native Linux).
+/// Neither mode returns if it matches:
+/// - Linux: the in-sandbox launcher (bind validator + restricted-network
+///   bridge), run by bwrap before the real command.
+/// - Windows: the launcher that starts the command in a Process Security
+///   Environment.
 ///
 /// Call this at the top of `main`, before normal argument parsing.
 #[doc(hidden)]
@@ -1083,8 +1005,9 @@ pub fn run_sandbox_launcher_if_invoked() {
     #[cfg(target_os = "linux")]
     {
         linux_bubblewrap::run_launcher_if_invoked();
-        linux_bubblewrap::run_wsl_helper_if_invoked();
     }
+    #[cfg(target_os = "windows")]
+    windows_psec::run_launcher_if_invoked();
 }
 
 // The createability probe only needs to know whether a sandbox *can* be built
@@ -1092,7 +1015,6 @@ pub fn run_sandbox_launcher_if_invoked() {
 // with no writable binds rather than re-deriving paths from the opaque
 // locations.
 
-#[cfg(not(target_os = "windows"))]
 fn resolve_restricted_network(allowed_domains: &[String]) -> Result<NetSetup, SandboxError> {
     let mut patterns = Vec::with_capacity(allowed_domains.len());
     for domain in allowed_domains {
@@ -1106,18 +1028,6 @@ fn resolve_restricted_network(allowed_domains: &[String]) -> Result<NetSetup, Sa
     })
 }
 
-#[cfg(target_os = "windows")]
-fn resolve_restricted_network(_allowed_domains: &[String]) -> Result<NetSetup, SandboxError> {
-    Err(unsupported_restricted_network_on_windows())
-}
-
-#[cfg(target_os = "windows")]
-fn unsupported_restricted_network_on_windows() -> SandboxError {
-    SandboxError::UnsupportedPolicy(
-        "restricted host network access is not yet supported for Windows sandboxes".to_string(),
-    )
-}
-
 #[cfg(target_os = "linux")]
 fn linux_probe_network(network: &SandboxNetPolicy) -> linux_bubblewrap::NetworkAccess {
     match network {
@@ -1128,7 +1038,6 @@ fn linux_probe_network(network: &SandboxNetPolicy) -> linux_bubblewrap::NetworkA
     }
 }
 
-#[cfg(not(target_os = "windows"))]
 fn upstream_proxy_from_env(env: &HashMap<String, String>) -> Option<UpstreamProxy> {
     let url = first_nonempty_env_value(
         env,
@@ -1151,7 +1060,6 @@ fn upstream_proxy_from_env(env: &HashMap<String, String>) -> Option<UpstreamProx
     }
 }
 
-#[cfg(not(target_os = "windows"))]
 fn first_nonempty_env_value<'a>(
     env: &'a HashMap<String, String>,
     names: &[&str],
@@ -1170,33 +1078,33 @@ fn first_nonempty_env_value<'a>(
 /// inherited `NO_PROXY`.
 ///
 /// Both upper- and lower-case forms are set because some clients (notably curl
-/// on macOS) only honor the lowercase variant. `NO_PROXY` is blanked so all
+/// on macOS) only honor the lowercase variant. Windows variable names are
+/// case-insensitive, so there any existing spelling is replaced by a single
+/// entry instead; otherwise an inherited `https_proxy` could win over ours when
+/// the environment block is built. `NO_PROXY` is blanked so all
 /// egress goes through our proxy unconditionally: an inherited `NO_PROXY`
 /// matching an allowlisted host would make the client attempt a direct
 /// connection, which the sandbox blocks — surfacing as a confusing "connection
 /// refused" instead of a clean policy decision.
-#[cfg(not(target_os = "windows"))]
 fn apply_proxy_env(env: &mut HashMap<String, String>, port: u16) {
     let url = format!("http://127.0.0.1:{port}");
-    for key in [
-        "HTTPS_PROXY",
-        "https_proxy",
-        "HTTP_PROXY",
-        "http_proxy",
-        "ALL_PROXY",
-        "all_proxy",
+    for (name, value) in [
+        ("HTTPS_PROXY", url.as_str()),
+        ("HTTP_PROXY", url.as_str()),
+        ("ALL_PROXY", url.as_str()),
+        ("NO_PROXY", ""),
     ] {
-        env.insert(key.to_string(), url.clone());
-    }
-    for key in ["NO_PROXY", "no_proxy"] {
-        env.insert(key.to_string(), String::new());
+        #[cfg(target_os = "windows")]
+        env.retain(|key, _| !key.eq_ignore_ascii_case(name));
+        #[cfg(not(target_os = "windows"))]
+        env.insert(name.to_ascii_lowercase(), value.to_string());
+        env.insert(name.to_string(), value.to_string());
     }
 }
 
 /// Drain the proxy's event channel on a background thread, logging each event.
 /// v1 surfacing only; future integrations (UI, telemetry) can replace this.
 /// The thread exits when the proxy is dropped and the channel closes.
-#[cfg(not(target_os = "windows"))]
 fn spawn_proxy_event_logger(events: futures::channel::mpsc::UnboundedReceiver<ProxyEvent>) {
     std::thread::spawn(move || {
         futures::executor::block_on(async move {
@@ -1209,7 +1117,6 @@ fn spawn_proxy_event_logger(events: futures::channel::mpsc::UnboundedReceiver<Pr
     });
 }
 
-#[cfg(not(target_os = "windows"))]
 fn log_proxy_event(event: &ProxyEvent) {
     match event {
         ProxyEvent::Ready { .. } => {}
@@ -1251,11 +1158,6 @@ fn map_linux_status(status: linux_bubblewrap::LauncherStatus) -> SandboxError {
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn map_anyhow_error(error: anyhow::Error) -> SandboxError {
-    #[cfg(target_os = "windows")]
-    if let Some(error) = error.downcast_ref::<windows_wsl::WslSandboxUnavailable>() {
-        return SandboxError::WslUnavailable(error.to_string());
-    }
-
     SandboxError::Other(format!("{error:#}"))
 }
 
@@ -1474,7 +1376,7 @@ mod tests {
 /// *that* as the grant, so approval is always against the real, symlink-resolved
 /// target.
 ///
-/// - **Linux/WSL**: bubblewrap can only bind an existing inode, so the missing
+/// - **Linux**: bubblewrap can only bind an existing inode, so the missing
 ///   directory (and any missing parents) is created **eagerly**, per component,
 ///   and the leaf's inode is pinned to read back its canonical path. If the
 ///   grant is denied, [`Self::discard`] removes exactly the directories that were

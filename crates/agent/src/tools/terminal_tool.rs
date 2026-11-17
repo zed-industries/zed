@@ -116,16 +116,9 @@ pub struct SandboxedTerminalToolInput {
     /// rejected. Requesting network access triggers a user approval prompt, so
     /// only list hosts you expect the command to need.
     #[cfg_attr(
-        any(target_os = "macos", target_os = "linux"),
+        any(target_os = "macos", target_os = "linux", target_os = "windows"),
         doc = "\nHost-specific access is enforced by an HTTP/HTTPS proxy, so use \
         `https://` URLs rather than `git@`/`ssh://`."
-    )]
-    #[cfg_attr(
-        target_os = "windows",
-        doc = "\nNOTE: on Windows the sandbox cannot currently restrict network \
-        access to specific hosts. Do not set `allow_hosts` on Windows; request \
-        `allow_all_hosts: true` if the command needs network access, or omit \
-        network permissions entirely."
     )]
     #[serde(default)]
     pub allow_hosts: Vec<String>,
@@ -161,9 +154,8 @@ pub struct SandboxedTerminalToolInput {
     #[cfg_attr(
         target_os = "windows",
         doc = "\nEvery path here must be an existing directory, given as a Windows drive \
-        path (`C:\\...`) or a WSL absolute path (`/...`); a path that does not exist \
-        cannot be granted. To write somewhere new, request write access to the nearest \
-        existing parent directory."
+        path (`C:\\...`); a path that does not exist cannot be granted. To write somewhere \
+        new, request write access to the nearest existing parent directory."
     )]
     #[serde(default)]
     pub fs_write_paths: Vec<String>,
@@ -185,15 +177,6 @@ pub struct SandboxedTerminalToolInput {
     /// needs behavior the sandbox can't grant on a per-permission basis,
     /// including commands that must write Git metadata.
     /// Requesting it triggers a user approval prompt.
-    #[cfg_attr(
-        target_os = "windows",
-        doc = "\nOn Windows, running unsandboxed also switches the shell. Sandboxed \
-        commands run under WSL's Linux bash; an unsandboxed command instead runs in the \
-        host's default shell — Git Bash (or scoop's bash) when one is installed, otherwise \
-        PowerShell/cmd. Path conventions change accordingly (e.g. `C:\\...` or `/c/...` \
-        rather than WSL's `/mnt/c/...`), so a command written for the sandboxed shell may \
-        behave differently here."
-    )]
     #[serde(default)]
     pub unsandboxed: Option<bool>,
     /// A short justification for why this command needs the sandbox
@@ -383,37 +366,6 @@ fn terminal_initial_title(input: Result<String, serde_json::Value>) -> SharedStr
     }
 }
 
-/// Windows only: resolve the `(release channel, version)` of the Linux `zed` to
-/// provision inside WSL as the sandbox helper. Dev (source) builds have no
-/// matching release, so they pull the latest nightly. Nightly builds also track
-/// `latest`: nightly assets are keyed by their full build metadata
-/// (`X.Y.Z+nightly.<n>.<sha>`), which `AppVersion` strips, so a bare `X.Y.Z`
-/// never resolves on the nightly host. Preview and stable pin their exact
-/// running version (stripped of pre-release/build metadata, which the release
-/// API doesn't key on).
-#[cfg(target_os = "windows")]
-fn wsl_zed_release(cx: &App) -> Option<(String, String)> {
-    use release_channel::{AppVersion, ReleaseChannel};
-    match *release_channel::RELEASE_CHANNEL {
-        ReleaseChannel::Dev | ReleaseChannel::Nightly => {
-            Some(("nightly".to_string(), "latest".to_string()))
-        }
-        channel => {
-            let version = AppVersion::global(cx);
-            Some((
-                channel.dev_name().to_string(),
-                format!("{}.{}.{}", version.major, version.minor, version.patch),
-            ))
-        }
-    }
-}
-
-/// Non-Windows platforms don't route through WSL, so there's no helper to fetch.
-#[cfg(not(target_os = "windows"))]
-fn wsl_zed_release(_cx: &App) -> Option<(String, String)> {
-    None
-}
-
 async fn run_terminal_tool(
     project: Entity<Project>,
     environment: Rc<dyn ThreadEnvironment>,
@@ -424,26 +376,17 @@ async fn run_terminal_tool(
     let selection = input.selection;
     let sandbox_input = input.sandbox.clone().unwrap_or_default();
 
-    let (working_dir, authorize, sandboxing, is_local_project, wsl_zed_release) =
-        cx.update(|cx| {
-            let working_dir =
-                working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
-            let context =
-                crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
-            let authorize =
-                event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
-            let sandboxing =
-                input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
-            let is_local_project = project.read(cx).is_local();
-            let wsl_zed_release = wsl_zed_release(cx);
-            Result::<_, String>::Ok((
-                working_dir,
-                authorize,
-                sandboxing,
-                is_local_project,
-                wsl_zed_release,
-            ))
-        })?;
+    let (working_dir, authorize, sandboxing, is_local_project) = cx.update(|cx| {
+        let working_dir = working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
+        let context =
+            crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
+        let authorize =
+            event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
+        let sandboxing =
+            input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
+        let is_local_project = project.read(cx).is_local();
+        Result::<_, String>::Ok((working_dir, authorize, sandboxing, is_local_project))
+    })?;
 
     authorize.await.map_err(|e| e.to_string())?;
 
@@ -532,10 +475,13 @@ async fn run_terminal_tool(
 
     // Host-specific network access is enforced by a loopback proxy that
     // confines the sandbox to its port. A non-local project's terminal can't
-    // reach the proxy, and Windows does not support this path yet. Reject the
-    // narrower request rather than silently widening it to all-host access.
-    let can_restrict_to_hosts =
-        (cfg!(target_os = "macos") || cfg!(target_os = "linux")) && is_local_project;
+    // reach the proxy. Reject the narrower request rather than silently
+    // widening it to all-host access.
+    let can_restrict_to_hosts = cfg!(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows"
+    )) && is_local_project;
     if !can_restrict_to_hosts && matches!(network, NetworkRequest::Hosts(_)) {
         return Err(
             "This platform or project cannot restrict sandboxed network access to specific hosts. Use `allow_all_hosts: true` if the command needs network access."
@@ -581,7 +527,6 @@ async fn run_terminal_tool(
     // what lets enforcement rebuild the grant via a verifying reopen rather than
     // re-resolving the requested path by string (closing a symlink TOCTOU). A
     // path that can't be resolved is dropped — fail-closed.
-    #[cfg(not(target_os = "windows"))]
     let write_paths: Vec<settings::GrantedWritePath> = write_paths
         .into_iter()
         .filter_map(|requested| match sandbox::resolve_canonical(&requested) {
@@ -595,31 +540,6 @@ async fn run_terminal_tool(
             }
         })
         .collect();
-    #[cfg(target_os = "windows")]
-    let write_paths: Vec<settings::GrantedWritePath> = {
-        let Some(release) = wsl_zed_release.clone() else {
-            return Err("Could not select a Linux Zed release for WSL sandboxing".to_string());
-        };
-        let mut resolved_paths = Vec::with_capacity(write_paths.len());
-        for requested in write_paths {
-            match sandbox::resolve_canonical_for_grant(requested.clone(), release.clone()).await {
-                Ok(resolved) => {
-                    resolved_paths.push(settings::GrantedWritePath::resolved_on_fs(
-                        requested,
-                        resolved.canonical,
-                        resolved.on_windows_fs,
-                    ));
-                }
-                Err(error) => {
-                    log::warn!(
-                        "could not resolve sandbox write path {} in WSL: {error:#}",
-                        requested.display()
-                    );
-                }
-            }
-        }
-        resolved_paths
-    };
 
     let request = crate::sandboxing::SandboxRequest {
         network,
@@ -627,53 +547,6 @@ async fn run_terminal_tool(
         unsandboxed: want_unsandboxed,
         write_paths,
     };
-
-    // Before any escalation prompt: if this command's sandbox will contain a
-    // path on a Windows drive (DrvFs) — from an explicit grant, a standing
-    // grant, or the default project directory — its integrity guarantees are
-    // weaker. When the warning is enabled, confirm with the user first. This
-    // gate is transient (never persisted): on "Continue" the normal flow
-    // (including any escalation prompt) proceeds; on "Abort" the command is
-    // cancelled. It recurs until the warning is disabled in settings.
-    //
-    // The warning only makes sense when a WSL sandbox will actually wrap the
-    // command, so it is skipped when the command is guaranteed to run without
-    // one (`unsandboxed_floor`: the user already turned the sandbox off for
-    // this thread) and when WSL is structurally absent (no registered distro —
-    // sandbox creation is guaranteed to fail, and the creation-failure
-    // fallback prompt handles that conversation instead).
-    if sandboxing
-        && !want_unsandboxed
-        && !unsandboxed_floor
-        && persistent.warn_ntfs_grants
-        && sandbox::wsl_distro_registered()
-    {
-        let effective = event_stream.effective_sandbox_request(&request, &persistent);
-        let contains_windows_fs = effective
-            .write_paths
-            .iter()
-            .any(|granted| granted.on_windows_fs)
-            || cx.update(|cx| {
-                let project = project.read(cx);
-                working_dir
-                    .as_deref()
-                    .is_some_and(|path| sandbox::path_is_on_windows_drive(path))
-                    || sandbox_worktree_writable_paths(project, cx)
-                        .iter()
-                        .any(|path| sandbox::path_is_on_windows_drive(path))
-            });
-        if contains_windows_fs
-            && let Err(error) = cx
-                .update(|cx| event_stream.authorize_windows_fs_warning(cx))
-                .await
-        {
-            // Carry the underlying error so a prompt-delivery failure is
-            // distinguishable from a genuine user abort.
-            return Ok(format!(
-                "Command cancelled: the user declined to run a command whose sandbox writes to a Windows drive ({error})."
-            ));
-        }
-    }
 
     if request.needs_escalation() {
         let reason = sandbox_input
@@ -748,19 +621,19 @@ async fn run_terminal_tool(
                 network: network_request_to_sandbox_network_access(&effective.network),
                 allow_fs_write: effective.allow_fs_write_all,
                 is_local: is_local_project,
-                wsl_zed_release: wsl_zed_release.clone(),
             };
 
             // The viability check runs a brief probe subprocess, so do it off
-            // the main thread. On Linux the sandbox can genuinely be unavailable
-            // (missing `bwrap`, disabled user namespaces, …); rather than
-            // silently failing open, we ask the user how to proceed and let them
-            // retry after fixing their environment. (On other platforms the
-            // probe never fails, so this prompt is Linux-only.)
+            // the main thread. On Linux and Windows the sandbox can genuinely be
+            // unavailable (missing `bwrap`, disabled user namespaces, a Windows
+            // build without Process Security Environment support, …); rather
+            // than silently failing open, we ask the user how to proceed and let
+            // them retry after fixing their environment. (On macOS the probe
+            // never fails, so this prompt isn't offered there.)
             // Each retry re-probes from scratch, so the failure reason shown to
             // the user reflects the *current* environment (e.g. it can change
             // from "no bwrap" to "bwrap is setuid" after they install one).
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             {
                 let mut retries = 0usize;
                 loop {
@@ -798,7 +671,7 @@ async fn run_terminal_tool(
                         }
                         Ok(SandboxFallbackDecision::RunUnsandboxed) => {
                             sandbox_not_applied =
-                                Some(acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error));
+                                Some(acp_thread::SandboxNotAppliedReason::CreationFailed(error));
                             break None;
                         }
                         Ok(SandboxFallbackDecision::Deny) | Err(_) => {
@@ -811,7 +684,7 @@ async fn run_terminal_tool(
                     }
                 }
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             {
                 let probe_wrap = wrap.clone();
                 match cx
@@ -821,7 +694,7 @@ async fn run_terminal_tool(
                 {
                     Ok(()) => Some(wrap),
                     Err(error) => {
-                        // Off Linux the probe only fails when the policy itself
+                        // On macOS the probe only fails when the policy itself
                         // can't be built (e.g. a required write grant or `.git`
                         // protection no longer exists or fails its verifying
                         // reopen). Running the command anyway would silently
@@ -848,85 +721,6 @@ async fn run_terminal_tool(
         Some(COMMAND_OUTPUT_LIMIT)
     };
 
-    // Create the terminal. On Windows the WSL sandbox can only report whether
-    // it set up the environment once `wsl.exe` actually runs (its probe is
-    // async), so — unlike Linux's up-front `can_create_sandbox` loop above —
-    // the sandbox-creation fallback happens here, around `create_terminal`. The
-    // user gets the same choices via `authorize_sandbox_fallback` (retry / run
-    // unsandboxed once / for this thread / always / deny), and a chosen
-    // "run unsandboxed" is recorded in `sandbox_not_applied` exactly as on
-    // Linux so the model and UI are told the command ran without a sandbox.
-    #[cfg(target_os = "windows")]
-    let terminal = {
-        let mut retries = 0usize;
-        let mut effective_wrap = sandbox_wrap.clone();
-        loop {
-            let error = match environment
-                .create_terminal(
-                    input.command.clone(),
-                    extra_env.clone(),
-                    working_dir.clone(),
-                    output_byte_limit,
-                    effective_wrap.clone(),
-                    cx,
-                )
-                .await
-            {
-                Ok(terminal) => break terminal,
-                Err(error) => error,
-            };
-
-            // Only an *environment*-unavailable failure of the WSL sandbox is a
-            // sandbox-creation problem the user can act on. A bad request (a
-            // missing writable path, mixed distros) — or any failure once we're
-            // already running unsandboxed — goes straight back to the model.
-            let Some(message) = effective_wrap.as_ref().and_then(|_| {
-                error
-                    .downcast_ref::<sandbox::SandboxError>()
-                    .and_then(|error| match error {
-                        sandbox::SandboxError::WslUnavailable(message) => Some(message.clone()),
-                        _ => None,
-                    })
-            }) else {
-                return Err(format!("{error:#}"));
-            };
-            let sandbox_error = acp_thread::LinuxWslSandboxError::Other(message);
-            log::warn!("Failed to create a WSL sandbox for an agent terminal command: {error:?}");
-
-            let decision = cx
-                .update(|cx| {
-                    event_stream.authorize_sandbox_fallback(
-                        Some(input.command.clone()),
-                        sandbox_error.user_facing_message(),
-                        Some(sandbox_error.docs_section().to_string()),
-                        retries,
-                        cx,
-                    )
-                })
-                .await;
-            match decision {
-                Ok(SandboxFallbackDecision::Retry) => {
-                    // WSL probe failures aren't cached, so retrying re-probes
-                    // the current environment (e.g. after installing `bwrap`).
-                    retries += 1;
-                }
-                Ok(SandboxFallbackDecision::RunUnsandboxed) => {
-                    sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(
-                        sandbox_error,
-                    ));
-                    effective_wrap = None;
-                }
-                Ok(SandboxFallbackDecision::Deny) | Err(_) => {
-                    return Ok(format!(
-                        "Command cancelled: the sandbox could not be created ({}) and the \
-                         user declined to run it without one.",
-                        sandbox_error.user_facing_message()
-                    ));
-                }
-            }
-        }
-    };
-    #[cfg(not(target_os = "windows"))]
     let terminal = environment
         .create_terminal(
             input.command.clone(),
@@ -944,41 +738,17 @@ async fn run_terminal_tool(
     // chose to run through), tell the agent so it can account for the weaker
     // isolation. Computed here — after the Windows fallback above may have set
     // the reason — so every affected command communicates the state.
-    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| {
-        // Only the Windows-specific block below mutates this; on other
-        // platforms the note is returned exactly as built.
-        #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-        let mut note = match reason {
-            acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
-                "Note: this command ran WITHOUT an OS sandbox because the user allowed unsandboxed \
+    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| match reason {
+        acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
+            "Note: this command ran WITHOUT an OS sandbox because the user allowed unsandboxed \
                  execution for the rest of this thread."
-                    .to_string()
-            }
-            acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
-                "Note: this command ran WITHOUT an OS sandbox because one could not be \
-                 created ({}).",
-                error.user_facing_message()
-            ),
-        };
-        // On Windows, running without a sandbox also changes the interpreter:
-        // the sandboxed path runs the command under WSL's Linux shell, but
-        // every unsandboxed path that reaches here falls back to the host
-        // shell (Git Bash, or PowerShell/cmd when no bash is installed) against
-        // native Windows paths. The model writes commands for the WSL/Linux
-        // sandbox, so the loss of isolation isn't the whole story — warn it
-        // that the shell and path conventions differ too, or a command that
-        // worked sandboxed may silently misbehave or fail here.
-        #[cfg(target_os = "windows")]
-        {
-            note.push(' ');
-            note.push_str(
-                "It also ran under the host shell (Git Bash, or PowerShell/cmd when no bash is \
-                 installed) instead of WSL's Linux shell, so the interpreter and path \
-                 conventions differ from the sandbox: Linux-only commands and `/mnt/...` paths \
-                 may fail. Rewrite the command for the host shell if it doesn't work.",
-            );
+                .to_string()
         }
-        note
+        acp_thread::SandboxNotAppliedReason::CreationFailed(error) => format!(
+            "Note: this command ran WITHOUT an OS sandbox because one could not be \
+                 created ({}).",
+            error.user_facing_message()
+        ),
     });
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
@@ -1060,14 +830,13 @@ fn resolve_write_paths(
         return Vec::new();
     }
     let project = project.read(cx);
-    let windows_paths = project.path_style(cx).is_windows();
     let base = working_dir.map(Path::to_path_buf).or_else(|| {
         project
             .worktrees(cx)
             .next()
             .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
     });
-    join_write_paths(raw_paths, base.as_deref(), windows_paths)
+    join_write_paths(raw_paths, base.as_deref())
 }
 
 /// Pure path-joining step of [`resolve_write_paths`], split out so it can be
@@ -1077,27 +846,10 @@ fn resolve_write_paths(
 /// subtree-containment checks and the user-facing approval prompt operate on
 /// the same path the sandbox will ultimately enforce. Relative paths with no
 /// base, and paths that traverse above the filesystem root, are dropped.
-///
-/// On Windows, raw paths the model expressed in WSL terms (a `/mnt/<drive>/...`
-/// automount path, or a WSL-absolute `/home/...` path) are mapped back to the
-/// form the sandbox machinery expects before normalization.
-fn join_write_paths(
-    raw_paths: &[String],
-    base: Option<&Path>,
-    windows_paths: bool,
-) -> Vec<PathBuf> {
+fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
     raw_paths
         .iter()
         .filter_map(|raw| {
-            if windows_paths {
-                if let Some(path) = wsl_drive_mount_path_to_windows_path(raw) {
-                    return Some(path);
-                }
-                if let Some(path) = wsl_absolute_path(raw) {
-                    return Some(path);
-                }
-            }
-
             let path = Path::new(raw);
             let absolute = if path.is_absolute() {
                 path.to_path_buf()
@@ -1109,34 +861,6 @@ fn join_write_paths(
         .collect()
 }
 
-fn wsl_drive_mount_path_to_windows_path(raw: &str) -> Option<PathBuf> {
-    let raw = raw.replace('\\', "/");
-    let remainder = raw.strip_prefix("/mnt/")?;
-    let (drive, rest) = remainder
-        .split_once('/')
-        .map_or((remainder, ""), |(drive, rest)| (drive, rest));
-    let mut drive_chars = drive.chars();
-    let drive = drive_chars.next()?.to_ascii_uppercase();
-    if !drive.is_ascii_alphabetic() || drive_chars.next().is_some() {
-        return None;
-    }
-
-    let mut windows_path = format!("{drive}:\\");
-    if !rest.is_empty() {
-        windows_path.push_str(&rest.replace('/', "\\"));
-    }
-    Some(PathBuf::from(windows_path))
-}
-
-fn wsl_absolute_path(raw: &str) -> Option<PathBuf> {
-    let raw = raw.replace('\\', "/");
-    if raw.starts_with('/') && !raw.starts_with("//") {
-        Some(PathBuf::from(raw))
-    } else {
-        None
-    }
-}
-
 /// Convert a (validated) network request into the access mode enforced by the
 /// terminal sandbox.
 fn network_request_to_sandbox_network_access(
@@ -1146,13 +870,13 @@ fn network_request_to_sandbox_network_access(
         NetworkRequest::None => acp_thread::SandboxNetworkAccess::None,
         NetworkRequest::AnyHost => acp_thread::SandboxNetworkAccess::All,
         NetworkRequest::Hosts(hosts) => {
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
             {
                 acp_thread::SandboxNetworkAccess::Restricted(http_proxy::Allowlist::from_patterns(
                     hosts.iter().cloned(),
                 ))
             }
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
             {
                 let _ = hosts;
                 acp_thread::SandboxNetworkAccess::None
@@ -1227,24 +951,6 @@ fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection
     }
 }
 
-/// Explanation appended to the model-facing result when a sandboxed command
-/// fails because it tried to use WSL's Windows interop (see
-/// [`wsl_interop_blocked`]).
-const WSL_INTEROP_BLOCKED_NOTE: &str = "This command tried to launch a Windows \
-executable, which the sandbox blocks: WSL Windows interop is disabled so \
-sandboxed commands can't escape to the Windows host. The noisy `WSL ... ERROR` \
-lines below are from that blocked attempt, not a bug in the command. If you \
-genuinely need to run a Windows program, re-run with `unsandboxed: true`.";
-
-/// Whether terminal output contains the kernel-style diagnostics WSL prints
-/// when a Windows executable is launched inside our pid-namespaced sandbox
-/// (interop init fails to parse `/proc/1/stat`, which is now `bwrap`). These
-/// markers don't appear for ordinary Linux commands.
-#[cfg(target_os = "windows")]
-fn wsl_interop_blocked(content: &str) -> bool {
-    content.contains("UtilGetPpid") || content.contains("Failed to parse: /proc/1/stat")
-}
-
 fn process_content(
     output: ProcessOutput,
     command: &str,
@@ -1255,15 +961,6 @@ fn process_content(
     let content = output.output.trim();
     let content = select_terminal_output_lines(content, selection);
     let is_empty = content.is_empty();
-
-    // On Windows, recognize the kernel-style diagnostics WSL prints when a
-    // command tries to launch a Windows executable inside the sandbox (where
-    // interop is deliberately disabled). They're noise the model can't act on,
-    // so we explain what actually happened.
-    #[cfg(target_os = "windows")]
-    let interop_blocked = wsl_interop_blocked(&content);
-    #[cfg(not(target_os = "windows"))]
-    let interop_blocked = false;
 
     let content = format!("```\n{content}\n```");
     let content = if output.truncated {
@@ -1306,11 +1003,6 @@ fn process_content(
                 } else {
                     content
                 }
-            }
-            Some(exit_code) if interop_blocked => {
-                format!(
-                    "Command \"{command}\" failed with exit code {exit_code}. {WSL_INTEROP_BLOCKED_NOTE}\n\n{content}"
-                )
             }
             Some(exit_code) => {
                 if is_empty {
@@ -3153,7 +2845,6 @@ mod tests {
                 "file.txt".to_string(),
             ],
             Some(base.as_path()),
-            cfg!(windows),
         );
         assert_eq!(
             joined,
@@ -3174,42 +2865,8 @@ mod tests {
         } else {
             "/abs/keep"
         };
-        let joined = join_write_paths(
-            &[abs.to_string(), "relative/drop".to_string()],
-            None,
-            cfg!(windows),
-        );
+        let joined = join_write_paths(&[abs.to_string(), "relative/drop".to_string()], None);
         assert_eq!(joined, vec![PathBuf::from(abs)]);
-    }
-
-    #[test]
-    fn test_join_write_paths_converts_wsl_drive_mounts_on_windows() {
-        let joined = join_write_paths(
-            &["/mnt/c/example/write-root".to_string()],
-            Some(Path::new("C:\\project")),
-            true,
-        );
-        assert_eq!(joined, vec![PathBuf::from("C:\\example\\write-root")]);
-    }
-
-    #[test]
-    fn test_join_write_paths_only_converts_wsl_drive_mounts_for_windows_paths() {
-        let joined = join_write_paths(
-            &["/mnt/c/example/write-root".to_string()],
-            Some(Path::new("/project")),
-            false,
-        );
-        assert_eq!(joined, vec![PathBuf::from("/mnt/c/example/write-root")]);
-    }
-
-    #[test]
-    fn test_join_write_paths_preserves_wsl_absolute_paths_on_windows() {
-        let joined = join_write_paths(
-            &["/home/example".to_string()],
-            Some(Path::new("C:\\project")),
-            true,
-        );
-        assert_eq!(joined, vec![PathBuf::from("/home/example")]);
     }
 
     #[test]
@@ -3232,7 +2889,6 @@ mod tests {
                 },
             ],
             Some(base.as_path()),
-            cfg!(windows),
         );
         let expected_escape = if cfg!(windows) {
             PathBuf::from("C:\\escape")
@@ -3859,14 +3515,14 @@ mod tests {
             other => panic!("expected unrestricted network access, got {other:?}"),
         }
 
-        // macOS and Linux confine host requests through the allowlist proxy.
+        // Platforms with a sandbox confine host requests through the allowlist proxy.
         match network_request_to_sandbox_network_access(&host_request(&["github.com"])) {
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
             acp_thread::SandboxNetworkAccess::Restricted(allowlist) => {
                 assert!(allowlist.allows("github.com"));
                 assert!(!allowlist.allows("example.com"));
             }
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
             acp_thread::SandboxNetworkAccess::None => {}
             other => panic!("unexpected network access for host request, got {other:?}"),
         }

@@ -203,6 +203,11 @@ impl WriteToolTest {
                 sandboxing: false,
                 is_linux: cfg!(target_os = "linux"),
                 is_windows: cfg!(target_os = "windows"),
+                shell: util::shell::ShellKind::new(
+                    &util::get_default_system_shell_preferring_bash(),
+                    cfg!(windows),
+                )
+                .to_string(),
             };
             let templates = Templates::new();
             template.render(&templates)?

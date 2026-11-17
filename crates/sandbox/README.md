@@ -39,12 +39,9 @@ This is not foolproof though - for example, on linux, it's not possible to prote
 The implementations are highly platform-specific:
 - Mac support comes from Seatbelt
 - Linux support comes from [bubblewrap], implemented via Linux [namespaces].
-- Windows:
-  - WSL: same as Linux
-  - non-WSL: not supported
-
-Note that WSL shells can be used on all Windows projects, regardless of whether
-the files are stored in the Linux filesystem or not.
+- Windows support comes from a Process Security Environment (PSEC), the
+  AppContainer-based process isolation API in recent Windows 11 builds. Windows
+  10 is not supported.
 
 Though not defined in this crate, the default grants provided by the Zed agent is:
 - read-only access to all files
@@ -311,23 +308,31 @@ installed inline right before `exec` in the direct case, and via the child's
 in-sandbox launcher, the launcher is now **always** run (even when there are no
 writable binds to validate and no bridge), so the filter is always installed.
 
-This is Linux/WSL-specific. On macOS, Seatbelt gates Unix-socket `connect` as a
+This is Linux-specific. On macOS, Seatbelt gates Unix-socket `connect` as a
 separate `network-outbound` capability that is denied by default, so the same
 escape is already closed there without a seccomp filter.
 
 ### Windows
 
-> [!NOTE] The Windows implementation depends heavily on the details of the Linux
-  implementation. 
+Windows runs the command in a Process Security Environment, created with
+`CreateProcessSecurityEnvironment` from `processmodel.dll`. The policy is a
+FlatBuffer listing read-only and read-write paths and whether network access is
+allowed; see `src/windows_psec.rs`. Reads are allowed everywhere by granting
+each fixed drive root read-only, and the writable grants and the read-only
+`.git` directories nest inside that.
 
-The Linux approach works perfectly on WSL in theory (WSL uses a "regular linux
-kernel"), but there is one practical thorn: the zed host code that creates the
-FD is now running on Windows, but we need Linux file descriptors.
+The PTY can't attach a security environment to the process it starts, so the
+command goes through a launcher mode of `zed.exe`. The launcher creates the
+environment and starts the command in it with
+`PROC_THREAD_ATTRIBUTE_SECURITY_ENVIRONMENT`. The environment is created with
+`PROCESS_SECURITY_ENVIRONMENT_FLAG_TERMINATE_ON_CLOSE`, so when the launcher
+exits and closes it, the command and everything it started are killed.
 
-To work around this, we launch `zed --wsl-sandbox-helper` in WSL, which is a
-shim that captures the FDs and sets up the socket. We download this to
-`~/.local/libexec/zed`, so that it does not conflict with the Windows `zed.exe`
-binary that WSL will inject into the Linux `$PATH` (yes the `.exe` is stripped).
+Known limitations:
+- A read-write grant on a volume root doesn't apply to anything inside it, so
+  "write anywhere" grants each top-level directory of each fixed drive instead.
+- Programs built on MSYS2 or Cygwin (such as Git Bash) and packaged (MSIX) apps
+  don't work inside the environment.
 
 ### MacOS
 
@@ -362,7 +367,7 @@ fully `cfg`-ed, per-OS inner struct so each platform carries exactly the capture
 identity its enforcement layer needs:
 - Linux: `{ O_PATH fd, canonical_path, untrusted_raw_path }`
 - macOS: `{ canonical_path, untrusted_raw_path }`
-- other platforms: `{ untrusted_raw_path }` (the real capture happens WSL-side)
+- other platforms: `{ untrusted_raw_path }` (Windows canonicalizes the path when it builds the PSEC policy)
 
 The type is opaque: it does not `Deref`, and its paths are readable only through
 a display view, never as a value that can be re-fed into a constructor by string.
