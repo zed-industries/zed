@@ -15829,18 +15829,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sandbox_linux_gui"
-version = "0.1.0"
-dependencies = [
- "futures 0.3.34",
- "gpui",
- "gpui_platform",
- "libc",
- "sandbox_linux",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "scc"
 version = "3.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
