@@ -107,6 +107,8 @@ struct State {
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
     visible_entries: Vec<VisibleEntriesForWorktree>,
+    /// Loaded directories with nothing to display, from the same snapshot as `visible_entries`.
+    empty_dir_ids: HashSet<ProjectEntryId>,
     max_width_item_index: Option<usize>,
     edit_state: Option<EditState>,
     temporarily_unfolded_pending_state: Option<TemporaryUnfoldedPendingState>,
@@ -127,6 +129,7 @@ impl State {
             last_worktree_root_id: None,
             ancestors: Default::default(),
             visible_entries: Default::default(),
+            empty_dir_ids: Default::default(),
             max_width_item_index: None,
             edit_state: old.edit_state.clone(),
             temporarily_unfolded_pending_state: None,
@@ -911,6 +914,7 @@ impl ProjectPanel {
                     temporarily_unfolded_pending_state: None,
                     last_worktree_root_id: Default::default(),
                     visible_entries: Default::default(),
+                    empty_dir_ids: Default::default(),
                     ancestors: Default::default(),
                     expanded_dir_ids: Default::default(),
                     unfolded_dir_ids: Default::default(),
@@ -4599,7 +4603,10 @@ impl ProjectPanel {
 
         let visible_worktrees: Vec<_> = project
             .visible_worktrees(cx)
-            .map(|worktree| worktree.read(cx).snapshot())
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (worktree.snapshot(), worktree.is_local())
+            })
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
@@ -4607,7 +4614,7 @@ impl ProjectPanel {
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
-                    for worktree_snapshot in visible_worktrees {
+                    for (worktree_snapshot, is_local) in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
                         let mut new_entry_parent_id = None;
@@ -4699,6 +4706,15 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
+                            if is_local
+                                && entry.kind == EntryKind::Dir
+                                && new_entry_parent_id != Some(entry.id)
+                                && !worktree_snapshot
+                                    .child_entries(&entry.path)
+                                    .any(|child| is_entry_shown(child, hide_gitignore, hide_hidden))
+                            {
+                                new_state.empty_dir_ids.insert(entry.id);
+                            }
                             if is_entry_shown(&entry, hide_gitignore, hide_hidden) {
                                 visible_worktree_entries.push(entry.to_owned());
                             }
@@ -7071,30 +7087,6 @@ impl ProjectPanel {
         }
     }
 
-    /// Whether `entry` is a directory whose contents are loaded and contain nothing
-    /// the panel would display. Unloaded and pending directories are never empty.
-    fn is_known_empty_dir(&self, worktree_id: WorktreeId, entry: &Entry, cx: &App) -> bool {
-        if entry.kind != EntryKind::Dir {
-            return false;
-        }
-        if self
-            .state
-            .edit_state
-            .as_ref()
-            .is_some_and(|edit_state| edit_state.is_new_entry() && edit_state.entry_id == entry.id)
-        {
-            return false;
-        }
-        let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) else {
-            return false;
-        };
-        let settings = ProjectPanelSettings::get_global(cx);
-        !worktree
-            .read(cx)
-            .child_entries(&entry.path)
-            .any(|child| is_entry_shown(child, settings.hide_gitignore, settings.hide_hidden))
-    }
-
     fn details_for_entry(
         &self,
         entry: &Entry,
@@ -7118,8 +7110,7 @@ impl ProjectPanel {
 
         let (chevron, icon) = Self::entry_icons(entry, is_expanded, cx);
         let chevron = chevron.filter(|_| {
-            !ProjectPanelSettings::get_global(cx).hide_empty_folder_chevrons
-                || !self.is_known_empty_dir(worktree_id, entry, cx)
+            !folder_indicator.shows_icon() || !self.state.empty_dir_ids.contains(&entry.id)
         });
 
         let path_style = self.project.read(cx).path_style(cx);

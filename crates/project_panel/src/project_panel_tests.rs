@@ -13051,7 +13051,7 @@ async fn test_file_rows_reserve_the_chevron_slot(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
-async fn test_hide_empty_folder_chevrons(cx: &mut gpui::TestAppContext) {
+async fn test_empty_folder_chevrons(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -13076,37 +13076,24 @@ async fn test_hide_empty_folder_chevrons(cx: &mut gpui::TestAppContext) {
     let panel = workspace.update_in(cx, ProjectPanel::new);
     cx.run_until_parked();
 
-    set_folder_indicator(FolderIndicator::Chevron, cx);
-    cx.run_until_parked();
-
     let chevron_of = |name: &str, cx: &mut VisualTestContext| {
         visible_entry_indicators(&panel, 0..50, cx)
             .into_iter()
             .find(|(filename, _, _)| filename == name)
             .and_then(|(_, chevron, _)| chevron)
     };
-    let set_hide_empty_folder_chevrons = |hide: bool, cx: &mut VisualTestContext| {
-        cx.update(|_, cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .project_panel
-                        .get_or_insert_default()
-                        .hide_empty_folder_chevrons = Some(hide);
-                });
-            });
-        });
-        cx.run_until_parked();
-    };
     let collapsed = Some("chevron_right.svg".to_string());
 
+    set_folder_indicator(FolderIndicator::Chevron, cx);
+    cx.run_until_parked();
     assert_eq!(
         chevron_of("empty_dir", cx),
         collapsed,
-        "the setting is off by default, so empty directories keep their chevron"
+        "`chevron` mode keeps the chevron so an empty folder is not mistaken for a file"
     );
 
-    set_hide_empty_folder_chevrons(true, cx);
+    set_folder_indicator(FolderIndicator::Both, cx);
+    cx.run_until_parked();
     assert_eq!(chevron_of("empty_dir", cx), None);
     assert_eq!(chevron_of("full_dir", cx), collapsed);
     assert_eq!(
@@ -13186,7 +13173,8 @@ async fn test_hide_empty_folder_chevrons(cx: &mut gpui::TestAppContext) {
     toggle_expand_dir(&panel, "root/empty_dir", cx);
     cx.run_until_parked();
 
-    set_hide_empty_folder_chevrons(false, cx);
+    set_folder_indicator(FolderIndicator::Chevron, cx);
+    cx.run_until_parked();
     assert_eq!(
         chevron_of("empty_dir", cx),
         Some("chevron_down.svg".to_string())
