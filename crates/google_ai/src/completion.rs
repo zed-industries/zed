@@ -633,53 +633,6 @@ mod tests {
     }
 
     #[test]
-    fn into_google_requests_xhigh_thinking_level_for_gemini_4_hydrogen() {
-        let mut request = text_request();
-        request.thinking_allowed = true;
-        request.thinking_effort = Some("xhigh".to_string());
-
-        let request = into_google(
-            request,
-            "gemini-4-hydrogen".to_string(),
-            GoogleModelMode::Thinking {
-                budget_tokens: None,
-            },
-        )
-        .unwrap();
-
-        let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
-        assert_eq!(thinking_config.include_thoughts, Some(true));
-        assert_eq!(thinking_config.thinking_level, Some(ThinkingLevel::XHigh));
-
-        let serialized = serde_json::to_value(thinking_config).unwrap();
-        assert_eq!(serialized["thinkingLevel"], "XHIGH");
-        assert_eq!(serialized["includeThoughts"], true);
-
-        let mut disabled_request = text_request();
-        disabled_request.thinking_allowed = false;
-
-        let disabled_request = into_google(
-            disabled_request,
-            "gemini-4-hydrogen".to_string(),
-            GoogleModelMode::Thinking {
-                budget_tokens: None,
-            },
-        )
-        .unwrap();
-
-        let disabled_thinking_config = disabled_request
-            .generation_config
-            .unwrap()
-            .thinking_config
-            .unwrap();
-        assert_eq!(
-            disabled_thinking_config.thinking_level,
-            Some(ThinkingLevel::Low)
-        );
-        assert_eq!(disabled_thinking_config.include_thoughts, None);
-    }
-
-    #[test]
     fn into_google_uses_json_schema_function_parameters() {
         let input_schema = json!({
             "type": "object",

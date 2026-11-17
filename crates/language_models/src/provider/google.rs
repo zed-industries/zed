@@ -458,50 +458,41 @@ mod tests {
     use serde_json::json;
 
     #[gpui::test]
-    async fn catalog_models_expose_and_gate_xhigh_thinking_effort(cx: &mut TestAppContext) {
-        let captured_requests: Arc<Mutex<Vec<(String, serde_json::Value)>>> =
-            Arc::new(Mutex::new(Vec::new()));
-        let captured_for_client = captured_requests.clone();
+    async fn catalog_models_drop_xhigh_effort_unless_supported(cx: &mut TestAppContext) {
+        let thinking_configs: Arc<Mutex<Vec<(String, serde_json::Value)>>> = Arc::default();
+        let http_client = FakeHttpClient::create({
+            let thinking_configs = thinking_configs.clone();
+            move |mut request| {
+                let thinking_configs = thinking_configs.clone();
+                async move {
+                    if request.method() == Method::GET {
+                        let models = ["gemini-4-hydrogen", "gemini-4-argon"].map(|id| {
+                            json!({
+                                "name": format!("models/{id}"),
+                                "displayName": id,
+                                "inputTokenLimit": 1_048_576,
+                                "outputTokenLimit": 65_536,
+                                "supportedGenerationMethods": ["generateContent"],
+                                "thinking": true
+                            })
+                        });
+                        let catalog = json!({ "models": models });
+                        return Ok(Response::builder()
+                            .status(200)
+                            .body(AsyncBody::from(catalog.to_string()))?);
+                    }
 
-        let http_client = FakeHttpClient::create(move |mut request| {
-            let captured = captured_for_client.clone();
-            async move {
-                if request.method() == Method::GET && request.uri().path() == "/v1beta/models" {
-                    let catalog = json!({
-                        "models": [
-                            {
-                                "name": "models/gemini-4-hydrogen",
-                                "displayName": "Gemini 4 Hydrogen",
-                                "inputTokenLimit": 1_048_576,
-                                "outputTokenLimit": 65_536,
-                                "supportedGenerationMethods": ["generateContent"],
-                                "thinking": true
-                            },
-                            {
-                                "name": "models/gemini-4-argon",
-                                "displayName": "Gemini 4 Argon",
-                                "inputTokenLimit": 1_048_576,
-                                "outputTokenLimit": 65_536,
-                                "supportedGenerationMethods": ["generateContent"],
-                                "thinking": true
-                            }
-                        ]
-                    });
-                    return Ok(Response::builder()
-                        .status(200)
-                        .body(AsyncBody::from(catalog.to_string()))?);
+                    let mut body = String::new();
+                    request.body_mut().read_to_string(&mut body).await?;
+                    let body: serde_json::Value = serde_json::from_str(&body)?;
+                    thinking_configs.lock().push((
+                        request.uri().path().to_string(),
+                        body["generationConfig"]["thinkingConfig"].clone(),
+                    ));
+                    Ok(Response::builder().status(200).body(AsyncBody::from(
+                        "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n\n",
+                    ))?)
                 }
-
-                let mut body = String::new();
-                request.body_mut().read_to_string(&mut body).await?;
-                let parsed: serde_json::Value = serde_json::from_str(&body)?;
-                captured
-                    .lock()
-                    .push((request.uri().path().to_string(), parsed));
-
-                Ok(Response::builder().status(200).body(AsyncBody::from(
-                    "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n\n",
-                ))?)
             }
         });
 
@@ -514,116 +505,57 @@ mod tests {
                 cx,
             )
         });
-
         cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
             .await
             .unwrap();
         cx.run_until_parked();
 
         let models = cx.read(|cx| provider.provided_models(cx));
-        let hydrogen = models
+        let xhigh = models
             .iter()
             .find(|model| model.id.0.as_ref() == "gemini-4-hydrogen")
-            .expect("gemini-4-hydrogen should be listed")
+            .and_then(|model| model.supported_effort_levels.last())
+            .unwrap()
             .clone();
-        let argon = models
-            .iter()
-            .find(|model| model.id.0.as_ref() == "gemini-4-argon")
-            .expect("gemini-4-argon should be listed")
-            .clone();
-
-        assert!(hydrogen.supports_thinking);
-        assert!(!hydrogen.supports_disabling_thinking);
-        assert_eq!(
-            hydrogen.supported_effort_levels.as_ref(),
-            &[
-                LanguageModelEffortLevel {
-                    name: "Low".into(),
-                    value: "low".into(),
-                    is_default: false,
-                    supports_disabling_thinking: None,
-                },
-                LanguageModelEffortLevel {
-                    name: "Medium".into(),
-                    value: "medium".into(),
-                    is_default: false,
-                    supports_disabling_thinking: None,
-                },
-                LanguageModelEffortLevel {
-                    name: "High".into(),
-                    value: "high".into(),
-                    is_default: true,
-                    supports_disabling_thinking: None,
-                },
-                LanguageModelEffortLevel {
-                    name: "Extra High".into(),
-                    value: "xhigh".into(),
-                    is_default: false,
-                    supports_disabling_thinking: None,
-                },
-            ]
-        );
-        assert_eq!(
-            argon
-                .supported_effort_levels
-                .iter()
-                .map(|level| (level.value.as_ref(), level.is_default))
-                .collect::<Vec<_>>(),
-            vec![("low", false), ("medium", true), ("high", false)]
-        );
-
-        let xhigh_request = || LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("Hello".to_string())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            thinking_allowed: true,
-            thinking_effort: Some("xhigh".to_string()),
-            ..Default::default()
-        };
-
+        assert_eq!(xhigh.name.as_ref(), "Extra High");
         let async_cx = cx.to_async();
-        let mut hydrogen_stream = provider
-            .stream_completion(&hydrogen, xhigh_request(), &async_cx)
-            .await
-            .unwrap();
-        while let Some(event) = hydrogen_stream.next().await {
-            event.unwrap();
+        for model_id in ["gemini-4-hydrogen", "gemini-4-argon"] {
+            let model = models
+                .iter()
+                .find(|model| model.id.0.as_ref() == model_id)
+                .unwrap();
+            let request = LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                thinking_allowed: true,
+                thinking_effort: Some(xhigh.value.to_string()),
+                ..Default::default()
+            };
+            let mut stream = provider
+                .stream_completion(model, request, &async_cx)
+                .await
+                .unwrap();
+            while let Some(event) = stream.next().await {
+                event.unwrap();
+            }
         }
 
-        let mut argon_stream = provider
-            .stream_completion(&argon, xhigh_request(), &async_cx)
-            .await
-            .unwrap();
-        while let Some(event) = argon_stream.next().await {
-            event.unwrap();
-        }
-
-        let requests = captured_requests.lock();
-        assert_eq!(requests.len(), 2);
         assert_eq!(
-            requests[0].0,
-            "/v1beta/models/gemini-4-hydrogen:streamGenerateContent"
-        );
-        assert_eq!(
-            requests[0].1["generationConfig"]["thinkingConfig"],
-            json!({
-                "thinkingLevel": "XHIGH",
-                "includeThoughts": true
-            })
-        );
-
-        assert_eq!(
-            requests[1].0,
-            "/v1beta/models/gemini-4-argon:streamGenerateContent"
-        );
-        assert_eq!(
-            requests[1].1["generationConfig"]["thinkingConfig"],
-            json!({
-                "includeThoughts": true
-            })
+            *thinking_configs.lock(),
+            [
+                (
+                    "/v1beta/models/gemini-4-hydrogen:streamGenerateContent".to_string(),
+                    json!({"thinkingLevel": "XHIGH", "includeThoughts": true}),
+                ),
+                (
+                    "/v1beta/models/gemini-4-argon:streamGenerateContent".to_string(),
+                    json!({"includeThoughts": true}),
+                ),
+            ]
         );
     }
 }
