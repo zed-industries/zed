@@ -3177,25 +3177,13 @@ impl LspCommand for GetCompletions {
     fn to_lsp(
         &self,
         path: &Path,
-        buffer: &Buffer,
-        language_server: &Arc<LanguageServer>,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::CompletionParams> {
-        let mut context = self.context.clone();
-        if context.trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER
-            && !context.trigger_character.as_ref().is_some_and(|trigger| {
-                buffer
-                    .completion_triggers_for_language_server(language_server.server_id())
-                    .is_some_and(|triggers| triggers.contains(trigger))
-            })
-        {
-            context.trigger_kind = CompletionTriggerKind::INVOKED;
-            context.trigger_character = None;
-        }
-
         Ok(lsp::CompletionParams {
             text_document_position: make_lsp_text_document_position(path, self.position)?,
-            context: Some(context),
+            context: Some(self.context.clone()),
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         })

@@ -7631,6 +7631,121 @@ async fn test_completion_context_uses_target_server_triggers(cx: &mut gpui::Test
 }
 
 #[gpui::test]
+async fn test_completion_context_survives_stale_trigger_replay(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.ts": "a." })).await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let [mut primary_servers, mut secondary_servers] =
+        [("typescript", ":"), ("emmet", ".")].map(|(name, trigger)| {
+            language_registry.register_fake_lsp(
+                "TypeScript",
+                FakeLspAdapter {
+                    name,
+                    capabilities: lsp::ServerCapabilities {
+                        completion_provider: Some(lsp::CompletionOptions {
+                            trigger_characters: Some(vec![trigger.to_string()]),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+        });
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .expect("open buffer with both language servers");
+    let primary_server = primary_servers.next().await.expect("start primary server");
+    let secondary_server = secondary_servers
+        .next()
+        .await
+        .expect("start secondary server");
+    cx.run_until_parked();
+
+    let old_version = buffer.read_with(cx, |buffer, _| buffer.version());
+    let stale_operations = buffer
+        .read_with(cx, |buffer, cx| buffer.serialize_ops(Some(old_version), cx))
+        .await
+        .into_iter()
+        .map(language::proto::deserialize_operation)
+        .collect::<Result<Vec<_>>>()
+        .expect("deserialize the collaborator's old buffer state");
+
+    primary_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "additional-completion-trigger".into(),
+                    method: "textDocument/completion".into(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "typescript", "scheme": "file" }],
+                        "triggerCharacters": ["."]
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("register an additional trigger on the primary server");
+    cx.run_until_parked();
+
+    let contexts = Arc::new(Mutex::new(HashMap::default()));
+    let primary_server_id = primary_server.server.server_id();
+    let secondary_server_id = secondary_server.server.server_id();
+    let _handlers = [primary_server, secondary_server].map(|server| {
+        let contexts = contexts.clone();
+        let server_id = server.server.server_id();
+        server.set_request_handler::<lsp::request::Completion, _, _>(move |params, _| {
+            contexts.lock().insert(server_id, params.context);
+            async move { Ok(Some(lsp::CompletionResponse::Array(Vec::new()))) }
+        })
+    });
+    let context = lsp::CompletionContext {
+        trigger_kind: lsp::CompletionTriggerKind::TRIGGER_CHARACTER,
+        trigger_character: Some(".".to_string()),
+    };
+
+    for replay_stale_state in [false, true] {
+        if replay_stale_state {
+            buffer.update(cx, |buffer, cx| {
+                buffer.apply_ops(stale_operations.clone(), cx);
+            });
+        }
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone()),
+            BTreeSet::from([":".to_string(), ".".to_string()]),
+        );
+
+        contexts.lock().clear();
+        project
+            .update(cx, |project, cx| {
+                project.completions(&buffer, 2, context.clone(), cx)
+            })
+            .await
+            .expect("request completions from both servers");
+        let contexts = contexts.lock();
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(
+            contexts.get(&secondary_server_id),
+            Some(&Some(context.clone()))
+        );
+        assert_eq!(
+            contexts.get(&primary_server_id),
+            Some(&Some(context.clone())),
+            "the primary server registered '.', even after stale trigger replay: {replay_stale_state}",
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
