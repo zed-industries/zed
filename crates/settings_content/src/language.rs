@@ -683,6 +683,7 @@ pub struct LanguageSettingsContent {
     /// Options:
     /// - "off": Use tree-sitter queries to compute document symbols (default).
     /// - "on": Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+    /// - "prefer_lsp": Use LSP symbols after a successful language server response, including empty responses, which mean no symbols. Keep the last successful LSP result while a refresh is pending. Fall back to tree-sitter before the first success, on errors, or when no server is available, and keep using tree-sitter during retries until a request succeeds.
     ///
     /// Default: "off"
     pub document_symbols: Option<DocumentSymbols>,
