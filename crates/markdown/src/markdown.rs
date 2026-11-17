@@ -4694,19 +4694,31 @@ impl RenderedLine {
         }
     }
 
+    /// Returns the rendered index for a source index, which may lie in syntax this line hides.
+    ///
+    /// A source index in hidden syntax maps to the nearest rendered text: the end of the segment
+    /// before it, or the start of the line. The result is not necessarily a character boundary,
+    /// because rendered text can differ from its source.
     fn rendered_index_for_source_index(&self, source_index: usize) -> usize {
         if source_index >= self.source_end {
             return self.layout.len();
         }
 
-        let mapping = match self
+        let mapping_ix = self
             .source_mappings
-            .binary_search_by_key(&source_index, |probe| probe.source_index)
-        {
-            Ok(ix) => &self.source_mappings[ix],
-            Err(ix) => &self.source_mappings[ix - 1],
+            .partition_point(|mapping| mapping.source_index <= source_index)
+            .saturating_sub(1);
+        let Some(mapping) = self.source_mappings.get(mapping_ix) else {
+            return 0;
         };
-        (mapping.rendered_index + (source_index - mapping.source_index)).min(self.layout.len())
+        let segment_end = self
+            .source_mappings
+            .get(mapping_ix + 1)
+            .map_or(self.layout.len(), |next_mapping| {
+                next_mapping.rendered_index
+            });
+        (mapping.rendered_index + source_index.saturating_sub(mapping.source_index))
+            .min(segment_end)
     }
 
     fn source_index_for_rendered_index(&self, rendered_index: usize) -> usize {
@@ -5077,9 +5089,10 @@ impl RenderedText {
             }
 
             let line_rendered_start = line.source_mappings.first().unwrap().rendered_index;
-            let rendered_index_in_line =
-                line.rendered_index_for_source_index(source_index) - line_rendered_start;
             let text = line.layout.text();
+            let rendered_index_in_line = text.floor_char_boundary(
+                line.rendered_index_for_source_index(source_index) - line_rendered_start,
+            );
 
             let scope = line.language.as_ref().map(|l| l.default_scope());
             let classifier = CharClassifier::new(scope);
@@ -5152,8 +5165,11 @@ impl RenderedText {
                 line.rendered_index_for_source_index(line.source_end)
             } else {
                 line.rendered_index_for_source_index(range.end)
-            }
-            .min(text.len());
+            };
+            // A source index can map into the middle of a rendered character: rendered text
+            // can differ from its source, and a selection can outlive the source it was made in.
+            let end = text.floor_char_boundary(end);
+            let start = text.floor_char_boundary(start).min(end);
 
             accumulator.push_str(&text[start..end]);
             accumulator.push('\n');

@@ -9650,6 +9650,94 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_selection_query_after_streaming_hides_clicked_syntax(cx: &mut TestAppContext) {
+        use gpui::Focusable as _;
+
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let workspace = conversation_view.read_with(cx, |view, _| view.workspace.clone());
+        let editor_pane = workspace
+            .update_in(cx, |workspace, window, cx| {
+                let thread_pane = workspace.active_pane().clone();
+                workspace.split_pane(thread_pane, workspace::SplitDirection::Right, window, cx)
+            })
+            .unwrap();
+
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let stream_text = |text: &str, cx: &mut VisualTestContext| {
+            cx.update(|_, cx| {
+                connection.send_update(
+                    session_id.clone(),
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                        text.into(),
+                    )),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(1));
+            cx.run_until_parked();
+        };
+
+        stream_text("См. [док](https://exa", cx);
+        let markdown = thread.read_with(cx, |thread, _| {
+            let AgentThreadEntry::AssistantMessage(message) = &thread.entries()[1] else {
+                panic!("expected an assistant message");
+            };
+            let AssistantMessageChunk::Message { block, .. } = &message.chunks[0] else {
+                panic!("expected a message chunk");
+            };
+            block
+                .blocks()
+                .next()
+                .and_then(|block| block.markdown().cloned())
+                .expect("message markdown")
+        });
+
+        // Clicking to the right of the text places the selection at the end of what has streamed.
+        let bounds = cx
+            .debug_bounds("message-content-1-0-0")
+            .expect("streamed message");
+        cx.simulate_click(
+            point(bounds.right() - px(2.), bounds.center().y),
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| markdown.read(cx).focus_handle(cx).is_focused(window)));
+
+        stream_text("mple.com) далее и ещё", cx);
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "См. [док](https://example.com) далее и ещё"
+        );
+
+        // Activating an item in another pane makes `Workspace` refresh the IME position.
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let item = cx.new(workspace::item::test::TestItem::new);
+                workspace.add_item(editor_pane, Box::new(item), None, false, false, window, cx);
+            })
+            .unwrap();
+        cx.update(|window, cx| {
+            assert!(window.simulate_next_frame(cx) > 0);
+        });
+    }
+
+    #[gpui::test]
     async fn test_plan_completion_does_not_add_transcript_entries(cx: &mut TestAppContext) {
         init_test(cx);
 
