@@ -4233,10 +4233,28 @@ impl MarkdownElementBuilder {
         source_range: Range<usize>,
         highlights: Option<&ResolvedHighlights>,
     ) {
+        let rendered_start = self.pending_line.text.len();
         self.pending_line.source_mappings.push(SourceMapping {
-            rendered_index: self.pending_line.text.len(),
+            rendered_index: rendered_start,
             source_index: source_range.start,
         });
+        // Within a mapping, a rendered index and its source index advance together. Text
+        // longer than its source, such as dashes substituted for a run of hyphens, would
+        // run out of source that way, so each of its characters gets a mapping of its own.
+        if text.len() > source_range.len() {
+            let mut previous_source_index = source_range.start;
+            for (char_index, _) in text.char_indices().skip(1) {
+                let source_index =
+                    source_range.start + char_index * source_range.len() / text.len();
+                if source_index > previous_source_index {
+                    self.pending_line.source_mappings.push(SourceMapping {
+                        rendered_index: rendered_start + char_index,
+                        source_index,
+                    });
+                    previous_source_index = source_index;
+                }
+            }
+        }
         self.pending_line.text.push_str(text);
         self.current_source_index = source_range.end;
 
@@ -4723,8 +4741,8 @@ impl RenderedLine {
 
     /// Returns the source index for a rendered index.
     ///
-    /// Rendered text can be longer than its source, such as dashes substituted for a run of
-    /// hyphens, so the result is kept within the source of the segment containing the index.
+    /// Rendered text can be longer than its source, so the result is kept within the source of
+    /// the segment containing the index.
     fn source_index_for_rendered_index(&self, rendered_index: usize) -> usize {
         if rendered_index >= self.layout.len() {
             return self.source_end;
@@ -5510,12 +5528,10 @@ mod tests {
         );
 
         // Dashes are longer than the run of hyphens they are substituted for.
-        let rendered = render_markdown("--------я", cx);
         assert_mappings(
-            &rendered,
-            vec![vec![(0, 0), (3, 3), (6, 6), (12, 8), (14, 10)]],
+            &render_markdown("--------я", cx),
+            vec![vec![(0, 0), (3, 2), (6, 4), (9, 6), (12, 8), (14, 10)]],
         );
-        assert_eq!(rendered.lines[0].source_index_for_rendered_index(9), 8);
 
         // HTML Comments are ignored
         assert_mappings(
