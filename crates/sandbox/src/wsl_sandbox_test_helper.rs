@@ -508,6 +508,8 @@ mod imp {
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: Vec::new(),
                     protected_file_names: Vec::new(),
+                    hidden_paths: Vec::new(),
+                    hidden_path_exceptions: Vec::new(),
                 }
             } else {
                 SandboxFsPolicy::Restricted {
@@ -519,6 +521,8 @@ mod imp {
                         .collect(),
                     protected_paths: Vec::new(),
                     protected_file_names: Vec::new(),
+                    hidden_paths: Vec::new(),
+                    hidden_path_exceptions: Vec::new(),
                 }
             },
             network: match permissions.network {

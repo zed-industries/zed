@@ -99,24 +99,41 @@ pub struct SandboxPolicy {
 }
 
 /// Filesystem policy for a sandboxed command.
+///
+/// In both variants, `hidden_paths` are subtrees the command can neither read
+/// (including listing and `stat`) nor write, even where a writable path covers
+/// them. Each of `hidden_path_exceptions` is a subtree inside a hidden path
+/// that the command can use as if it were outside the hidden path: it is
+/// readable, and writable wherever the rest of the policy makes it writable.
+/// Protected paths and protected file names still apply inside an exception.
+/// A hidden path may not lie inside an exception; [`Sandbox::new`] rejects
+/// such a policy.
+///
+/// Only the macOS backend can enforce hidden paths. The Linux and WSL
+/// backends reject any policy that lists one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SandboxFsPolicy {
     /// Allow unrestricted filesystem writes except for protected paths and
-    /// protected file names, which remain readable but not writable.
+    /// protected file names, which remain readable but not writable, and
+    /// hidden paths.
     Unrestricted {
         protected_paths: Vec<HostFilesystemLocation>,
         /// See [`ProtectedFileName`].
         protected_file_names: Vec<ProtectedFileName>,
+        hidden_paths: Vec<HostFilesystemLocation>,
+        hidden_path_exceptions: Vec<HostFilesystemLocation>,
     },
-    /// Reads are allowed everywhere; writes are confined to these locations
-    /// (and the standard ephemeral locations the platform provides). Each is a
-    /// [`HostFilesystemLocation`] captured at validation time, never a bare path
-    /// the enforcement layer would re-resolve.
+    /// Reads are allowed everywhere except hidden paths; writes are confined to
+    /// these locations (and the standard ephemeral locations the platform
+    /// provides). Each is a [`HostFilesystemLocation`] captured at validation
+    /// time, never a bare path the enforcement layer would re-resolve.
     Restricted {
         writable_paths: Vec<HostFilesystemLocation>,
         protected_paths: Vec<HostFilesystemLocation>,
         /// See [`ProtectedFileName`].
         protected_file_names: Vec<ProtectedFileName>,
+        hidden_paths: Vec<HostFilesystemLocation>,
+        hidden_path_exceptions: Vec<HostFilesystemLocation>,
     },
 }
 
@@ -316,7 +333,7 @@ fn validate_writable_paths_do_not_overlap_protected_paths(
 ) -> Result<(), SandboxError> {
     for writable_path in writable_paths {
         for protected_path in protected_paths {
-            if writable_path_overlaps_protected_path(writable_path, protected_path) {
+            if location_is_within(writable_path, protected_path) {
                 return Err(SandboxError::InvalidRequest(format!(
                     "writable sandbox path `{}` overlaps protected path `{}`",
                     writable_path.untrusted_path_display(),
@@ -328,32 +345,100 @@ fn validate_writable_paths_do_not_overlap_protected_paths(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-fn writable_path_overlaps_protected_path(
-    writable_path: &HostFilesystemLocation,
-    protected_path: &HostFilesystemLocation,
+/// Rejects a hidden path inside an exception: Seatbelt applies the last
+/// matching rule, so the exception's allow would override the hidden path's
+/// deny and expose it.
+fn validate_hidden_paths_are_outside_exceptions(
+    hidden_paths: &[HostFilesystemLocation],
+    hidden_path_exceptions: &[HostFilesystemLocation],
+) -> Result<(), SandboxError> {
+    for hidden_path in hidden_paths {
+        for exception in hidden_path_exceptions {
+            if location_is_within(hidden_path, exception) {
+                return Err(SandboxError::InvalidRequest(format!(
+                    "hidden sandbox path `{}` lies inside hidden path exception `{}`",
+                    hidden_path.untrusted_path_display(),
+                    exception.untrusted_path_display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Unions two layers' hidden paths. An exception from one layer is kept only
+/// where the other layer leaves its whole subtree visible too, so merging can
+/// never expose a subtree that either layer hides.
+fn merge_hidden_paths(
+    hidden_a: Vec<HostFilesystemLocation>,
+    exceptions_a: Vec<HostFilesystemLocation>,
+    hidden_b: Vec<HostFilesystemLocation>,
+    exceptions_b: Vec<HostFilesystemLocation>,
+) -> (Vec<HostFilesystemLocation>, Vec<HostFilesystemLocation>) {
+    let kept_a: Vec<_> = exceptions_a
+        .iter()
+        .filter(|exception| subtree_is_visible(exception, &hidden_b, &exceptions_b))
+        .cloned()
+        .collect();
+    let kept_b: Vec<_> = exceptions_b
+        .iter()
+        .filter(|exception| subtree_is_visible(exception, &hidden_a, &exceptions_a))
+        .cloned()
+        .collect();
+    (
+        merge_locations(hidden_a, hidden_b),
+        merge_locations(kept_a, kept_b),
+    )
+}
+
+/// Whether no part of the subtree at `location` is hidden by a layer with
+/// these hidden paths and exceptions.
+fn subtree_is_visible(
+    location: &HostFilesystemLocation,
+    hidden_paths: &[HostFilesystemLocation],
+    hidden_path_exceptions: &[HostFilesystemLocation],
 ) -> bool {
-    linux_location_is_equal_or_descendant(writable_path, protected_path)
+    hidden_paths.iter().all(|hidden_path| {
+        if location_is_within(hidden_path, location) {
+            false
+        } else if location_is_within(location, hidden_path) {
+            hidden_path_exceptions
+                .iter()
+                .any(|exception| location_is_within(location, exception))
+        } else {
+            true
+        }
+    })
+}
+
+/// Whether `location` is `ancestor` or lies beneath it, judged by the
+/// identities captured in each location rather than by re-resolving paths.
+#[cfg(target_os = "linux")]
+pub(crate) fn location_is_within(
+    location: &HostFilesystemLocation,
+    ancestor: &HostFilesystemLocation,
+) -> bool {
+    linux_location_is_equal_or_descendant(location, ancestor)
 }
 
 #[cfg(target_os = "macos")]
-fn writable_path_overlaps_protected_path(
-    writable_path: &HostFilesystemLocation,
-    protected_path: &HostFilesystemLocation,
+pub(crate) fn location_is_within(
+    location: &HostFilesystemLocation,
+    ancestor: &HostFilesystemLocation,
 ) -> bool {
-    writable_path
+    location
         .macos_canonical_path()
-        .starts_with(protected_path.macos_canonical_path())
+        .starts_with(ancestor.macos_canonical_path())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn writable_path_overlaps_protected_path(
-    writable_path: &HostFilesystemLocation,
-    protected_path: &HostFilesystemLocation,
+pub(crate) fn location_is_within(
+    location: &HostFilesystemLocation,
+    ancestor: &HostFilesystemLocation,
 ) -> bool {
-    writable_path
+    location
         .untrusted_raw_path()
-        .starts_with(protected_path.untrusted_raw_path())
+        .starts_with(ancestor.untrusted_raw_path())
 }
 
 #[cfg(target_os = "linux")]
@@ -410,30 +495,38 @@ fn linux_location_is_equal_or_descendant(
 
 impl SandboxFsPolicy {
     /// Unrestricted access dominates; otherwise the writable subtrees union.
-    /// Protected paths and protected file names always union.
+    /// Protected paths, protected file names, and hidden paths always union. A
+    /// hidden path exception survives only where the other layer leaves its
+    /// whole subtree visible too, so merging never exposes what either layer
+    /// hides.
     pub fn merge(self, other: SandboxFsPolicy) -> SandboxFsPolicy {
         match (self, other) {
             (
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: protected_a,
                     protected_file_names: names_a,
+                    hidden_paths: hidden_a,
+                    hidden_path_exceptions: exceptions_a,
                 },
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: protected_b,
                     protected_file_names: names_b,
+                    hidden_paths: hidden_b,
+                    hidden_path_exceptions: exceptions_b,
                 },
-            ) => SandboxFsPolicy::Unrestricted {
-                protected_paths: merge_locations(protected_a, protected_b),
-                protected_file_names: merge_unique(names_a, names_b),
-            },
-            (
+            )
+            | (
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: protected_a,
                     protected_file_names: names_a,
+                    hidden_paths: hidden_a,
+                    hidden_path_exceptions: exceptions_a,
                 },
                 SandboxFsPolicy::Restricted {
                     protected_paths: protected_b,
                     protected_file_names: names_b,
+                    hidden_paths: hidden_b,
+                    hidden_path_exceptions: exceptions_b,
                     ..
                 },
             )
@@ -441,32 +534,52 @@ impl SandboxFsPolicy {
                 SandboxFsPolicy::Restricted {
                     protected_paths: protected_a,
                     protected_file_names: names_a,
+                    hidden_paths: hidden_a,
+                    hidden_path_exceptions: exceptions_a,
                     ..
                 },
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: protected_b,
                     protected_file_names: names_b,
+                    hidden_paths: hidden_b,
+                    hidden_path_exceptions: exceptions_b,
                 },
-            ) => SandboxFsPolicy::Unrestricted {
-                protected_paths: merge_locations(protected_a, protected_b),
-                protected_file_names: merge_unique(names_a, names_b),
-            },
+            ) => {
+                let (hidden_paths, hidden_path_exceptions) =
+                    merge_hidden_paths(hidden_a, exceptions_a, hidden_b, exceptions_b);
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: merge_locations(protected_a, protected_b),
+                    protected_file_names: merge_unique(names_a, names_b),
+                    hidden_paths,
+                    hidden_path_exceptions,
+                }
+            }
             (
                 SandboxFsPolicy::Restricted {
                     writable_paths: writable_a,
                     protected_paths: protected_a,
                     protected_file_names: names_a,
+                    hidden_paths: hidden_a,
+                    hidden_path_exceptions: exceptions_a,
                 },
                 SandboxFsPolicy::Restricted {
                     writable_paths: writable_b,
                     protected_paths: protected_b,
                     protected_file_names: names_b,
+                    hidden_paths: hidden_b,
+                    hidden_path_exceptions: exceptions_b,
                 },
-            ) => SandboxFsPolicy::Restricted {
-                writable_paths: merge_locations(writable_a, writable_b),
-                protected_paths: merge_locations(protected_a, protected_b),
-                protected_file_names: merge_unique(names_a, names_b),
-            },
+            ) => {
+                let (hidden_paths, hidden_path_exceptions) =
+                    merge_hidden_paths(hidden_a, exceptions_a, hidden_b, exceptions_b);
+                SandboxFsPolicy::Restricted {
+                    writable_paths: merge_locations(writable_a, writable_b),
+                    protected_paths: merge_locations(protected_a, protected_b),
+                    protected_file_names: merge_unique(names_a, names_b),
+                    hidden_paths,
+                    hidden_path_exceptions,
+                }
+            }
         }
     }
 }
@@ -590,6 +703,10 @@ struct FsSetup {
     /// non-empty list in [`Sandbox::new`].
     #[cfg(target_os = "macos")]
     protected_file_names: Vec<ProtectedFileName>,
+    #[cfg(target_os = "macos")]
+    hidden_paths: Vec<HostFilesystemLocation>,
+    #[cfg(target_os = "macos")]
+    hidden_path_exceptions: Vec<HostFilesystemLocation>,
 }
 
 /// Resolved network plan derived from [`SandboxNetPolicy`]. For the restricted
@@ -660,27 +777,55 @@ impl Sandbox {
     /// # Errors
     ///
     /// Returns [`SandboxError::UnsupportedPolicy`] on Linux and Windows when the
-    /// policy has any [`ProtectedFileName`]s, Unix socket grants, or TCP port
-    /// grants, because those backends cannot enforce them yet.
+    /// policy has any [`ProtectedFileName`]s, hidden paths, Unix socket grants,
+    /// or TCP port grants, because those backends cannot enforce them yet.
+    /// Returns [`SandboxError::InvalidRequest`] for a malformed policy, such as
+    /// a writable path inside a protected path, a hidden path inside a hidden
+    /// path exception, or TCP port 0.
     pub fn new(policy: SandboxPolicy) -> Result<Self, SandboxError> {
-        let (allow_fs_write, writable_paths, protected_paths, protected_file_names) =
-            match policy.fs {
-                SandboxFsPolicy::Unrestricted {
-                    protected_paths,
-                    protected_file_names,
-                } => (true, Vec::new(), protected_paths, protected_file_names),
-                SandboxFsPolicy::Restricted {
+        let (
+            allow_fs_write,
+            writable_paths,
+            protected_paths,
+            protected_file_names,
+            hidden_paths,
+            hidden_path_exceptions,
+        ) = match policy.fs {
+            SandboxFsPolicy::Unrestricted {
+                protected_paths,
+                protected_file_names,
+                hidden_paths,
+                hidden_path_exceptions,
+            } => (
+                true,
+                Vec::new(),
+                protected_paths,
+                protected_file_names,
+                hidden_paths,
+                hidden_path_exceptions,
+            ),
+            SandboxFsPolicy::Restricted {
+                writable_paths,
+                protected_paths,
+                protected_file_names,
+                hidden_paths,
+                hidden_path_exceptions,
+            } => {
+                validate_writable_paths_do_not_overlap_protected_paths(
+                    &writable_paths,
+                    &protected_paths,
+                )?;
+                (
+                    false,
                     writable_paths,
                     protected_paths,
                     protected_file_names,
-                } => {
-                    validate_writable_paths_do_not_overlap_protected_paths(
-                        &writable_paths,
-                        &protected_paths,
-                    )?;
-                    (false, writable_paths, protected_paths, protected_file_names)
-                }
-            };
+                    hidden_paths,
+                    hidden_path_exceptions,
+                )
+            }
+        };
+        validate_hidden_paths_are_outside_exceptions(&hidden_paths, &hidden_path_exceptions)?;
 
         // Bubblewrap can only protect inodes that exist when the sandbox is
         // built, so it cannot deny a name in a directory created later. Fail
@@ -689,6 +834,14 @@ impl Sandbox {
         if !protected_file_names.is_empty() {
             return Err(SandboxError::UnsupportedPolicy(
                 "protected file names are not yet supported by this platform's sandbox".to_string(),
+            ));
+        }
+        // Bubblewrap can only hide paths by mounting over them, which neither
+        // covers paths created later nor allows exceptions underneath.
+        #[cfg(not(target_os = "macos"))]
+        if !hidden_paths.is_empty() || !hidden_path_exceptions.is_empty() {
+            return Err(SandboxError::UnsupportedPolicy(
+                "hidden paths are not yet supported by this platform's sandbox".to_string(),
             ));
         }
         // Bubblewrap's seccomp filter denies every `AF_UNIX` socket, and its
@@ -717,6 +870,10 @@ impl Sandbox {
             protected_paths,
             #[cfg(target_os = "macos")]
             protected_file_names,
+            #[cfg(target_os = "macos")]
+            hidden_paths,
+            #[cfg(target_os = "macos")]
+            hidden_path_exceptions,
         };
 
         let network = match policy.network {
@@ -1064,6 +1221,18 @@ impl Sandbox {
             .iter()
             .map(HostFilesystemLocation::macos_canonical_path)
             .collect();
+        let hidden_paths: Vec<&Path> = self
+            .fs
+            .hidden_paths
+            .iter()
+            .map(HostFilesystemLocation::macos_canonical_path)
+            .collect();
+        let hidden_path_exceptions: Vec<&Path> = self
+            .fs
+            .hidden_path_exceptions
+            .iter()
+            .map(HostFilesystemLocation::macos_canonical_path)
+            .collect();
         let allowed_unix_sockets: Vec<&Path> = self
             .allowed_unix_sockets
             .iter()
@@ -1076,6 +1245,8 @@ impl Sandbox {
             &writable,
             &protected,
             &self.fs.protected_file_names,
+            &hidden_paths,
+            &hidden_path_exceptions,
             &allowed_unix_sockets,
             allowed_tcp_ports,
             permissions,
@@ -1399,6 +1570,8 @@ mod tests {
                     writable_paths: vec![writable_path],
                     protected_paths: vec![protected_git.clone()],
                     protected_file_names: Vec::new(),
+                    hidden_paths: Vec::new(),
+                    hidden_path_exceptions: Vec::new(),
                 },
                 network: SandboxNetPolicy::Blocked,
                 allowed_unix_sockets: Vec::new(),
@@ -1433,6 +1606,8 @@ mod tests {
                 writable_paths: vec![writable_displayed_inside_git],
                 protected_paths: vec![protected_git],
                 protected_file_names: Vec::new(),
+                hidden_paths: Vec::new(),
+                hidden_path_exceptions: Vec::new(),
             },
             network: SandboxNetPolicy::Blocked,
             allowed_unix_sockets: Vec::new(),
@@ -1456,11 +1631,15 @@ mod tests {
             writable_paths: vec![location(&dir_a), location(&dir_b)],
             protected_paths: vec![location(&dir_c)],
             protected_file_names: Vec::new(),
+            hidden_paths: Vec::new(),
+            hidden_path_exceptions: Vec::new(),
         };
         let b = SandboxFsPolicy::Restricted {
             writable_paths: vec![location(&dir_b), location(&dir_c)],
             protected_paths: vec![location(&dir_c), location(&dir_d)],
             protected_file_names: Vec::new(),
+            hidden_paths: Vec::new(),
+            hidden_path_exceptions: Vec::new(),
         };
         assert_eq!(
             a.clone().merge(b),
@@ -1468,31 +1647,43 @@ mod tests {
                 writable_paths: vec![location(&dir_a), location(&dir_b), location(&dir_c)],
                 protected_paths: vec![location(&dir_c), location(&dir_d)],
                 protected_file_names: Vec::new(),
+                hidden_paths: Vec::new(),
+                hidden_path_exceptions: Vec::new(),
             }
         );
         assert_eq!(
             a.merge(SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_a)],
                 protected_file_names: Vec::new(),
+                hidden_paths: Vec::new(),
+                hidden_path_exceptions: Vec::new(),
             }),
             SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_c), location(&dir_a)],
                 protected_file_names: Vec::new(),
+                hidden_paths: Vec::new(),
+                hidden_path_exceptions: Vec::new(),
             }
         );
         assert_eq!(
             SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_d)],
                 protected_file_names: Vec::new(),
+                hidden_paths: Vec::new(),
+                hidden_path_exceptions: Vec::new(),
             }
             .merge(SandboxFsPolicy::Restricted {
                 writable_paths: vec![location(&dir_a)],
                 protected_paths: vec![location(&dir_c)],
                 protected_file_names: Vec::new(),
+                hidden_paths: Vec::new(),
+                hidden_path_exceptions: Vec::new(),
             }),
             SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_d), location(&dir_c)],
                 protected_file_names: Vec::new(),
+                hidden_paths: Vec::new(),
+                hidden_path_exceptions: Vec::new(),
             }
         );
     }
@@ -1836,10 +2027,224 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn restricted_fs_hides_hidden_paths_except_their_exceptions() {
+        let project_dir = tempfile::tempdir().expect("create project dir");
+        let readme_file = project_dir.path().join("README");
+        std::fs::write(&readme_file, "public\n").expect("write readme");
+        let secrets_dir = project_dir.path().join("secrets");
+        std::fs::create_dir(&secrets_dir).expect("create secrets dir");
+        let secret_file = secrets_dir.join("id_ed25519");
+        std::fs::write(&secret_file, "private\n").expect("write secret");
+        let kept_dir = secrets_dir.join("kept");
+        std::fs::create_dir(&kept_dir).expect("create kept dir");
+        let kept_file = kept_dir.join("notes");
+        std::fs::write(&kept_file, "kept\n").expect("write kept file");
+        let locked_file = kept_dir.join("locked");
+        std::fs::write(&locked_file, "locked\n").expect("write locked file");
+
+        let mut sandbox = Sandbox::new(SandboxPolicy {
+            fs: SandboxFsPolicy::Restricted {
+                writable_paths: vec![location(project_dir.path())],
+                protected_paths: vec![location(&locked_file)],
+                protected_file_names: Vec::new(),
+                hidden_paths: vec![location(&secrets_dir)],
+                hidden_path_exceptions: vec![location(&kept_dir)],
+            },
+            network: SandboxNetPolicy::Blocked,
+            allowed_unix_sockets: Vec::new(),
+        })
+        .expect("create sandbox");
+
+        let output = run_shell(&mut sandbox, &format!("cat '{}'", readme_file.display()));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "public\n");
+        let output = run_shell(&mut sandbox, &format!("cat '{}'", secret_file.display()));
+        assert!(!output.status.success(), "read inside a hidden path");
+        assert!(output.stdout.is_empty(), "hidden bytes leaked");
+        let output = run_shell(&mut sandbox, &format!("ls '{}'", secrets_dir.display()));
+        assert!(!output.status.success(), "listed a hidden path");
+        let hidden_written = secrets_dir.join("written");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", hidden_written.display()),
+        );
+        assert!(!output.status.success(), "wrote inside a hidden path");
+        assert!(!hidden_written.exists());
+
+        let output = run_shell(&mut sandbox, &format!("cat '{}'", kept_file.display()));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "kept\n");
+        let kept_written = kept_dir.join("written");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", kept_written.display()),
+        );
+        assert!(
+            output.status.success(),
+            "write inside an exception: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo changed > '{}'", locked_file.display()),
+        );
+        assert!(
+            !output.status.success(),
+            "protected path inside an exception"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&locked_file).expect("read locked file"),
+            "locked\n"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unrestricted_fs_hides_not_yet_created_hidden_paths() {
+        let root_dir = tempfile::tempdir().expect("create root dir");
+        // Two missing levels under a temp dir reached through the `/var`
+        // symlink, so the rule only matches if the location was resolved
+        // through its nearest existing ancestor.
+        let hidden_dir = root_dir.path().join("missing/hidden");
+        let exception_dir = hidden_dir.join("kept");
+        let mut sandbox = Sandbox::new(SandboxPolicy {
+            fs: SandboxFsPolicy::Unrestricted {
+                protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                hidden_paths: vec![location(&hidden_dir)],
+                hidden_path_exceptions: vec![location(&exception_dir)],
+            },
+            network: SandboxNetPolicy::Blocked,
+            allowed_unix_sockets: Vec::new(),
+        })
+        .expect("create sandbox");
+
+        let ordinary_file = root_dir.path().join("missing/ordinary");
+        let output = run_shell(
+            &mut sandbox,
+            &format!(
+                "mkdir -p '{}' && echo hello > '{}'",
+                root_dir.path().join("missing").display(),
+                ordinary_file.display()
+            ),
+        );
+        assert!(
+            output.status.success(),
+            "unrestricted write: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = run_shell(&mut sandbox, &format!("mkdir '{}'", hidden_dir.display()));
+        assert!(!output.status.success(), "created a hidden path");
+        assert!(!hidden_dir.exists());
+
+        std::fs::create_dir_all(&exception_dir).expect("create exception dir");
+        let exception_file = exception_dir.join("written");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", exception_file.display()),
+        );
+        assert!(
+            output.status.success(),
+            "write inside an exception: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", hidden_dir.join("other").display()),
+        );
+        assert!(!output.status.success(), "wrote inside a hidden path");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn hidden_paths_inside_exceptions_are_rejected() {
+        let root_dir = tempfile::tempdir().expect("create root dir");
+        let outer = root_dir.path().join("outer");
+        let exception = outer.join("exception");
+        let inner = exception.join("inner");
+        std::fs::create_dir_all(&inner).expect("create nested dirs");
+        let result = Sandbox::new(SandboxPolicy {
+            fs: SandboxFsPolicy::Unrestricted {
+                protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                hidden_paths: vec![location(&outer), location(&inner)],
+                hidden_path_exceptions: vec![location(&exception)],
+            },
+            network: SandboxNetPolicy::Blocked,
+            allowed_unix_sockets: Vec::new(),
+        });
+        assert!(matches!(result, Err(SandboxError::InvalidRequest(_))));
+    }
+
+    #[test]
+    fn fs_merge_keeps_only_exceptions_both_layers_leave_visible() {
+        let root_dir = tempfile::tempdir().expect("create root dir");
+        let data_dir = root_dir.path().join("data");
+        let kept_dir = data_dir.join("kept");
+        let nested_dir = kept_dir.join("nested");
+        let other_dir = root_dir.path().join("other");
+        std::fs::create_dir_all(&nested_dir).expect("create nested dir");
+        std::fs::create_dir_all(&other_dir).expect("create other dir");
+        let hiding = |hidden: &[&Path], exceptions: &[&Path]| SandboxFsPolicy::Unrestricted {
+            protected_paths: Vec::new(),
+            protected_file_names: Vec::new(),
+            hidden_paths: hidden.iter().map(|path| location(path)).collect(),
+            hidden_path_exceptions: exceptions.iter().map(|path| location(path)).collect(),
+        };
+
+        // A layer that hides `data` without an exception for `kept` drops it.
+        assert_eq!(
+            hiding(&[&data_dir], &[&kept_dir]).merge(hiding(&[&data_dir], &[])),
+            hiding(&[&data_dir], &[])
+        );
+        // A layer that hides something inside the exception drops it too.
+        assert_eq!(
+            hiding(&[&data_dir], &[&kept_dir]).merge(hiding(&[&nested_dir], &[])),
+            hiding(&[&data_dir], &[])
+        );
+        // Exceptions survive where the other layer hides nothing of theirs.
+        assert_eq!(
+            hiding(&[&data_dir], &[&kept_dir]).merge(hiding(&[&other_dir], &[])),
+            hiding(&[&data_dir, &other_dir], &[&kept_dir])
+        );
+        assert_eq!(
+            hiding(&[&data_dir], &[&kept_dir]).merge(hiding(&[&data_dir], &[&kept_dir])),
+            hiding(&[&data_dir], &[&kept_dir])
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_rejects_hidden_paths() {
+        let hidden_dir = tempfile::tempdir().expect("create hidden dir");
+        let result = Sandbox::new(SandboxPolicy {
+            fs: SandboxFsPolicy::Unrestricted {
+                protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                hidden_paths: vec![location(hidden_dir.path())],
+                hidden_path_exceptions: Vec::new(),
+            },
+            network: SandboxNetPolicy::Blocked,
+            allowed_unix_sockets: Vec::new(),
+        });
+        assert!(matches!(result, Err(SandboxError::UnsupportedPolicy(_))));
+    }
+
+    fn location(path: &Path) -> HostFilesystemLocation {
+        HostFilesystemLocation::capture(path).expect("capture location")
+    }
+
+    #[cfg(target_os = "macos")]
+    fn run_shell(sandbox: &mut Sandbox, script: &str) -> Output {
+        run_sandboxed(sandbox, "/bin/sh", &["-c", script])
+    }
+
     fn unrestricted_fs() -> SandboxFsPolicy {
         SandboxFsPolicy::Unrestricted {
             protected_paths: Vec::new(),
             protected_file_names: Vec::new(),
+            hidden_paths: Vec::new(),
+            hidden_path_exceptions: Vec::new(),
         }
     }
 

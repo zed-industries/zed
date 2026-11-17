@@ -142,6 +142,16 @@ impl HostFilesystemLocation {
         }
     }
 
+    /// Whether this location is `ancestor` or lies beneath it, judged by the
+    /// identities captured in each rather than by re-resolving their paths.
+    ///
+    /// This is the check [`crate::Sandbox::new`] uses to reject a writable path
+    /// inside a protected path, or a hidden path inside a hidden path
+    /// exception, so callers can drop such entries up front.
+    pub fn is_within(&self, ancestor: &HostFilesystemLocation) -> bool {
+        crate::location_is_within(self, ancestor)
+    }
+
     /// The captured canonical path, falling back to the raw path only on
     /// platforms that do not resolve a separate canonical identity.
     ///
