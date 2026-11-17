@@ -220,10 +220,10 @@ pub struct SettingsContent {
     pub auto_update: Option<bool>,
 
     /// This base keymap settings adjusts the default keybindings in Zed to be similar
-    /// to other common code editors. By default, Zed's keymap closely follows VSCode's
-    /// keymap, with minor adjustments, this corresponds to the "VSCode" setting.
+    /// to other common code editors. By default, Zed uses its own keymap, which
+    /// corresponds to the "Zed" setting.
     ///
-    /// Default: VSCode
+    /// Default: Zed
     pub base_keymap: Option<BaseKeymapContent>,
 
     /// Configuration for the collab panel visual settings.
@@ -1016,7 +1016,7 @@ pub struct FileFinderSettingsContent {
     /// Whether to pre-fill the file finder's query with the text selected in the
     /// focused item (e.g. an editor or a terminal) when it is opened.
     ///
-    /// Default: true
+    /// Default: false
     pub prefill_query_from_selection: Option<bool>,
 }
 

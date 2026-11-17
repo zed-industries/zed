@@ -1,16 +1,14 @@
-#[cfg(any(test, feature = "test-support"))]
-use crate::NoopTextSystem;
-#[cfg(any(test, feature = "test-support"))]
-use crate::PathPromptOptions;
 use crate::{
     ActivityGuard, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem,
-    CursorStyle, DevicePixels, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap,
-    OwnedMenu, Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
+    CursorStyle, DevicePixels, DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu,
+    Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
     PlatformKeyboardMapper, PlatformTextSystem, PromptButton, ScreenCaptureFrame,
     ScreenCaptureSource, ScreenCaptureStream, SharedString, SourceMetadata, SystemNotification,
     SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
     WindowParams, size,
 };
+#[cfg(any(test, feature = "test-support"))]
+use crate::{DisplayId, NoopTextSystem, PathPromptOptions};
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
 use collections::VecDeque;
@@ -735,7 +733,7 @@ impl Platform for TestPlatform {
         system_notifications.shown.push(notification);
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         let mut system_notifications = self.system_notifications.borrow_mut();
         system_notifications
             .delivered
@@ -743,6 +741,7 @@ impl Platform for TestPlatform {
         system_notifications
             .dismissed
             .push(SharedString::from(tag.to_string()));
+        Task::ready(())
     }
 
     fn on_system_notification_response(

@@ -41,7 +41,7 @@ fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<Service
     }
 }
 
-/// Omitting effort enables reasoning on Sol/Luna, which then reject temperature.
+/// Omitting effort enables reasoning on Sol/Luna/Terra, which then reject temperature.
 fn temperature_for_model(
     model_id: &str,
     temperature: Option<f32>,
@@ -49,7 +49,9 @@ fn temperature_for_model(
 ) -> Option<f32> {
     temperature.filter(|_| match model_id {
         "gpt-6-astra" | "gpt-6.1-sol" => false,
-        "gpt-6-sol" | "gpt-6-luna" => reasoning_effort == Some(ReasoningEffort::None),
+        "gpt-6-sol" | "gpt-6-luna" | "gpt-6.1-terra" => {
+            reasoning_effort == Some(ReasoningEffort::None)
+        }
         _ => true,
     })
 }
@@ -301,15 +303,13 @@ pub fn into_open_ai_response(
     let mut replayed_reasoning_item_indexes = HashMap::default();
     let mut tool_use_kinds_by_id = HashMap::default();
     let mut system_instructions = Vec::new();
+    let mut in_initial_system_prompt = true;
     for (index, message) in messages.into_iter().enumerate() {
-        // System messages go to the top-level `instructions` field rather
-        // than the input item list. `instructions` is applied per request
-        // (the Responses API documents it as a system message inserted into
-        // the model's context), so the current system prompt survives when
-        // replaying provider compaction state replaces the accumulated input
-        // items below. This also matches the Codex backend, which rejects
-        // system-role input items outright.
-        if message.role == Role::System {
+        // Only the initial prompt belongs in `instructions`, outside a
+        // provider-compacted input window. Later instructions must retain their
+        // position; developer-role items also work on Codex, which rejects
+        // system-role input items.
+        if message.role == Role::System && in_initial_system_prompt {
             for content in message.content {
                 if let MessageContent::Text(text) = content
                     && !text.trim().is_empty()
@@ -318,6 +318,9 @@ pub fn into_open_ai_response(
                 }
             }
             continue;
+        }
+        if !message.contents_empty() {
+            in_initial_system_prompt = false;
         }
         append_message_to_response_items(
             message,
@@ -696,7 +699,7 @@ fn flush_response_parts(
         role: match role {
             Role::User => crate::Role::User,
             Role::Assistant => crate::Role::Assistant,
-            Role::System => crate::Role::System,
+            Role::System => crate::Role::Developer,
         },
         content: parts.clone(),
         phase: match role {
@@ -2393,6 +2396,9 @@ mod tests {
         for (model_id, temperature, effort, expected_temperature) in [
             ("gpt-6.1-sol", Some(0.25), None, None),
             ("gpt-6.1-sol", None, None, None),
+            ("gpt-6.1-terra", Some(0.25), None, None),
+            ("gpt-6.1-terra", Some(0.25), Some(Medium), None),
+            ("gpt-6.1-terra", Some(0.25), Some(NoReasoning), Some(0.25)),
             ("gpt-6-astra", Some(0.25), None, None),
             ("gpt-6-astra", None, None, None),
             ("gpt-6-sol", Some(0.25), None, None),
@@ -4573,7 +4579,7 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_hoists_system_messages_into_instructions() {
+    fn into_open_ai_response_keeps_system_updates_as_developer_items() {
         let request = LanguageModelRequest {
             messages: vec![
                 LanguageModelRequestMessage {
@@ -4613,7 +4619,7 @@ mod tests {
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
             serialized["instructions"],
-            json!("You are a coding assistant.\n\nPrefer terse answers.")
+            json!("You are a coding assistant.")
         );
         assert_eq!(
             serialized["input"],
@@ -4623,6 +4629,13 @@ mod tests {
                     "role": "user",
                     "content": [
                         { "type": "input_text", "text": "Hello." }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        { "type": "input_text", "text": "Prefer terse answers." }
                     ]
                 }
             ])
@@ -4673,6 +4686,14 @@ mod tests {
                     cache: false,
                     reasoning_details: None,
                 },
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text(
+                        "Use the updated project context.".into(),
+                    )],
+                    cache: false,
+                    reasoning_details: None,
+                },
             ],
             ..Default::default()
         };
@@ -4704,6 +4725,13 @@ mod tests {
                     "role": "user",
                     "content": [
                         { "type": "input_text", "text": "Continue." }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        { "type": "input_text", "text": "Use the updated project context." }
                     ]
                 }
             ])
