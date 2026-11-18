@@ -1,6 +1,6 @@
 use crate::dispatcher::AndroidDispatcher;
 use crate::display::AndroidDisplay;
-use crate::events::{self, TouchGesture};
+use crate::events::{self, TouchIds};
 use crate::keyboard::AndroidKeyboardLayout;
 use crate::window::{AndroidWindow, AndroidWindowInner};
 use android_activity::input::KeyCharacterMap;
@@ -47,14 +47,14 @@ pub struct AndroidPlatform {
     pending_launch: RefCell<Option<Box<dyn 'static + FnOnce()>>>,
     quit_requested: Cell<bool>,
     key_maps: RefCell<HashMap<i32, KeyCharacterMap>>,
-    touch_gesture: RefCell<TouchGesture>,
+    touch_ids: RefCell<TouchIds>,
     last_frame: Cell<Instant>,
 }
 
 #[derive(Default)]
 struct AndroidPlatformCallbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    quit: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut() -> bool>>,
     reopen: Option<Box<dyn FnMut()>>,
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     will_open_app_menu: Option<Box<dyn FnMut()>>,
@@ -95,7 +95,7 @@ impl AndroidPlatform {
             pending_launch: RefCell::new(None),
             quit_requested: Cell::new(false),
             key_maps: RefCell::new(HashMap::new()),
-            touch_gesture: RefCell::new(TouchGesture::default()),
+            touch_ids: RefCell::new(TouchIds::default()),
             last_frame: Cell::new(Instant::now()),
         }
     }
@@ -133,10 +133,7 @@ impl AndroidPlatform {
                 }
             }
             MainEvent::InsetsChanged { .. } => {
-                log::info!(
-                    "insets changed: content_rect={:?}",
-                    self.app.content_rect()
-                );
+                log::info!("insets changed: content_rect={:?}", self.app.content_rect());
             }
             MainEvent::ConfigChanged { .. } => {
                 if let Some(window) = self.window() {
@@ -146,7 +143,7 @@ impl AndroidPlatform {
             }
             MainEvent::RedrawNeeded { .. } => {
                 if let Some(window) = self.window() {
-                    window.request_frame(true);
+                    window.request_frame(true, gpui::FrameRequestSource::NativeCallback);
                     self.last_frame.set(Instant::now());
                 }
             }
@@ -178,10 +175,10 @@ impl AndroidPlatform {
             }
         };
         let mut key_maps = self.key_maps.borrow_mut();
-        let mut gesture = self.touch_gesture.borrow_mut();
+        let mut touch_ids = self.touch_ids.borrow_mut();
         loop {
             let more = iter.next(|event| {
-                events::handle_input_event(event, &window, &mut gesture, &mut key_maps, &self.app)
+                events::handle_input_event(event, &window, &mut touch_ids, &mut key_maps, &self.app)
             });
             if !more {
                 break;
@@ -207,7 +204,7 @@ impl AndroidPlatform {
         }
         if let Some(window) = self.window() {
             self.last_frame.set(Instant::now());
-            window.request_frame(false);
+            window.request_frame(false, gpui::FrameRequestSource::LocalSchedule);
         }
     }
 }
@@ -236,12 +233,21 @@ fn system_fonts() -> Vec<Cow<'static, [u8]>> {
         }
     }
     if fonts.is_empty() {
-        log::warn!("no Roboto fonts found in /system/fonts; text rendering will fail unless the app bundles fonts");
+        log::warn!(
+            "no Roboto fonts found in /system/fonts; text rendering will fail unless the app bundles fonts"
+        );
     }
     fonts
 }
 
 impl Platform for AndroidPlatform {
+    fn platform_info(&self) -> gpui::PlatformInfo {
+        gpui::PlatformInfo {
+            os: gpui::OperatingSystem::Android,
+            target: gpui::PlatformTarget::Native,
+        }
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }
@@ -270,6 +276,7 @@ impl Platform for AndroidPlatform {
         }
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(ref mut quit) = callbacks.quit {
+            // The activity is already being destroyed, which cannot be vetoed.
             quit();
         }
     }
@@ -278,7 +285,7 @@ impl Platform for AndroidPlatform {
         self.quit_requested.set(true);
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {}
+    fn restart(&self, _binary_path: Option<PathBuf>, _arguments: Vec<std::ffi::OsString>) {}
 
     fn activate(&self, _ignoring_other_apps: bool) {}
 
@@ -295,6 +302,8 @@ impl Platform for AndroidPlatform {
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         Some(self.display.clone())
     }
+
+    fn on_displays_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         self.active_window
@@ -316,7 +325,8 @@ impl Platform for AndroidPlatform {
             self.display.clone(),
             self.window_appearance(),
         )?;
-        self.display.set_size(window.inner.state.borrow().bounds.size);
+        self.display
+            .set_size(window.inner.state.borrow().bounds.size);
         *self.active_window.borrow_mut() = Some((handle, Rc::clone(&window.inner)));
         Ok(Box::new(window))
     }
@@ -373,9 +383,11 @@ impl Platform for AndroidPlatform {
 
     fn open_with_system(&self, _path: &Path) {}
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
         self.callbacks.borrow_mut().quit = Some(callback);
     }
+
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 
@@ -405,6 +417,12 @@ impl Platform for AndroidPlatform {
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.borrow_mut().thermal_state_change = Some(callback);
+    }
+
+    fn prevent_idle_sleep(&self, _reason: &str) -> Task<Result<gpui::ActivityGuard>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "idle sleep prevention is not implemented on Android"
+        )))
     }
 
     fn compositor_name(&self) -> &'static str {

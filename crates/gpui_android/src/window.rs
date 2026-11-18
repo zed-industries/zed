@@ -1,12 +1,11 @@
-use crate::events::ClickState;
 use android_activity::AndroidApp;
 use anyhow::Context as _;
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult,
+    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
+    WindowControlArea, WindowControls, WindowDecorations, WindowParams, WindowVisibility, px,
 };
 use gpui_wgpu::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use std::cell::{Cell, RefCell};
@@ -33,8 +32,9 @@ impl raw_window_handle::HasWindowHandle for RawWindow {
     fn window_handle(
         &self,
     ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-        let ptr = std::ptr::NonNull::new(self.native_window.ptr().as_ptr().cast::<std::ffi::c_void>())
-            .ok_or(raw_window_handle::HandleError::Unavailable)?;
+        let ptr =
+            std::ptr::NonNull::new(self.native_window.ptr().as_ptr().cast::<std::ffi::c_void>())
+                .ok_or(raw_window_handle::HandleError::Unavailable)?;
         let handle = raw_window_handle::AndroidNdkWindowHandle::new(ptr);
         Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(handle.into()) })
     }
@@ -53,6 +53,7 @@ pub(crate) struct AndroidWindowCallbacks {
     pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     pub(crate) input: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
+    pub(crate) visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     pub(crate) hover_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     pub(crate) moved: Option<Box<dyn FnMut()>>,
@@ -80,7 +81,6 @@ pub(crate) struct AndroidWindowInner {
     pub(crate) gpu_context: GpuContext,
     pub(crate) state: RefCell<AndroidWindowState>,
     pub(crate) callbacks: RefCell<AndroidWindowCallbacks>,
-    pub(crate) click_state: RefCell<ClickState>,
     pub(crate) surface_configured: Cell<bool>,
     pub(crate) appearance: Cell<WindowAppearance>,
     pending_physical_size: Cell<Option<Size<DevicePixels>>>,
@@ -153,7 +153,6 @@ impl AndroidWindow {
             gpu_context,
             state: RefCell::new(state),
             callbacks: RefCell::new(AndroidWindowCallbacks::default()),
-            click_state: RefCell::new(ClickState::default()),
             surface_configured: Cell::new(true),
             appearance: Cell::new(appearance),
             pending_physical_size: Cell::new(None),
@@ -197,17 +196,18 @@ impl AndroidWindowInner {
 
         {
             let mut state = self.state.borrow_mut();
-            if let Err(error) =
-                state
-                    .renderer
-                    .replace_surface(&raw_window, surface_config(physical_size), &instance)
-            {
+            if let Err(error) = state.renderer.replace_surface(
+                &raw_window,
+                surface_config(physical_size),
+                &instance,
+            ) {
                 log::error!("failed to replace wgpu surface: {error:#}");
                 return;
             }
             state.raw_window = raw_window;
         }
         self.surface_configured.set(true);
+        self.notify_visibility_change();
         self.update_size();
     }
 
@@ -216,6 +216,24 @@ impl AndroidWindowInner {
     pub(crate) fn handle_surface_destroyed(&self) {
         self.surface_configured.set(false);
         self.state.borrow_mut().renderer.unconfigure_surface();
+        self.notify_visibility_change();
+    }
+
+    /// The window is presented exactly while it has a surface to draw to.
+    fn visibility(&self) -> WindowVisibility {
+        if self.surface_configured.get() {
+            WindowVisibility::Visible
+        } else {
+            WindowVisibility::Hidden
+        }
+    }
+
+    fn notify_visibility_change(&self) {
+        let visibility = self.visibility();
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(ref mut callback) = callbacks.visibility_change {
+            callback(visibility);
+        }
     }
 
     pub(crate) fn update_size(&self) {
@@ -242,7 +260,7 @@ impl AndroidWindowInner {
         }
     }
 
-    pub(crate) fn request_frame(&self, force_render: bool) {
+    pub(crate) fn request_frame(&self, force_render: bool, signal_source: FrameRequestSource) {
         if !self.surface_configured.get() {
             return;
         }
@@ -251,6 +269,8 @@ impl AndroidWindowInner {
             callback(RequestFrameOptions {
                 require_presentation: true,
                 force_render,
+                signal_at: None,
+                signal_source,
             });
         }
     }
@@ -354,7 +374,7 @@ impl PlatformWindow for AndroidWindow {
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         // Deliberately does not summon the soft keyboard: GPUI re-registers
         // the handler every frame, so requesting it here re-opens a keyboard
-        // the user just dismissed. Taps summon it instead (events.rs).
+        // the user just dismissed. Taps on a text input summon it instead.
         self.inner.state.borrow_mut().input_handler = Some(input_handler);
     }
 
@@ -378,6 +398,10 @@ impl PlatformWindow for AndroidWindow {
 
     fn is_active(&self) -> bool {
         self.inner.state.borrow().is_active
+    }
+
+    fn visibility(&self) -> WindowVisibility {
+        self.inner.visibility()
     }
 
     fn is_hovered(&self) -> bool {
@@ -415,6 +439,12 @@ impl PlatformWindow for AndroidWindow {
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.inner.callbacks.borrow_mut().active_status_change = Some(callback);
     }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.inner.callbacks.borrow_mut().visibility_change = Some(callback);
+    }
+
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.inner.callbacks.borrow_mut().hover_status_change = Some(callback);
@@ -455,8 +485,6 @@ impl PlatformWindow for AndroidWindow {
         state.renderer.draw(scene);
     }
 
-    fn completed_frame(&self) {}
-
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.inner.state.borrow().renderer.sprite_atlas().clone()
     }
@@ -470,7 +498,7 @@ impl PlatformWindow for AndroidWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        Some(self.inner.state.borrow().renderer.gpu_specs())
+        self.inner.state.borrow().renderer.gpu_specs()
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
@@ -499,4 +527,12 @@ impl PlatformWindow for AndroidWindow {
     }
 
     fn set_client_inset(&self, _inset: Pixels) {}
+
+    fn show_soft_keyboard(&self) {
+        self.inner.app.show_soft_input(true);
+    }
+
+    fn hide_soft_keyboard(&self) {
+        self.inner.app.hide_soft_input(false);
+    }
 }

@@ -36,6 +36,11 @@ impl PlatformDisplay for AndroidDisplay {
         self.id
     }
 
+    // The refresh rate is only reachable through JNI (`Display.getRefreshRate`).
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn uuid(&self) -> Result<uuid::Uuid> {
         Ok(self.uuid)
     }
