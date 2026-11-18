@@ -48,6 +48,7 @@ picker.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 rand.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 remote_connection.workspace = true
 schemars.workspace = true
