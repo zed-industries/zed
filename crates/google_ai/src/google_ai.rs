@@ -79,7 +79,7 @@ fn supports_minimal_thinking(model_id: &str) -> bool {
 /// The most thinking a level-based model accepts. Only some models go past `HIGH`.
 fn highest_thinking_level(model_id: &str) -> ThinkingLevel {
     match model_id {
-        "gemini-4-hydrogen" => ThinkingLevel::XHigh,
+        "gemini-4-hydrogen" | "gemini-4-neon" => ThinkingLevel::XHigh,
         _ => ThinkingLevel::High,
     }
 }
@@ -88,9 +88,10 @@ fn highest_thinking_level(model_id: &str) -> ThinkingLevel {
 fn default_thinking_level(model_id: &str) -> ThinkingLevel {
     match model_id {
         "gemini-3.5-flash-lite" => ThinkingLevel::Minimal,
-        "gemini-3-flash-preview" | "gemini-3.1-pro-preview" | "gemini-4-hydrogen" => {
-            ThinkingLevel::High
-        }
+        "gemini-3-flash-preview"
+        | "gemini-3.1-pro-preview"
+        | "gemini-4-hydrogen"
+        | "gemini-4-neon" => ThinkingLevel::High,
         _ => ThinkingLevel::Medium,
     }
 }
@@ -1095,6 +1096,16 @@ mod tests {
         for (id, expected_levels, expected_default) in [
             (
                 "gemini-4-hydrogen",
+                vec![
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                    ThinkingLevel::XHigh,
+                ],
+                ThinkingLevel::High,
+            ),
+            (
+                "gemini-4-neon",
                 vec![
                     ThinkingLevel::Low,
                     ThinkingLevel::Medium,
