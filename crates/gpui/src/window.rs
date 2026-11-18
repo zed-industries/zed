@@ -3684,8 +3684,13 @@ impl Window {
 
     #[inline]
     fn snapped_content_mask(&self) -> ContentMask<ScaledPixels> {
+        let bounds = self.content_mask().bounds;
         ContentMask {
-            bounds: self.cover_bounds(self.content_mask().bounds),
+            bounds: if bounds.is_empty() {
+                bounds.scale(self.scale_factor())
+            } else {
+                self.cover_bounds(bounds)
+            },
         }
     }
 
