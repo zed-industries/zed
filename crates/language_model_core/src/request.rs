@@ -353,6 +353,10 @@ impl From<&str> for MessageContent {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Hash)]
 pub struct LanguageModelRequestMessage {
+    /// Leading system messages form the initial prompt; later ones update the conversation.
+    ///
+    /// Supporting providers preserve later system messages at their position.
+    /// Other providers may flatten them into the initial instructions.
     pub role: Role,
     pub content: Vec<MessageContent>,
     pub cache: bool,
