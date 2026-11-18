@@ -22,7 +22,7 @@ enum CliCommand {
     /// Inspect the GPUI publish plan and its dependencies.
     #[command(subcommand)]
     Gpui(tasks::gpui::GpuiCommand),
-    /// Runs the Linux Bubblewrap sandboxing NixOS VM tests.
+    /// Runs the sandbox_linux NixOS VM tests.
     SandboxTests(tasks::sandbox_tests::SandboxTestsArgs),
     /// Runs the Windows WSL Bubblewrap sandbox behavior tests.
     WslSandboxTests(tasks::wsl_sandbox_tests::WslSandboxTestsArgs),

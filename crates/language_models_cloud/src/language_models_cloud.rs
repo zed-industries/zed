@@ -1192,6 +1192,18 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             cloud_llm_client::LanguageModelProvider::Google => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
+                let mut request = request;
+                // A thread keeps its effort across model switches, and Gemini rejects levels a
+                // model doesn't accept, including any level for thinking-budget models.
+                let effort_supported = request.thinking_effort.as_deref().is_some_and(|effort| {
+                    config
+                        .supported_effort_levels
+                        .iter()
+                        .any(|level| level.value.eq_ignore_ascii_case(effort))
+                });
+                if !effort_supported {
+                    request.thinking_effort = None;
+                }
                 let mode = if config.supports_thinking {
                     GoogleModelMode::Thinking {
                         budget_tokens: None,
@@ -2563,6 +2575,12 @@ mod tests {
         config.provider = cloud_llm_client::LanguageModelProvider::Google;
         config.id = cloud_llm_client::LanguageModelId("future-google-model".into());
         config.supports_thinking = true;
+        config.supported_effort_levels = vec![cloud_llm_client::SupportedEffortLevel {
+            name: Arc::from("Medium"),
+            value: Arc::from("medium"),
+            is_default: Some(true),
+            supports_disabling_thinking: None,
+        }];
         let (provider, model) = bind_test_model(
             FakeHttpClient::create(|mut request| async move {
                 let mut body = String::new();
@@ -2609,6 +2627,72 @@ mod tests {
             }
         }
         assert_eq!(summaries, ["Summary"]);
+    }
+
+    #[gpui::test]
+    async fn hosted_google_sends_only_effort_levels_the_model_lists(cx: &mut gpui::TestAppContext) {
+        for (listed_efforts, expected_thinking_config) in [
+            (
+                ["low", "medium", "high", "xhigh"].as_slice(),
+                json!({"thinkingLevel": "XHIGH", "includeThoughts": true}),
+            ),
+            (
+                ["low", "medium", "high"].as_slice(),
+                json!({"includeThoughts": true}),
+            ),
+        ] {
+            let thinking_config = Arc::new(Mutex::new(None));
+            let http_client = FakeHttpClient::create({
+                let thinking_config = thinking_config.clone();
+                move |mut request| {
+                    let thinking_config = thinking_config.clone();
+                    async move {
+                        let mut body = String::new();
+                        request.body_mut().read_to_string(&mut body).await?;
+                        let body: serde_json::Value = serde_json::from_str(&body)?;
+                        *thinking_config.lock().unwrap() = Some(
+                            body["provider_request"]["generationConfig"]["thinkingConfig"].clone(),
+                        );
+                        Ok(Response::builder()
+                            .status(200)
+                            .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                            .body(AsyncBody::from(
+                                json!({"status": "stream_ended"}).to_string(),
+                            ))?)
+                    }
+                }
+            });
+            let mut config = cloud_test_config();
+            config.provider = cloud_llm_client::LanguageModelProvider::Google;
+            config.id = cloud_llm_client::LanguageModelId("future-google-model".into());
+            config.supports_thinking = true;
+            config.supported_effort_levels = listed_efforts
+                .iter()
+                .map(|value| cloud_llm_client::SupportedEffortLevel {
+                    name: Arc::from(*value),
+                    value: Arc::from(*value),
+                    is_default: None,
+                    supports_disabling_thinking: None,
+                })
+                .collect();
+            let (provider, model) = bind_test_model(http_client, config);
+
+            let mut request = compact_test_request();
+            request.thinking_allowed = true;
+            request.thinking_effort = Some("xhigh".into());
+            cx.update(|cx| provider.stream_completion(&model, request, cx))
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+
+            assert_eq!(
+                thinking_config.lock().unwrap().take(),
+                Some(expected_thinking_config),
+                "listed efforts: {listed_efforts:?}"
+            );
+        }
     }
 
     fn cloud_google_test_model(

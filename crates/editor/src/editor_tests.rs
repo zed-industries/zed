@@ -2390,6 +2390,372 @@ fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_fold_at_current_indentation_level(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &"
+        ˇclass Foo:
+            def a():
+                print(1)
+
+        class Bar:
+            def b():
+                print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        ˇclass Foo:⋯
+
+        class Bar:⋯
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.unfold_all(&actions::UnfoldAll, window, cx);
+    });
+
+    cx.set_selections_state(
+        &"
+        class Foo:
+            ˇdef a():
+                print(1)
+
+        class Bar:
+            def b():
+                print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        class Foo:
+            ˇdef a():⋯
+
+        class Bar:
+            def b():⋯
+        "
+        .unindent(),
+    );
+
+    let state = &"
+        class Foo:
+            def a():
+                if x:
+                    y()
+                ˇz()
+
+            def b():
+                if w:
+                    v()
+        "
+    .unindent();
+    cx.set_state(&state);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(&state);
+    assert_eq!(
+        cx.display_text(),
+        "
+        class Foo:
+            def a():
+                if x:⋯
+                z()
+
+            def b():
+                if w:⋯
+        "
+        .unindent(),
+    )
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_no_ops(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Nothing should be folded if cursor is at an empty line.
+    let state = "
+        ˇ
+        fn work() {
+            run();
+        }
+        "
+    .unindent();
+    cx.set_state(&state);
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+    cx.assert_display_state(&state);
+
+    // Nothing should be folded if cursor is on a blank line with only spaces.
+    let state = "
+        \x20\x20\x20\x20ˇ
+        fn work() {
+            run();
+        }
+        "
+    .unindent();
+    cx.set_state(&state);
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+    cx.assert_display_state(&state);
+
+    // Nothing should be folded if cursor is on a blank line with only tabs.
+    let state = "
+    fn work() {
+        run();
+    }
+    \tˇ"
+    .unindent();
+
+    cx.set_state(&state);
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(&state);
+    assert_eq!(
+        cx.display_text(),
+        "
+        fn work() {
+            run();
+        }
+        \x20\x20\x20\x20"
+            .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_with_multiple_cursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The newest cursor is on the `b()` method, with the older one on the `Foo`
+    // class definition. Ensure that folding at the current indentation level
+    // will use the newest selection.
+    cx.set_state(
+        &"
+        ˇclass Foo:
+            def a():
+                print(1)
+
+        class Bar:
+            ˇdef b():
+                print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    assert_eq!(
+        cx.display_text(),
+        "
+        class Foo:
+            def a():⋯
+
+        class Bar:
+            def b():⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_on_less_spaces_than_tab_size(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &"
+        class Foo:
+          ˇdef a():
+            print(1)
+
+        class Bar:
+          def b():
+            print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        class Foo:
+          ˇdef a():⋯
+
+        class Bar:
+          def b():⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_scans_past_single_row_crease(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let marked_text = "
+        fn first() «{}»
+
+        ˇfn second() «{
+            work();
+        }»
+        "
+    .unindent();
+
+    cx.set_state(&marked_text.replace(['«', '»'], ""));
+    let crease_ranges = cx.ranges(&marked_text.replace('ˇ', ""));
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        editor.insert_creases(
+            crease_ranges.iter().map(|range| {
+                let start = snapshot.anchor_before(MultiBufferOffset(range.start));
+                let end = snapshot.anchor_after(MultiBufferOffset(range.end));
+
+                Crease::simple(start..end, FoldPlaceholder::test())
+            }),
+            cx,
+        );
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    assert_eq!(
+        cx.display_text(),
+        "
+        fn first() ⋯
+
+        fn second() ⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_with_crease_on_shared_boundary_row(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let marked_text = "
+        fn first() «{
+            work();
+        ˇ}» fn second() «{}»
+
+        fn third() «{
+            work();
+        }»
+        "
+    .unindent();
+
+    cx.set_state(&marked_text.replace(['«', '»'], ""));
+    let crease_ranges = cx.ranges(&marked_text.replace('ˇ', ""));
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        editor.insert_creases(
+            crease_ranges.iter().map(|range| {
+                let start = snapshot.anchor_before(MultiBufferOffset(range.start));
+                let end = snapshot.anchor_after(MultiBufferOffset(range.end));
+
+                Crease::simple(start..end, FoldPlaceholder::test())
+            }),
+            cx,
+        );
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        fn first() {
+            work();
+        ˇ} fn second() ⋯
+
+        fn third() ⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

@@ -739,7 +739,7 @@ impl WebWindowInner {
             }
 
             let keystroke = Keystroke {
-                modifiers,
+                modifiers: keystroke_modifiers(&key, modifiers),
                 key,
                 key_char: key_char.clone(),
             };
@@ -803,7 +803,7 @@ impl WebWindowInner {
             let key_char = compute_key_char(&event, &key, &modifiers);
 
             let keystroke = Keystroke {
-                modifiers,
+                modifiers: keystroke_modifiers(&key, modifiers),
                 key,
                 key_char,
             };
@@ -1343,6 +1343,18 @@ pub(crate) fn platform_info(browser_window: &web_sys::Window) -> gpui::PlatformI
     }
 }
 
+/// Drops Shift from symbol keystrokes, as GPUI's Linux platform does.
+fn keystroke_modifiers(key: &str, mut modifiers: Modifiers) -> Modifiers {
+    // Browsers report the shifted character as the key (Shift+1 arrives as `!`),
+    // so keeping Shift would produce `shift-!`, which never matches a `!`
+    // binding. Shift stays on letters, where it distinguishes case, and on named
+    // keys such as `tab` and `enter`.
+    if modifiers.shift && key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
+        modifiers.shift = false;
+    }
+    modifiers
+}
+
 fn is_modifier_only_key(key: &str) -> bool {
     matches!(
         key,
@@ -1477,5 +1489,19 @@ mod tests {
         let reused = touch_ids.start(7).expect("reused pointer touch id");
         assert_ne!(reused, first);
         assert_ne!(reused, concurrent);
+    }
+
+    #[test]
+    fn shift_is_dropped_only_from_symbol_keys() {
+        let shift = Modifiers::shift();
+        assert_eq!(keystroke_modifiers("!", shift), Modifiers::none());
+        assert_eq!(keystroke_modifiers("?", shift), Modifiers::none());
+        assert_eq!(keystroke_modifiers("a", shift), shift);
+        assert_eq!(keystroke_modifiers("tab", shift), shift);
+        let control_shift = Modifiers::control_shift();
+        assert_eq!(
+            keystroke_modifiers("!", control_shift),
+            Modifiers::control()
+        );
     }
 }
