@@ -33,6 +33,18 @@ fn init_trust_global(
     })
 }
 
+fn init_trust_global_with_db(
+    db_trusted: DbTrustedPaths,
+    worktree_store: Entity<WorktreeStore>,
+    cx: &mut TestAppContext,
+) -> Entity<TrustedWorktreesStore> {
+    cx.update(|cx| {
+        init(db_trusted, cx);
+        track_worktree_trust(worktree_store, None, None, None, cx);
+        TrustedWorktrees::try_get_global(cx).expect("global should be set")
+    })
+}
+
 #[gpui::test]
 async fn test_single_worktree_trust(cx: &mut TestAppContext) {
     init_test(cx);
@@ -588,6 +600,9 @@ async fn test_abs_path_trust_covers_multiple_worktrees(cx: &mut TestAppContext) 
         );
     });
 
+    // Canonicalization is async — let it resolve before checking trust.
+    cx.run_until_parked();
+
     for &worktree_id in &worktree_ids {
         let can_trust = trusted_worktrees.update(cx, |store, cx| {
             store.can_trust(&worktree_store, worktree_id, cx)
@@ -1071,5 +1086,861 @@ async fn test_windows_style_abs_path_trust_from_unix_client(cx: &mut TestAppCont
     assert!(
         trusted_worktrees.update(cx, |store, cx| store.can_trust(&worktree_store, t2_id, cx)),
         "t2 should be auto-trusted by the trusted parent scope C:\\Users\\me\\dev\\wt"
+    );
+}
+
+#[gpui::test]
+async fn test_canonical_trust_case_insensitive_db_path(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(path!("/dir"), json!({ "main.rs": "" }))
+        .await;
+
+    let mut db_trusted = DbTrustedPaths::default();
+    db_trusted
+        .entry(None)
+        .or_default()
+        .insert(PathBuf::from(path!("/DIR")));
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global_with_db(db_trusted, worktree_store.clone(), cx);
+
+    let events: Rc<RefCell<Vec<TrustedWorktreesEvent>>> = Rc::default();
+    cx.update({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&trusted_worktrees, move |_, event, _| {
+                events.borrow_mut().push(match event {
+                    TrustedWorktreesEvent::Trusted(host, paths) => {
+                        TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
+                    }
+                    TrustedWorktreesEvent::Restricted(host, paths) => {
+                        TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
+                    }
+                });
+            })
+        }
+    })
+    .detach();
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        !can_trust,
+        "should be restricted before canonical resolution"
+    );
+
+    cx.run_until_parked();
+
+    let has_trusted_event = events
+        .borrow()
+        .iter()
+        .any(|e| matches!(e, TrustedWorktreesEvent::Trusted(..)));
+    assert!(
+        has_trusted_event,
+        "Trusted event should fire after canonical resolution"
+    );
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        can_trust,
+        "should be trusted after canonical resolution on case-insensitive fs"
+    );
+}
+
+#[gpui::test]
+async fn test_canonical_trust_case_sensitive_distinct_dirs(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/safe"), json!({ "main.rs": "" }))
+        .await;
+    fs.insert_tree(path!("/SAFE"), json!({ "main.rs": "" }))
+        .await;
+
+    let mut db_trusted = DbTrustedPaths::default();
+    db_trusted
+        .entry(None)
+        .or_default()
+        .insert(PathBuf::from(path!("/safe")));
+
+    let project = Project::test(fs, [path!("/SAFE").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global_with_db(db_trusted, worktree_store.clone(), cx);
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(!can_trust, "SAFE should be restricted initially");
+
+    cx.run_until_parked();
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        !can_trust,
+        "SAFE should remain restricted — distinct canonical paths on case-sensitive fs"
+    );
+}
+
+#[gpui::test]
+async fn test_canonical_trust_failure_no_prefix_fallback(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/parent"), json!({ "child": { "main.rs": "" } }))
+        .await;
+
+    let mut db_trusted = DbTrustedPaths::default();
+    db_trusted
+        .entry(None)
+        .or_default()
+        .insert(PathBuf::from(path!("/PARENT")));
+
+    let project = Project::test(fs, [path!("/parent/child").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global_with_db(db_trusted, worktree_store.clone(), cx);
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(!can_trust, "should be restricted initially");
+
+    cx.run_until_parked();
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        !can_trust,
+        "should remain restricted — canonicalize of /PARENT fails on case-sensitive fs"
+    );
+}
+
+#[gpui::test]
+async fn test_trust_schedules_canonicalization_for_descendants(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(path!("/parent"), json!({ "child": { "main.rs": "" } }))
+        .await;
+
+    let project = Project::test(fs, [path!("/parent/child").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(!can_trust, "should be restricted initially");
+
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::AbsPath(PathBuf::from(path!("/PARENT")))]),
+            cx,
+        );
+    });
+
+    cx.run_until_parked();
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        can_trust,
+        "child should be trusted after canonical resolution of differently-cased parent"
+    );
+}
+
+#[gpui::test]
+async fn test_db_trust_symlink_descendant_stays_restricted(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/trusted"), json!({ "real.rs": "" }))
+        .await;
+    fs.insert_tree(path!("/outside"), json!({ "evil.rs": "" }))
+        .await;
+    fs.insert_symlink(path!("/trusted/link"), PathBuf::from(path!("/outside")))
+        .await;
+
+    let mut db_trusted = DbTrustedPaths::default();
+    db_trusted
+        .entry(None)
+        .or_default()
+        .insert(PathBuf::from(path!("/trusted")));
+
+    let project = Project::test(fs, [path!("/trusted/link").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global_with_db(db_trusted, worktree_store.clone(), cx);
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        !can_trust,
+        "symlink worktree should be restricted initially"
+    );
+
+    cx.run_until_parked();
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        !can_trust,
+        "symlink to /outside should remain restricted — canonical path resolves outside trusted root"
+    );
+}
+
+#[gpui::test]
+async fn test_stale_canonicalization_no_trust_after_clear(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(path!("/dir"), json!({ "main.rs": "" }))
+        .await;
+
+    let mut db_trusted = DbTrustedPaths::default();
+    db_trusted
+        .entry(None)
+        .or_default()
+        .insert(PathBuf::from(path!("/DIR")));
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global_with_db(db_trusted, worktree_store.clone(), cx);
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(!can_trust, "should be restricted before resolution");
+
+    trusted_worktrees.update(cx, |store, _cx| {
+        store.clear_trusted_paths();
+    });
+
+    cx.run_until_parked();
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        !can_trust,
+        "should remain restricted — trust entries cleared before canonicalization completed"
+    );
+}
+
+#[gpui::test]
+async fn test_trust_symlink_descendant_stays_restricted(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/trusted"), json!({ "real.rs": "" }))
+        .await;
+    fs.insert_tree(path!("/outside"), json!({ "evil.rs": "" }))
+        .await;
+    fs.insert_symlink(path!("/trusted/link"), PathBuf::from(path!("/outside")))
+        .await;
+
+    let project = Project::test(fs, [path!("/trusted/link").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        !can_trust,
+        "symlink worktree should be restricted initially"
+    );
+
+    // trust() with the real parent — symlink child should NOT be unrestricted
+    // because trust() uses exact equality for local worktrees.
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::AbsPath(PathBuf::from(path!("/trusted")))]),
+            cx,
+        );
+    });
+
+    // Let canonicalization resolve.
+    cx.run_until_parked();
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        !can_trust,
+        "symlink worktree should remain restricted — canonical path /outside is not under /trusted"
+    );
+}
+
+#[gpui::test]
+async fn test_canonical_no_event_when_trust_not_granted(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/safe"), json!({ "main.rs": "" }))
+        .await;
+    fs.insert_tree(path!("/SAFE"), json!({ "main.rs": "" }))
+        .await;
+
+    let mut db_trusted = DbTrustedPaths::default();
+    db_trusted
+        .entry(None)
+        .or_default()
+        .insert(PathBuf::from(path!("/safe")));
+
+    let project = Project::test(fs, [path!("/SAFE").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global_with_db(db_trusted, worktree_store.clone(), cx);
+
+    let events: Rc<RefCell<Vec<TrustedWorktreesEvent>>> = Rc::default();
+    cx.update({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&trusted_worktrees, move |_, event, _| {
+                events.borrow_mut().push(match event {
+                    TrustedWorktreesEvent::Trusted(host, paths) => {
+                        TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
+                    }
+                    TrustedWorktreesEvent::Restricted(host, paths) => {
+                        TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
+                    }
+                });
+            })
+        }
+    })
+    .detach();
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(!can_trust, "SAFE should be restricted");
+
+    // Clear events from the Restricted event above.
+    events.borrow_mut().clear();
+
+    cx.run_until_parked();
+
+    let has_trusted_event = events
+        .borrow()
+        .iter()
+        .any(|e| matches!(e, TrustedWorktreesEvent::Trusted(..)));
+    assert!(
+        !has_trusted_event,
+        "no Trusted event should fire — canonical resolution confirmed /safe and /SAFE are distinct"
+    );
+
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(
+        !can_trust,
+        "SAFE should remain restricted after canonical resolution"
+    );
+}
+
+#[gpui::test]
+async fn test_single_file_exemption_revoked_after_clear(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/"),
+        json!({
+            "project": { "main.rs": "fn main() {}" },
+            "standalone.rs": "fn standalone() {}"
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [path!("/project").as_ref(), path!("/standalone.rs").as_ref()],
+        cx,
+    )
+    .await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let (dir_worktree_id, file_worktree_id) = worktree_store.read_with(cx, |store, cx| {
+        let worktrees: Vec<_> = store.worktrees().collect();
+        assert_eq!(worktrees.len(), 2);
+        let (dir_wt, file_wt) = if worktrees[0].read(cx).is_single_file() {
+            (&worktrees[1], &worktrees[0])
+        } else {
+            (&worktrees[0], &worktrees[1])
+        };
+        (dir_wt.read(cx).id(), file_wt.read(cx).id())
+    });
+
+    let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
+
+    // Trust the directory worktree — the single-file worktree is implicitly exempt.
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(dir_worktree_id)]),
+            cx,
+        );
+    });
+
+    let can_trust_file = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, file_worktree_id, cx)
+    });
+    assert!(
+        can_trust_file,
+        "single-file worktree should be trusted when a directory worktree is trusted"
+    );
+
+    // Clear all trust — the single-file exemption should be revoked.
+    trusted_worktrees.update(cx, |store, _cx| {
+        store.clear_trusted_paths();
+    });
+
+    let can_trust_file_after = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, file_worktree_id, cx)
+    });
+    assert!(
+        !can_trust_file_after,
+        "single-file worktree should be restricted after clearing all trust"
+    );
+
+    let can_trust_dir_after = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, dir_worktree_id, cx)
+    });
+    assert!(
+        !can_trust_dir_after,
+        "directory worktree should be restricted after clearing all trust"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_child_of_trusted_parent(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use project::worktree_store::WorktreeIdCounter;
+    use rpc::{AnyProtoClient, NoopProtoClient, proto};
+    use util::paths::PathStyle;
+    use worktree::Worktree;
+
+    init_test(cx);
+
+    let client = AnyProtoClient::new(NoopProtoClient::new());
+    let worktree_store = cx.update(|cx| {
+        cx.new(|_| {
+            WorktreeStore::remote(
+                true,
+                client.clone(),
+                1,
+                PathStyle::Unix,
+                WorktreeIdCounter::default(),
+            )
+        })
+    });
+
+    let make_worktree = |id: u64, name: &str, abs_path: &str, cx: &mut TestAppContext| {
+        let metadata = proto::WorktreeMetadata {
+            id,
+            root_name: name.to_string(),
+            visible: true,
+            abs_path: abs_path.to_string(),
+            root_repo_common_dir: None,
+            root_repo_is_linked_worktree: false,
+        };
+        let worktree = cx.update(|cx| {
+            Worktree::remote(
+                1,
+                clock::ReplicaId::new(1),
+                metadata,
+                client.clone(),
+                PathStyle::Unix,
+                cx,
+            )
+        });
+        worktree.update(cx, |worktree, _| {
+            worktree
+                .as_remote()
+                .unwrap()
+                .update_from_remote(proto::UpdateWorktree {
+                    project_id: 1,
+                    worktree_id: id,
+                    abs_path: abs_path.to_string(),
+                    root_name: name.to_string(),
+                    updated_entries: vec![proto::Entry {
+                        id: 1,
+                        is_dir: true,
+                        path: "".to_string(),
+                        inode: 1,
+                        mtime: Some(proto::Timestamp {
+                            seconds: 0,
+                            nanos: 0,
+                        }),
+                        is_ignored: false,
+                        is_hidden: false,
+                        is_external: false,
+                        is_fifo: false,
+                        size: None,
+                        canonical_path: None,
+                        is_unloaded: false,
+                    }],
+                    removed_entries: vec![],
+                    scan_id: 1,
+                    is_last_update: true,
+                    updated_repositories: vec![],
+                    removed_repositories: vec![],
+                    root_repo_common_dir: None,
+                    root_repo_is_linked_worktree: false,
+                });
+        });
+        cx.run_until_parked();
+        worktree
+    };
+
+    let parent_wt = make_worktree(1, "parent", "/home/user/dev", cx);
+    let child_wt = make_worktree(2, "child", "/home/user/dev/child", cx);
+    let parent_id = parent_wt.read_with(cx, |wt, _| wt.id());
+    let child_id = child_wt.read_with(cx, |wt, _| wt.id());
+    worktree_store.update(cx, |store, cx| {
+        store.add(&parent_wt, cx);
+        store.add(&child_wt, cx);
+    });
+
+    let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
+
+    assert!(
+        !trusted_worktrees.update(cx, |store, cx| store.can_trust(
+            &worktree_store,
+            child_id,
+            cx
+        )),
+        "child should be restricted initially"
+    );
+
+    // Trust the parent path — remote uses starts_with, so child is covered immediately.
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::AbsPath(PathBuf::from("/home/user/dev"))]),
+            cx,
+        );
+    });
+
+    assert!(
+        trusted_worktrees.update(cx, |store, cx| store.can_trust(
+            &worktree_store,
+            child_id,
+            cx
+        )),
+        "remote child should be trusted after parent path trust"
+    );
+
+    // Also verify the parent itself is trusted.
+    assert!(
+        trusted_worktrees.update(cx, |store, cx| store.can_trust(
+            &worktree_store,
+            parent_id,
+            cx
+        )),
+        "remote parent should be trusted"
+    );
+}
+
+#[gpui::test]
+async fn test_worktree_removed_during_canonicalization(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(path!("/dir"), json!({ "main.rs": "" }))
+        .await;
+
+    let mut db_trusted = DbTrustedPaths::default();
+    db_trusted
+        .entry(None)
+        .or_default()
+        .insert(PathBuf::from(path!("/DIR")));
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global_with_db(db_trusted, worktree_store.clone(), cx);
+
+    let events: Rc<RefCell<Vec<TrustedWorktreesEvent>>> = Rc::default();
+    cx.update({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&trusted_worktrees, move |_, event, _| {
+                events.borrow_mut().push(match event {
+                    TrustedWorktreesEvent::Trusted(host, paths) => {
+                        TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
+                    }
+                    TrustedWorktreesEvent::Restricted(host, paths) => {
+                        TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
+                    }
+                });
+            })
+        }
+    })
+    .detach();
+
+    // Trigger canonicalization by checking trust.
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
+    assert!(!can_trust, "should be restricted before resolution");
+
+    // Remove the worktree before canonicalization completes.
+    worktree_store.update(cx, |store, cx| {
+        store.remove_worktree(worktree_id, cx);
+    });
+
+    events.borrow_mut().clear();
+
+    // Let canonicalization complete — stale guard should catch the removed worktree.
+    cx.run_until_parked();
+
+    let has_trusted_event = events
+        .borrow()
+        .iter()
+        .any(|e| matches!(e, TrustedWorktreesEvent::Trusted(..)));
+    assert!(
+        !has_trusted_event,
+        "no Trusted event should fire for a removed worktree"
+    );
+}
+
+/// Verifies that canonical resolution does NOT promote AbsPath grants into
+/// Worktree(id) entries in trusted_paths. If promotion existed, removing the
+/// AbsPath entry would leave behind a Worktree(id) that still passes can_trust.
+#[gpui::test]
+async fn test_no_worktree_id_promotion_after_canonical_resolution(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            "child": { "main.rs": "" },
+            "standalone.rs": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [
+            path!("/parent/child").as_ref(),
+            path!("/parent/standalone.rs").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let (dir_worktree_id, file_worktree_id) = worktree_store.read_with(cx, |store, cx| {
+        let worktrees: Vec<_> = store.worktrees().collect();
+        assert_eq!(worktrees.len(), 2);
+        let (dir_wt, file_wt) = if worktrees[0].read(cx).is_single_file() {
+            (&worktrees[1], &worktrees[0])
+        } else {
+            (&worktrees[0], &worktrees[1])
+        };
+        (dir_wt.read(cx).id(), file_wt.read(cx).id())
+    });
+
+    let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
+
+    // Trigger restriction by checking trust before any grants.
+    for &wt_id in &[dir_worktree_id, file_worktree_id] {
+        assert!(
+            !trusted_worktrees.update(cx, |store, cx| {
+                store.can_trust(&worktree_store, wt_id, cx)
+            }),
+            "worktree should be restricted initially"
+        );
+    }
+
+    // Trust via AbsPath with different casing — needs canonicalization.
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::AbsPath(PathBuf::from(path!("/PARENT")))]),
+            cx,
+        );
+    });
+
+    cx.run_until_parked();
+
+    // Both should be trusted after canonical resolution.
+    assert!(
+        trusted_worktrees.update(cx, |store, cx| {
+            store.can_trust(&worktree_store, dir_worktree_id, cx)
+        }),
+        "directory worktree should be trusted after canonical resolution"
+    );
+    assert!(
+        trusted_worktrees.update(cx, |store, cx| {
+            store.can_trust(&worktree_store, file_worktree_id, cx)
+        }),
+        "single-file worktree should be trusted after canonical resolution"
+    );
+
+    // Remove ONLY the AbsPath entry. If a Worktree(id) was promoted into
+    // trusted_paths, it would survive this removal and the worktree would
+    // still appear trusted.
+    trusted_worktrees.update(cx, |store, _cx| {
+        store.remove_trusted_entry(
+            &worktree_store,
+            &PathTrust::AbsPath(PathBuf::from(path!("/PARENT"))),
+        );
+    });
+
+    let can_trust_dir = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, dir_worktree_id, cx)
+    });
+    assert!(
+        !can_trust_dir,
+        "directory worktree must be untrusted after removing the AbsPath entry — \
+         a promoted Worktree(id) would have survived, proving no promotion occurred"
+    );
+
+    let can_trust_file = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, file_worktree_id, cx)
+    });
+    assert!(
+        !can_trust_file,
+        "single-file worktree must be untrusted after removing the AbsPath entry"
+    );
+}
+
+/// Exercises the Worktree(id) branch in can_trust() using canonical_worktree_roots.
+/// Parent worktree at /trusted is granted Worktree(id) trust FIRST. Then a nested
+/// child worktree at /trusted/link (symlink → /outside) is added. When can_trust
+/// runs on the child for the first time, the auto_trusted check evaluates the
+/// Worktree(id) entry. Raw starts_with would pass (/trusted/link starts_with
+/// /trusted), but canonical resolves /trusted/link → /outside, which does NOT
+/// start_with /trusted.
+#[gpui::test]
+async fn test_worktree_id_grant_symlink_child_stays_restricted(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/trusted"), json!({ "main.rs": "" }))
+        .await;
+    fs.insert_tree(path!("/outside"), json!({ "evil.rs": "" }))
+        .await;
+    fs.insert_symlink(path!("/trusted/link"), PathBuf::from(path!("/outside")))
+        .await;
+
+    // Open only /trusted as the initial worktree.
+    let project = Project::test(fs, [path!("/trusted").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let parent_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
+
+    // Restrict and then trust the parent BEFORE the child exists.
+    assert!(
+        !trusted_worktrees.update(cx, |store, cx| {
+            store.can_trust(&worktree_store, parent_id, cx)
+        }),
+        "/trusted should be restricted initially"
+    );
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(parent_id)]),
+            cx,
+        );
+    });
+    assert!(
+        trusted_worktrees.update(cx, |store, cx| {
+            store.can_trust(&worktree_store, parent_id, cx)
+        }),
+        "/trusted should be trusted after grant"
+    );
+
+    // Now add the symlink child. It was never restricted — can_trust's
+    // auto_trusted check will evaluate the Worktree(id) entry.
+    let link_worktree = worktree_store
+        .update(cx, |store, cx| {
+            store.create_worktree(path!("/trusted/link"), true, cx)
+        })
+        .await
+        .unwrap();
+    let link_id = link_worktree.read_with(cx, |wt, _| wt.id());
+
+    // First can_trust on the child exercises the pre-resolution path:
+    // no canonical roots exist yet, so the exact-equality fallback runs.
+    // /trusted/link != /trusted → restricted.
+    let can_trust_link = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, link_id, cx)
+    });
+    assert!(
+        !can_trust_link,
+        "/trusted/link should be restricted before canonical resolution"
+    );
+
+    // The first can_trust call spawned canonicalization. Let it complete.
+    cx.run_until_parked();
+
+    // Second can_trust exercises the post-resolution canonical branch:
+    // canonical /trusted/link → /outside, canonical /trusted → /trusted.
+    // /outside does NOT start_with /trusted → still restricted.
+    let can_trust_link_after = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, link_id, cx)
+    });
+    assert!(
+        !can_trust_link_after,
+        "/trusted/link should remain restricted after canonical resolution — \
+         /outside is not under /trusted"
     );
 }

@@ -137,6 +137,9 @@ pub struct TrustedWorktreesStore {
     trusted_paths: TrustedPaths,
     restricted: HashMap<WeakEntity<WorktreeStore>, HashSet<WorktreeId>>,
     worktree_trust_serialization: Task<()>,
+    canonical_db_paths: HashMap<WeakEntity<WorktreeStore>, HashMap<PathBuf, PathBuf>>,
+    canonical_worktree_roots: HashMap<WeakEntity<WorktreeStore>, HashMap<WorktreeId, PathBuf>>,
+    pending_canonicalization: HashMap<WeakEntity<WorktreeStore>, HashSet<WorktreeId>>,
 }
 
 #[derive(Debug, Default)]
@@ -205,6 +208,9 @@ impl TrustedWorktreesStore {
             worktree_stores: HashMap::default(),
             restricted: HashMap::default(),
             worktree_trust_serialization: Task::ready(()),
+            canonical_db_paths: HashMap::default(),
+            canonical_worktree_roots: HashMap::default(),
+            pending_canonicalization: HashMap::default(),
         }
     }
 
@@ -237,6 +243,17 @@ impl TrustedWorktreesStore {
             .clone()
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn remove_trusted_entry(
+        &mut self,
+        worktree_store: &Entity<WorktreeStore>,
+        entry: &PathTrust,
+    ) {
+        if let Some(paths) = self.trusted_paths.get_mut(&worktree_store.downgrade()) {
+            paths.remove(entry);
+        }
+    }
+
     /// Adds certain entities on this host to the trusted list.
     /// This will emit [`TrustedWorktreesEvent::Trusted`] event for all passed entries
     /// and the ones that got auto trusted based on trust hierarchy (see module-level docs).
@@ -251,6 +268,7 @@ impl TrustedWorktreesStore {
         let mut new_trusted_other_worktrees = HashSet::default();
         let mut new_trusted_abs_paths = HashSet::default();
         let path_style = worktree_store.read(cx).path_style();
+        let is_local = worktree_store.read(cx).fs().is_some();
         for trusted_path in trusted_paths.iter().chain(
             self.trusted_paths
                 .remove(&weak_worktree_store)
@@ -302,7 +320,7 @@ impl TrustedWorktreesStore {
 
         new_trusted_other_worktrees.retain(|(worktree_abs_path, _)| {
             new_trusted_abs_paths.iter().all(|new_trusted_path| {
-                !starts_with_case_sensitive_aware(worktree_abs_path, new_trusted_path, path_style)
+                !path_style.starts_with(worktree_abs_path, new_trusted_path)
             })
         });
         if !new_trusted_other_worktrees.is_empty() {
@@ -330,11 +348,11 @@ impl TrustedWorktreesStore {
                     let restricted_worktree_path = worktree.read(cx).abs_path();
                     let retain = (!is_file || new_trusted_other_worktrees.is_empty())
                         && new_trusted_abs_paths.iter().all(|new_trusted_path| {
-                            !starts_with_case_sensitive_aware(
-                                &restricted_worktree_path,
-                                new_trusted_path,
-                                path_style,
-                            )
+                            if is_local {
+                                restricted_worktree_path.as_ref() != new_trusted_path.as_path()
+                            } else {
+                                !path_style.starts_with(&restricted_worktree_path, new_trusted_path)
+                            }
                         });
                     if !retain {
                         trusted_paths.insert(PathTrust::Worktree(*restricted_worktree));
@@ -362,6 +380,29 @@ impl TrustedWorktreesStore {
                     .into_iter()
                     .map(PathTrust::Worktree),
             );
+        }
+
+        if is_local {
+            if let Some(remaining) = self.restricted.get(&weak_worktree_store) {
+                let to_canonicalize: Vec<_> = remaining
+                    .iter()
+                    .filter(|wt_id| {
+                        !self
+                            .pending_canonicalization
+                            .get(&weak_worktree_store)
+                            .is_some_and(|p| p.contains(wt_id))
+                    })
+                    .filter_map(|&wt_id| {
+                        worktree_store
+                            .read(cx)
+                            .worktree_for_id(wt_id, cx)
+                            .map(|wt| (wt_id, wt.read(cx).abs_path()))
+                    })
+                    .collect();
+                for (wt_id, wt_path) in to_canonicalize {
+                    self.spawn_canonicalization(worktree_store, wt_id, wt_path, path_style, cx);
+                }
+            }
         }
 
         if let Some(store_data) = self.worktree_stores.get(&weak_worktree_store) {
@@ -470,32 +511,48 @@ impl TrustedWorktreesStore {
         //
         // See module documentation for details on trust level.
         if let Some(trusted_paths) = self.trusted_paths.get(&weak_worktree_store) {
+            let canonical_db = self.canonical_db_paths.get(&weak_worktree_store);
+            let canonical_roots = self.canonical_worktree_roots.get(&weak_worktree_store);
+            let is_local = worktree_store.read(cx).fs().is_some();
+            let checking_worktree_id = worktree_id;
+
             let auto_trusted = worktree_store.read_with(cx, |worktree_store, cx| {
                 trusted_paths.iter().any(|trusted_path| match trusted_path {
-                    PathTrust::Worktree(worktree_id) => worktree_store
-                        .worktree_for_id(*worktree_id, cx)
-                        .is_some_and(|worktree| {
-                            let worktree = worktree.read(cx);
-                            starts_with_case_sensitive_aware(
-                                &worktree_path,
-                                &worktree.abs_path(),
-                                path_style,
-                            ) || (is_file && !worktree.is_single_file())
+                    PathTrust::Worktree(trusted_wt_id) => worktree_store
+                        .worktree_for_id(*trusted_wt_id, cx)
+                        .is_some_and(|trusted_wt| {
+                            let trusted_wt = trusted_wt.read(cx);
+                            let is_non_file = !trusted_wt.is_single_file();
+                            if !is_local {
+                                path_style.starts_with(&worktree_path, &trusted_wt.abs_path())
+                                    || (is_file && is_non_file)
+                            } else if let (Some(canonical_checking), Some(canonical_trusted)) = (
+                                canonical_roots.and_then(|r| r.get(&checking_worktree_id)),
+                                canonical_roots.and_then(|r| r.get(trusted_wt_id)),
+                            ) {
+                                canonical_checking.starts_with(canonical_trusted)
+                                    || (is_file && is_non_file)
+                            } else {
+                                worktree_path.as_ref() == trusted_wt.abs_path().as_ref()
+                                    || (is_file && is_non_file)
+                            }
                         }),
                     PathTrust::AbsPath(trusted_path) => {
-                        is_file
-                            || starts_with_case_sensitive_aware(
-                                &worktree_path,
-                                trusted_path,
-                                path_style,
-                            )
+                        if !is_local {
+                            return is_file || path_style.starts_with(&worktree_path, trusted_path);
+                        }
+                        if let (Some(canonical_trusted), Some(canonical_root)) = (
+                            canonical_db.and_then(|db| db.get(trusted_path.as_path())),
+                            canonical_roots.and_then(|roots| roots.get(&checking_worktree_id)),
+                        ) {
+                            canonical_root.starts_with(canonical_trusted) || is_file
+                        } else {
+                            worktree_path.as_ref() == trusted_path.as_path() || is_file
+                        }
                     }
                 })
             });
             if auto_trusted {
-                if let Some(trusted_paths) = self.trusted_paths.get_mut(&weak_worktree_store) {
-                    trusted_paths.insert(PathTrust::Worktree(worktree_id));
-                }
                 return true;
             }
         }
@@ -525,10 +582,199 @@ impl TrustedWorktreesStore {
             }
         }
         cx.emit(TrustedWorktreesEvent::Restricted(
-            weak_worktree_store,
+            weak_worktree_store.clone(),
             HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
         ));
+
+        let has_unresolved_trust_entries = self
+            .trusted_paths
+            .get(&weak_worktree_store)
+            .is_some_and(|paths| {
+                let canonical_roots = self.canonical_worktree_roots.get(&weak_worktree_store);
+                paths.iter().any(|p| match p {
+                    PathTrust::AbsPath(_) => true,
+                    PathTrust::Worktree(wt_id) => {
+                        !canonical_roots.is_some_and(|roots| roots.contains_key(wt_id))
+                    }
+                })
+            });
+        let not_already_canonicalized = !self
+            .canonical_worktree_roots
+            .get(&weak_worktree_store)
+            .is_some_and(|roots| roots.contains_key(&worktree_id));
+        let not_in_flight = !self
+            .pending_canonicalization
+            .get(&weak_worktree_store)
+            .is_some_and(|pending| pending.contains(&worktree_id));
+        if has_unresolved_trust_entries
+            && not_already_canonicalized
+            && not_in_flight
+            && worktree_store.read(cx).fs().is_some()
+        {
+            self.spawn_canonicalization(worktree_store, worktree_id, worktree_path, path_style, cx);
+        }
+
         false
+    }
+
+    fn spawn_canonicalization(
+        &mut self,
+        worktree_store: &Entity<WorktreeStore>,
+        worktree_id: WorktreeId,
+        worktree_path: Arc<Path>,
+        _path_style: PathStyle,
+        cx: &mut Context<Self>,
+    ) {
+        let weak = worktree_store.downgrade();
+        let Some(fs) = worktree_store.read(cx).fs() else {
+            return;
+        };
+
+        let abs_paths: Vec<PathBuf> = self
+            .trusted_paths
+            .get(&weak)
+            .into_iter()
+            .flat_map(|paths| paths.iter())
+            .filter_map(|p| match p {
+                PathTrust::AbsPath(path) => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let trusted_wt_roots: Vec<(WorktreeId, PathBuf)> = self
+            .trusted_paths
+            .get(&weak)
+            .into_iter()
+            .flat_map(|paths| paths.iter())
+            .filter_map(|p| match p {
+                PathTrust::Worktree(wt_id) => {
+                    if self
+                        .canonical_worktree_roots
+                        .get(&weak)
+                        .is_some_and(|roots| roots.contains_key(wt_id))
+                    {
+                        None
+                    } else {
+                        worktree_store
+                            .read(cx)
+                            .worktree_for_id(*wt_id, cx)
+                            .map(|wt| (*wt_id, wt.read(cx).abs_path().to_path_buf()))
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+
+        if abs_paths.is_empty() && trusted_wt_roots.is_empty() {
+            return;
+        }
+
+        self.pending_canonicalization
+            .entry(weak.clone())
+            .or_default()
+            .insert(worktree_id);
+
+        let raw_worktree_path = worktree_path.to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let canonical_root = fs.canonicalize(&raw_worktree_path).await.ok();
+
+            let mut canonical_db = Vec::new();
+            for abs_path in &abs_paths {
+                if let Ok(canonical) = fs.canonicalize(abs_path).await {
+                    canonical_db.push((abs_path.clone(), canonical));
+                }
+            }
+
+            let mut canonical_trusted_wts = Vec::new();
+            for (wt_id, wt_path) in &trusted_wt_roots {
+                if let Ok(canonical) = fs.canonicalize(wt_path).await {
+                    canonical_trusted_wts.push((*wt_id, canonical));
+                }
+            }
+
+            this.update(cx, |this, cx| {
+                if let Some(canonical_root) = &canonical_root {
+                    this.canonical_worktree_roots
+                        .entry(weak.clone())
+                        .or_default()
+                        .insert(worktree_id, canonical_root.clone());
+                }
+
+                for (raw, canonical) in &canonical_db {
+                    this.canonical_db_paths
+                        .entry(weak.clone())
+                        .or_default()
+                        .insert(raw.clone(), canonical.clone());
+                }
+
+                for (wt_id, canonical) in &canonical_trusted_wts {
+                    this.canonical_worktree_roots
+                        .entry(weak.clone())
+                        .or_default()
+                        .insert(*wt_id, canonical.clone());
+                }
+
+                if let Some(pending) = this.pending_canonicalization.get_mut(&weak) {
+                    pending.remove(&worktree_id);
+                    if pending.is_empty() {
+                        this.pending_canonicalization.remove(&weak);
+                    }
+                }
+
+                let Some(worktree_store) = weak.upgrade() else {
+                    return;
+                };
+                if worktree_store
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .is_none()
+                {
+                    return;
+                }
+                if !this
+                    .restricted
+                    .get(&weak)
+                    .is_some_and(|r| r.contains(&worktree_id))
+                {
+                    return;
+                }
+
+                if let Some(canonical_root) = &canonical_root {
+                    let is_trusted = this
+                        .trusted_paths
+                        .get(&weak)
+                        .into_iter()
+                        .flat_map(|paths| paths.iter())
+                        .any(|entry| match entry {
+                            PathTrust::AbsPath(tp) => this
+                                .canonical_db_paths
+                                .get(&weak)
+                                .and_then(|db| db.get(tp.as_path()))
+                                .is_some_and(|ct| canonical_root.starts_with(ct)),
+                            PathTrust::Worktree(trusted_wt_id) => this
+                                .canonical_worktree_roots
+                                .get(&weak)
+                                .and_then(|roots| roots.get(trusted_wt_id))
+                                .is_some_and(|ct| canonical_root.starts_with(ct)),
+                        });
+
+                    if is_trusted {
+                        if let Some(restricted) = this.restricted.get_mut(&weak) {
+                            restricted.remove(&worktree_id);
+                            if restricted.is_empty() {
+                                this.restricted.remove(&weak);
+                            }
+                        }
+                        cx.emit(TrustedWorktreesEvent::Trusted(
+                            weak,
+                            HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                        ));
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Lists all explicitly restricted worktrees (via [`TrustedWorktreesStore::can_trust`] method calls) for a particular worktree store on a particular host.
@@ -640,6 +886,11 @@ impl TrustedWorktreesStore {
     ) {
         self.worktree_stores
             .retain(|worktree_store, _| worktree_store.is_upgradable());
+        self.canonical_db_paths.retain(|ws, _| ws.is_upgradable());
+        self.canonical_worktree_roots
+            .retain(|ws, _| ws.is_upgradable());
+        self.pending_canonicalization
+            .retain(|ws, _| ws.is_upgradable());
         let weak_worktree_store = worktree_store.downgrade();
         self.worktree_stores.insert(
             weak_worktree_store.clone(),
@@ -686,19 +937,5 @@ fn find_worktree_in_store(
         Some((worktree.read(cx).id(), worktree.read(cx).is_single_file()))
     } else {
         None
-    }
-}
-
-/// Windows file systems are case-insensitive, but `PathStyle::starts_with` compares
-/// path components with case-sensitive `OsStr::eq`. For trust checks that compare
-/// persisted DB paths against current worktree paths, we need case-insensitive matching
-/// on Windows to handle paths that may differ only in casing.
-fn starts_with_case_sensitive_aware(path: &Path, prefix: &Path, path_style: PathStyle) -> bool {
-    if path_style == PathStyle::Windows {
-        let path_str = path.to_string_lossy().to_ascii_lowercase();
-        let prefix_str = prefix.to_string_lossy().to_ascii_lowercase();
-        PathStyle::Windows.starts_with(Path::new(&path_str), Path::new(&prefix_str))
-    } else {
-        path_style.starts_with(path, prefix)
     }
 }

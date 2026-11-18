@@ -1413,7 +1413,6 @@ async fn test_project_debug_scenarios_load_with_db_trusted_path(cx: &mut gpui::T
     assert_eq!(scenarios[0].1.label, "my-debug");
 }
 
-#[cfg(target_os = "windows")]
 #[gpui::test]
 async fn test_project_debug_scenarios_load_with_case_different_db_trusted_path(
     cx: &mut gpui::TestAppContext,
@@ -1424,21 +1423,19 @@ async fn test_project_debug_scenarios_load_with_case_different_db_trusted_path(
     TaskStore::init(None);
 
     // Simulate a DB-trusted path with different casing than the worktree path.
-    // On Windows, paths are case-insensitive, so "C:\DIR" and "C:\dir" refer to the
-    // same location. The DB might store a path with different casing than how the
-    // worktree is opened (e.g., user opens from command line vs. file picker).
+    // On a case-insensitive filesystem, "/DIR" and "/dir" refer to the same location.
+    // The DB might store a path with different casing than how the worktree is opened
+    // (e.g., user opens from command line vs. file picker).
+    // We use FakeFs with case_sensitive=false to simulate this cross-platform.
     let mut db_trusted = DbTrustedPaths::default();
     db_trusted
         .entry(None)
         .or_default()
-        .insert(PathBuf::from(if cfg!(windows) {
-            "C:\\DIR"
-        } else {
-            "/DIR"
-        }));
+        .insert(PathBuf::from(path!("/DIR")));
     cx.update(|cx| trusted_worktrees::init(db_trusted, cx));
 
     let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
     fs.insert_tree(
         path!("/dir"),
         json!({
