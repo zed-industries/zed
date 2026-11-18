@@ -6,7 +6,7 @@ summary: The editor for what's next
 description: |
   Zed is a modern open-source code editor, built from the ground up in Rust with
   a GPU-accelerated renderer. We help you build software faster than ever before.
-grade: stable
+grade: "$SNAP_GRADE"
 confinement: classic
 compression: lzo
 website: https://zed.dev/
@@ -17,7 +17,7 @@ contact: https://zed.dev/community-links#support-and-feedback
 parts:
   zed:
     plugin: dump
-    source: "https://github.com/zed-industries/zed/releases/download/v$RELEASE_VERSION/zed-linux-x86_64.tar.gz"
+    source: "$ZED_TARBALL"
 
     organize:
       # These renames seem to not be necessary, but it's tidier.
@@ -71,17 +71,18 @@ apps:
     # Menu integration: snapcraft copies this into meta/gui, rewrites Exec to
     # the snap command and resolves the bare Icon=zed against the primed
     # hicolor icons; snapd then exports it to /var/lib/snapd/desktop/
-    # applications on install. The desktop entry in the tarball is generated
-    # for the stable channel, so the id always matches dev.zed.Zed.
-    desktop: share/applications/dev.zed.Zed.desktop
+    # applications on install. The tarball names its desktop entry after the
+    # release channel's app id.
+    desktop: share/applications/$APP_ID.desktop
     environment:
       ZED_BUNDLE_TYPE: snap
+      ZED_UPDATE_EXPLANATION: "Please use snap to update Zed."
       # snapcraft sets DF_1_NODEFLIB on all ELFs of the snap, which makes the
       # dynamic linker ignore /etc/ld.so.cache for them, and the Vulkan loader
       # dlopens ICD libraries by bare soname. Bundled sonames still resolve
       # through the RPATH snapcraft injects ($ORIGIN), but host ICD libraries
       # not shipped in the snap (e.g. NVIDIA's) need these host directories.
-      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu
+      LD_LIBRARY_PATH: $SNAP/usr/lib/$ARCH_TRIPLET:/usr/lib/$ARCH_TRIPLET:/lib/$ARCH_TRIPLET
       # The Vulkan loader only discovers ICD manifests under the host's XDG
       # paths, never $SNAP/usr/share/vulkan/icd.d, so without this the bundled
       # Mesa ICDs would be invisible on hosts without Vulkan drivers (e.g.
