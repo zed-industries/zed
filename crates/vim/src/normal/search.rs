@@ -462,78 +462,68 @@ impl Vim {
                     .selections
                     .newest::<MultiBufferOffset>(&display_snapshot);
 
-                // In case there's already a selection, for example, a visual
-                // selection. Fallback to letting the `Editor::query_suggestion`
-                // handle it.
+                // A selection, such as a visual one, is used as the query
+                // as is.
+                // Returning `None` leaves that to the search bar's
+                // `query_suggestion` further down.
                 if !selection.is_empty() {
                     return None;
                 }
 
-                // Starting from the cursor's position, we'll scan forward and
-                // try to either find the first word or punctuation character,
-                // from which we'll continue to advance it's range as long as
-                // the next character kind matches.
+                // Like vim, search for the first word at or after the cursor
+                // on its line, falling back to the first run of punctuation
+                // when no word follows. The scan only locates the first
+                // character of that run, `surrounding_word` then expands it
+                // in both directions.
+                //
+                // The offsets stored are the ones right after the character
+                // rather than before it because, at a boundary,
+                // `surrounding_word` picks the higher kind of its two
+                // neighbors, so from the start of `(` in `function_call(` it
+                // would return `function_call` instead of `(`.
+                let mut punctuation_offset = None;
+                let mut word_offset = None;
                 let classifier = buffer_snapshot.char_classifier_at(selection.start);
-                let mut punctuation_range = None;
-                let mut word_range = None;
-                let mut offset = selection.start;
 
-                for ch in buffer_snapshot
-                    .chars_at(offset)
-                    .take_while(|&ch| ch != '\n')
+                for (ch, offset) in display_snapshot
+                    .buffer_chars_at(selection.start)
+                    .take_while(|(ch, _)| *ch != '\n')
                 {
-                    match (classifier.kind(ch), &word_range, &punctuation_range) {
-                        (CharKind::Whitespace | CharKind::Punctuation, Some(_), _) => break,
-                        (CharKind::Whitespace, _, _) => {}
-                        (CharKind::Word, _, _) => {
-                            word_range.get_or_insert(offset..offset + ch.len_utf8()).end =
-                                offset + ch.len_utf8();
+                    match classifier.kind(ch) {
+                        // A word always wins over punctuation, so the scan
+                        // can stop at the first one. Punctuation can't stop
+                        // it, since a word may still follow.
+                        CharKind::Word => {
+                            word_offset = Some(offset + ch.len_utf8());
+                            break;
                         }
-                        (CharKind::Punctuation, _, _) => {
-                            let range =
-                                punctuation_range.get_or_insert(offset..offset + ch.len_utf8());
-
-                            if range.end == offset {
-                                range.end = offset + ch.len_utf8();
-                            }
+                        CharKind::Punctuation => {
+                            punctuation_offset.get_or_insert(offset + ch.len_utf8());
                         }
+                        CharKind::Whitespace => {}
                     }
-
-                    offset += ch.len_utf8();
                 }
 
-                word_range
-                    .map(|range| (range, CharKind::Word))
-                    .or(punctuation_range.map(|range| (range, CharKind::Punctuation)))
-                    .map(|(mut range, kind)| {
-                        // If any of the ranges (word or punctuation) starts
-                        // directly on the cursor position, we need to scan
-                        // backwards, as the whole run might start before the
-                        // cursor position.
-                        if range.start == selection.start {
-                            for ch in buffer_snapshot
-                                .reversed_chars_at(range.start)
-                                .take_while(|&ch| ch != '\n' && classifier.kind(ch) == kind)
-                            {
-                                range.start -= ch.len_utf8();
-                            }
-                        }
-                        // If it starts somewhere to the right of the cursor, we
-                        // skip the first occurrence to match vim. No scroll
-                        // since search will scroll already.
-                        else if move_cursor {
-                            editor.change_selections(
-                                SelectionEffects::no_scroll(),
-                                window,
-                                cx,
-                                |selections| {
-                                    selections.select_ranges([range.start..range.start]);
-                                },
-                            );
-                        }
+                let (range, _) =
+                    buffer_snapshot.surrounding_word(word_offset.or(punctuation_offset)?, None);
 
-                        buffer_snapshot.text_for_range(range).collect()
-                    })
+                // When the run starts to the right of the cursor, vim jumps
+                // past that occurrence instead of to it.
+                // As such, we move the cursor onto it first as that makes the
+                // search treat it as the current match and we avoid scrolling
+                // as the search will deal with that already.
+                if move_cursor && range.start > selection.start {
+                    editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_ranges([range.start..range.start]);
+                        },
+                    );
+                }
+
+                Some(buffer_snapshot.text_for_range(range).collect())
             })
             .flatten();
 
