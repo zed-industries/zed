@@ -1741,8 +1741,6 @@ impl GitStore {
                     });
 
                     let recalculation = this.update(cx, |this, cx| {
-                        this.loading_diffs.remove(&(buffer_id, diff_kind));
-
                         let git_store = cx.weak_entity();
                         let diff_state = this
                             .diffs
@@ -1770,6 +1768,11 @@ impl GitStore {
                     Ok(buffer_diff)
                 }
                 .await;
+                // Remove the entry on failure too, so the next call retries the load.
+                this.update(cx, |this, _| {
+                    this.loading_diffs.remove(&(buffer_id, diff_kind));
+                })
+                .ok();
                 result.map_err(Arc::new)
             })
             .shared();
@@ -12402,6 +12405,55 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_open_diff_since_retries_after_failed_load(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            util::path!("/project"),
+            json!({ ".git": {}, "file.txt": "new\n" }),
+        )
+        .await;
+        let dot_git = Path::new(util::path!("/project/.git"));
+        let project = Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository = project.read_with(cx, |project, cx| {
+            project.active_repository(cx).expect("repository")
+        });
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(util::path!("/project/file.txt"), cx)
+            })
+            .await
+            .expect("open buffer");
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let oid = git::Oid::from_bytes(&[1; 20]).expect("valid oid");
+
+        let error = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_diff_since(Some(oid), buffer.clone(), repository.clone(), cx)
+            })
+            .await
+            .expect_err("blob is missing");
+        assert_eq!(error.to_string(), "oid does not exist");
+
+        fs.with_git_state(dot_git, false, |state| {
+            state.oids.insert(oid, b"old\n".to_vec());
+        })
+        .expect("repository exists");
+        let diff = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_diff_since(Some(oid), buffer.clone(), repository, cx)
+            })
+            .await
+            .expect("retry loads the blob");
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.base_text_string(cx).as_deref(), Some("old\n"));
+        });
     }
 
     #[gpui::test]

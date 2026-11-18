@@ -4909,7 +4909,7 @@ pub mod tests {
         let buffer = cx.new(|cx| Buffer::local("initial", cx));
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-        // Edit the buffer. This sets buffer_changed_since_sync = true.
+        // Edit the buffer. This adds it to the multibuffer's changed buffers.
         // Importantly, do NOT call multibuffer.snapshot() yet.
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..0, "prefix ")], None, cx);
