@@ -1157,7 +1157,11 @@ impl SplittableEditor {
         let Some(lhs) = self.lhs.take() else {
             return;
         };
+        Self::detach_lhs(lhs, &self.rhs_editor, cx);
+        cx.notify();
+    }
 
+    fn detach_lhs(lhs: LhsEditor, rhs_editor: &Entity<Editor>, cx: &mut App) {
         // Detach the stale lhs editor from the shared scroll anchor while the split companion still exists,
         // so its anchor can be converted to lhs native before rhs tears down split specific state.
         lhs.editor.update(cx, |editor, cx| {
@@ -1168,7 +1172,7 @@ impl SplittableEditor {
             editor.set_on_local_selections_changed(None);
         });
 
-        self.rhs_editor.update(cx, |rhs, cx| {
+        rhs_editor.update(cx, |rhs, cx| {
             let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
             let native_anchor = rhs.scroll_manager.native_anchor(&rhs_snapshot, cx);
             let rhs_display_map_id = rhs_snapshot.display_map_id;
@@ -1190,7 +1194,6 @@ impl SplittableEditor {
             });
             rhs.inlay_hint_visibility_changed(cx);
         });
-        cx.notify();
     }
 
     pub fn update_excerpts_for_path(
