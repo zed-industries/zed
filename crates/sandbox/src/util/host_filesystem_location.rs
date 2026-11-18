@@ -142,8 +142,13 @@ impl HostFilesystemLocation {
         }
     }
 
-    /// Whether this location is `ancestor` or lies beneath it, judged by the
-    /// identities captured in each rather than by re-resolving their paths.
+    /// Whether this location is the same file or directory as `ancestor`, or
+    /// lies somewhere beneath it.
+    ///
+    /// Both locations were resolved when they were captured, and this compares
+    /// what they resolved to then: the open directory handles on Linux, the
+    /// canonical paths on macOS. It does not look the paths up again, so a
+    /// symlink swapped in since capture cannot change the answer.
     ///
     /// This is the check [`crate::Sandbox::new`] uses to reject a writable path
     /// inside a protected path, or a path disallowing reads inside a path

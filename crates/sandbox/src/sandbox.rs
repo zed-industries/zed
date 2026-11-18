@@ -416,8 +416,9 @@ fn subtree_is_readable(
     })
 }
 
-/// Whether `location` is `ancestor` or lies beneath it, judged by the
-/// identities captured in each location rather than by re-resolving paths.
+/// Whether `location` is the same file or directory as `ancestor`, or lies
+/// beneath it. Compares what each location resolved to when it was captured
+/// rather than looking the paths up again.
 #[cfg(target_os = "linux")]
 pub(crate) fn location_is_within(
     location: &HostFilesystemLocation,
