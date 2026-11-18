@@ -1,0 +1,44 @@
+# Temporary: checks whether GitHub-hosted Windows runners can run the PSEC
+# sandbox tests. Delete this branch once the run has finished.
+name: tmp_psec_runner_probe
+on:
+  push:
+    branches:
+    - tmp-psec-runner-probe
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+        - windows-11-arm
+        - windows-2025
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+    - name: enable long paths
+      shell: bash
+      run: git config --system core.longpaths true
+    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+    - name: report OS build and processmodel.dll
+      shell: pwsh
+      run: |
+        Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' |
+          Format-List ProductName, DisplayVersion, CurrentBuild, UBR
+        $dll = "$env:SystemRoot\System32\processmodel.dll"
+        if (Test-Path $dll) {
+          (Get-Item $dll).VersionInfo | Format-List FileVersion, ProductVersion
+        } else {
+          Write-Output "processmodel.dll: MISSING"
+        }
+    - name: run PSEC tests
+      shell: bash
+      run: |
+        set -o pipefail
+        cargo test -p sandbox --lib windows_psec -- --nocapture --test-threads=1 2>&1 | tee psec.log
+        if grep -q "skipping PSEC test" psec.log; then
+          echo "::error::PSEC tests were skipped: no PSEC support on this runner"
+          exit 1
+        fi
