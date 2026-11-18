@@ -123,6 +123,17 @@ impl Scene {
         }
     }
 
+    /// The area covered by the animated sprites at their current poses, or empty
+    /// bounds when nothing animates.
+    pub(crate) fn animated_sprite_bounds(&self) -> Bounds<ScaledPixels> {
+        self.animations
+            .iter()
+            .filter_map(|animation| self.monochrome_sprites.get(animation.sprite_index))
+            .fold(Bounds::default(), |bounds, sprite| {
+                bounds.join(&Primitive::MonochromeSprite(*sprite).clipped_bounds())
+            })
+    }
+
     pub fn len(&self) -> usize {
         self.paint_operations.len()
     }
@@ -444,7 +455,7 @@ impl Primitive {
         }
     }
 
-    fn clipped_bounds(&self) -> Bounds<ScaledPixels> {
+    pub(crate) fn clipped_bounds(&self) -> Bounds<ScaledPixels> {
         self.transformation()
             .transform_bounds(*self.bounds())
             .intersect(&self.content_mask().bounds)
@@ -737,7 +748,7 @@ impl PrimitiveBatch {
     }
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct Quad {
@@ -757,7 +768,7 @@ impl From<Quad> for Primitive {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct Underline {
@@ -776,7 +787,7 @@ impl From<Underline> for Primitive {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct Shadow {
@@ -937,7 +948,7 @@ impl Default for TransformationMatrix {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
@@ -1002,7 +1013,7 @@ impl From<MonochromeSprite> for Primitive {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct SubpixelSprite {
@@ -1021,7 +1032,7 @@ impl From<SubpixelSprite> for Primitive {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct PolychromeSprite {
@@ -1069,7 +1080,7 @@ pub struct PathCurve {
     pub pad: u32, // align to 8 bytes
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct PathPaint {
@@ -1103,6 +1114,15 @@ pub struct PaintedPath {
     bounds: Bounds<ScaledPixels>,
     tiles: Rc<PathTiles>,
     paint: PathPaint,
+}
+
+impl PartialEq for PaintedPath {
+    fn eq(&self, other: &Self) -> bool {
+        self.order == other.order
+            && self.bounds == other.bounds
+            && self.paint == other.paint
+            && (Rc::ptr_eq(&self.tiles, &other.tiles) || self.tiles == other.tiles)
+    }
 }
 
 #[expect(missing_docs)]
