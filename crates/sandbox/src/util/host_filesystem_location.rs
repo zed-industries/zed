@@ -148,7 +148,8 @@ impl HostFilesystemLocation {
     /// Both locations were resolved when they were captured, and this compares
     /// what they resolved to then: the open directory handles on Linux, the
     /// canonical paths on macOS. It does not look the paths up again, so a
-    /// symlink swapped in since capture cannot change the answer.
+    /// symlink swapped in since capture cannot change the answer. Windows
+    /// captures no resolved form, so there it compares the paths as given.
     ///
     /// This is the check [`crate::Sandbox::new`] uses to reject a writable path
     /// inside a protected path, or a path disallowing reads inside a path
