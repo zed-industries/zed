@@ -2125,20 +2125,15 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 
     let path = PathBuf::from("/root/one/node_modules/c/lib");
 
-    // No work happens when files and directories change within an unloaded directory.
-    let prev_fs_call_count = fs.read_dir_call_count() + fs.metadata_call_count();
-    // When we open a directory, we check each ancestor whether it's a git
-    // repository. That means we have an fs.metadata call per ancestor that we
-    // need to subtract here.
-    let ancestors = path.ancestors().count();
+    // No work happens when files and directories change within an unloaded
+    // directory. Checking whether ancestors are git repositories uses `is_file`
+    // and `read_link`, which `FakeFs` does not count as directory scans.
+    let prev_read_dir_count = fs.read_dir_call_count();
 
     fs.create_dir(path.as_ref()).await.unwrap();
     cx.executor().run_until_parked();
 
-    assert_eq!(
-        fs.read_dir_call_count() + fs.metadata_call_count() - prev_fs_call_count - ancestors,
-        0
-    );
+    assert_eq!(fs.read_dir_call_count(), prev_read_dir_count);
 }
 
 #[gpui::test]

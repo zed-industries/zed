@@ -2590,11 +2590,19 @@ impl GitGraph {
             return;
         };
 
+        let commit_view_options = CommitViewOptions {
+            reveal_file: match &self.log_source {
+                LogSource::Path(path) => Some(path.clone()),
+                _ => None,
+            },
+            ..Default::default()
+        };
+
         CommitView::open(
             commit_entry.data.sha.to_string(),
             repository.downgrade(),
             self.workspace.clone(),
-            Default::default(),
+            commit_view_options,
             window,
             cx,
         );
