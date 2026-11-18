@@ -3438,3 +3438,53 @@ async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext)
         assert_eq!(vim_mode, Some(Mode::Normal));
     });
 }
+
+#[gpui::test]
+async fn test_highlight_on_yank_in_visual_modes(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(
+        indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog"},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("v e y");
+    cx.assert_editor_background_highlights(
+        editor::HighlightKey::HighlightOnYank,
+        indoc! {"
+            The «quickˇ» brown
+            fox jumps over
+            the lazy dog"},
+    );
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    cx.assert_editor_background_highlights(
+        editor::HighlightKey::HighlightOnYank,
+        indoc! {"
+            The quick brown
+            fox jumps over
+            the lazy dog"},
+    );
+
+    cx.simulate_keystrokes("V j y");
+    cx.assert_editor_background_highlights(
+        editor::HighlightKey::HighlightOnYank,
+        indoc! {"
+            «The quick brown
+            fox jumps overˇ»
+            the lazy dog"},
+    );
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes("ctrl-v j l y");
+    cx.assert_editor_background_highlights(
+        editor::HighlightKey::HighlightOnYank,
+        indoc! {"
+            «Thˇ»e quick brown
+            «foˇ»x jumps over
+            the lazy dog"},
+    );
+}
