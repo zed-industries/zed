@@ -18,13 +18,14 @@ use super::LineWrapper;
 /// A laid out and styled line of text
 #[derive(Default, Debug)]
 pub struct LineLayout {
-    /// The font size for this line
+    /// The font size this line was laid out at. A run may be shaped at a size of its own; see
+    /// [`ShapedRun::font_size`].
     pub font_size: Pixels,
     /// The width of the line
     pub width: Pixels,
-    /// The ascent of the line
+    /// The ascent of the line, the largest of its runs'
     pub ascent: Pixels,
-    /// The descent of the line
+    /// The descent of the line, the largest of its runs'
     pub descent: Pixels,
     /// The shaped runs that make up this line
     pub runs: Vec<ShapedRun>,
@@ -37,6 +38,8 @@ pub struct LineLayout {
 pub struct ShapedRun {
     /// The font id for this run
     pub font_id: FontId,
+    /// The font size this run was shaped at, and its glyphs are painted at
+    pub font_size: Pixels,
     /// The glyphs that make up this run
     pub glyphs: Vec<ShapedGlyph>,
 }
@@ -149,6 +152,7 @@ impl LineLayout {
             if split_pos > 0 {
                 left_runs.push(ShapedRun {
                     font_id: run.font_id,
+                    font_size: run.font_size,
                     glyphs: run.glyphs[..split_pos].to_vec(),
                 });
             }
@@ -165,6 +169,7 @@ impl LineLayout {
                     .collect();
                 right_runs.push(ShapedRun {
                     font_id: run.font_id,
+                    font_size: run.font_size,
                     glyphs: right_glyphs,
                 });
             }
@@ -777,10 +782,13 @@ fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
 
 /// A run of text with a single font.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[expect(missing_docs)]
 pub struct FontRun {
+    /// The length of the run in utf-8 bytes
     pub len: usize,
+    /// The font of the run
     pub font_id: FontId,
+    /// The size of the run, or `None` for the size the whole line is laid out at
+    pub font_size: Option<Pixels>,
 }
 
 trait AsCacheKeyRef {
@@ -878,6 +886,101 @@ mod tests {
         assert_eq!(key.text.as_ptr(), text.as_ptr());
     }
 
+    fn noop_text_system() -> WindowTextSystem {
+        WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new()))))
+    }
+
+    fn sized_run(len: usize, font_size: Option<Pixels>) -> TextRun {
+        TextRun {
+            len,
+            font: font(".ZedMono"),
+            font_size,
+            ..Default::default()
+        }
+    }
+
+    fn assert_close(actual: Pixels, expected: Pixels) {
+        assert!(
+            (actual - expected).abs() < px(0.001),
+            "{actual:?} is not {expected:?}"
+        );
+    }
+
+    #[test]
+    fn a_run_with_a_size_of_its_own_is_shaped_at_that_size() {
+        let text_system = noop_text_system();
+        let line = text_system.shape_line(
+            "prose code".into(),
+            px(15.),
+            &[sized_run(6, None), sized_run(4, Some(px(10.)))],
+            None,
+        );
+        let prose = text_system.shape_line("prose ".into(), px(15.), &[sized_run(6, None)], None);
+        let code = text_system.shape_line("code".into(), px(10.), &[sized_run(4, None)], None);
+
+        let sizes = line.layout.runs.iter().map(|run| run.font_size);
+        assert_eq!(sizes.collect::<Vec<_>>(), [px(15.), px(10.)]);
+        assert_close(line.layout.x_for_index(6), prose.width);
+        assert_close(line.width, prose.width + code.width);
+    }
+
+    #[test]
+    fn a_line_is_as_tall_as_its_largest_run() {
+        let text_system = noop_text_system();
+        let at = |runs: &[TextRun]| text_system.shape_line("ab".into(), px(15.), runs, None);
+        let line = at(&[sized_run(2, None)]);
+        let (ascent, descent) = (line.layout.ascent, line.layout.descent);
+
+        let smaller = at(&[sized_run(1, None), sized_run(1, Some(px(10.)))]);
+        assert_eq!(
+            (smaller.layout.ascent, smaller.layout.descent),
+            (ascent, descent)
+        );
+
+        let larger = at(&[sized_run(1, None), sized_run(1, Some(px(30.)))]);
+        assert_eq!(larger.layout.ascent, ascent * 2.);
+        assert_eq!(larger.layout.descent, descent * 2.);
+
+        let all_smaller = at(&[sized_run(2, Some(px(7.5)))]);
+        assert_eq!(all_smaller.layout.ascent, ascent / 2.);
+    }
+
+    #[test]
+    fn a_run_at_the_size_of_the_text_lays_out_as_if_it_had_none() {
+        let text_system = noop_text_system();
+        let unsized_layout = text_system.layout_line("ab", px(15.), &[sized_run(2, None)], None);
+        let sized_layout = text_system.layout_line(
+            "ab",
+            px(15.),
+            &[sized_run(1, None), sized_run(1, Some(px(15.)))],
+            None,
+        );
+        assert!(Arc::ptr_eq(&unsized_layout, &sized_layout));
+    }
+
+    #[test]
+    fn layouts_that_differ_only_in_a_run_size_are_cached_apart() {
+        let text_system = noop_text_system();
+        let layout = |font_size| {
+            text_system.layout_line("ab", px(15.), &[sized_run(2, Some(font_size))], None)
+        };
+        assert_close(layout(px(10.)).width * 2., layout(px(20.)).width);
+    }
+
+    #[test]
+    fn wrapping_measures_each_run_at_its_size() {
+        let text_system = noop_text_system();
+        let wraps = |runs: &[TextRun]| {
+            let lines = text_system
+                .shape_text("aaaa bbbb".into(), px(15.), runs, Some(px(75.)), None)
+                .unwrap();
+            lines[0].layout.wrap_boundaries.len()
+        };
+        // Each character advances 0.6 em: 81px at 15px, 69px when "bbbb" is at 10px.
+        assert_eq!(wraps(&[sized_run(9, None)]), 1);
+        assert_eq!(wraps(&[sized_run(5, None), sized_run(4, Some(px(10.)))]), 0);
+    }
+
     fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
         ShapedGlyph {
             id: GlyphId(0),
@@ -895,6 +998,7 @@ mod tests {
             descent: px(4.),
             runs: vec![ShapedRun {
                 font_id: FontId(0),
+                font_size: px(16.),
                 glyphs,
             }],
             len: 0,

@@ -34,6 +34,7 @@ pub fn test_missing_glyph_notifications() -> Result<(), JsValue> {
     let runs = [FontRun {
         len: text.len(),
         font_id,
+        font_size: None,
     }];
     let layout = text_system.layout_line(text, px(24.), &runs);
     assert!(
@@ -68,6 +69,7 @@ pub fn test_missing_glyph_notifications() -> Result<(), JsValue> {
             &[FontRun {
                 len: text.len(),
                 font_id,
+                font_size: None,
             }],
         );
         let glyphs = layout
@@ -101,6 +103,7 @@ pub fn test_missing_glyph_notifications() -> Result<(), JsValue> {
         &[FontRun {
             len: bundled.len(),
             font_id,
+            font_size: None,
         }],
     );
     for run in &layout.runs {

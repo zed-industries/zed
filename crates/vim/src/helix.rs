@@ -1360,6 +1360,7 @@ impl Vim {
             let run = gpui::TextRun {
                 len: text.len(),
                 font: font.clone(),
+                font_size: None,
                 color: Hsla::default(),
                 background_color: None,
                 underline: None,

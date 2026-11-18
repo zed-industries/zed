@@ -566,6 +566,7 @@ impl TextStyle {
                 weight: self.font_weight,
                 style: self.font_style,
             },
+            font_size: None,
             color: self.color,
             background_color: self.background_color,
             underline: self.underline,
