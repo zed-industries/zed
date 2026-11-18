@@ -466,7 +466,8 @@ async fn test_browser_navigates_after_child_configuration(cx: &mut TestAppContex
             adapter: "fake-adapter".into(),
             label: "Browser".into(),
             config: json!({
-                "type": "pwa-chrome", "request": "launch", "url": "about:blank",
+                "type": "pwa-chrome", "request": "launch", "url": url,
+                "skipNavigateForTest": true,
                 dap::adapters::ZED_BROWSER_LAUNCH_URL: url,
             }),
             tcp_connection: None,

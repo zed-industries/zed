@@ -674,7 +674,10 @@ fn configure_browser_navigation(configuration: &mut serde_json::Map<String, Valu
     configuration.insert(dap::adapters::ZED_BROWSER_LAUNCH_URL.to_owned(), url);
     // js-debug can deadlock on a cached service worker if navigation starts before
     // the page's child session is bound and its queued CDP events can be processed.
-    configuration.insert("url".to_owned(), "about:blank".into());
+    // `url` stays so js-debug still opens the browser on about:blank and maps sources
+    // against it; replacing it with about:blank made js-debug navigate there after
+    // the launch, which could undo the navigation Zed already started.
+    configuration.insert("skipNavigateForTest".to_owned(), true.into());
 }
 
 #[cfg(test)]
@@ -691,7 +694,8 @@ mod tests {
                 "runtimeArgs": ["--user-data-dir=/chrome-dev"],
             });
             configure_browser_navigation(configuration.as_object_mut().expect("configuration"));
-            assert_eq!(configuration["url"], "about:blank");
+            assert_eq!(configuration["url"], "http://localhost:3000/");
+            assert_eq!(configuration["skipNavigateForTest"], true);
             assert_eq!(configuration["urlFilter"], "http://localhost:3000/");
             assert_eq!(
                 configuration[dap::adapters::ZED_BROWSER_LAUNCH_URL],
