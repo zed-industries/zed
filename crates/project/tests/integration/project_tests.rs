@@ -1354,133 +1354,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
-async fn test_project_debug_scenarios_load_with_db_trusted_path(cx: &mut gpui::TestAppContext) {
-    use project::trusted_worktrees::{self, DbTrustedPaths};
-
-    init_test(cx);
-    TaskStore::init(None);
-
-    let mut db_trusted = DbTrustedPaths::default();
-    db_trusted
-        .entry(None)
-        .or_default()
-        .insert(PathBuf::from(path!("/dir")));
-    cx.update(|cx| trusted_worktrees::init(db_trusted, cx));
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/dir"),
-        json!({
-            ".zed": {
-                "settings.json": r#"{ "tab_size": 8 }"#,
-                "tasks.json": r#"[{ "label": "my-task", "command": "echo hello" }]"#,
-                "debug.json": r#"[{ "label": "my-debug", "adapter": "Debugpy", "request": "launch" }]"#,
-            },
-            "file.rs": ""
-        }),
-    )
-    .await;
-
-    let project = Project::test_with_worktree_trust(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    cx.run_until_parked();
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-    let worktree_id = worktree_store.read_with(cx, |store, cx| {
-        store.worktrees().next().unwrap().read(cx).id()
-    });
-    let inventory = project.read_with(cx, |project, cx| {
-        project
-            .task_store()
-            .read(cx)
-            .task_inventory()
-            .unwrap()
-            .clone()
-    });
-    let contexts = TaskContexts {
-        active_worktree_context: Some((worktree_id, TaskContext::default())),
-        ..Default::default()
-    };
-
-    let (_, scenarios) = inventory
-        .update(cx, |inventory, cx| {
-            inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
-        })
-        .await;
-    assert_eq!(
-        scenarios.len(),
-        1,
-        "debug.json should load when worktree path is pre-trusted in DB"
-    );
-    assert_eq!(scenarios[0].1.label, "my-debug");
-}
-
-#[gpui::test]
-async fn test_project_debug_scenarios_load_with_case_different_db_trusted_path(
-    cx: &mut gpui::TestAppContext,
-) {
-    use project::trusted_worktrees::{self, DbTrustedPaths};
-
-    init_test(cx);
-    TaskStore::init(None);
-
-    // Simulate a DB-trusted path with different casing than the worktree path.
-    // On a case-insensitive filesystem, "/DIR" and "/dir" refer to the same location.
-    // The DB might store a path with different casing than how the worktree is opened
-    // (e.g., user opens from command line vs. file picker).
-    // We use FakeFs with case_sensitive=false to simulate this cross-platform.
-    let mut db_trusted = DbTrustedPaths::default();
-    db_trusted
-        .entry(None)
-        .or_default()
-        .insert(PathBuf::from(path!("/DIR")));
-    cx.update(|cx| trusted_worktrees::init(db_trusted, cx));
-
-    let fs = FakeFs::new(cx.executor());
-    fs.set_case_sensitive(false);
-    fs.insert_tree(
-        path!("/dir"),
-        json!({
-            ".zed": {
-                "settings.json": r#"{ "tab_size": 8 }"#,
-                "debug.json": r#"[{ "label": "case-test", "adapter": "Debugpy", "request": "launch" }]"#,
-            },
-            "file.rs": ""
-        }),
-    )
-    .await;
-
-    let project = Project::test_with_worktree_trust(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    cx.run_until_parked();
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-    let worktree_id = worktree_store.read_with(cx, |store, cx| {
-        store.worktrees().next().unwrap().read(cx).id()
-    });
-    let inventory = project.read_with(cx, |project, cx| {
-        project
-            .task_store()
-            .read(cx)
-            .task_inventory()
-            .unwrap()
-            .clone()
-    });
-    let contexts = TaskContexts {
-        active_worktree_context: Some((worktree_id, TaskContext::default())),
-        ..Default::default()
-    };
-
-    let (_, scenarios) = inventory
-        .update(cx, |inventory, cx| {
-            inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
-        })
-        .await;
-    assert_eq!(
-        scenarios.len(),
-        1,
-        "debug.json should load even when DB-trusted path has different casing"
-    );
-    assert_eq!(scenarios[0].1.label, "case-test");
-}
-
-#[gpui::test]
 async fn test_project_tasks_and_debug_scenarios_require_trust(cx: &mut gpui::TestAppContext) {
     use project::trusted_worktrees::{self, DbTrustedPaths, PathTrust, TrustedWorktrees};
 
@@ -1565,6 +1438,62 @@ async fn test_project_tasks_and_debug_scenarios_require_trust(cx: &mut gpui::Tes
     assert_eq!(templates.len(), 1);
     assert_eq!(templates[0].1.label, "updated");
     assert_eq!(templates[0].1.command, "echo updated");
+    let (_, scenarios) = inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
+        })
+        .await;
+    assert_eq!(scenarios.len(), 1);
+    assert_eq!(scenarios[0].1.label, "debug");
+}
+
+#[cfg(windows)]
+#[gpui::test]
+async fn test_debug_scenarios_load_with_differently_cased_db_trusted_path(
+    cx: &mut gpui::TestAppContext,
+) {
+    use project::trusted_worktrees::{self, DbTrustedPaths};
+    use util::paths::SanitizedPath;
+
+    init_test(cx);
+    cx.executor().allow_parking();
+    TaskStore::init(None);
+
+    let dir = TempTree::new(json!({
+        "Project": {
+            ".zed": {
+                "debug.json": r#"[{ "label": "debug", "adapter": "Debugpy", "request": "launch" }]"#,
+            },
+        },
+    }));
+    let root = SanitizedPath::new(dir.path()).as_path().to_path_buf();
+    let db_trusted_paths =
+        DbTrustedPaths::from_iter([(None, HashSet::from_iter([root.join("project")]))]);
+    cx.update(|cx| trusted_worktrees::init(db_trusted_paths, cx));
+
+    let project = Project::test_with_worktree_trust(
+        RealFs::new(None, cx.executor()),
+        [root.join("Project").as_path()],
+        cx,
+    )
+    .await;
+    cx.run_until_parked();
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let inventory = project.read_with(cx, |project, cx| {
+        project
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .unwrap()
+            .clone()
+    });
+    let contexts = TaskContexts {
+        active_worktree_context: Some((worktree_id, TaskContext::default())),
+        ..Default::default()
+    };
     let (_, scenarios) = inventory
         .update(cx, |inventory, cx| {
             inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
