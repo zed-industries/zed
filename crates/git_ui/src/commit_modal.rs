@@ -656,7 +656,7 @@ impl Render for CommitModal {
                     .id("editor-container")
                     .cursor_text()
                     .p_2()
-                    .size_full()
+                    .flex_1()
                     .gap_2()
                     .justify_between()
                     .rounded(properties.editor_border_radius())

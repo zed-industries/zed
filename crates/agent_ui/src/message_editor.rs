@@ -759,7 +759,13 @@ impl MessageEditor {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).text(cx).trim().is_empty()
+        self.editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .chars_at(MultiBufferOffset(0))
+            .all(char::is_whitespace)
     }
 
     pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
