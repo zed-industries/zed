@@ -44,6 +44,7 @@ const EXIT_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis
 
 fn mcp_configurations_for_project(
     project: &Entity<Project>,
+    agent_runs_locally: bool,
     cx: &App,
 ) -> Vec<(String, Arc<ContextServerConfiguration>)> {
     let store = project.read(cx).context_server_store().read(cx);
@@ -56,7 +57,7 @@ fn mcp_configurations_for_project(
             match &*configuration {
                 ContextServerConfiguration::Custom { remote, .. }
                 | ContextServerConfiguration::Extension { remote, .. }
-                    if !is_local && !remote =>
+                    if !is_local && *remote == agent_runs_locally =>
                 {
                     None
                 }
@@ -64,6 +65,16 @@ fn mcp_configurations_for_project(
             }
         })
         .collect()
+}
+
+fn agent_runs_locally(
+    agent_server_store: &WeakEntity<AgentServerStore>,
+    agent_id: &AgentId,
+    cx: &App,
+) -> bool {
+    agent_server_store
+        .read_with(cx, |store, _| store.agent_runs_locally(agent_id))
+        .unwrap_or(false)
 }
 
 fn work_dirs_from_session_info(cwd: PathBuf, additional_directories: Vec<PathBuf>) -> PathList {

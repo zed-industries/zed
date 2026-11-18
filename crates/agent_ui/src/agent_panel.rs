@@ -7040,6 +7040,7 @@ mod tests {
                 content.agent_servers.get_or_insert_default().insert(
                     id.to_string(),
                     settings::CustomAgentServerSettings::Custom {
+                        remote: true,
                         path: PathBuf::from("/usr/bin/fake-agent"),
                         args: Vec::new(),
                         env: Default::default(),

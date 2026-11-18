@@ -7,6 +7,7 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
 };
+use util::serde::default_true;
 
 use crate::ExtendingVec;
 
@@ -845,6 +846,11 @@ impl From<bool> for AgentConfigOptionValue {
     }
 }
 
+/// skip_serializing_if truth helper
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 #[with_fallible_options]
 #[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -857,6 +863,19 @@ pub enum CustomAgentServerSettings {
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         env: HashMap<String, String>,
+        /// Whether to run this agent on the remote server when using remote development.
+        ///
+        /// If this is false, the agent process runs on the local machine, and communicates
+        /// with Zed over ACP. The agent can then only reach the remote project through the
+        /// ACP file system and terminal requests that Zed serves, or through its own
+        /// means (for example an SSH backend).
+        ///
+        /// This only applies to agents defined in your user settings. Agents defined in a
+        /// remote server's settings always run on that server.
+        ///
+        /// Default: true
+        #[serde(default = "default_true", skip_serializing_if = "is_true")]
+        remote: bool,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.

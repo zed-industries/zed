@@ -140,6 +140,10 @@ pub trait ExternalAgentServer {
 
     fn set_loading_status_tx(&mut self, _tx: watch::Sender<Option<String>>) {}
 
+    fn runs_locally(&self) -> bool {
+        false
+    }
+
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -158,6 +162,10 @@ enum AgentServerStoreState {
         project_id: u64,
         upstream_client: Entity<RemoteClient>,
         worktree_store: Entity<WorktreeStore>,
+        server_agent_names: Vec<String>,
+        client_agents: HashMap<String, AgentServerCommand>,
+        client_environment: Entity<ProjectEnvironment>,
+        _subscriptions: Vec<Subscription>,
     },
     Collab,
 }
@@ -368,6 +376,7 @@ impl AgentServerStore {
                             Box::new(LocalCustomAgent {
                                 command: command.clone(),
                                 project_environment: project_environment.clone(),
+                                environment: CustomAgentEnvironment::Project,
                             }) as Box<dyn ExternalAgentServer>,
                             ExternalAgentSource::Custom,
                             None,
@@ -532,15 +541,129 @@ impl AgentServerStore {
         project_id: u64,
         upstream_client: Entity<RemoteClient>,
         worktree_store: Entity<WorktreeStore>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        Self {
+        let client_environment =
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx));
+        let subscriptions = vec![cx.observe_global::<SettingsStore>(|this, cx| {
+            this.client_agent_settings_changed(cx);
+        })];
+        let mut this = Self {
             state: AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
                 worktree_store,
+                server_agent_names: Vec::new(),
+                client_agents: client_agent_commands(cx),
+                client_environment,
+                _subscriptions: subscriptions,
             },
             external_agents: HashMap::default(),
+        };
+        this.refresh_remote_agents(cx);
+        this
+    }
+
+    fn client_agent_settings_changed(&mut self, cx: &mut Context<Self>) {
+        let new_client_agents = client_agent_commands(cx);
+        let AgentServerStoreState::Remote { client_agents, .. } = &mut self.state else {
+            debug_panic!("client agent settings should only be observed in remote projects");
+            return;
+        };
+        if *client_agents == new_client_agents {
+            return;
         }
+        *client_agents = new_client_agents;
+        self.refresh_remote_agents(cx);
+    }
+
+    fn refresh_remote_agents(&mut self, cx: &mut Context<Self>) {
+        let AgentServerStoreState::Remote {
+            project_id,
+            upstream_client,
+            worktree_store,
+            server_agent_names,
+            client_agents,
+            client_environment,
+            ..
+        } = &self.state
+        else {
+            debug_panic!("refresh_remote_agents should only be called for a remote project");
+            return;
+        };
+
+        let mut previous_entries = std::mem::take(&mut self.external_agents);
+        let mut new_version_available_txs = HashMap::default();
+        let mut loading_status_txs = HashMap::default();
+        let mut metadata = HashMap::default();
+
+        for (name, mut entry) in previous_entries.drain() {
+            if let Some(tx) = entry.server.take_new_version_available_tx() {
+                new_version_available_txs.insert(name.clone(), tx);
+            }
+            if let Some(tx) = entry.server.take_loading_status_tx() {
+                loading_status_txs.insert(name.clone(), tx);
+            }
+
+            metadata.insert(name, (entry.icon, entry.display_name, entry.source));
+        }
+
+        self.external_agents = server_agent_names
+            .iter()
+            .filter(|name| !client_agents.contains_key(*name))
+            .map(|name| {
+                let agent_id = AgentId(name.clone().into());
+                let (icon, display_name, source) = metadata
+                    .remove(&agent_id)
+                    .or_else(|| {
+                        AgentRegistryStore::try_global(cx)
+                            .and_then(|store| store.read(cx).agent(&agent_id))
+                            .map(|s| {
+                                (
+                                    s.icon_path().cloned(),
+                                    Some(s.name().clone()),
+                                    ExternalAgentSource::Registry,
+                                )
+                            })
+                    })
+                    .unwrap_or((None, None, ExternalAgentSource::default()));
+                let agent = RemoteExternalAgentServer {
+                    project_id: *project_id,
+                    upstream_client: upstream_client.clone(),
+                    worktree_store: worktree_store.clone(),
+                    name: agent_id.clone(),
+                    new_version_available_tx: new_version_available_txs.remove(&agent_id),
+                    loading_status_tx: loading_status_txs.remove(&agent_id),
+                };
+                (
+                    agent_id,
+                    ExternalAgentEntry::new(
+                        Box::new(agent) as Box<dyn ExternalAgentServer>,
+                        source,
+                        icon,
+                        display_name,
+                    ),
+                )
+            })
+            .collect();
+
+        for (name, command) in client_agents {
+            self.external_agents.insert(
+                AgentId(name.clone().into()),
+                ExternalAgentEntry::new(
+                    Box::new(LocalCustomAgent {
+                        command: command.clone(),
+                        project_environment: client_environment.clone(),
+                        environment: CustomAgentEnvironment::Home,
+                    }) as Box<dyn ExternalAgentServer>,
+                    ExternalAgentSource::Custom,
+                    None,
+                    None,
+                ),
+            );
+        }
+
+        cx.emit(AgentServersUpdated);
     }
 
     pub fn collab() -> Self {
@@ -606,6 +729,12 @@ impl AgentServerStore {
 
     pub fn has_external_agents(&self) -> bool {
         !self.external_agents.is_empty()
+    }
+
+    pub fn agent_runs_locally(&self, name: &AgentId) -> bool {
+        self.external_agents
+            .get(name)
+            .is_some_and(|entry| entry.server.runs_locally())
     }
 
     pub fn external_agents(&self) -> impl Iterator<Item = &AgentId> {
@@ -716,73 +845,16 @@ impl AgentServerStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let AgentServerStoreState::Remote {
-                project_id,
-                upstream_client,
-                worktree_store,
-            } = &this.state
+                server_agent_names, ..
+            } = &mut this.state
             else {
                 debug_panic!(
                     "handle_external_agents_updated should not be called for a non-remote project"
                 );
                 bail!("unexpected ExternalAgentsUpdated message")
             };
-
-            let mut previous_entries = std::mem::take(&mut this.external_agents);
-            let mut new_version_available_txs = HashMap::default();
-            let mut loading_status_txs = HashMap::default();
-            let mut metadata = HashMap::default();
-
-            for (name, mut entry) in previous_entries.drain() {
-                if let Some(tx) = entry.server.take_new_version_available_tx() {
-                    new_version_available_txs.insert(name.clone(), tx);
-                }
-                if let Some(tx) = entry.server.take_loading_status_tx() {
-                    loading_status_txs.insert(name.clone(), tx);
-                }
-
-                metadata.insert(name, (entry.icon, entry.display_name, entry.source));
-            }
-
-            this.external_agents = envelope
-                .payload
-                .names
-                .into_iter()
-                .map(|name| {
-                    let agent_id = AgentId(name.into());
-                    let (icon, display_name, source) = metadata
-                        .remove(&agent_id)
-                        .or_else(|| {
-                            AgentRegistryStore::try_global(cx)
-                                .and_then(|store| store.read(cx).agent(&agent_id))
-                                .map(|s| {
-                                    (
-                                        s.icon_path().cloned(),
-                                        Some(s.name().clone()),
-                                        ExternalAgentSource::Registry,
-                                    )
-                                })
-                        })
-                        .unwrap_or((None, None, ExternalAgentSource::default()));
-                    let agent = RemoteExternalAgentServer {
-                        project_id: *project_id,
-                        upstream_client: upstream_client.clone(),
-                        worktree_store: worktree_store.clone(),
-                        name: agent_id.clone(),
-                        new_version_available_tx: new_version_available_txs.remove(&agent_id),
-                        loading_status_tx: loading_status_txs.remove(&agent_id),
-                    };
-                    (
-                        agent_id,
-                        ExternalAgentEntry::new(
-                            Box::new(agent) as Box<dyn ExternalAgentServer>,
-                            source,
-                            icon,
-                            display_name,
-                        ),
-                    )
-                })
-                .collect();
-            cx.emit(AgentServersUpdated);
+            *server_agent_names = envelope.payload.names;
+            this.refresh_remote_agents(cx);
             Ok(())
         })
     }
@@ -1544,9 +1616,18 @@ fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
     (package_name, format!("{package_name}@0.0.0 - {version}"))
 }
 
+/// Where a custom agent's base environment comes from.
+enum CustomAgentEnvironment {
+    Project,
+    /// For agents running on this machine in a remote project, whose worktrees
+    /// aren't available locally.
+    Home,
+}
+
 struct LocalCustomAgent {
     project_environment: Entity<ProjectEnvironment>,
     command: AgentServerCommand,
+    environment: CustomAgentEnvironment,
 }
 
 impl ExternalAgentServer for LocalCustomAgent {
@@ -1558,19 +1639,30 @@ impl ExternalAgentServer for LocalCustomAgent {
     ) -> Task<Result<AgentServerCommand>> {
         let mut command = self.command.clone();
         let project_environment = self.project_environment.downgrade();
+        let use_client_home = matches!(self.environment, CustomAgentEnvironment::Home);
         cx.spawn(async move |cx| {
-            let mut env = project_environment
-                .update(cx, |project_environment, cx| {
+            let base_environment = project_environment.update(cx, |project_environment, cx| {
+                if use_client_home {
+                    project_environment.local_directory_environment(
+                        &task::Shell::System,
+                        Arc::from(paths::home_dir().as_path()),
+                        cx,
+                    )
+                } else {
                     project_environment.default_environment(cx)
-                })?
-                .await
-                .unwrap_or_default();
+                }
+            })?;
+            let mut env = base_environment.await.unwrap_or_default();
             env.extend(command.env.unwrap_or_default());
             env.extend(extra_env);
             command.env = Some(env);
             command.args.extend(extra_args);
             Ok(command)
         })
+    }
+
+    fn runs_locally(&self) -> bool {
+        matches!(self.environment, CustomAgentEnvironment::Home)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -1580,6 +1672,24 @@ impl ExternalAgentServer for LocalCustomAgent {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+fn client_agent_commands(cx: &gpui::App) -> HashMap<String, AgentServerCommand> {
+    let Some(store) = cx.try_global::<SettingsStore>() else {
+        return HashMap::default();
+    };
+    store
+        .get::<AllAgentServersSettings>(None)
+        .iter()
+        .filter_map(|(name, settings)| match settings {
+            CustomAgentServerSettings::Custom {
+                command,
+                remote: false,
+                ..
+            } => Some((name.clone(), command.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
@@ -1610,6 +1720,10 @@ impl AllAgentServersSettings {
 pub enum CustomAgentServerSettings {
     Custom {
         command: AgentServerCommand,
+        /// Whether the agent runs on the remote server when using remote development.
+        ///
+        /// Default: true
+        remote: bool,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.
@@ -1713,12 +1827,14 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
+                remote,
             } => CustomAgentServerSettings::Custom {
                 command: AgentServerCommand {
                     path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
                     args,
                     env: Some(env),
                 },
+                remote,
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
@@ -2461,5 +2577,52 @@ mod tests {
                 "agent-b tx should have been transferred"
             );
         });
+    }
+
+    #[cfg(test)]
+    fn parse_custom_agent(value: serde_json::Value) -> CustomAgentServerSettings {
+        let settings: settings::CustomAgentServerSettings =
+            serde_json::from_value(value).expect("agent settings should deserialize");
+        settings.into()
+    }
+
+    #[test]
+    fn custom_agents_run_remotely_unless_configured_otherwise() {
+        let default_agent = parse_custom_agent(serde_json::json!({
+            "type": "custom",
+            "command": "hermes",
+            "args": ["acp"],
+        }));
+        assert!(matches!(
+            default_agent,
+            CustomAgentServerSettings::Custom { remote: true, .. }
+        ));
+
+        let local_agent = parse_custom_agent(serde_json::json!({
+            "type": "custom",
+            "command": "hermes",
+            "args": ["acp"],
+            "remote": false,
+        }));
+        assert!(matches!(
+            local_agent,
+            CustomAgentServerSettings::Custom { remote: false, .. }
+        ));
+    }
+
+    #[test]
+    fn remote_setting_is_only_serialized_when_disabled() {
+        let remote_by_default: settings::CustomAgentServerSettings =
+            serde_json::from_value(serde_json::json!({ "type": "custom", "command": "hermes" }))
+                .expect("agent settings should deserialize");
+        let serialized = serde_json::to_value(&remote_by_default).expect("should serialize");
+        assert_eq!(serialized.get("remote"), None);
+
+        let local: settings::CustomAgentServerSettings = serde_json::from_value(
+            serde_json::json!({ "type": "custom", "command": "hermes", "remote": false }),
+        )
+        .expect("agent settings should deserialize");
+        let serialized = serde_json::to_value(&local).expect("should serialize");
+        assert_eq!(serialized.get("remote"), Some(&serde_json::json!(false)));
     }
 }

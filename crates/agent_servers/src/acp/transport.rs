@@ -31,6 +31,7 @@ pub(super) struct StdioProcess {
 pub(super) fn spawn_stdio(
     project: &Entity<Project>,
     command: AgentServerCommand,
+    run_locally: bool,
     cx: &AsyncApp,
 ) -> Result<StdioProcess> {
     let root_dir = project.read_with(cx, |project, cx| {
@@ -43,6 +44,7 @@ pub(super) fn spawn_stdio(
     let remote_command = project.read_with(cx, |project, cx| {
         project
             .remote_client()
+            .filter(|_| !run_locally)
             .map(|client| {
                 client.read(cx).build_stdio_command(RemoteCommand {
                     program: command.path.display().to_string(),
@@ -184,7 +186,7 @@ mod tests {
                 mut outgoing,
                 stderr,
                 debug_log,
-            } = spawn_stdio(&project, command.clone(), &cx.to_async())
+            } = spawn_stdio(&project, command.clone(), false, &cx.to_async())
                 .expect("spawn fresh transport");
             let stderr_task = cx.background_executor.spawn(stderr);
             let params = serde_json::json!({ "attempt": attempt });

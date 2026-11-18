@@ -1673,11 +1673,12 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let agent_server_store = cx.new(|_| {
+            let agent_server_store = cx.new(|cx| {
                 AgentServerStore::remote(
                     REMOTE_SERVER_PROJECT_ID,
                     remote.clone(),
                     worktree_store.clone(),
+                    cx,
                 )
             });
 
