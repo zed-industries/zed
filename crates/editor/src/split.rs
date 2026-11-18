@@ -663,6 +663,13 @@ impl SplittableEditor {
                     cx.notify();
                 }
             }),
+            // Other entities can keep the rhs editor alive after this editor is released.
+            // Without this teardown, its shared scroll anchor can reference the released lhs display map.
+            cx.on_release(|this, cx| {
+                if let Some(lhs) = this.lhs.take() {
+                    Self::detach_lhs(lhs, &this.rhs_editor, cx);
+                }
+            }),
         ];
 
         let this = cx.weak_entity();
@@ -4570,6 +4577,72 @@ mod tests {
             lhs_pos.x, rhs_pos.x,
             "LHS should have same horizontal scroll position as RHS after autoscroll"
         )
+    }
+
+    #[gpui::test]
+    async fn test_rhs_editor_outlives_released_split(cx: &mut gpui::TestAppContext) {
+        use multi_buffer::ToPoint as _;
+        use rope::Point;
+
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let content = (0..50)
+            .map(|row| format!("line {row}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (buffer, diff) = buffer_with_diff(&content, &content, cx);
+
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let (rhs_editor, lhs_editor) = editor.update(cx, |editor, _cx| {
+            let lhs = editor.lhs.as_ref().expect("should have lhs editor");
+            (editor.rhs_editor.clone(), lhs.editor.clone())
+        });
+
+        // Scroll from the lhs so that the shared anchor is native to the lhs display map.
+        lhs_editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(gpui::Point::new(0., 10.), window, cx);
+        });
+        cx.run_until_parked();
+
+        let expected_row = rhs_editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            editor
+                .scroll_manager
+                .native_anchor(&snapshot, cx)
+                .anchor
+                .to_point(snapshot.buffer_snapshot())
+                .row
+        });
+
+        let lhs_display_map = lhs_editor.read_with(cx, |editor, _| editor.display_map.downgrade());
+        drop(lhs_editor);
+        drop(editor);
+        cx.update(|_, _| {});
+        assert!(
+            lhs_display_map.upgrade().is_none(),
+            "lhs display map should be released with the split editor"
+        );
+
+        rhs_editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let anchor = editor.scroll_manager.native_anchor(&snapshot, cx);
+            assert_eq!(
+                anchor.anchor.to_point(snapshot.buffer_snapshot()).row,
+                expected_row,
+                "rhs editor should keep its scroll position after the split editor is released"
+            );
+        });
     }
 
     #[gpui::test]
