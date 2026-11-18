@@ -29,7 +29,6 @@ askpass.workspace = true
 clap.workspace = true
 client.workspace = true
 collections.workspace = true
-crashes.workspace = true
 dap_adapters.workspace = true
 debug_adapter_extension.workspace = true
 env_logger.workspace = true
@@ -75,6 +74,9 @@ worktree.workspace = true
 thiserror.workspace = true
 rayon.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+
+[target.'cfg(not(target_os = "freebsd"))'.dependencies]
+crashes.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

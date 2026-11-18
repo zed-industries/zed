@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+freebsd_release=14.3-RELEASE
+freebsd_base_sha256=e38b5cf756d60086a6c2f736eff19cc7685f7e2313e31d14342fc8df57200a92
+
+usage() {
+    echo "Usage: $0 [--release]"
+}
+
+profile=debug
+cargo_arguments=()
+if (( $# > 1 )); then
+    usage >&2
+    exit 2
+fi
+case "${1:-}" in
+    "") ;;
+    --release)
+        profile=release
+        cargo_arguments+=(--release --config .cargo/bundle-config.toml)
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
+
+cd "$(dirname "$0")/.."
+mkdir -p target
+sysroot="${FREEBSD_SYSROOT:-$PWD/target/freebsd-sysroot}"
+if [[ ! -f "$sysroot/usr/include/stdio.h" ]]; then
+    download="$PWD/target/freebsd-download"
+    mkdir -p "$download" "$sysroot"
+    base_url="https://archive.freebsd.org/old-releases/amd64/$freebsd_release"
+    curl --fail --location --retry 3 "$base_url/base.txz" -o "$download/base.txz"
+    echo "$freebsd_base_sha256  $download/base.txz" | sha256sum --check
+    tar -xJf "$download/base.txz" -C "$sysroot" ./usr/include ./usr/lib ./lib ./libexec
+fi
+sysroot=$(cd "$sysroot" && pwd)
+
+# Zig applies --sysroot to every absolute -L path, including Cargo build outputs.
+# Use an overlay for FreeBSD's absolute-path libc linker script instead.
+link_directory="$PWD/target/freebsd-link"
+mkdir -p "$link_directory"
+for library in "$sysroot/usr/lib/"*; do
+    name=$(basename "$library")
+    if [[ "$name" != libc.so ]]; then
+        ln -sfn "$library" "$link_directory/$name"
+    fi
+done
+# cargo-zigbuild 0.22.1 drops these FreeBSD libraries from Rust's linker arguments.
+cat > "$link_directory/libc.so" <<EOF_LINKER
+GROUP ( $sysroot/lib/libc.so.7 $sysroot/usr/lib/libc_nonshared.a
+    AS_NEEDED ( $sysroot/usr/lib/libkvm.so $sysroot/usr/lib/libprocstat.so
+        $sysroot/usr/lib/libmemstat.so $sysroot/usr/lib/libdevstat.so ) )
+EOF_LINKER
+
+# Zig does not ship the FreeBSD headers and startup objects needed by native dependencies.
+export ZIG_LIBC="$PWD/target/freebsd-libc.txt"
+cat > "$ZIG_LIBC" <<EOF_LIBC
+include_dir=$sysroot/usr/include
+sys_include_dir=$sysroot/usr/include
+crt_dir=$link_directory
+msvc_lib_dir=
+kernel32_lib_dir=
+gcc_dir=
+EOF_LIBC
+export CFLAGS_x86_64_unknown_freebsd="--sysroot=$sysroot -isystem $sysroot/usr/include"
+export CXXFLAGS_x86_64_unknown_freebsd="$CFLAGS_x86_64_unknown_freebsd"
+export CARGO_TARGET_X86_64_UNKNOWN_FREEBSD_RUSTFLAGS="--cfg tokio_unstable -C symbol-mangling-version=v0 -L native=$sysroot/usr/lib -L native=$sysroot/lib"
+export PKG_CONFIG_SYSROOT_DIR_x86_64_unknown_freebsd="$sysroot"
+export PKG_CONFIG_LIBDIR_x86_64_unknown_freebsd="$sysroot/usr/libdata/pkgconfig"
+
+cargo zigbuild --locked "${cargo_arguments[@]}" --package remote_server --bin remote-server --target x86_64-unknown-freebsd
+if [[ "$profile" == release ]]; then
+    target_directory=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.target_directory')
+    binary="$target_directory/x86_64-unknown-freebsd/release/remote-server"
+    echo "Stripping release artifact..."
+    zig objcopy --strip-all "$binary" "$binary.stripped"
+    echo "Compressing release artifact..."
+    gzip -c --best "$binary.stripped" > "$target_directory/zed-remote-server-freebsd-x86_64.gz"
+    rm "$binary.stripped"
+fi

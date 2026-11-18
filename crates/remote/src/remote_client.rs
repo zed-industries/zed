@@ -56,6 +56,7 @@ use util::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RemoteOs {
     Linux,
+    FreeBsd,
     MacOs,
     Windows,
 }
@@ -64,6 +65,7 @@ impl RemoteOs {
     pub fn as_str(&self) -> &'static str {
         match self {
             RemoteOs::Linux => "linux",
+            RemoteOs::FreeBsd => "freebsd",
             RemoteOs::MacOs => "macos",
             RemoteOs::Windows => "windows",
         }
@@ -78,6 +80,7 @@ impl RemoteOs {
     pub fn display_name(&self) -> &'static str {
         match self {
             RemoteOs::Linux => "Linux",
+            RemoteOs::FreeBsd => "FreeBSD",
             RemoteOs::MacOs => "macOS",
             RemoteOs::Windows => "Windows",
         }

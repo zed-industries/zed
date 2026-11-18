@@ -29,9 +29,15 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    #[cfg(not(target_os = "freebsd"))]
     if let Some(socket) = &cli.crash_handler {
         crashes::crash_server(socket.as_path(), paths::logs_dir().clone());
         return Ok(());
+    }
+
+    #[cfg(target_os = "freebsd")]
+    if cli.crash_handler.is_some() {
+        anyhow::bail!("crash handler is not supported on this platform");
     }
 
     if cli.printenv {

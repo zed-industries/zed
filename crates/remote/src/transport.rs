@@ -32,10 +32,16 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
     let os = match os {
         "Darwin" => RemoteOs::MacOs,
         "Linux" => RemoteOs::Linux,
+        "FreeBSD" => RemoteOs::FreeBsd,
         _ => anyhow::bail!(
             "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
         ),
     };
+
+    anyhow::ensure!(
+        os != RemoteOs::FreeBsd || matches!(arch, "amd64" | "x86_64"),
+        "FreeBSD remote servers are only supported on x86_64 (amd64); received architecture {arch:?}"
+    );
 
     // exclude armv5,6,7 as they are 32-bit.
     let arch = if arch.starts_with("armv8")
@@ -44,7 +50,7 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
         || arch.starts_with("aarch64")
     {
         RemoteArch::Aarch64
-    } else if arch.starts_with("x86") {
+    } else if arch.starts_with("x86") || arch == "amd64" {
         RemoteArch::X86_64
     } else {
         anyhow::bail!(
@@ -62,7 +68,7 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
 pub(crate) fn os_version_command(os: RemoteOs) -> (&'static str, &'static [&'static str]) {
     match os {
         // Matches the `/etc/os-release` parsing in `client::telemetry::os_version`.
-        RemoteOs::Linux => ("cat", &["/etc/os-release"]),
+        RemoteOs::Linux | RemoteOs::FreeBsd => ("cat", &["/etc/os-release"]),
         RemoteOs::MacOs => ("sw_vers", &["-productVersion"]),
         // Prints e.g. "Microsoft Windows [Version 10.0.19045.5011]".
         RemoteOs::Windows => ("cmd.exe", &["/c", "ver"]),
@@ -72,17 +78,17 @@ pub(crate) fn os_version_command(os: RemoteOs) -> (&'static str, &'static [&'sta
 /// Parses the output of [`os_version_command`] into a human-readable version
 /// string, matching the conventions used by `client::telemetry::os_version`.
 ///
-/// For Linux this is `"{ID} {VERSION_ID}"` (e.g. `"ubuntu 24.04"`); for macOS it
-/// is the product version (e.g. `"15.6.1"`); for Windows it is the
-/// `major.minor.build` version (e.g. `"10.0.19045"`). Returns `None` if nothing
-/// usable could be parsed.
+/// For systems with `os-release` this is `"{ID} {VERSION_ID}"` (e.g.
+/// `"ubuntu 24.04"`); for macOS it is the product version (e.g. `"15.6.1"`); for
+/// Windows it is the `major.minor.build` version (e.g. `"10.0.19045"`). Returns
+/// `None` if nothing usable could be parsed.
 pub(crate) fn parse_os_version(os: RemoteOs, output: &str) -> Option<String> {
     let output = output.trim();
     if output.is_empty() {
         return None;
     }
     match os {
-        RemoteOs::Linux => util::parse_os_release(output),
+        RemoteOs::Linux | RemoteOs::FreeBsd => util::parse_os_release(output),
         RemoteOs::MacOs => {
             // `sw_vers -productVersion` prints a single version line.
             output
@@ -359,6 +365,7 @@ async fn build_remote_server_from_source(
                 } else {
                     "unknown-linux-gnu"
                 },
+            RemoteOs::FreeBsd => "unknown-freebsd",
             RemoteOs::MacOs => "apple-darwin",
             RemoteOs::Windows => "pc-windows-msvc",
         }
@@ -565,6 +572,10 @@ mod tests {
         assert_eq!(result.os, RemoteOs::MacOs);
         assert_eq!(result.arch, RemoteArch::Aarch64);
 
+        let result = parse_platform("FreeBSD amd64\n").unwrap();
+        assert_eq!(result.os, RemoteOs::FreeBsd);
+        assert_eq!(result.arch, RemoteArch::X86_64);
+
         let result = parse_platform("Linux x86_64").unwrap();
         assert_eq!(result.os, RemoteOs::Linux);
         assert_eq!(result.arch, RemoteArch::X86_64);
@@ -602,6 +613,28 @@ mod tests {
     }
 
     #[test]
+    fn test_freebsd_platform_architectures() -> Result<()> {
+        for architecture in ["amd64", "x86_64"] {
+            let platform = parse_platform(&format!("FreeBSD {architecture}\n"))?;
+            assert_eq!(platform.os, RemoteOs::FreeBsd);
+            assert_eq!(platform.arch, RemoteArch::X86_64);
+        }
+
+        for architecture in ["arm64", "aarch64", "armv8", "i386", "x86"] {
+            let Err(error) = parse_platform(&format!("FreeBSD {architecture}\n")) else {
+                anyhow::bail!("unexpectedly accepted FreeBSD {architecture}");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains("only supported on x86_64 (amd64)"),
+                "{error}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_os_version() {
         // Linux delegates to `util::parse_os_release` (tested there); confirm
         // the dispatch is wired up.
@@ -609,6 +642,10 @@ mod tests {
         assert_eq!(
             parse_os_version(RemoteOs::Linux, os_release),
             Some("ubuntu 24.04".to_string())
+        );
+        assert_eq!(
+            parse_os_version(RemoteOs::FreeBsd, "ID=freebsd\nVERSION_ID=14.3\n"),
+            Some("freebsd 14.3".to_string())
         );
 
         // macOS `sw_vers -productVersion` prints a bare version, possibly after

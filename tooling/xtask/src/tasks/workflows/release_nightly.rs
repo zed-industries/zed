@@ -4,7 +4,7 @@ use crate::tasks::workflows::{
         ReleaseBundleJobs, create_sentry_release, download_workflow_artifacts, notify_on_failure,
         prep_release_artifacts,
     },
-    run_bundling::{build_static_bwrap, bundle_linux, bundle_mac, bundle_windows},
+    run_bundling::{build_static_bwrap, bundle_freebsd, bundle_linux, bundle_mac, bundle_windows},
     run_tests::run_platform_tests_no_filter,
     runners::{Arch, Platform, ReleaseChannel},
     steps::{
@@ -31,6 +31,7 @@ pub fn release_nightly() -> Workflow {
     const NIGHTLY: Option<ReleaseChannel> = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {
+        freebsd_x86_64: bundle_freebsd(NIGHTLY, &[&tests]),
         linux_aarch64: bundle_linux(Arch::AARCH64, NIGHTLY, true, &[&tests]),
         linux_x86_64: bundle_linux(Arch::X86_64, NIGHTLY, true, &[&tests]),
         bwrap_linux_aarch64: build_static_bwrap(Arch::AARCH64, &[&tests]),

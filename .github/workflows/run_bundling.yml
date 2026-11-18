@@ -12,6 +12,57 @@ on:
 permissions:
   contents: read
 jobs:
+  bundle_freebsd:
+    if: |-
+      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_bundling::setup_freebsd_cross_build
+      run: echo "FREEBSD_SYSROOT=$GITHUB_WORKSPACE/target/freebsd-sysroot-$SYSROOT_CACHE_KEY" >> "$GITHUB_ENV"
+      env:
+        SYSROOT_CACHE_KEY: ${{ hashFiles('script/build-remote-server-freebsd') }}
+    - name: Cache FreeBSD sysroot
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        path: ${{ env.FREEBSD_SYSROOT }}
+    - name: run_bundling::setup_freebsd_cross_build
+      run: sudo apt-get update && sudo apt-get install -y cmake ninja-build protobuf-compiler jq
+    - name: run_bundling::setup_freebsd_cross_build
+      run: |
+        tools_directory="$RUNNER_TEMP/freebsd-build-tools"
+        mkdir -p "$tools_directory/cargo-zigbuild" "$tools_directory/zig"
+        curl --fail --location --retry 3 https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.22.1/cargo-zigbuild-x86_64-unknown-linux-musl.tar.xz -o "$tools_directory/cargo-zigbuild.tar.xz"
+        echo "b18ca96a420b4fce29cd397308289b1f34298ca9d425daa0b4450fc95ee3260b  $tools_directory/cargo-zigbuild.tar.xz" | sha256sum --check
+        curl --fail --location --retry 3 https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz -o "$tools_directory/zig.tar.xz"
+        echo "473ec26806133cf4d1918caf1a410f8403a13d979726a9045b421b685031a982  $tools_directory/zig.tar.xz" | sha256sum --check
+        tar -xJf "$tools_directory/cargo-zigbuild.tar.xz" -C "$tools_directory/cargo-zigbuild" --strip-components=1
+        tar -xJf "$tools_directory/zig.tar.xz" -C "$tools_directory/zig" --strip-components=1
+        echo "$tools_directory/cargo-zigbuild" >> "$GITHUB_PATH"
+        echo "$tools_directory/zig" >> "$GITHUB_PATH"
+        rustup target add x86_64-unknown-freebsd
+    - name: run_bundling::bundle_freebsd
+      run: ./script/build-remote-server-freebsd --release
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: zed-remote-server-freebsd-x86_64.gz
+        path: target/zed-remote-server-freebsd-x86_64.gz
+        if-no-files-found: error
+    timeout-minutes: 180
   bundle_linux_aarch64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
