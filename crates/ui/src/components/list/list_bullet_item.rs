@@ -107,7 +107,7 @@ impl Component for ListBulletItem {
 
         v_flex()
             .gap_6()
-            .child(example_group(basic_examples).vertical())
+            .child(example_group(basic_examples))
             .into_any_element()
     }
 }

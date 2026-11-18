@@ -197,8 +197,7 @@ impl Component for Animation {
                                 .into_any_element(),
                         ),
                     ],
-                )
-                .grow(),
+                ),
                 example_group_with_title(
                     "Fade and Animate In",
                     vec![
@@ -267,8 +266,7 @@ impl Component for Animation {
                                 .into_any_element(),
                         ),
                     ],
-                )
-                .grow(),
+                ),
             ])
             .into_any_element()
     }
