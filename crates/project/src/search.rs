@@ -1,7 +1,7 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::{Ok, Result};
 use client::proto;
-use fancy_regex::{Captures, Regex, RegexBuilder};
+use fancy_regex::{Captures, Expander, Regex, RegexBuilder};
 use gpui::Entity;
 use itertools::Itertools as _;
 use language::{Buffer, BufferSnapshot, CharKind};
@@ -463,6 +463,7 @@ impl SearchQuery {
                         x => unreachable!("Unexpected escape sequence: {}", x),
                     },
                 );
+                let replacement = delimit_capture_references(regex, &replacement);
                 let captures = regex
                     .captures_from_pos(line, hit.start)
                     .ok()
@@ -472,15 +473,11 @@ impl SearchQuery {
                     // The pattern is not guaranteed to match the whole line, for instance when
                     // searching within a selection that starts or ends mid-line, so fall back to
                     // matching the hit on its own.
-                    return Some(regex.replace(line.get(hit)?, |captures: &Captures<str>| {
-                        expand_replacement(regex, captures, &replacement)
-                    }));
+                    return Some(regex.replace(line.get(hit)?, replacement));
                 };
-                Some(Cow::Owned(expand_replacement(
-                    regex,
-                    &captures,
-                    &replacement,
-                )))
+                let mut replaced = String::new();
+                captures.expand(&replacement, &mut replaced);
+                Some(Cow::Owned(replaced))
             }
 
             SearchQuery::Regex {
@@ -697,29 +694,52 @@ impl SearchQuery {
     }
 }
 
-/// Expands capture group references in `replacement` the way the `regex` crate does: an
-/// unbraced reference such as `$1` or `$name` ends at the first character outside of
-/// `[0-9A-Za-z_]`.
-///
-/// `fancy_regex` treats every Unicode alphanumeric character as part of the reference instead,
-/// so `$1ème` would refer to a nonexistent group named `1ème` and expand to nothing.
-fn expand_replacement(regex: &Regex, captures: &Captures<str>, replacement: &str) -> String {
-    let mut expanded = String::new();
-    regex_automata::util::interpolate::string(
-        replacement,
-        |index, output| {
-            if let Some(group) = captures.get(index) {
-                output.push_str(group.as_str());
-            }
-        },
-        |name| {
-            regex
-                .capture_names()
-                .position(|group_name| group_name == Some(name))
-        },
-        &mut expanded,
-    );
-    expanded
+/// `fancy_regex` reads an unbraced capture reference up to the first character that is neither a
+/// Unicode alphanumeric nor `_`, so `$1ème` refers to a group named `1ème` and expands to nothing.
+/// Unless such a group exists, end the reference before its first non-ASCII character by rewriting
+/// it as `${1}ème`. Every other reference is left for `fancy_regex` to interpret.
+fn delimit_capture_references<'a>(regex: &Regex, replacement: &'a str) -> Cow<'a, str> {
+    let mut delimited = String::new();
+    let mut copied_len = 0;
+    let mut search_start = 0;
+    while let Some(offset) = replacement[search_start..].find('$') {
+        let name_start = search_start + offset + 1;
+        let rest = &replacement[name_start..];
+        if rest.starts_with('$') {
+            search_start = name_start + 1;
+            continue;
+        }
+        let name_len = rest
+            .find(|character: char| !(character.is_alphanumeric() || character == '_'))
+            .unwrap_or(rest.len());
+        let name_end = name_start + name_len;
+        search_start = name_end;
+        let name = &rest[..name_len];
+        let ascii_len = name
+            .find(|character: char| !character.is_ascii())
+            .unwrap_or(name_len);
+        if ascii_len == 0 || ascii_len == name_len {
+            continue;
+        }
+        // `Expander::check` looks the name up in the regex directly, whereas `Regex::capture_names`
+        // would allocate a list of every group.
+        let reference = &replacement[name_start - 1..name_end];
+        if Expander::default().check(reference, regex).is_ok() {
+            continue;
+        }
+        let ascii_end = name_start + ascii_len;
+        delimited.push_str(&replacement[copied_len..name_start]);
+        delimited.push('{');
+        delimited.push_str(&replacement[name_start..ascii_end]);
+        delimited.push('}');
+        copied_len = ascii_end;
+    }
+    if delimited.is_empty() {
+        Cow::Borrowed(replacement)
+    } else {
+        delimited.push_str(&replacement[copied_len..]);
+        Cow::Owned(delimited)
+    }
 }
 
 async fn detect_single_line(
@@ -917,5 +937,31 @@ mod tests {
         let line = "x2e";
         let hit = 1..line.len();
         assert_eq!(query.replacement_for(line, hit).as_deref(), Some("2ème"));
+    }
+
+    #[test]
+    fn test_replacement_for_keeps_other_capture_reference_syntax() {
+        for (pattern, replacement, line, expected) in [
+            // Braced references look up a group by name before trying it as an index.
+            (r"(?<2>a)b", "${2}", "ab", "a"),
+            (r"(?<02>a)(b)", "${02}", "ab", "a"),
+            // Braces around anything but a name are literal text.
+            (r"(a)", "${x:-default}", "a", "${x:-default}"),
+            (r"(a)", "${${${", "a", "${${${"),
+            (r"(a)", "$$1ème", "a", "$1ème"),
+            // An unbraced reference that names an existing group is used whole.
+            (r"(?<1ème>a)(b)", "$1ème", "ab", "a"),
+            (r"(?<aé>x)?(y)", "[$aé]", "y", "[]"),
+            (r"(?<数>\d+)", "$数", "12", "12"),
+            // ASCII word characters still extend an unbraced reference.
+            (r"old_(\w+)", "$1_old", "old_name", ""),
+            (r"old_(\w+)", "${1}_old", "old_name", "name_old"),
+        ] {
+            assert_eq!(
+                replace_first_hit(pattern, replacement, line).as_deref(),
+                Some(expected),
+                "replacing {pattern:?} with {replacement:?} in {line:?}"
+            );
+        }
     }
 }
