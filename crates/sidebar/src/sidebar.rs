@@ -715,6 +715,13 @@ fn workspace_menu_worktree_labels(
         .collect()
 }
 
+fn defer_menu_dismissal(menu: &WeakEntity<ContextMenu>, window: &mut Window, cx: &mut App) {
+    let menu = menu.clone();
+    window.defer(cx, move |_, cx| {
+        menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+    });
+}
+
 fn apply_worktree_label_mode(
     mut worktrees: Vec<ThreadItemWorktreeInfo>,
     mode: AgentThreadWorktreeLabel,
@@ -3147,9 +3154,7 @@ impl Sidebar {
                                                 );
                                             })
                                             .ok();
-                                        activate_weak_menu
-                                            .update(cx, |_, cx| cx.emit(DismissEvent))
-                                            .ok();
+                                        defer_menu_dismissal(&activate_weak_menu, window, cx);
                                     },
                                 );
                             }
@@ -3170,30 +3175,26 @@ impl Sidebar {
                                     ContextMenuEntry::new("Move Up")
                                         .action(Box::new(MoveProjectUp))
                                         .disabled(!can_move_up)
-                                        .handler(move |_window, cx| {
+                                        .handler(move |window, cx| {
                                             move_up_multi_workspace
                                                 .update(cx, |mw, cx| {
                                                     mw.move_project_group_up(&move_up_key, cx);
                                                 })
                                                 .ok();
-                                            move_up_weak_menu
-                                                .update(cx, |_, cx| cx.emit(DismissEvent))
-                                                .ok();
+                                            defer_menu_dismissal(&move_up_weak_menu, window, cx);
                                         }),
                                 )
                                 .item(
                                     ContextMenuEntry::new("Move Down")
                                         .action(Box::new(MoveProjectDown))
                                         .disabled(!can_move_down)
-                                        .handler(move |_window, cx| {
+                                        .handler(move |window, cx| {
                                             move_down_multi_workspace
                                                 .update(cx, |mw, cx| {
                                                     mw.move_project_group_down(&move_down_key, cx);
                                                 })
                                                 .ok();
-                                            move_down_weak_menu
-                                                .update(cx, |_, cx| cx.emit(DismissEvent))
-                                                .ok();
+                                            defer_menu_dismissal(&move_down_weak_menu, window, cx);
                                         }),
                                 )
                         });
@@ -3208,7 +3209,7 @@ impl Sidebar {
                                         .detach_and_log_err(cx);
                                 })
                                 .ok();
-                            weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                            defer_menu_dismissal(&weak_menu, window, cx);
                         })
                     });
 
