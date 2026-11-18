@@ -10583,3 +10583,218 @@ impl SubagentCompactionTest {
             .read_with(cx, |thread, _| assert!(thread.is_turn_complete()));
     }
 }
+
+/// Opens a saved copy of `thread`, the way reopening it after restarting Zed does.
+fn thread_from_db(
+    thread: &Entity<Thread>,
+    db_thread: DbThread,
+    project_context: &Entity<ProjectContext>,
+    cx: &mut TestAppContext,
+) -> Entity<Thread> {
+    cx.update(|cx| {
+        let thread = thread.read(cx);
+        let project = thread.project.clone();
+        let context_server_registry = thread.context_server_registry.clone();
+        let templates = thread.templates.clone();
+        cx.new(|cx| {
+            Thread::from_db(
+                acp_v2::SessionId::new("reopened"),
+                db_thread,
+                project,
+                project_context.clone(),
+                context_server_registry,
+                templates,
+                cx,
+            )
+        })
+    })
+}
+
+fn last_user_text(thread: &Thread) -> String {
+    let Some(Message::User(message)) = thread.last_message() else {
+        panic!("the thread should end with a user message");
+    };
+    message
+        .content
+        .iter()
+        .map(|content| match content {
+            UserMessageContent::Text(text) => text.as_str(),
+            _ => "",
+        })
+        .collect()
+}
+
+#[gpui::test]
+async fn test_background_command_running_when_saved_is_reported_as_interrupted(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    thread.update(cx, |thread, cx| {
+        let terminal = Rc::new(FakeTerminalHandle::new_never_exits(cx));
+        thread.register_background_command(
+            acp_v2::TerminalId::new("term-1"),
+            "make test".into(),
+            terminal,
+            cx,
+        );
+    });
+
+    let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(
+        db_thread.background_work,
+        vec![DbBackgroundWork::Command {
+            terminal_id: acp_v2::TerminalId::new("term-1"),
+            command: "make test".into(),
+        }]
+    );
+
+    let reopened = thread_from_db(&thread, db_thread, &project_context, cx);
+    cx.run_until_parked();
+    let notice = reopened.read_with(cx, |thread, _| {
+        assert!(!thread.has_background_work());
+        last_user_text(thread)
+    });
+    assert_eq!(
+        background_result_source(&notice),
+        Some(BackgroundResultSource::Command(Some(
+            acp_v2::TerminalId::new("term-1")
+        )))
+    );
+    assert!(notice.contains("status=\"interrupted\""), "{notice}");
+    assert!(notice.contains("Command: make test"), "{notice}");
+    assert!(
+        fake.pending_completions_for(&model).is_empty(),
+        "reopening the thread should not start a turn"
+    );
+
+    let saved_again = reopened.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert!(
+        saved_again.background_work.is_empty(),
+        "the command was reported once and should not be reported again"
+    );
+
+    reopened
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["What happened?"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let request = fake
+        .pending_completions_for(&model)
+        .pop()
+        .expect("the user's message should start a turn");
+    let sent = request
+        .messages
+        .iter()
+        .map(|message| message.string_contents())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let notice_at = sent
+        .find("<background_command_result terminal_id=\"term-1\"")
+        .unwrap_or_else(|| panic!("the model should read the notice: {sent}"));
+    let question_at = sent.find("What happened?").unwrap();
+    assert!(
+        notice_at < question_at,
+        "the notice should come before the user's message: {sent}"
+    );
+}
+
+#[gpui::test]
+async fn test_background_agent_running_when_saved_is_reported_as_interrupted(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    let subagent = cx.update(|cx| {
+        let parent = thread.read(cx);
+        let project = parent.project.clone();
+        let context_server_registry = parent.context_server_registry.clone();
+        let templates = parent.templates.clone();
+        cx.new(|cx| {
+            let mut subagent = Thread::new(
+                project,
+                project_context.clone(),
+                context_server_registry,
+                templates,
+                Some(model.clone()),
+                cx,
+            );
+            subagent.set_title("Run the test suite".into(), cx);
+            subagent
+        })
+    });
+    let subagent_id = subagent.read_with(cx, |subagent, _| subagent.id().clone());
+    thread.update(cx, |thread, cx| {
+        thread.register_background_subagent(subagent.downgrade(), cx)
+    });
+
+    let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(
+        db_thread.background_work,
+        vec![DbBackgroundWork::Agent {
+            session_id: subagent_id.clone(),
+            title: "Run the test suite".into(),
+        }]
+    );
+
+    let reopened = thread_from_db(&thread, db_thread, &project_context, cx);
+    cx.run_until_parked();
+    let notice = reopened.read_with(cx, |thread, _| {
+        assert!(!thread.has_background_work());
+        last_user_text(thread)
+    });
+    assert_eq!(
+        background_result_source(&notice),
+        Some(BackgroundResultSource::Agent(subagent_id))
+    );
+    assert!(notice.contains("status=\"interrupted\""), "{notice}");
+    assert!(notice.contains("Run the test suite"), "{notice}");
+    assert!(
+        fake.pending_completions_for(&model).is_empty(),
+        "reopening the thread should not start a turn"
+    );
+
+    let saved_again = reopened.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert!(
+        saved_again.background_work.is_empty(),
+        "the agent was reported once and should not be reported again"
+    );
+
+    reopened
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Is it done?"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let request = fake
+        .pending_completions_for(&model)
+        .pop()
+        .expect("the user's message should start a turn");
+    let sent = request
+        .messages
+        .iter()
+        .map(|message| message.string_contents())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let notice_at = sent
+        .find("<background_agent_result session_id=")
+        .unwrap_or_else(|| panic!("the model should read the notice: {sent}"));
+    let question_at = sent.find("Is it done?").unwrap();
+    assert!(
+        notice_at < question_at,
+        "the notice should come before the user's message: {sent}"
+    );
+}

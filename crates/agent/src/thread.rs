@@ -1,6 +1,7 @@
 use crate::{
     ApplyCodeActionTool, AskUserTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
-    CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
+    CreateDirectoryTool, CreateThreadTool, DbBackgroundWork, DbLanguageModel, DbThread,
+    DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
     ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
@@ -1399,6 +1400,7 @@ pub(crate) struct StreamingSaveKey {
     thinking_effort: Option<String>,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     sandbox_grants: crate::db::DbSandboxGrants,
+    background_work_count: usize,
 }
 
 pub struct Thread {
@@ -1915,6 +1917,64 @@ impl Thread {
         }
     }
 
+    /// Reports the background work that was running when the thread was saved
+    /// as interrupted: none of it survived Zed quitting. Each item becomes a
+    /// message after the history, in the form a finished item reports back, so
+    /// the model reads it before the user's next message. No turn starts.
+    fn report_interrupted_background_work(&mut self, work: Vec<DbBackgroundWork>) {
+        for item in work {
+            let text = match item {
+                DbBackgroundWork::Agent { session_id, title } => {
+                    crate::interrupted_background_agent_message(&session_id, &title)
+                }
+                DbBackgroundWork::Command {
+                    terminal_id,
+                    command,
+                } => crate::interrupted_background_command_message(&terminal_id, &command),
+            };
+            self.messages.push(Arc::new(Message::User(UserMessage {
+                id: ClientUserMessageId::new(),
+                content: Arc::from([UserMessageContent::Text(text)]),
+            })));
+        }
+    }
+
+    /// The background work that is still running, as saved with the thread.
+    fn background_work_to_db(&self, cx: &App) -> Vec<DbBackgroundWork> {
+        let agents = self
+            .background_subagents
+            .iter()
+            .filter_map(|subagent| subagent.upgrade())
+            .map(|subagent| {
+                let subagent = subagent.read(cx);
+                DbBackgroundWork::Agent {
+                    session_id: subagent.id().clone(),
+                    title: subagent.title().unwrap_or_else(|| "Agent".into()),
+                }
+            });
+        let commands = self
+            .background_commands
+            .iter()
+            .filter(|command| !command.stopped_by_agent)
+            .map(|command| DbBackgroundWork::Command {
+                terminal_id: command.id.clone(),
+                command: command.command.clone(),
+            });
+        agents.chain(commands).collect()
+    }
+
+    fn background_work_count(&self) -> usize {
+        self.background_subagents
+            .iter()
+            .filter(|subagent| subagent.upgrade().is_some())
+            .count()
+            + self
+                .background_commands
+                .iter()
+                .filter(|command| !command.stopped_by_agent)
+                .count()
+    }
+
     pub fn from_db(
         id: acp_v2::SessionId,
         db_thread: DbThread,
@@ -1958,7 +2018,7 @@ impl Thread {
         let context_usage =
             context_usage_from_history(&db_thread.messages, &db_thread.request_token_usage);
 
-        Self {
+        let mut thread = Self {
             id,
             prompt_id: PromptId::new(),
             title: if db_thread.title.is_empty() {
@@ -2014,7 +2074,9 @@ impl Thread {
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
-        }
+        };
+        thread.report_interrupted_background_work(db_thread.background_work);
+        thread
     }
 
     pub fn sandbox_status(&self, cx: &App) -> Option<(ThreadSandbox, ThreadSandbox)> {
@@ -2113,6 +2175,7 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            background_work: self.background_work_to_db(cx),
         };
 
         cx.background_spawn(async move {
@@ -2139,6 +2202,7 @@ impl Thread {
             thinking_effort: self.thinking_effort.clone(),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            background_work_count: self.background_work_count(),
         }
     }
 
