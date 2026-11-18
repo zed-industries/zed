@@ -1378,7 +1378,9 @@ pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
 impl From<language_model_core::Speed> for Speed {
     fn from(speed: language_model_core::Speed) -> Self {
         match speed {
-            language_model_core::Speed::Standard => Speed::Standard,
+            language_model_core::Speed::Standard | language_model_core::Speed::Ultrafast => {
+                Speed::Standard
+            }
             language_model_core::Speed::Fast => Speed::Fast,
         }
     }
