@@ -5,6 +5,7 @@ use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, Result, anyhow, ensure};
 use base64::Engine as _;
@@ -27,6 +28,7 @@ use windows::Win32::System::Environment::{
 };
 use windows::Win32::System::JobObjects::{
     JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+    JOB_OBJECT_UILIMIT_READCLIPBOARD, JOB_OBJECT_UILIMIT_WRITECLIPBOARD,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     QueryInformationJobObject,
 };
@@ -104,6 +106,7 @@ pub(crate) fn build_spec(
     // Vtable offsets (`4 + 2 * field index`) and enum values from the schema.
     const VERSION: VOffsetT = 4;
     const CAPABILITIES: VOffsetT = 6;
+    const UI_RESTRICTIONS: VOffsetT = 10;
     const FS_READ_ONLY: VOffsetT = 14;
     const NETWORK_POLICY: VOffsetT = 18;
     const NETWORK_POLICY_PROXY: VOffsetT = 4;
@@ -178,6 +181,14 @@ pub(crate) fn build_spec(
     if let Some(capabilities) = capabilities {
         builder.push_slot_always(CAPABILITIES, capabilities);
     }
+    // `ui_restrictions` is a `JOB_OBJECT_UILIMIT_*` mask. The clipboard can hold
+    // secrets, and a sandboxed command with any network grant could send them
+    // out, so it is off limits under every policy, as on macOS and Linux.
+    builder.push_slot::<u64>(
+        UI_RESTRICTIONS,
+        u64::from(JOB_OBJECT_UILIMIT_READCLIPBOARD.0 | JOB_OBJECT_UILIMIT_WRITECLIPBOARD.0),
+        0,
+    );
     if let Some(read_write) = read_write {
         builder.push_slot_always(FS_READ_WRITE, read_write);
     }
@@ -220,6 +231,20 @@ pub(crate) fn check_available() -> Result<()> {
         exports()?.supports_version(1, 0)?,
         "this Windows build does not support Process Security Environment 1.0"
     );
+
+    // The API being present doesn't mean an environment can be created: that
+    // can still fail (for example when the feature is turned off by policy).
+    // The launcher would only report that in the command's output, so create a
+    // baseline environment here, where the caller can still offer to run the
+    // command unsandboxed. Only success is remembered, so that a retry after a
+    // failure probes again.
+    static CREATED: AtomicBool = AtomicBool::new(false);
+    if !CREATED.load(Ordering::Relaxed) {
+        let spec = build_spec(false, &[], &[], NetworkAccess::None)?;
+        SecurityEnvironment::create(&spec)
+            .context("Windows could not create a Process Security Environment")?;
+        CREATED.store(true, Ordering::Relaxed);
+    }
     Ok(())
 }
 
@@ -787,6 +812,27 @@ mod tests {
         );
         let error = run_launcher(&command_line).unwrap_err();
         assert!(format!("{error:#}").contains("was redirected"), "{error:#}");
+    }
+
+    #[test]
+    fn clipboard_is_blocked_under_every_policy() {
+        let layout = Layout::new();
+        for allow_fs_write in [false, true] {
+            let spec = build_spec(
+                allow_fs_write,
+                &[&dunce::canonicalize(layout.project.path()).unwrap()],
+                &[],
+                NetworkAccess::All,
+            )
+            .unwrap();
+            let Some(exit_code) = run_sandboxed(
+                &spec,
+                "powershell -NoProfile -NonInteractive -Command \"Set-Clipboard -Value zed-sandbox-test\"",
+            ) else {
+                return;
+            };
+            assert_ne!(exit_code, 0, "the sandbox should not write the clipboard");
+        }
     }
 
     #[test]

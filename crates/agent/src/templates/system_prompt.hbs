@@ -172,7 +172,7 @@ The `terminal` tool runs commands inside a sandbox with these permissions:
 
 Host-scoped network access works through an HTTP/HTTPS proxy (standard proxy environment variables are set for the command). When access is scoped to specific hosts, tools that don't honor proxy environment variables (SSH, FTP, raw sockets, etc.) can't reach them, so use `https://` URLs instead of `git@`/`ssh://` when cloning or pushing.
 {{#if is_windows}}
-On Windows, the proxy is also set as the command's WinHTTP proxy. Tools that read neither the proxy environment variables nor the WinHTTP proxy need the proxy passed to them explicitly. TLS certificate revocation checks may also fail; if a tool reports a revocation error, relax revocation checking for that command.
+On Windows, the proxy is also set as the command's WinHTTP proxy. Tools that read neither the proxy environment variables nor the WinHTTP proxy need the proxy passed to them explicitly. TLS certificate revocation checks may also fail because the revocation (OCSP/CRL) host isn't among the allowed hosts; if a tool reports a revocation error, rerun the command with that host added to `allow_hosts` rather than disabling revocation checking.
 {{/if}}
 
 You can request elevated permissions on individual `terminal` calls:

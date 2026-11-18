@@ -634,7 +634,9 @@ impl Sandbox {
 
     /// Check whether the platform sandbox can be created on this host without
     /// actually building a command or spawning the proxy. On Linux this runs a
-    /// brief `bwrap` probe (call it off the main thread).
+    /// brief `bwrap` probe, and on Windows it creates (and closes) a baseline
+    /// Process Security Environment the first time (call it off the main
+    /// thread).
     ///
     /// This answers a purely *environmental* question — is a bwrap sandbox
     /// possible here at all (a usable `bwrap`, plus the unprivileged user
