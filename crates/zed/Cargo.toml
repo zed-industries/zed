@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "1.30.0"
+version = "1.31.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -248,6 +248,9 @@ gpui = { workspace = true, features = ["profiler", "windows-manifest"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 windows_resources.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+sandbox_linux.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 gpui = { workspace = true, features = ["profiler", "wayland", "x11"] }

@@ -758,6 +758,7 @@ pub fn language_model(model: &ChatGptModel) -> LanguageModel {
         supports_streaming_tools: true,
         supports_thinking: true,
         supports_fast_mode: model.supports_priority(),
+        supports_ultrafast_mode: false,
         supports_server_side_compaction: true,
         supports_explicit_compaction: true,
         supported_effort_levels,

@@ -127,6 +127,7 @@ members = [
     "crates/language_extension",
     "crates/language_model",
     "crates/language_model_core",
+    "crates/language_model_selector",
     "crates/language_models",
     "crates/language_models_cloud",
     "crates/language_onboarding",
@@ -188,6 +189,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/sandbox",
+    "crates/sandbox_linux",
     "crates/scheduler",
     "crates/schema_generator",
     "crates/search",
@@ -404,6 +406,7 @@ language_detection = { path = "crates/language_detection" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_model_core = { path = "crates/language_model_core" }
+language_model_selector = { path = "crates/language_model_selector" }
 language_models = { path = "crates/language_models" }
 language_models_cloud = { path = "crates/language_models_cloud" }
 language_onboarding = { path = "crates/language_onboarding" }
@@ -465,6 +468,7 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev = "3ee9745862279ce1d18
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 sandbox = { path = "crates/sandbox" }
+sandbox_linux = { path = "crates/sandbox_linux" }
 scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 search_everywhere = { path = "crates/search_everywhere" }
@@ -537,7 +541,7 @@ accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.22"
 accesskit_windows = "0.34"
-agent-client-protocol = { version = "=5.3.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
+agent-client-protocol = { version = "=5.4.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"

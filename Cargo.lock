@@ -329,9 +329,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "5.3.0"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "956559bd2dfddb5c8bc86792b1669bd2611fb4bd2c31865e4b8165ab6ea63109"
+checksum = "5480352b071301dfa2ba98d36d02132ad95c336116b469548feca2f45eaf0b3d"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -348,9 +348,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "5.3.0"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4956a27f160f7ff73b17822066d1cb57d415ef9f442d3bcebb8074d2c8f24ec3"
+checksum = "a2ff29b1cc0de7ea56df8971f559741872119ddf8d2245bce264a9fb2f577aaf"
 dependencies = [
  "quote",
  "syn 3.0.3",
@@ -358,9 +358,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "1.18.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5128cd57704892e3978c85bfce0d532ef3162f585739f44726fa80d464c1782f"
+checksum = "5d27fec60e79b5682eae06f9c94e028eb7043dfc972a4a38e7008701b4408d21"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -369,6 +369,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "strum 0.28.0",
+ "uuid",
 ]
 
 [[package]]
@@ -503,6 +504,7 @@ dependencies = [
  "jsonschema",
  "language",
  "language_model",
+ "language_model_selector",
  "language_models",
  "languages",
  "log",
@@ -7067,6 +7069,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "language_model_selector",
  "log",
  "markdown",
  "menu",
@@ -9600,6 +9603,23 @@ dependencies = [
  "serde_json",
  "strum 0.28.0",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "language_model_selector"
+version = "0.1.0"
+dependencies = [
+ "agent_settings",
+ "collections",
+ "fs",
+ "fuzzy",
+ "gpui",
+ "language_model",
+ "ordered-float 5.5.0",
+ "picker",
+ "settings",
+ "ui",
+ "zed_actions",
 ]
 
 [[package]]
@@ -13499,9 +13519,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "piper"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96c8c490f422ef9a4efd2cb5b42b76c8613d7e7dfc1caf667b8a3350a5acc066"
+checksum = "c835479a4443ded371d6c535cbfd8d31ad92c5d23ae9770a61bc155e4992a3c1"
 dependencies = [
  "atomic-waker",
  "fastrand 2.3.0",
@@ -15810,11 +15830,22 @@ dependencies = [
  "log",
  "nix 0.30.1",
  "seccompiler",
- "serde",
- "serde_json",
  "smol",
  "tempfile",
  "windows-registry 0.6.1",
+]
+
+[[package]]
+name = "sandbox_linux"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "log",
+ "nix 0.30.1",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -22520,7 +22551,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.30.0"
+version = "1.31.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -22642,6 +22673,7 @@ dependencies = [
  "reqwest_client",
  "rope",
  "sandbox",
+ "sandbox_linux",
  "search",
  "search_everywhere",
  "semver",

@@ -76,11 +76,21 @@ fn supports_minimal_thinking(model_id: &str) -> bool {
     )
 }
 
+/// The most thinking a level-based model accepts. Only some models go past `HIGH`.
+fn highest_thinking_level(model_id: &str) -> ThinkingLevel {
+    match model_id {
+        "gemini-4-hydrogen" => ThinkingLevel::XHigh,
+        _ => ThinkingLevel::High,
+    }
+}
+
 /// The thinking level Zed selects for a level-based model until the user picks another.
 fn default_thinking_level(model_id: &str) -> ThinkingLevel {
     match model_id {
         "gemini-3.5-flash-lite" => ThinkingLevel::Minimal,
-        "gemini-3-flash-preview" | "gemini-3.1-pro-preview" => ThinkingLevel::High,
+        "gemini-3-flash-preview" | "gemini-3.1-pro-preview" | "gemini-4-hydrogen" => {
+            ThinkingLevel::High
+        }
         _ => ThinkingLevel::Medium,
     }
 }
@@ -663,13 +673,14 @@ pub struct ThinkingConfig {
     pub include_thoughts: Option<bool>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ThinkingLevel {
     Minimal,
     Low,
     Medium,
     High,
+    XHigh,
 }
 
 impl ThinkingLevel {
@@ -679,6 +690,7 @@ impl ThinkingLevel {
             "low" => Some(Self::Low),
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
+            "xhigh" => Some(Self::XHigh),
             _ => None,
         }
     }
@@ -689,6 +701,7 @@ impl ThinkingLevel {
             Self::Low => "Low",
             Self::Medium => "Medium",
             Self::High => "High",
+            Self::XHigh => "Extra High",
         }
     }
 
@@ -698,6 +711,7 @@ impl ThinkingLevel {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::XHigh => "xhigh",
         }
     }
 }
@@ -933,9 +947,10 @@ impl Model {
                         ThinkingLevel::Low,
                         ThinkingLevel::Medium,
                         ThinkingLevel::High,
+                        ThinkingLevel::XHigh,
                     ]
                     .into_iter()
-                    .skip_while(|level| *level != lowest)
+                    .filter(|level| (lowest..=highest_thinking_level(id)).contains(level))
                     .collect(),
                     Some(default_thinking_level(id)),
                 ),
@@ -1064,6 +1079,54 @@ mod tests {
             Some(ThinkingLevel::Low)
         );
         assert_eq!(lowest_thinking_level("gemini-2.5-flash"), None);
+    }
+
+    #[test]
+    fn test_from_listed_thinking_levels_per_model() {
+        let listed_entry = |id: &str| ListModelEntry {
+            name: format!("models/{id}"),
+            display_name: Some(id.to_string()),
+            input_token_limit: Some(1_048_576),
+            output_token_limit: Some(65_536),
+            supported_generation_methods: vec!["generateContent".to_string()],
+            thinking: true,
+        };
+
+        for (id, expected_levels, expected_default) in [
+            (
+                "gemini-4-hydrogen",
+                vec![
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                    ThinkingLevel::XHigh,
+                ],
+                ThinkingLevel::High,
+            ),
+            (
+                "gemini-4-argon",
+                vec![
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                ],
+                ThinkingLevel::Medium,
+            ),
+            (
+                "gemini-3.6-flash",
+                vec![
+                    ThinkingLevel::Minimal,
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                ],
+                ThinkingLevel::Medium,
+            ),
+        ] {
+            let model = Model::from_listed(listed_entry(id)).unwrap();
+            assert_eq!(model.supported_thinking_levels, expected_levels, "{id}");
+            assert_eq!(model.default_thinking_level, Some(expected_default), "{id}");
+        }
     }
 
     #[test]

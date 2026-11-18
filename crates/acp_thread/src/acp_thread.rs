@@ -578,6 +578,7 @@ pub struct ElicitationEntryId(pub Arc<str>);
 pub struct Elicitation {
     pub id: ElicitationEntryId,
     pub request: acp_v2::CreateElicitationRequest,
+    pub v1_string_patterns: std::collections::BTreeMap<String, String>,
     pub status: ElicitationStatus,
 }
 
@@ -638,7 +639,7 @@ impl ElicitationStore {
 
     fn insert_pending_elicitation(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: elicitation::ElicitationRequest,
     ) -> (
         ElicitationEntryId,
         oneshot::Receiver<acp_v2::CreateElicitationResponse>,
@@ -647,7 +648,8 @@ impl ElicitationStore {
         let id = ElicitationEntryId(Uuid::new_v4().to_string().into());
         self.elicitations.push(Elicitation {
             id: id.clone(),
-            request,
+            request: request.request,
+            v1_string_patterns: request.v1_string_patterns,
             status: ElicitationStatus::Pending { respond_tx },
         });
         (id, response_rx)
@@ -754,7 +756,7 @@ impl ElicitationStore {
 
     pub fn request_elicitation(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: impl Into<elicitation::ElicitationRequest>,
         cx: &mut Context<Self>,
     ) -> Result<Task<acp_v2::CreateElicitationResponse>, acp_v2::Error> {
         self.request_elicitation_with_id(request, cx)
@@ -763,10 +765,11 @@ impl ElicitationStore {
 
     pub fn request_elicitation_with_id(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: impl Into<elicitation::ElicitationRequest>,
         cx: &mut Context<Self>,
     ) -> Result<(ElicitationEntryId, Task<acp_v2::CreateElicitationResponse>), acp_v2::Error> {
-        Self::validate_request(&request)?;
+        let request = request.into();
+        Self::validate_request(&request.request)?;
         let (id, response_rx) = self.insert_pending_elicitation(request);
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
         cx.notify();
@@ -1122,7 +1125,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn location(&self, ix: usize) -> Option<(ToolCallLocation, AgentLocation)> {
+    pub fn location(&self, ix: usize) -> Option<(ToolCallLocation, Option<AgentLocation>)> {
         if let AgentThreadEntry::ToolCall(ToolCall {
             locations,
             resolved_locations,
@@ -1131,7 +1134,7 @@ impl AgentThreadEntry {
         {
             Some((
                 locations.get(ix)?.clone(),
-                resolved_locations.get(ix)?.clone()?,
+                resolved_locations.get(ix).cloned().flatten(),
             ))
         } else {
             None
@@ -4215,10 +4218,7 @@ impl AcpThread {
         Ok(())
     }
 
-    /// Ends a history replay into this session, after a successful load or resume. The
-    /// subagents RFD treats the work states and cancel grants that the replay reported for
-    /// subagents as history, outcomes included: each subagent's work state is unconfirmed,
-    /// and it cannot be cancelled, until the agent reports current ones after the response.
+    /// Discards child state and cancel grants after a v1 load or a failed v2 resume.
     /// Titles and transcripts stay.
     pub fn invalidate_replayed_subagent_state(&mut self, cx: &mut Context<Self>) {
         for subagent in self.subagents.values() {
@@ -4681,6 +4681,7 @@ impl AcpThread {
     pub fn handle_connection_lost(&mut self, cx: &mut Context<Self>) {
         let was_observable = self.activity.ensure_observable().is_ok();
         self.activity.close_observation();
+        self.clear_live_subagent_state(cx);
         let changed = self.submissions.disconnect();
         if !changed.is_empty() {
             for id in changed {
@@ -4731,9 +4732,26 @@ impl AcpThread {
     pub fn handle_session_closed(&mut self, cx: &mut Context<Self>) {
         // Close confirms stopping without inventing an Idle snapshot or ending receipts.
         self.activity.finish_close();
+        self.clear_live_subagent_state(cx);
         self.cancel_generic_permission_requests(cx);
         self.cancel_outstanding_elicitations(cx);
+        for subagent in self.subagents.values() {
+            subagent.update(cx, |subagent, cx| subagent.handle_session_closed(cx));
+        }
         cx.notify();
+    }
+
+    fn clear_live_subagent_state(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.submissions.transport(),
+            SubmissionTransport::AgentOwned
+        ) && let Some(association) = &mut self.subagent_association
+        {
+            association.can_cancel = false;
+            if self.foreground_activity().is_active() {
+                self.clear_session_state(cx).log_err();
+            }
+        }
     }
 
     fn register_submission(
@@ -4879,6 +4897,19 @@ impl AcpThread {
         }
     }
 
+    pub fn update_v2_subagent_state(
+        &mut self,
+        state: acp_v2::StateUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        // The agent can send the same state on the child's stream and on the
+        // parent's. A second copy is not another outcome.
+        if self.foreground_state() == Some(&state) {
+            return Ok(());
+        }
+        self.update_session_state(state, cx)
+    }
+
     pub fn update_session_state(
         &mut self,
         state: acp_v2::StateUpdate,
@@ -4946,12 +4977,15 @@ impl AcpThread {
                     stop_reason: stop_reason.clone(),
                 });
             }
-            // A subagent's work can stop because Zed cancelled an ancestor. Its requests stay
-            // answerable until it reports that, and then go as if Zed had cancelled it.
             if self.subagent_association.is_some()
                 && matches!(stop_reason, Some(acp_v2::StopReason::Cancelled))
             {
-                self.cancel_local_actions(RequestPermissionOutcome::Cancelled, cx);
+                if self.connection.answers_permission_requests_on_cancel() {
+                    self.cancel_local_actions(RequestPermissionOutcome::Cancelled, cx);
+                } else if was_in_progress {
+                    // Only the agent knows which requests are still needed by background work.
+                    self.mark_foreground_tool_calls_cancelled(cx);
+                }
             }
         }
         if previous != self.foreground_activity() {
@@ -7131,7 +7165,7 @@ impl AcpThread {
 
     pub fn request_elicitation(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: impl Into<elicitation::ElicitationRequest>,
         cx: &mut Context<Self>,
     ) -> Result<Task<acp_v2::CreateElicitationResponse>, acp_v2::Error> {
         self.request_elicitation_with_id(request, cx)
@@ -7140,10 +7174,11 @@ impl AcpThread {
 
     pub fn request_elicitation_with_id(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: impl Into<elicitation::ElicitationRequest>,
         cx: &mut Context<Self>,
     ) -> Result<(ElicitationEntryId, Task<acp_v2::CreateElicitationResponse>), acp_v2::Error> {
-        ElicitationStore::validate_request(&request)?;
+        let request = request.into();
+        ElicitationStore::validate_request(&request.request)?;
 
         let (id, response_rx) = self.elicitations.insert_pending_elicitation(request);
         self.push_entry(AgentThreadEntry::Elicitation(id.clone()), cx);
@@ -7861,6 +7896,11 @@ impl AcpThread {
                 || self.has_unsettled_submissions()
             {
                 self.connection.cancel(self.session_id(), cx)?;
+                if self.activity.in_progress()
+                    && !self.connection.answers_permission_requests_on_cancel()
+                {
+                    self.mark_foreground_tool_calls_cancelled(cx);
+                }
             }
             if self.connection.answers_permission_requests_on_cancel() {
                 if self.subagent_association.is_some() {
@@ -7997,6 +8037,39 @@ impl AcpThread {
             self.cancel_permission_request_with_outcome(id, outcome.clone(), cx);
         }
         self.cancel_outstanding_elicitations(cx);
+    }
+
+    fn mark_foreground_tool_calls_cancelled(&mut self, cx: &mut Context<Self>) {
+        let background = self
+            .activity
+            .state()
+            .and_then(|state| state.background())
+            .unwrap_or_default();
+        for (index, entry) in self
+            .entries
+            .iter_mut()
+            .enumerate()
+            .skip(self.activity.first_entry_index())
+        {
+            let AgentThreadEntry::ToolCall(call) = entry else {
+                continue;
+            };
+            if matches!(
+                call.underlying_status(),
+                ToolCallStatus::Pending | ToolCallStatus::InProgress | ToolCallStatus::Paused
+            ) && !background.iter().any(|item| match item {
+                acp_v2::BackgroundWork::ToolCall(item) => item.tool_call_id == call.id,
+                acp_v2::BackgroundWork::Terminal(item) => call
+                    .terminals()
+                    .any(|terminal| terminal.read(cx).id() == &item.terminal_id),
+                _ => false,
+            }) {
+                // This is a display hint. The next reported status replaces it.
+                call.set_local_status(ToolCallStatus::Canceled);
+                cx.emit(AcpThreadEvent::EntryUpdated(index));
+                cx.notify();
+            }
+        }
     }
 
     fn mark_pending_entries_as_canceled(
@@ -18400,10 +18473,9 @@ mod tests {
         assert_eq!(absolute.path, respelled.path);
         thread.update(cx, |thread, cx| {
             let (index, call) = thread.tool_call(&id).expect("tool");
-            let (location, _) = thread.entries[index]
-                .location(0)
-                .expect("resolved location");
+            let (location, resolved) = thread.entries[index].location(0).expect("location");
             assert_eq!(location, absolute);
+            assert!(resolved.is_some());
             let resolved_locations = call.resolved_locations.clone();
             thread
                 .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("location-migration"), cx)
@@ -18427,15 +18499,17 @@ mod tests {
             let (index, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.locations, vec![respelled.clone()]);
             assert!(call.resolved_locations.is_empty());
-            assert!(thread.entries[index].location(0).is_none());
+            assert_eq!(
+                thread.entries[index].location(0),
+                Some((respelled.clone(), None))
+            );
         });
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
             let (index, _) = thread.tool_call(&id).expect("tool");
-            let (location, _) = thread.entries[index]
-                .location(0)
-                .expect("refreshed projection");
+            let (location, resolved) = thread.entries[index].location(0).expect("location");
             assert_eq!(location, respelled);
+            assert!(resolved.is_some(), "refreshed projection");
             thread
                 .update_tool_call(
                     acp_v1::ToolCallUpdate::new(
@@ -18452,7 +18526,10 @@ mod tests {
             let (index, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.locations, vec![relative.clone()]);
             assert!(call.resolved_locations.is_empty());
-            assert!(thread.entries[index].location(0).is_none());
+            assert_eq!(
+                thread.entries[index].location(0),
+                Some((relative.clone(), None))
+            );
         });
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
@@ -19066,8 +19143,10 @@ mod tests {
         thread.read_with(cx, |thread, cx| {
             let (tool_call_location, agent_location) = thread.entries[0]
                 .location(0)
-                .expect("external tool-call location should resolve");
+                .expect("external tool-call location");
             assert_eq!(tool_call_location.path, skill_path);
+            let agent_location =
+                agent_location.expect("external tool-call location should resolve");
 
             let buffer = agent_location
                 .buffer

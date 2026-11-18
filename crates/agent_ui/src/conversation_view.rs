@@ -400,26 +400,26 @@ impl Conversation {
         pattern_index: usize,
         cx: &mut Context<Self>,
     ) {
-        let Some(request) = self.permission_request(session_id, request_id, cx) else {
+        let Some(PermissionOptions::DropdownWithPatterns { patterns, .. }) = self
+            .permission_request(session_id, request_id, cx)
+            .and_then(PermissionRequest::legacy_options)
+        else {
             return;
         };
-        let Some(options) = request.legacy_options() else {
+        if pattern_index >= patterns.len() {
             return;
-        };
-        let pattern_count = match options {
-            PermissionOptions::DropdownWithPatterns { patterns, .. } => patterns.len(),
-            _ => 0,
-        };
+        }
         match self.permission_selections.get_mut(&request_id) {
             Some(selection @ thread_view::PermissionSelection::SelectedPatterns(_)) => {
                 selection.toggle_pattern(pattern_index);
+                if !selection.has_any_checked_patterns() {
+                    self.permission_selections.remove(&request_id);
+                }
             }
             _ => {
                 self.permission_selections.insert(
                     request_id,
-                    thread_view::PermissionSelection::SelectedPatterns(
-                        (0..pattern_count).collect(),
-                    ),
+                    thread_view::PermissionSelection::SelectedPatterns(vec![pattern_index]),
                 );
             }
         }
@@ -2905,7 +2905,10 @@ impl ConversationView {
             .map(|elicitation| {
                 let is_pending = matches!(elicitation.status, ElicitationStatus::Pending { .. });
                 let schema = match &elicitation.request.mode {
-                    acp_v2::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    acp_v2::ElicitationMode::Form(mode) => Some((
+                        mode.requested_schema.clone(),
+                        elicitation.v1_string_patterns.clone(),
+                    )),
                     _ => None,
                 };
                 (elicitation.id.clone(), is_pending, schema)
@@ -2921,11 +2924,13 @@ impl ConversationView {
 
         for (id, is_pending, schema) in elicitations {
             if is_pending
-                && let Some(schema) = schema
+                && let Some((schema, patterns)) = schema
                 && !self.request_elicitation_form_states.contains_key(&id)
             {
-                self.request_elicitation_form_states
-                    .insert(id, ElicitationFormState::new(&schema, window, cx));
+                self.request_elicitation_form_states.insert(
+                    id,
+                    ElicitationFormState::with_v1_string_patterns(&schema, patterns, window, cx),
+                );
             } else if !is_pending {
                 self.request_elicitation_form_states.remove(&id);
             }
@@ -9647,6 +9652,94 @@ pub(crate) mod tests {
             .expect("prompt should succeed");
         cx.run_until_parked();
         (conversation_view, cx)
+    }
+
+    #[gpui::test]
+    async fn test_selection_query_after_streaming_hides_clicked_syntax(cx: &mut TestAppContext) {
+        use gpui::Focusable as _;
+
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let workspace = conversation_view.read_with(cx, |view, _| view.workspace.clone());
+        let editor_pane = workspace
+            .update_in(cx, |workspace, window, cx| {
+                let thread_pane = workspace.active_pane().clone();
+                workspace.split_pane(thread_pane, workspace::SplitDirection::Right, window, cx)
+            })
+            .unwrap();
+
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let stream_text = |text: &str, cx: &mut VisualTestContext| {
+            cx.update(|_, cx| {
+                connection.send_update(
+                    session_id.clone(),
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                        text.into(),
+                    )),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(1));
+            cx.run_until_parked();
+        };
+
+        stream_text("См. [док](https://exa", cx);
+        let markdown = thread.read_with(cx, |thread, _| {
+            let AgentThreadEntry::AssistantMessage(message) = &thread.entries()[1] else {
+                panic!("expected an assistant message");
+            };
+            let AssistantMessageChunk::Message { block, .. } = &message.chunks[0] else {
+                panic!("expected a message chunk");
+            };
+            block
+                .blocks()
+                .next()
+                .and_then(|block| block.markdown().cloned())
+                .expect("message markdown")
+        });
+
+        // Clicking to the right of the text places the selection at the end of what has streamed.
+        let bounds = cx
+            .debug_bounds("message-content-1-0-0")
+            .expect("streamed message");
+        cx.simulate_click(
+            point(bounds.right() - px(2.), bounds.center().y),
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| markdown.read(cx).focus_handle(cx).is_focused(window)));
+
+        stream_text("mple.com) далее и ещё", cx);
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "См. [док](https://example.com) далее и ещё"
+        );
+
+        // Activating an item in another pane makes `Workspace` refresh the IME position.
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let item = cx.new(workspace::item::test::TestItem::new);
+                workspace.add_item(editor_pane, Box::new(item), None, false, false, window, cx);
+            })
+            .unwrap();
+        cx.update(|window, cx| {
+            assert!(window.simulate_next_frame(cx) > 0);
+        });
     }
 
     #[gpui::test]
@@ -16960,6 +17053,53 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_toggle_command_pattern_toggles_only_clicked_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let (thread, conversation) = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| {
+                (view.thread.clone(), view.conversation.clone())
+            });
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        // A chained command gets one pattern row per sub-command (`ls`, `git status`, `git log`).
+        let options = ToolPermissionContext::new(
+            TerminalTool::NAME,
+            vec!["ls && git status && git log".into()],
+        )
+        .build_permission_options();
+        let (request_id, _response) =
+            request_test_tool_authorization_with_options(&thread, "pipeline", options, cx);
+
+        let toggle = |pattern_index, cx: &mut VisualTestContext| {
+            conversation.update(cx, |conversation, cx| {
+                conversation.toggle_permission_pattern(&session_id, request_id, pattern_index, cx);
+                match conversation.permission_selections.get(&request_id) {
+                    Some(thread_view::PermissionSelection::SelectedPatterns(checked)) => {
+                        let mut checked = checked.clone();
+                        checked.sort();
+                        Some(checked)
+                    }
+                    Some(thread_view::PermissionSelection::Choice(_)) => {
+                        panic!("toggling a pattern must not select a dropdown choice")
+                    }
+                    None => None,
+                }
+            })
+        };
+        // An index with no matching row must not enter pattern mode.
+        assert_eq!(toggle(99, cx), None);
+        // The first click on a row other than the first checks only that row.
+        assert_eq!(toggle(1, cx), Some(vec![1]));
+        // Later clicks add only their own row...
+        assert_eq!(toggle(0, cx), Some(vec![0, 1]));
+        // ...and remove only their own row.
+        assert_eq!(toggle(1, cx), Some(vec![0]));
+        // Unchecking the last row goes back to the default selection.
+        assert_eq!(toggle(0, cx), None);
+    }
+
+    #[gpui::test]
     async fn test_allow_button_uses_selected_granularity(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -17669,6 +17809,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         if with_patterns {
+            let pattern = cx
+                .debug_bounds("MENU_ITEM-Always for `cargo test` commands")
+                .expect("the rendered persistent dropdown should offer the cargo pattern");
+            cx.simulate_click(pattern.center(), gpui::Modifiers::default());
+            cx.run_until_parked();
+            // Toggling `sort` on and off must leave only `cargo test` checked.
             for _ in 0..2 {
                 let pattern = cx
                     .debug_bounds("MENU_ITEM-Always for `sort` commands")

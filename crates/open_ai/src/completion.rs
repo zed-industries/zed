@@ -32,11 +32,11 @@ const RESPONSE_MESSAGE_PHASE_COMMENTARY: &str = "commentary";
 const RESPONSE_MESSAGE_PHASE_FINAL_ANSWER: &str = "final_answer";
 
 /// Translates the request's `Speed` into the corresponding OpenAI service tier.
-/// Only `Fast` produces a value; `Standard` leaves the field unset so that the
-/// project's default tier applies.
+/// `Standard` leaves the field unset so that the project's default tier applies.
 fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<ServiceTier> {
     match speed? {
         language_model_core::Speed::Fast => Some(ServiceTier::Priority),
+        language_model_core::Speed::Ultrafast => Some(ServiceTier::Ultrafast),
         language_model_core::Speed::Standard => None,
     }
 }
@@ -2455,15 +2455,13 @@ mod tests {
         Ok(())
     }
 
-    /// `Speed::Fast` should translate to `service_tier: "priority"` on the
-    /// outgoing Responses request, while `Standard` / `None` should leave the
-    /// field unset so the project's default tier wins.
     #[test]
-    fn into_open_ai_response_sets_service_tier_for_fast_speed() -> Result<()> {
+    fn into_open_ai_response_sets_service_tier_for_speed() -> Result<()> {
         for (speed, expected) in [
             (None, None),
             (Some(Speed::Standard), None),
             (Some(Speed::Fast), Some("priority")),
+            (Some(Speed::Ultrafast), Some("ultrafast")),
         ] {
             let request = LanguageModelRequest {
                 thread_id: None,

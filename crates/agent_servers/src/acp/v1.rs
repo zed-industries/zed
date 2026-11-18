@@ -2,7 +2,7 @@ use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions, FlattenAcpResult as _,
     ForegroundWork, ReadOnlyConfigOptions, UnsupportedVersion, apply_subagent_update,
     drain_foreground_queue, enqueue_notification, enqueue_request, first_class_terminal_auth_task,
-    handle_v2_complete_elicitation, handle_v2_create_elicitation, map_acp_error,
+    handle_elicitation, handle_v2_complete_elicitation, map_acp_error,
     mcp_configurations_for_project, respond_err, respond_result, runtime, session_thread,
     terminal_auth_task_id, transport, with_v2_client_ingress, work_dirs_from_session_info,
 };
@@ -838,7 +838,8 @@ impl AcpConnection {
             session_id,
             AcpSession {
                 thread: thread.downgrade(),
-                is_subagent: false,
+                subagent_root: None,
+                replay: None,
                 suppress_abort_err: false,
                 session_modes,
                 config_options,
@@ -3224,9 +3225,9 @@ mod tests {
         assert_eq!(
             v2_response(response, cx, "pre-cancelled permission")
                 .await
-                .expect_err("RPC cancellation before registration")
-                .code,
-            ErrorCode::RequestCancelled
+                .expect("RPC cancellation before registration")
+                .outcome,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         cx.run_until_parked();
         assert_eq!(
@@ -3258,9 +3259,9 @@ mod tests {
         assert_eq!(
             v2_response(first, cx, "permission RPC cancellation")
                 .await
-                .expect_err("RPC cancellation")
-                .code,
-            ErrorCode::RequestCancelled
+                .expect("RPC cancellation")
+                .outcome,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         harness.thread.update(cx, |thread, cx| {
             assert!(thread.permission_request(first_id).is_none());
@@ -3479,9 +3480,9 @@ mod tests {
             assert_eq!(
                 v2_response(response, cx, "pre-cancelled elicitation")
                     .await
-                    .expect_err("RPC cancellation before registration")
-                    .code,
-                ErrorCode::RequestCancelled
+                    .expect("RPC cancellation before registration")
+                    .action,
+                acp_v2::ElicitationAction::Cancel
             );
             harness.thread.read_with(cx, |thread, _| {
                 assert_eq!(thread.entries().len(), entry_count);
@@ -3504,9 +3505,9 @@ mod tests {
             assert_eq!(
                 v2_response(first, cx, "elicitation RPC cancellation")
                     .await
-                    .expect_err("RPC cancellation")
-                    .code,
-                ErrorCode::RequestCancelled
+                    .expect("RPC cancellation")
+                    .action,
+                acp_v2::ElicitationAction::Cancel
             );
             assert!((&mut second).now_or_never().is_none());
             let check = |first_status: &ElicitationStatus, second_status: &ElicitationStatus| {
@@ -8440,7 +8441,8 @@ exit 7
             parent_session_id.clone(),
             AcpSession {
                 thread: parent.downgrade(),
-                is_subagent: false,
+                subagent_root: None,
+                replay: None,
                 suppress_abort_err: false,
                 session_modes: None,
                 config_options: None,
@@ -10293,7 +10295,7 @@ fn handle_create_elicitation(
                 .map_err(agent_client_protocol::Error::from)
         })
     });
-    handle_v2_create_elicitation(args, responder, cx, ctx);
+    handle_elicitation(args, responder, false, cx, ctx);
 }
 
 fn handle_complete_elicitation(

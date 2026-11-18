@@ -533,13 +533,14 @@ pub enum Speed {
     #[default]
     Standard,
     Fast,
+    Ultrafast,
 }
 
 impl Speed {
     pub fn toggle(self) -> Self {
         match self {
             Speed::Standard => Speed::Fast,
-            Speed::Fast => Speed::Standard,
+            Speed::Fast | Speed::Ultrafast => Speed::Standard,
         }
     }
 }

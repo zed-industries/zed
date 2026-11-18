@@ -215,6 +215,8 @@ fn main() {
     // args are appended verbatim and would otherwise be misinterpreted as Zed's
     // own arguments.
     sandbox::run_sandbox_launcher_if_invoked();
+    #[cfg(target_os = "linux")]
+    sandbox_linux::run_hidden_entrypoint_if_invoked();
 
     #[cfg(unix)]
     util::prevent_root_execution();
