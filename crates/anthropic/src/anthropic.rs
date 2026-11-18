@@ -1351,10 +1351,6 @@ impl ApiError {
         ApiErrorCode::from_str(&self.error_type).ok()
     }
 
-    pub fn is_rate_limit_error(&self) -> bool {
-        matches!(self.error_type.as_str(), "rate_limit_error")
-    }
-
     pub fn match_window_exceeded(&self) -> Option<u64> {
         let Some(ApiErrorCode::InvalidRequestError) = self.code() else {
             return None;

@@ -22,7 +22,6 @@ use agent_client_protocol::{
     v2::schema as acp_v2,
 };
 use anyhow::anyhow;
-use async_channel;
 use collections::HashMap;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;

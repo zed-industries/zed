@@ -57,10 +57,6 @@ pub struct SandboxWrap {
     /// Allow unrestricted filesystem writes except for protected paths (ignores
     /// ordinary writable paths).
     pub allow_fs_write: bool,
-    /// Whether the project (and therefore this terminal) is local. The
-    /// enforcing proxy binds a loopback port on this host, so it can only
-    /// confine local commands; a remote terminal can't reach it.
-    pub is_local: bool,
     /// Windows/WSL only: `(release channel, version)` of the Linux `zed` to
     /// provision inside WSL as the sandbox helper (version `latest` for dev
     /// builds). Resolved by the agent (which can read the running app's release

@@ -26,7 +26,6 @@ use util::{ResultExt, path_list::PathList};
 use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
-pub type DbSummary = crate::legacy_thread::DetailedSummaryState;
 pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
 
 #[derive(Debug, Clone)]
