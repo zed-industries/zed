@@ -46,7 +46,7 @@ impl HtmlElement {
         self.attrs
             .borrow()
             .iter()
-            .find(|attr| attr.name.local.to_string() == name)
+            .find(|attr| &*attr.name.local == name)
             .map(|attr| attr.value.to_string())
     }
 
@@ -55,7 +55,7 @@ impl HtmlElement {
         self.attrs
             .borrow()
             .iter()
-            .find(|attr| attr.name.local.to_string() == "class")
+            .find(|attr| &*attr.name.local == "class")
             .map(|attr| {
                 attr.value
                     .split(' ')
@@ -73,7 +73,7 @@ impl HtmlElement {
     /// Returns whether this [`HtmlElement`] has any of the specified classes.
     pub fn has_any_classes(&self, classes: &[&str]) -> bool {
         self.attrs.borrow().iter().any(|attr| {
-            attr.name.local.to_string() == "class"
+            &*attr.name.local == "class"
                 && attr
                     .value
                     .split(' ')
