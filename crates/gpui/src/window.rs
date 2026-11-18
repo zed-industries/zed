@@ -10400,6 +10400,146 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn test_empty_content_masks_remain_empty_when_snapped(cx: &mut TestAppContext) {
+        test_paint_at_scales(cx, |window| {
+            let viewport = ContentMask {
+                bounds: Bounds::from_corners(point(px(20.), px(20.)), point(px(100.), px(100.))),
+            };
+            for fraction in [0., 0.25, 0.5, 0.75] {
+                for bounds in [
+                    Bounds::new(point(px(30.), px(120. + fraction)), size(px(40.), px(20.))),
+                    Bounds::new(point(px(120. + fraction), px(30.)), size(px(20.), px(40.))),
+                    Bounds::new(
+                        point(px(120. + fraction), px(120. + fraction)),
+                        size(px(20.), px(20.)),
+                    ),
+                    Bounds::new(
+                        point(px(30. + fraction), px(40. + fraction)),
+                        size(px(0.), px(20.)),
+                    ),
+                    Bounds::new(
+                        point(px(30. + fraction), px(40. + fraction)),
+                        size(px(20.), px(0.)),
+                    ),
+                ] {
+                    window.with_content_mask(Some(viewport), |window| {
+                        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                            assert!(window.content_mask().bounds.is_empty());
+                            assert!(
+                                window.snapped_content_mask().bounds.is_empty(),
+                                "scale={}, bounds={bounds:?}",
+                                window.scale_factor(),
+                            );
+                            let count = window.next_frame.scene.len();
+                            window.paint_quad(crate::fill(bounds, crate::red()));
+                            window.paint_quad(crate::outline(
+                                bounds,
+                                crate::red(),
+                                Default::default(),
+                            ));
+                            assert_eq!(window.next_frame.scene.len(), count);
+                        });
+                    });
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_nonempty_content_masks_keep_covering_fractional_edges(cx: &mut TestAppContext) {
+        test_paint_at_scales(cx, |window| {
+            let bounds = Bounds::new(point(px(30.25), px(40.25)), size(px(0.125), px(0.125)));
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                let snapped = window.snapped_content_mask().bounds;
+                let scale = window.scale_factor();
+                assert_eq!(snapped, window.cover_bounds(bounds));
+                assert!(!snapped.is_empty());
+                assert_eq!(snapped.left().0, (30.25 * scale).floor());
+                assert_eq!(snapped.top().0, (40.25 * scale).floor());
+                assert_eq!(snapped.right().0, (30.375 * scale).ceil());
+                assert_eq!(snapped.bottom().0, (40.375 * scale).ceil());
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_cover_bounds_preserves_empty_shadow_bounds(cx: &mut TestAppContext) {
+        test_paint_at_scales(cx, |window| {
+            let shadow = crate::BoxShadow::new(px(0.25), px(0.5), crate::red()).blur_radius(px(4.));
+            for origin in [point(px(30.25), px(40.25)), point(px(-30.25), px(-40.25))] {
+                for size in [
+                    size(px(20.), px(0.)),
+                    size(px(0.), px(20.)),
+                    size(px(0.), px(0.)),
+                ] {
+                    let bounds = Bounds::new(origin, size);
+                    let count = window.next_frame.scene.len();
+                    window.paint_drop_shadows(
+                        bounds,
+                        Default::default(),
+                        std::slice::from_ref(&shadow),
+                    );
+                    assert_eq!(
+                        window.next_frame.scene.len(),
+                        count,
+                        "scale={}, bounds={bounds:?}",
+                        window.scale_factor()
+                    );
+                    assert_eq!(
+                        window.cover_bounds(bounds),
+                        bounds.scale(window.scale_factor())
+                    );
+                }
+            }
+            let bounds = Bounds::new(point(px(30.25), px(40.25)), size(px(20.), px(20.)));
+            let collapsed_shadow = shadow.clone().spread_radius(px(-10.));
+            let shape_bounds =
+                (bounds + collapsed_shadow.offset).dilate(collapsed_shadow.spread_radius);
+            let count = window.next_frame.scene.len();
+            window.paint_drop_shadows(bounds, Default::default(), &[collapsed_shadow]);
+            assert_eq!(window.next_frame.scene.len(), count);
+            assert_eq!(
+                window.cover_bounds(shape_bounds),
+                shape_bounds.scale(window.scale_factor())
+            );
+
+            window.paint_drop_shadows(bounds, Default::default(), &[shadow]);
+            assert_eq!(window.next_frame.scene.len(), count + 1);
+        });
+    }
+
+    struct PaintTestView(Rc<dyn Fn(&mut Window)>);
+
+    impl Render for PaintTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let paint = self.0.clone();
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    window.content_mask_stack.push(ContentMask {
+                        bounds: Bounds::from_corners(
+                            point(px(-1000.), px(-1000.)),
+                            point(px(1000.), px(1000.)),
+                        ),
+                    });
+                    paint(window);
+                    window.content_mask_stack.pop();
+                },
+            )
+            .size_full()
+        }
+    }
+
+    fn test_paint_at_scales(cx: &mut TestAppContext, paint: impl Fn(&mut Window) + 'static) {
+        let window = cx.add_window(move |_, _| PaintTestView(Rc::new(paint)));
+        for scale in [1., 1.25, 1.5, 2., 3.] {
+            cx.simulate_window_scale_factor_change(window.into(), scale);
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        }
+    }
+
     #[derive(Clone, Copy, PartialEq)]
     enum LongPressResponse {
         PreventDefault,
