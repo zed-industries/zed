@@ -1,7 +1,10 @@
 use crate::{
     AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
-    MacWindow, events::key_to_menu_equivalent, main_thread_marker, ns_string,
-    pasteboard::Pasteboard, renderer, set_active_window_cursor_style,
+    MacWindow,
+    events::key_to_menu_equivalent,
+    main_thread_marker, ns_string,
+    pasteboard::{DeferredPasteboard, Pasteboard},
+    renderer, set_active_window_cursor_style,
     system_notifications::NotificationCommand,
 };
 use anyhow::{Context as _, anyhow};
@@ -174,8 +177,8 @@ pub(crate) struct MacPlatformState {
     headless: bool,
     activation_policy: ActivationPolicy,
     application_created: bool,
-    general_pasteboard: Option<Pasteboard>,
-    find_pasteboard: Option<Pasteboard>,
+    general_pasteboard: Option<DeferredPasteboard>,
+    find_pasteboard: Option<DeferredPasteboard>,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     thermal_observer: Option<ProcessInfoObserver>,
@@ -244,8 +247,8 @@ impl MacPlatform {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             renderer_context: renderer::Context::default(),
-            general_pasteboard: Pasteboard::general(),
-            find_pasteboard: Pasteboard::find(),
+            general_pasteboard: Pasteboard::general().map(DeferredPasteboard::new),
+            find_pasteboard: Pasteboard::find().map(DeferredPasteboard::new),
             reopen: None,
             quit: None,
             menu_command: None,
@@ -1255,7 +1258,7 @@ impl Platform for MacPlatform {
     fn write_to_clipboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
         if let Some(pasteboard) = &state.general_pasteboard {
-            pasteboard.write(item);
+            pasteboard.write(item, &state.foreground_executor);
         }
     }
 
@@ -1267,7 +1270,7 @@ impl Platform for MacPlatform {
     fn write_to_find_pasteboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
         if let Some(pasteboard) = &state.find_pasteboard {
-            pasteboard.write(item);
+            pasteboard.write(item, &state.foreground_executor);
         }
     }
 

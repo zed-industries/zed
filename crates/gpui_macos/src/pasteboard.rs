@@ -1,5 +1,7 @@
+use std::cell::{Cell, RefCell};
 use std::ffi::CStr;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use objc2::{Message, class, msg_send, rc::Retained};
 #[expect(
@@ -18,13 +20,73 @@ use strum::IntoEnumIterator as _;
 use uuid::Uuid;
 
 use gpui::{
-    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, ForegroundExecutor, Image,
+    ImageFormat, hash,
 };
 
 pub struct Pasteboard {
     inner: Retained<NSPasteboard>,
     text_hash_type: Retained<NSString>,
     metadata_type: Retained<NSString>,
+    /// Stands in for code that runs the main run loop during a native write.
+    #[cfg(test)]
+    during_native_write: RefCell<Option<Box<dyn Fn()>>>,
+}
+
+/// A pasteboard whose native writes run in a later main-thread task.
+///
+/// Writing to an `NSPasteboard` can run a nested main run loop (clipboard
+/// managers that hook the pasteboard do this), which runs queued GPUI tasks
+/// before the write returns. Callers usually write while the `App` is
+/// borrowed, so those tasks would panic borrowing it again. Deferring the
+/// native write to its own task keeps it off the caller's stack.
+pub struct DeferredPasteboard {
+    pasteboard: Rc<Pasteboard>,
+    pending_write: Rc<RefCell<Option<ClipboardItem>>>,
+    write_task_scheduled: Rc<Cell<bool>>,
+}
+
+impl DeferredPasteboard {
+    pub fn new(pasteboard: Pasteboard) -> Self {
+        Self {
+            pasteboard: Rc::new(pasteboard),
+            pending_write: Rc::default(),
+            write_task_scheduled: Rc::default(),
+        }
+    }
+
+    /// Returns the item most recently written, even if it hasn't reached the
+    /// native pasteboard yet.
+    pub fn read(&self) -> Option<ClipboardItem> {
+        if let Some(item) = self.pending_write.borrow().as_ref() {
+            return Some(item.clone());
+        }
+        self.pasteboard.read()
+    }
+
+    pub fn write(&self, item: ClipboardItem, executor: &ForegroundExecutor) {
+        self.pending_write.replace(Some(item));
+        if self.write_task_scheduled.replace(true) {
+            return;
+        }
+
+        let pasteboard = self.pasteboard.clone();
+        let pending_write = self.pending_write.clone();
+        let write_task_scheduled = self.write_task_scheduled.clone();
+        executor
+            .spawn(async move {
+                // A native write can run a nested run loop that writes again.
+                // This task stays the only writer and picks that item up
+                // afterwards, so two native writes never interleave.
+                loop {
+                    let item = pending_write.borrow_mut().take();
+                    let Some(item) = item else { break };
+                    pasteboard.write(item);
+                }
+                write_task_scheduled.set(false);
+            })
+            .detach();
+    }
 }
 
 impl Pasteboard {
@@ -53,6 +115,8 @@ impl Pasteboard {
             inner,
             text_hash_type: NSString::from_str("zed-text-hash"),
             metadata_type: NSString::from_str("zed-metadata"),
+            #[cfg(test)]
+            during_native_write: RefCell::new(None),
         }
     }
 
@@ -160,6 +224,11 @@ impl Pasteboard {
     }
 
     pub fn write(&self, item: ClipboardItem) {
+        #[cfg(test)]
+        if let Some(during_native_write) = self.during_native_write.borrow().as_ref() {
+            during_native_write();
+        }
+
         match item.entries.as_slice() {
             [] => {
                 // Writing an empty list of entries just clears the clipboard.
@@ -309,6 +378,70 @@ mod tests {
     use objc2::rc::autoreleasepool;
 
     use super::*;
+
+    #[test]
+    fn test_write_runs_outside_of_the_callers_stack() {
+        let dispatcher = std::sync::Arc::new(gpui::TestDispatcher::new(0));
+        let executor = ForegroundExecutor::new(dispatcher.clone());
+
+        // Stands in for the `App`, which is borrowed while GPUI dispatches the
+        // event that triggers a copy.
+        let app = Rc::new(RefCell::new(()));
+
+        let pasteboard = Pasteboard::unique();
+        // A hooked pasteboard runs the main run loop during the write, which
+        // runs a queued task that borrows the `App`.
+        pasteboard.during_native_write.replace(Some(Box::new({
+            let app = app.clone();
+            move || drop(app.borrow_mut())
+        })));
+        let pasteboard = DeferredPasteboard::new(pasteboard);
+
+        let app_borrow = app.borrow_mut();
+        pasteboard.write(ClipboardItem::new_string("1".to_string()), &executor);
+        let item = ClipboardItem::new_string("2".to_string());
+        pasteboard.write(item.clone(), &executor);
+        assert_eq!(pasteboard.read(), Some(item.clone()));
+        assert_eq!(pasteboard.pasteboard.read(), None);
+        drop(app_borrow);
+
+        dispatcher.run_until_parked();
+        assert_eq!(pasteboard.pasteboard.read(), Some(item.clone()));
+        assert_eq!(pasteboard.read(), Some(item));
+    }
+
+    #[test]
+    fn test_write_during_native_write_lands_last() {
+        let dispatcher = std::sync::Arc::new(gpui::TestDispatcher::new(0));
+        let executor = ForegroundExecutor::new(dispatcher.clone());
+        let pasteboard = Rc::new(DeferredPasteboard::new(Pasteboard::unique()));
+        let nested_item = ClipboardItem::new_string("nested".to_string());
+
+        // The first native write runs a nested run loop in which another
+        // write is made and every queued task runs.
+        let nested = Cell::new(false);
+        pasteboard
+            .pasteboard
+            .during_native_write
+            .replace(Some(Box::new({
+                let pasteboard = Rc::downgrade(&pasteboard);
+                let executor = executor.clone();
+                let dispatcher = dispatcher.clone();
+                let nested_item = nested_item.clone();
+                move || {
+                    if nested.replace(true) {
+                        return;
+                    }
+                    let pasteboard = pasteboard.upgrade().unwrap();
+                    pasteboard.write(nested_item.clone(), &executor);
+                    dispatcher.run_until_parked();
+                }
+            })));
+
+        pasteboard.write(ClipboardItem::new_string("outer".to_string()), &executor);
+        dispatcher.run_until_parked();
+        assert_eq!(pasteboard.pasteboard.read(), Some(nested_item));
+    }
 
     #[test]
     fn test_string() {
