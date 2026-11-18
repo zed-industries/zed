@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
 use serde::Deserialize;
 use settings::Settings;
-use std::{iter::Peekable, ops::Range, str::Chars};
+use std::{iter::Peekable, str::Chars};
 use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
@@ -457,42 +457,48 @@ impl Vim {
         let query = self
             .update_editor(cx, |_, editor, cx| -> Option<String> {
                 let display_snapshot = editor.display_snapshot(cx);
+                let buffer_snapshot = display_snapshot.buffer();
                 let selection = editor
                     .selections
                     .newest::<MultiBufferOffset>(&display_snapshot);
-                let buffer = display_snapshot.buffer();
 
+                // In case there's already a selection, for example, a visual
+                // selection. Fallback to letting the `Editor::query_suggestion`
+                // handle it.
                 if !selection.is_empty() {
-                    return Some(
-                        buffer
-                            .text_for_range(selection.start..selection.end)
-                            .collect(),
-                    );
+                    return None;
                 }
 
-                let classifier = buffer.char_classifier_at(selection.start);
-                let mut punctuation_range: Option<Range<MultiBufferOffset>> = None;
-
-                let mut word_range: Option<Range<MultiBufferOffset>> = None;
+                // Starting from the cursor's position, we'll scan forward and
+                // try to either find the first word or punctuation character,
+                // from which we'll continue to advance it's range as long as
+                // the next character kind matches.
+                let classifier = buffer_snapshot.char_classifier_at(selection.start);
+                let mut punctuation_range = None;
+                let mut word_range = None;
                 let mut offset = selection.start;
-                for ch in buffer.chars_at(offset).take_while(|&ch| ch != '\n') {
-                    match classifier.kind(ch) {
-                        CharKind::Whitespace | CharKind::Punctuation if word_range.is_some() => {
-                            break;
-                        }
-                        CharKind::Punctuation => match &mut punctuation_range {
-                            Some(Range { end, .. }) if *end == offset => {
-                                *end = offset + ch.len_utf8();
-                            }
-                            None => punctuation_range = Some(offset..offset + ch.len_utf8()),
-                            _ => {}
-                        },
-                        CharKind::Word => {
+
+                for ch in buffer_snapshot
+                    .chars_at(offset)
+                    .take_while(|&ch| ch != '\n')
+                {
+                    match (classifier.kind(ch), &word_range, &punctuation_range) {
+                        (CharKind::Whitespace | CharKind::Punctuation, Some(_), _) => break,
+                        (CharKind::Whitespace, _, _) => {}
+                        (CharKind::Word, _, _) => {
                             word_range.get_or_insert(offset..offset + ch.len_utf8()).end =
                                 offset + ch.len_utf8();
                         }
-                        CharKind::Whitespace => {}
+                        (CharKind::Punctuation, _, _) => {
+                            let range =
+                                punctuation_range.get_or_insert(offset..offset + ch.len_utf8());
+
+                            if range.end == offset {
+                                range.end = offset + ch.len_utf8();
+                            }
+                        }
                     }
+
                     offset += ch.len_utf8();
                 }
 
@@ -500,16 +506,21 @@ impl Vim {
                     .map(|range| (range, CharKind::Word))
                     .or(punctuation_range.map(|range| (range, CharKind::Punctuation)))
                     .map(|(mut range, kind)| {
-                        // If the run starts directly on the cursor, it may continue to the left.
+                        // If any of the ranges (word or punctuation) starts
+                        // directly on the cursor position, we need to scan
+                        // backwards, as the whole run might start before the
+                        // cursor position.
                         if range.start == selection.start {
-                            for ch in buffer
+                            for ch in buffer_snapshot
                                 .reversed_chars_at(range.start)
                                 .take_while(|&ch| ch != '\n' && classifier.kind(ch) == kind)
                             {
                                 range.start -= ch.len_utf8();
                             }
                         }
-                        // If it starts somewhere to the right of the cursor, we skip the first occurrence to match vim. No scroll since search will scroll already.
+                        // If it starts somewhere to the right of the cursor, we
+                        // skip the first occurrence to match vim. No scroll
+                        // since search will scroll already.
                         else if move_cursor {
                             editor.change_selections(
                                 SelectionEffects::no_scroll(),
@@ -521,7 +532,7 @@ impl Vim {
                             );
                         }
 
-                        buffer.text_for_range(range).collect()
+                        buffer_snapshot.text_for_range(range).collect()
                     })
             })
             .flatten();
@@ -545,7 +556,13 @@ impl Vim {
                 if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = query else {
+                let Some(query) = query.or_else(|| {
+                    search_bar.query_suggestion(
+                        Some(settings::SeedQuerySetting::Selection),
+                        window,
+                        cx,
+                    )
+                }) else {
                     drop(search_bar.search("", None, false, window, cx));
                     return None;
                 };
@@ -852,7 +869,7 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::{DisplayPoint, display_map::DisplayRow};
+    use editor::{DisplayPoint, HighlightKey, display_map::DisplayRow};
 
     use indoc::indoc;
     use itertools::Itertools;
@@ -1175,6 +1192,10 @@ mod test {
         cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
         cx.simulate_shared_keystrokes("v 3 l *").await;
         cx.shared_state().await.assert_eq("a.c. abcd ˇa.c. abcd");
+
+        cx.set_shared_state("foo ˇbar\nbaz\nfoo bar").await;
+        cx.simulate_shared_keystrokes("shift-v *").await;
+        cx.shared_state().await.assert_eq("foo bar\nbaz\nˇfoo bar");
     }
 
     #[gpui::test]
@@ -1203,17 +1224,50 @@ mod test {
         cx.set_shared_state("tmp(ˇ[ ([").await;
         cx.simulate_shared_keystrokes("*").await;
         cx.shared_state().await.assert_eq("tmp([ ˇ([");
+        cx.assert_editor_background_highlights(
+            HighlightKey::BufferSearchHighlights,
+            "tmp«([» «([»",
+        );
+
         cx.set_shared_state("tmpˇ([ ([").await;
         cx.simulate_shared_keystrokes("*").await;
         cx.shared_state().await.assert_eq("tmp([ ˇ([");
 
-        // Jump between matches using */#.
+        // Assert `#` moves to the previous match.
         cx.set_shared_state("tmp([ ˇ([").await;
         cx.simulate_shared_keystrokes("#").await;
         cx.shared_state().await.assert_eq("tmpˇ([ ([");
-        cx.set_shared_state("tmpˇ([ ([").await;
+        cx.assert_editor_background_highlights(
+            HighlightKey::BufferSearchHighlights,
+            "tmp«([» «([»",
+        );
+
+        // Count with both `*` and `#`.
+        cx.set_shared_state("tmp([ ˇ([ ([ ([").await;
+        cx.simulate_shared_keystrokes("2 *").await;
+        cx.shared_state().await.assert_eq("tmp([ ([ ([ ˇ([");
+        cx.simulate_shared_keystrokes("2 #").await;
+        cx.shared_state().await.assert_eq("tmp([ ˇ([ ([ ([");
+        cx.assert_editor_background_highlights(
+            HighlightKey::BufferSearchHighlights,
+            "tmp«([» «([» «([» «([»",
+        );
+
+        // Both `*` and `#` with `g` modifier.
+        cx.set_shared_state("ˇhi highlight hi").await;
         cx.simulate_shared_keystrokes("*").await;
-        cx.shared_state().await.assert_eq("tmp([ ˇ([");
+        cx.shared_state().await.assert_eq("hi highlight ˇhi");
+        cx.simulate_shared_keystrokes("#").await;
+        cx.shared_state().await.assert_eq("ˇhi highlight hi");
+        cx.simulate_shared_keystrokes("g *").await;
+        cx.shared_state().await.assert_eq("hi ˇhighlight hi");
+        cx.set_shared_state("hi highlight ˇhi").await;
+        cx.simulate_shared_keystrokes("g #").await;
+        cx.shared_state().await.assert_eq("hi ˇhighlight hi");
+        cx.assert_editor_background_highlights(
+            HighlightKey::BufferSearchHighlights,
+            "«hi» «hi»ghlight «hi»",
+        );
     }
 
     #[gpui::test]
