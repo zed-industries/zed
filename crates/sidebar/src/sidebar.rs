@@ -223,19 +223,6 @@ enum ThreadEntryWorkspace {
     },
 }
 
-impl ThreadEntryWorkspace {
-    fn is_remote(&self, cx: &App) -> bool {
-        match self {
-            ThreadEntryWorkspace::Open(workspace) => {
-                !workspace.read(cx).project().read(cx).is_local()
-            }
-            ThreadEntryWorkspace::Closed {
-                project_group_key, ..
-            } => project_group_key.host().is_some(),
-        }
-    }
-}
-
 /// If the title begins with a decorative prefix (such as a leading emoji,
 /// spinner glyph, or symbol the agent prefixed the title with), splits that
 /// prefix off so a single representative glyph can be displayed in place of the
@@ -834,7 +821,6 @@ pub struct Sidebar {
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_new_thread_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
-    project_header_menu_ix: Option<usize>,
     worktree_default_branches: HashMap<ProjectGroupKey, DefaultBranchCache>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
@@ -985,7 +971,6 @@ impl Sidebar {
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
             project_header_new_thread_menu_handles: HashMap::new(),
-            project_header_menu_ix: None,
             worktree_default_branches: HashMap::new(),
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
@@ -2910,11 +2895,7 @@ impl Sidebar {
             .on_open(Rc::new({
                 let this = this.clone();
                 move |_window, cx| {
-                    this.update(cx, |sidebar, cx| {
-                        sidebar.project_header_menu_ix = Some(ix);
-                        cx.notify();
-                    })
-                    .ok();
+                    this.update(cx, |_, cx| cx.notify()).ok();
                 }
             }))
             .menu(move |window, cx| {
@@ -3216,11 +3197,7 @@ impl Sidebar {
 
                 window
                     .subscribe(&menu, cx, move |_, _: &gpui::DismissEvent, _window, cx| {
-                        this.update(cx, |sidebar, cx| {
-                            sidebar.project_header_menu_ix = None;
-                            cx.notify();
-                        })
-                        .ok();
+                        this.update(cx, |_, cx| cx.notify()).ok();
                     })
                     .detach();
 
@@ -6284,8 +6261,6 @@ impl Sidebar {
             format_history_entry_timestamp(Self::thread_display_time(&thread.metadata)).into()
         };
 
-        let is_remote = thread.workspace.is_remote(cx);
-
         let worktrees = apply_worktree_label_mode(
             thread.worktrees.clone(),
             cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
@@ -6309,7 +6284,6 @@ impl Sidebar {
                 this.icon_color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.2)))
             })
             .status(thread.status)
-            .is_remote(is_remote)
             .when_some(icon_svg, |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
@@ -6619,7 +6593,6 @@ impl Sidebar {
             terminal.worktrees.clone(),
             cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
         );
-        let is_remote = terminal.workspace.is_remote(cx);
         let is_renaming =
             self.rename_target == Some(RenameTarget::Terminal(terminal.metadata.terminal_id));
         let rename_title_editor = is_renaming.then(|| self.render_rename_title_editor(cx));
@@ -6635,7 +6608,6 @@ impl Sidebar {
             .base_bg(sidebar_bg)
             .icon(IconName::Terminal)
             .when_some(icon_char, |this, icon_char| this.icon_char(icon_char))
-            .is_remote(is_remote)
             .worktrees(worktrees)
             .timestamp(timestamp)
             .notified(terminal.has_notification)

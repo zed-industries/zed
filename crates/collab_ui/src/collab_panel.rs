@@ -3577,7 +3577,6 @@ impl CollabPanel {
                                     cx.new(|_| JoinChannelTooltip {
                                         channel_store: channel_store.clone(),
                                         channel_id,
-                                        has_notes_notification,
                                     })
                                     .into()
                                 }
@@ -4150,8 +4149,6 @@ impl Render for DraggedChannelView {
 struct JoinChannelTooltip {
     channel_store: Entity<ChannelStore>,
     channel_id: ChannelId,
-    #[allow(unused)]
-    has_notes_notification: bool,
 }
 
 impl Render for JoinChannelTooltip {

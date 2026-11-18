@@ -40,10 +40,6 @@ impl FormatDistance {
         }
     }
 
-    pub fn from_now(date: DateTimeType) -> Self {
-        Self::new(date, DateTimeType::Local(Local::now()))
-    }
-
     pub fn include_seconds(mut self, include_seconds: bool) -> Self {
         self.include_seconds = include_seconds;
         self

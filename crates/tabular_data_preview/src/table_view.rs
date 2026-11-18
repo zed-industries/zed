@@ -102,11 +102,6 @@ impl PerformanceMetrics {
             .collect::<Vec<_>>()
             .join("\n")
     }
-
-    /// Get timing for a specific metric
-    pub fn get_timing(&self, name: &str) -> Option<Duration> {
-        self.timings.get(name).map(|(duration, _)| *duration)
-    }
 }
 
 pub struct TableView {
