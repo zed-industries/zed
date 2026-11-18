@@ -2073,7 +2073,7 @@ impl ProjectPanel {
         };
         let filename = self.filename_editor.read(cx).text(cx);
         if !filename.is_empty() {
-            if filename.is_empty() {
+            if filename.trim().is_empty() {
                 edit_state.validation_state =
                     ValidationState::Error("File or directory name cannot be empty.".to_string());
                 cx.notify();

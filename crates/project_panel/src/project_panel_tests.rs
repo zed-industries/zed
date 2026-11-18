@@ -3241,6 +3241,53 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_whitespace_only_filename_is_reported_as_empty(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({ "file.txt": "" })).await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    select_path(&panel, "root", cx);
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("   ", window, cx));
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _| {
+        let validation_state = panel
+            .state
+            .edit_state
+            .as_ref()
+            .map(|edit_state| &edit_state.validation_state);
+        assert!(
+            matches!(
+                validation_state,
+                Some(ValidationState::Error(message))
+                    if message == "File or directory name cannot be empty."
+            ),
+            "Unexpected validation state: {validation_state:?}"
+        );
+    });
+}
+
 // NOTE: This test is skipped on Windows, because on Windows,
 // when it triggers the lsp store it converts `/src/test/first copy.txt` into an uri
 // but it fails with message `"/src\\test\\first copy.txt" is not parseable as an URI`
