@@ -129,6 +129,9 @@ pub struct LanguageModel {
     /// request. Only meaningful when `supports_thinking` is `true`.
     pub supports_disabling_thinking: bool,
     pub supports_fast_mode: bool,
+    pub supports_ultrafast_mode: bool,
+    /// Whether instruction updates can retain their positions in conversation history.
+    pub supports_system_prompt_updates: bool,
     /// The effort levels that can be used when thinking.
     pub supported_effort_levels: Arc<[LanguageModelEffortLevel]>,
     /// Whether this model supports provider-side automatic context
@@ -139,6 +142,9 @@ pub struct LanguageModel {
     pub supports_explicit_compaction_output_limit: bool,
     /// The provider-enforced input size required for explicit compaction.
     pub minimum_explicit_compaction_input_tokens: Option<u64>,
+    /// How Zed builds prompt-based compaction requests. This does not affect
+    /// provider-native compaction.
+    pub prompt_compaction_strategy: PromptCompactionStrategy,
     pub supports_images: bool,
     pub supports_tools: bool,
     pub tool_choice_support: LanguageModelToolChoiceSupport,
@@ -153,6 +159,16 @@ pub struct LanguageModel {
     /// Equals `max_token_count` unless the model has a separate prompt limit.
     pub max_input_tokens: u64,
     pub max_output_tokens: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PromptCompactionStrategy {
+    #[default]
+    RebuildPrompt,
+    /// Preserve tools, system instructions, conversation history, and reasoning
+    /// settings while disabling tool calls. Providers must only opt in when
+    /// `tool_choice: none` is enforced without invalidating that cached prefix.
+    PreserveRequestPrefix,
 }
 
 /// Which [`LanguageModelToolChoice`] values a model accepts.
@@ -207,11 +223,14 @@ impl LanguageModel {
             supports_thinking: false,
             supports_disabling_thinking: true,
             supports_fast_mode: false,
+            supports_ultrafast_mode: false,
+            supports_system_prompt_updates: false,
             supported_effort_levels: Arc::default(),
             supports_server_side_compaction: false,
             supports_explicit_compaction: false,
             supports_explicit_compaction_output_limit: false,
             minimum_explicit_compaction_input_tokens: None,
+            prompt_compaction_strategy: PromptCompactionStrategy::default(),
             supports_images: false,
             supports_tools: false,
             tool_choice_support: LanguageModelToolChoiceSupport::default(),
@@ -333,6 +352,10 @@ impl LanguageModel {
         self.minimum_explicit_compaction_input_tokens
     }
 
+    pub fn prompt_compaction_strategy(&self) -> PromptCompactionStrategy {
+        self.prompt_compaction_strategy
+    }
+
     pub fn supports_images(&self) -> bool {
         self.supports_images
     }
@@ -450,6 +473,7 @@ pub trait LanguageModelClient: 'static {
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
+                                Ok(LanguageModelCompletionEvent::InputTransformations(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -729,7 +753,7 @@ impl LanguageModelCostInfo {
     }
 
     fn cost_value_to_string(cost: &f64) -> SharedString {
-        if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
+        if (cost.fract() - 0.0).abs() < f64::EPSILON {
             SharedString::from(format!("{:.0}", cost))
         } else {
             SharedString::from(format!("{:.2}", cost))

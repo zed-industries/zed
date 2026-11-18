@@ -15,9 +15,9 @@ use hdrhistogram::Histogram;
 
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
-    Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform, PlatformHeadlessRenderer,
-    PlatformTextSystem, Render, Reservation, Task, TestPlatform, ThreadedDispatcher, VisualContext,
-    Window, WindowBounds, WindowHandle, WindowOptions,
+    Entity, EntityId, Focusable, ForegroundExecutor, Global, Pixels, Platform,
+    PlatformHeadlessRenderer, PlatformTextSystem, Render, Reservation, Size, Task, TestPlatform,
+    ThreadedDispatcher, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiBorrow,
     profiler::{
         self, FrameEvent, FrameTimingCollector,
@@ -1206,6 +1206,25 @@ impl<'a, 'measurement> BenchWindowContext<'a, 'measurement> {
         self.cx
             .update_window(self.window, |_, window, cx| update(window, cx))
             .expect("benchmark window was unexpectedly closed")
+    }
+
+    /// Resizes the window's content area as the platform does when the user drags its
+    /// edge, through the window's resize callback. The next frame redraws at the new size.
+    ///
+    /// Must not be called from inside [`Self::update`]: the callback updates the window.
+    pub fn simulate_resize(&mut self, size: Size<Pixels>) {
+        let mut platform_window = {
+            let mut app = self.cx.app.borrow_mut();
+            app.windows
+                .get_mut(self.window.window_id())
+                .and_then(|window| window.as_deref_mut())
+                .expect("benchmark window was unexpectedly closed")
+                .platform_window
+                .as_test()
+                .expect("benchmark platform window")
+                .clone()
+        };
+        platform_window.simulate_resize(size);
     }
 }
 

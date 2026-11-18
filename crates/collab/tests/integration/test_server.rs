@@ -733,17 +733,17 @@ impl TestClient {
                 current: store
                     .contacts()
                     .iter()
-                    .map(|contact| contact.user.username.clone().to_string())
+                    .map(|contact| contact.user.username.to_string())
                     .collect(),
                 outgoing_requests: store
                     .outgoing_contact_requests()
                     .iter()
-                    .map(|user| user.username.clone().to_string())
+                    .map(|user| user.username.to_string())
                     .collect(),
                 incoming_requests: store
                     .incoming_contact_requests()
                     .iter()
-                    .map(|user| user.username.clone().to_string())
+                    .map(|user| user.username.to_string())
                     .collect(),
             })
     }

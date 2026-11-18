@@ -4,7 +4,7 @@ use std::{
 };
 
 use agent::{ThreadStore, ZED_AGENT_ID};
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
@@ -1822,7 +1822,7 @@ mod tests {
     use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::DbThread;
-    use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp};
+    use agent_client_protocol::{v1::schema as acp_v1, v2::schema as acp};
     use gpui::{TestAppContext, VisualTestContext};
     use project::FakeFs;
     use project::Project;

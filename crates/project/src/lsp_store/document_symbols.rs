@@ -356,7 +356,7 @@ fn flatten_document_symbols(
         output.push(OutlineItem {
             depth,
             range,
-            selection_range: selection_range.clone(),
+            selection_range,
             source_range_for_text,
             text: text.into(),
             highlight_ranges: Vec::new(),

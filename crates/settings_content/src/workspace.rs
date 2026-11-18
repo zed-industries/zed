@@ -29,11 +29,11 @@ pub struct WorkspaceSettingsContent {
     pub bottom_dock_layout: Option<BottomDockLayout>,
     /// Direction to split horizontally.
     ///
-    /// Default: "up"
+    /// Default: "down"
     pub pane_split_direction_horizontal: Option<PaneSplitDirectionHorizontal>,
     /// Direction to split vertically.
     ///
-    /// Default: "left"
+    /// Default: "right"
     pub pane_split_direction_vertical: Option<PaneSplitDirectionVertical>,
     /// Centered layout related settings.
     pub centered_layout: Option<CenteredLayoutSettings>,
@@ -202,9 +202,9 @@ pub struct ItemSettingsContent {
     ///
     /// Default: off
     pub show_diagnostics: Option<ShowDiagnostics>,
-    /// Whether to always show the close button on tabs.
+    /// When to show the close button on tabs.
     ///
-    /// Default: false
+    /// Default: hover
     pub show_close_button: Option<ShowCloseButton>,
 }
 

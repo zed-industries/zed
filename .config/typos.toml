@@ -49,8 +49,6 @@ extend-exclude = [
     "crates/gpui_windows/src/window.rs",
     # Some typos in the base mdBook CSS.
     "docs/theme/css/",
-    # Automatically generated JS.
-    "docs/theme/c15t@*.js",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
     # File type extensions are not typos
@@ -120,4 +118,7 @@ check-filename = true
 [default.extend-words]
 flate = "flate"
 scap = "scap"
+# `RTA_OIF` in `crates/sandbox_linux/src/net.rs` is a rtnetlink attribute
+# ("output interface"), not a misspelling of "of".
+OIF = "OIF"
 writeable = "writeable"

@@ -25,7 +25,6 @@ env_var.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_util.workspace = true
-http_client.workspace = true
 icons.workspace = true
 image.workspace = true
 language_model_core.workspace = true

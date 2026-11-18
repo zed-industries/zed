@@ -194,7 +194,7 @@ mod tests {
     use super::*;
     use crate::acp::v1::connect_client_future;
     use acp_thread::{ElicitationStatus, ElicitationStore};
-    use agent_client_protocol::schema::v2 as acp;
+    use agent_client_protocol::v2::schema as acp;
     use collections::HashMap;
     use gpui::TestAppContext;
     use std::{cell::RefCell, rc::Rc};

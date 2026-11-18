@@ -510,17 +510,7 @@ impl EditorElement {
                         && editor.read(cx).enable_mouse_wheel_zoom
                         && EditorSettings::get_global(cx).mouse_wheel_zoom
                     {
-                        let delta_y = match event.delta {
-                            ScrollDelta::Pixels(pixels) => pixels.y.into(),
-                            ScrollDelta::Lines(lines) => lines.y,
-                        };
-
-                        if delta_y > 0.0 {
-                            theme_settings::increase_buffer_font_size(cx);
-                        } else if delta_y < 0.0 {
-                            theme_settings::decrease_buffer_font_size(cx);
-                        }
-
+                        theme_settings::adjust_buffer_font_size_for_scroll(event.delta, cx);
                         cx.stop_propagation();
                     } else {
                         let scroll_sensitivity = {

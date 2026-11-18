@@ -19,8 +19,8 @@ use editor::{
     actions::{self},
 };
 use gpui::{
-    App, AppContext, BackgroundExecutor, BorrowAppContext, Entity, TestAppContext,
-    VisualTestContext,
+    App, AppContext, BackgroundExecutor, BorrowAppContext, Entity, TestAppContext, UpdateGlobal,
+    VisualTestContext, px,
 };
 use project::{
     FakeFs, Project,
@@ -39,7 +39,11 @@ use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::{path, rel_path::rel_path};
 use workspace::item::SaveOptions;
 use workspace::pane_group::SplitDirection;
-use workspace::{Item, Pane, dock::Panel, move_active_item, move_item};
+use workspace::{
+    Item, Pane,
+    dock::{Panel, test::TestPanel},
+    move_active_item, move_item,
+};
 
 #[gpui::test]
 async fn test_auto_close_prevents_restoring_debugger_visibility(cx: &mut TestAppContext) {
@@ -148,10 +152,14 @@ async fn test_auto_close_on_session_end(cx: &mut TestAppContext) {
     }
 
     start_debug_session(&workspace, cx, |_| {}).expect("session should start");
+    // A test panel stands in for the terminal panel, which would spawn a real shell when opened.
     workspace
         .update(cx, |multi, window, cx| {
             multi.workspace().update(cx, |workspace, cx| {
-                workspace.open_panel::<TerminalPanel>(window, cx);
+                let other_panel =
+                    cx.new(|cx| TestPanel::new(workspace::dock::DockPosition::Bottom, 100, cx));
+                workspace.add_panel(other_panel, window, cx);
+                workspace.open_panel::<TestPanel>(window, cx);
             });
         })
         .expect("workspace exists");
@@ -172,7 +180,7 @@ async fn test_auto_close_on_session_end(cx: &mut TestAppContext) {
                     .read(cx)
                     .visible_panel()
                     .map(|panel| panel.persistent_name()),
-                Some(TerminalPanel::persistent_name())
+                Some(TestPanel::persistent_name())
             );
         })
         .expect("workspace exists");
@@ -618,6 +626,39 @@ async fn test_breakpoint_activates_session_window(cx: &mut TestAppContext) {
             !breakpoint_hit,
         );
     }
+}
+
+#[gpui::test]
+async fn test_debug_panel_default_size(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+
+    workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            assert_eq!(panel.read(cx).default_size(window, cx), px(300.));
+
+            for (dock, expected_size) in [
+                (settings::DockPosition::Left, px(495.)),
+                (settings::DockPosition::Right, px(495.)),
+                (settings::DockPosition::Bottom, px(275.)),
+            ] {
+                settings::SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        let debugger = settings.debugger.get_or_insert_default();
+                        debugger.dock = Some(dock);
+                        debugger.default_width = Some(495.0.into());
+                        debugger.default_height = Some(275.0.into());
+                    });
+                });
+
+                assert_eq!(panel.read(cx).default_size(window, cx), expected_size);
+            }
+        })
+        .unwrap();
 }
 
 #[gpui::test]

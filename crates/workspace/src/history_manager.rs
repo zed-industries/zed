@@ -252,6 +252,7 @@ mod tests {
                 user_toolchains: Default::default(),
                 recent_navigation_history: Vec::new(),
                 window_id: None,
+                path_style: util::paths::PathStyle::local(),
             })
             .await;
         }

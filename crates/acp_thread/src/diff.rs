@@ -1,6 +1,6 @@
 mod patch;
 
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Result, anyhow, ensure};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
@@ -58,7 +58,12 @@ impl DiffPatch {
                 hunks: Vec::new(),
             })
             .collect::<Vec<_>>();
-        if source.patch.is_none() {
+        // A patch in a format Zed doesn't recognize renders as if it were omitted.
+        if source
+            .patch
+            .as_ref()
+            .is_none_or(|patch| patch.format != acp_v2::DiffPatchFormat::GitPatch)
+        {
             return Self {
                 files,
                 fallback: None,
@@ -106,10 +111,6 @@ impl DiffPatch {
             .patch
             .as_ref()
             .ok_or_else(|| anyhow!("no patch supplied"))?;
-        ensure!(
-            patch.format == acp_v2::DiffPatchFormat::GitPatch,
-            "unsupported patch format"
-        );
         ensure!(
             !source.changes.is_empty(),
             "patch has no reported file changes"
@@ -1164,7 +1165,11 @@ mod tests {
             source.patch.as_mut().expect("patch").format =
                 acp_v2::DiffPatchFormat::Other("_future".into());
             let render = DiffPatch::new(&source, &languages, cx);
-            assert!(render.fallback.is_some());
+            assert_eq!(render.files.len(), 1);
+            assert!(
+                render.fallback.is_none(),
+                "an unrecognized format renders from changes as if patch were omitted"
+            );
             let content = crate::ToolCallContent::DiffPatch { source, render };
             assert!(
                 content

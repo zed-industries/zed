@@ -780,8 +780,8 @@ impl Dock {
                             .iter()
                             .position(|entry| entry.panel.panel_id() == Entity::entity_id(panel))
                         {
-                            this.set_open(true, window, cx);
                             this.activate_panel(ix, window, cx);
+                            this.set_open(true, window, cx);
                             window.focus(&panel.read(cx).activation_focus_handle(cx), cx);
                         }
                     }
@@ -1652,6 +1652,9 @@ pub mod test {
         pub zoomed: bool,
         pub active: bool,
         pub persist_visibility: bool,
+        /// Keeps track of the values provided to [`Self::set_active`], to allow
+        /// inspecting whether the panel was activated or deactivated.
+        pub activation_history: Vec<bool>,
         pub focus_handle: FocusHandle,
         pub activation_focus_handle: Option<FocusHandle>,
         pub default_size: Pixels,
@@ -1669,6 +1672,7 @@ pub mod test {
                 zoomed: false,
                 active: false,
                 persist_visibility: true,
+                activation_history: Vec::new(),
                 focus_handle: cx.focus_handle(),
                 activation_focus_handle: None,
                 default_size: px(300.),
@@ -1793,6 +1797,7 @@ pub mod test {
 
         fn set_active(&mut self, active: bool, _window: &mut Window, _cx: &mut Context<Self>) {
             self.active = active;
+            self.activation_history.push(active);
         }
 
         fn activation_priority(&self) -> u32 {

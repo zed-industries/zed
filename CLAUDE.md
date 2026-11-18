@@ -1,1 +1,1 @@
-.rules
+AGENTS.md
