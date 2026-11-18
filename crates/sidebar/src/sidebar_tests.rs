@@ -4177,6 +4177,134 @@ async fn test_thread_switcher_preserves_closed_terminal_linked_worktree_workspac
 }
 
 #[gpui::test]
+async fn test_thread_switcher_opens_closed_linked_worktree_thread_in_its_worktree(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a",
+                    },
+                    "feature-b": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-b",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktrees/project/feature-a/project",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-a",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktrees/project/feature-b/project",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-b",
+            "src": {},
+        }),
+    )
+    .await;
+    for name in ["feature-a", "feature-b"] {
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            false,
+            git::repository::Worktree {
+                path: PathBuf::from(format!("/worktrees/project/{name}/project")),
+                ref_name: Some(format!("refs/heads/{name}").into()),
+                sha: "aaa".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+    }
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let main_paths = PathList::new(&[PathBuf::from("/project")]);
+    let worktree_folder_paths =
+        PathList::new(&[PathBuf::from("/worktrees/project/feature-a/project")]);
+    save_thread_metadata_with_main_paths(
+        "feature-thread",
+        "Feature Thread",
+        worktree_folder_paths.clone(),
+        main_paths.clone(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "main-thread",
+        "Main Thread",
+        main_paths.clone(),
+        main_paths,
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+
+    let sibling_project = project::Project::test(
+        fs.clone(),
+        ["/worktrees/project/feature-b/project".as_ref()],
+        cx,
+    )
+    .await;
+    sibling_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+        MultiWorkspace::test_new(sibling_project.clone(), window, cx)
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+    let feature_selection = sidebar.read_with(cx, |sidebar, cx| {
+        sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open")
+            .read(cx)
+            .entries()
+            .iter()
+            .find_map(|entry| match entry {
+                ThreadSwitcherEntry::Thread(thread)
+                    if thread.metadata.title.as_ref().map(|title| title.as_ref())
+                        == Some("Feature Thread") =>
+                {
+                    Some(entry.selection())
+                }
+                _ => None,
+            })
+            .expect("the closed worktree thread should be listed")
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.confirm_switcher_selection(&feature_selection, window, cx);
+    });
+    cx.run_until_parked();
+
+    let active_root_paths = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        PathList::new(&multi_workspace.workspace().read(cx).root_paths(cx))
+    });
+    assert_eq!(active_root_paths, worktree_folder_paths);
+}
+
+#[gpui::test]
 async fn test_archive_selected_terminal_archives_closed_linked_worktree(cx: &mut TestAppContext) {
     init_test(cx);
 

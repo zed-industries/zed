@@ -5901,17 +5901,15 @@ impl Sidebar {
                     if thread.draft == Some(DraftKind::Empty) {
                         return None;
                     }
-                    let workspace = match &thread.workspace {
-                        ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
-                        ThreadEntryWorkspace::Closed { .. } => {
-                            current_header_key.as_ref().and_then(|key| {
-                                self.multi_workspace.upgrade().and_then(|mw| {
-                                    mw.read(cx)
-                                        .workspace_for_paths(key.path_list(), key.host(), cx)
-                                })
-                            })
-                        }
-                    }?;
+                    if let ThreadEntryWorkspace::Closed { .. } = &thread.workspace {
+                        let key = current_header_key.as_ref()?;
+                        let multi_workspace = self.multi_workspace.upgrade()?;
+                        multi_workspace
+                            .read(cx)
+                            .workspaces_for_project_group(key, cx)
+                            .next()?;
+                    }
+                    let workspace = thread.workspace.clone();
                     let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
                     let timestamp: SharedString =
                         format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
@@ -6000,18 +5998,20 @@ impl Sidebar {
                 metadata,
                 workspace,
             } => {
-                if let Some(multi_workspace) = self.multi_workspace.upgrade() {
-                    multi_workspace.update(cx, |multi_workspace, cx| {
-                        multi_workspace.activate(workspace.clone(), None, window, cx);
+                if let ThreadEntryWorkspace::Open(workspace) = workspace {
+                    if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+                        multi_workspace.update(cx, |multi_workspace, cx| {
+                            multi_workspace.activate(workspace.clone(), None, window, cx);
+                        });
+                    }
+                    self.active_entry = Some(ActiveEntry::Thread {
+                        thread_id: metadata.thread_id,
+                        session_id: metadata.session_id.clone(),
+                        workspace: workspace.clone(),
                     });
+                    self.update_entries(cx);
+                    Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
                 }
-                self.active_entry = Some(ActiveEntry::Thread {
-                    thread_id: metadata.thread_id,
-                    session_id: metadata.session_id.clone(),
-                    workspace: workspace.clone(),
-                });
-                self.update_entries(cx);
-                Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
             }
             ThreadSwitcherSelection::Terminal {
                 metadata,
@@ -6043,7 +6043,7 @@ impl Sidebar {
         match selection {
             ThreadSwitcherSelection::Thread {
                 metadata,
-                workspace,
+                workspace: ThreadEntryWorkspace::Open(workspace),
             } => {
                 if let Some(multi_workspace) = self.multi_workspace.upgrade() {
                     multi_workspace.update(cx, |multi_workspace, cx| {
@@ -6060,6 +6060,24 @@ impl Sidebar {
                 self.update_entries(cx);
                 self.dismiss_thread_switcher(cx);
                 Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
+            }
+            ThreadSwitcherSelection::Thread {
+                metadata,
+                workspace:
+                    ThreadEntryWorkspace::Closed {
+                        folder_paths,
+                        project_group_key,
+                    },
+            } => {
+                self.record_thread_access(&metadata.thread_id);
+                self.dismiss_thread_switcher(cx);
+                self.open_workspace_and_activate_thread(
+                    metadata.clone(),
+                    folder_paths.clone(),
+                    project_group_key,
+                    window,
+                    cx,
+                );
             }
             ThreadSwitcherSelection::Terminal {
                 metadata,
