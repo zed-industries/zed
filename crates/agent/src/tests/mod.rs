@@ -6317,9 +6317,7 @@ fn test_background_agent_result_names_its_sender() {
         background_result_source(
             "<background_agent_result session_id=\"abc\" status=\"completed\">\ndone"
         ),
-        Some(BackgroundResultSource::Agent(acp_v2::SessionId::new(
-            "abc"
-        )))
+        Some(BackgroundResultSource::Agent(acp_v2::SessionId::new("abc")))
     );
     assert_eq!(
         background_result_source(&background_command_result_message(
@@ -6404,9 +6402,7 @@ async fn test_stop_background_command_kills_it_and_returns_its_output(cx: &mut T
 }
 
 #[gpui::test]
-async fn test_stop_agent_after_current_step_reports_the_agent_as_stopped(
-    cx: &mut TestAppContext,
-) {
+async fn test_stop_agent_after_current_step_reports_the_agent_as_stopped(cx: &mut TestAppContext) {
     let fake = init_test(cx);
     cx.update(|cx| {
         cx.update_flags(true, vec!["subagents".to_string()]);
@@ -6743,8 +6739,7 @@ async fn test_stop_agent_stops_a_background_subagent_without_a_result_message(
         .iter()
         .map(|message| message.string_contents())
         .collect::<Vec<_>>()
-        .join("
-");
+        .join("\n");
     assert!(sent.contains("The agent was stopped"), "{sent}");
 
     fake.send_text(&model, &after_stop, "Done");
@@ -6768,9 +6763,7 @@ async fn test_stop_agent_stops_a_background_subagent_without_a_result_message(
 }
 
 #[gpui::test]
-async fn test_background_subagent_result_starts_a_turn_on_the_idle_parent(
-    cx: &mut TestAppContext,
-) {
+async fn test_background_subagent_result_starts_a_turn_on_the_idle_parent(cx: &mut TestAppContext) {
     let fake = init_test(cx);
     cx.update(|cx| {
         cx.update_flags(true, vec!["subagents".to_string()]);
@@ -6908,10 +6901,7 @@ async fn test_background_subagent_result_starts_a_turn_on_the_idle_parent(
         "{delivered}"
     );
     assert!(delivered.contains("subagent task response"), "{delivered}");
-    assert!(
-        delivered.contains("not written by the user"),
-        "{delivered}"
-    );
+    assert!(delivered.contains("not written by the user"), "{delivered}");
 
     fake.send_text(&model, &delivery, "Thanks");
     fake.end_stream(&model, &delivery);

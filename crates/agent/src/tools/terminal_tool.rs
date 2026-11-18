@@ -1044,8 +1044,7 @@ async fn run_terminal_tool(
             }
             let message =
                 crate::background_command_result_message(&terminal_id, &command, &outcome);
-            if let Err(error) =
-                cx.update(|cx| environment.deliver_background_message(message, cx))
+            if let Err(error) = cx.update(|cx| environment.deliver_background_message(message, cx))
             {
                 log::error!("Failed to deliver a background command's result: {error:#}");
             }

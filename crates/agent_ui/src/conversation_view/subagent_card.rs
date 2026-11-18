@@ -245,8 +245,7 @@ impl SubagentCardState {
         if entries.end.is_none() && !returned_early {
             return card;
         }
-        let Some(subagent) =
-            subagent.filter(|subagent| subagent.subagent_association().is_some())
+        let Some(subagent) = subagent.filter(|subagent| subagent.subagent_association().is_some())
         else {
             return card;
         };

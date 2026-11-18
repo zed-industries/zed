@@ -5799,11 +5799,9 @@ impl ThreadView {
                             .terminals()
                             .any(|terminal| terminal.read(cx).id() == &terminal_id))
                 });
-                let title: SharedString = util::truncate_and_trailoff(
-                    command.lines().next().unwrap_or_default(),
-                    60,
-                )
-                .into();
+                let title: SharedString =
+                    util::truncate_and_trailoff(command.lines().next().unwrap_or_default(), 60)
+                        .into();
                 (title, entry_ix)
             })
             .collect::<Vec<_>>();
@@ -12755,15 +12753,15 @@ impl ThreadView {
         let message = subagent_view.and_then(|subagent_view| {
             let subagent_view = subagent_view.read(cx);
             match subagent_view.thread.read(cx).entries().get(message_ix)? {
-                AgentThreadEntry::UserMessage(message) => Some(
-                    subagent_view.render_message_content(
+                AgentThreadEntry::UserMessage(message) => {
+                    Some(subagent_view.render_message_content(
                         message_ix,
                         0,
                         &message.content,
                         window,
                         cx,
-                    ),
-                ),
+                    ))
+                }
                 _ => None,
             }
         });

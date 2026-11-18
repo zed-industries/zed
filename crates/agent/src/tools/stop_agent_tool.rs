@@ -82,8 +82,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn stops_at_once_unless_asked_to_wait_for_the_current_step() -> Result<(), serde_json::Error>
-    {
+    fn stops_at_once_unless_asked_to_wait_for_the_current_step() -> Result<(), serde_json::Error> {
         let at_once: StopAgentToolInput = serde_json::from_value(json!({
             "session_id": "session",
         }))?;

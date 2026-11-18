@@ -7197,7 +7197,11 @@ pub(crate) mod tests {
             ("background", &working, SubagentStatus::Running),
             ("background", &reporting, SubagentStatus::Canceled),
             ("background", &silent, SubagentStatus::Unknown),
-            ("background", &without_association, SubagentStatus::Completed),
+            (
+                "background",
+                &without_association,
+                SubagentStatus::Completed,
+            ),
         ] {
             let state = cx.update(|cx| {
                 let parent = parent.read(cx);

@@ -388,7 +388,11 @@ mod tests {
             "message": "message",
         }))?;
         assert!(!foreground.run_in_background);
-        assert!(serde_json::to_value(foreground)?.get("run_in_background").is_none());
+        assert!(
+            serde_json::to_value(foreground)?
+                .get("run_in_background")
+                .is_none()
+        );
 
         let background: SpawnAgentToolInput = serde_json::from_value(json!({
             "label": "label",

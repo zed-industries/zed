@@ -4239,12 +4239,11 @@ async fn wait_until_not_generating(
     let (changed_tx, mut changed_rx) = mpsc::unbounded();
     let _subscription = cx.update(|cx| {
         let thread = thread.upgrade().context("Parent thread no longer exists")?;
-        anyhow::Ok(cx.subscribe(
-            &thread,
-            move |_, _: &acp_thread::AcpThreadEvent, _| {
+        anyhow::Ok(
+            cx.subscribe(&thread, move |_, _: &acp_thread::AcpThreadEvent, _| {
                 changed_tx.unbounded_send(()).ok();
-            },
-        ))
+            }),
+        )
     })?;
     loop {
         let generating = thread.read_with(cx, |thread, _| {
