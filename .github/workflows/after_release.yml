@@ -121,7 +121,7 @@ jobs:
         token: ${{ secrets.WINGET_TOKEN }}
   publish_snap_x86_64:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -141,7 +141,7 @@ jobs:
     timeout-minutes: 60
   publish_snap_aarch64:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-2x4-ubuntu-2404-arm
+    runs-on: ubuntu-24.04-arm
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

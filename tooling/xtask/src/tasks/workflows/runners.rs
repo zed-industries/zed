@@ -13,8 +13,6 @@ pub const LINUX_ARM_BUNDLER: Runner = Runner("namespace-profile-8x32-ubuntu-2004
 // Larger Ubuntu runner with glibc 2.39 for extension bundling
 pub const LINUX_LARGE_RAM: Runner = Runner("namespace-profile-8x32-ubuntu-2404");
 
-pub const LINUX_ARM_SMALL: Runner = Runner("namespace-profile-2x4-ubuntu-2404-arm");
-
 pub const MAC_DEFAULT: Runner = Runner("namespace-profile-mac-large");
 pub const MAC_BUNDLER: Runner = Runner("namespace-profile-mac-large-xcode26");
 pub const MAC_SMALL: Runner = Runner("namespace-profile-mac-small");
@@ -51,11 +49,13 @@ impl Arch {
         }
     }
 
-    // Snapcraft can only build a snap for the architecture of its host.
+    // Snapcraft can only build a snap for the architecture of its host. These
+    // are GitHub-hosted because snapd needs systemd, which the Namespace runner
+    // images don't run.
     pub fn linux_snap_builder(&self) -> Runner {
         match self {
-            Arch::X86_64 => LINUX_SMALL,
-            Arch::AARCH64 => LINUX_ARM_SMALL,
+            Arch::X86_64 => Runner("ubuntu-24.04"),
+            Arch::AARCH64 => Runner("ubuntu-24.04-arm"),
         }
     }
 }
