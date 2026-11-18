@@ -5932,6 +5932,36 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_blame_untracked_path_with_large_contents(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("committed.txt"), "line one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "First commit"]);
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Git exits without reading stdin for a path that isn't in HEAD.
+        let blame = repo
+            .blame(
+                repo_path("untracked.txt"),
+                Rope::from("line\n".repeat(1 << 20)),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+        assert_eq!(blame.entries, Vec::new());
+    }
+
+    #[gpui::test]
     async fn test_branches_return_head_when_commit_metadata_cannot_be_read(
         cx: &mut TestAppContext,
     ) {
