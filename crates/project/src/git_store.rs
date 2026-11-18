@@ -11,7 +11,7 @@ use crate::{
     trusted_worktrees::{
         PathTrust, TrustedWorktrees, TrustedWorktreesEvent, TrustedWorktreesStore,
     },
-    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+    worktree_store::{DeltaClone, WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
@@ -95,6 +95,7 @@ use util::{
     post_inc,
     rel_path::RelPath,
 };
+pub use worktree::is_submodule_git_dir;
 use worktree::{
     File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
     UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree, WorktreeSettings,
@@ -11053,28 +11054,6 @@ pub fn repo_identity_path(common_dir: &Path, path_style: PathStyle) -> &Path {
     }
 }
 
-/// Returns true if `git_dir` is a Git submodule's git directory.
-///
-/// Submodules store their git directory inside the superproject at
-/// `<superproject>/.git/modules/<name>`. Unlike a linked worktree, a submodule
-/// is an independent project whose identity is its own working directory, so its
-/// path must not be resolved to the superproject's `.git/modules/...` directory
-/// (from which the working directory cannot be derived).
-pub fn is_submodule_git_dir(git_dir: &Path) -> bool {
-    let mut previous_was_git_dir = false;
-    for component in git_dir.components() {
-        if let std::path::Component::Normal(name) = component {
-            if previous_was_git_dir && name == std::ffi::OsStr::new("modules") {
-                return true;
-            }
-            previous_was_git_dir = name.to_string_lossy().ends_with(".git");
-        } else {
-            previous_was_git_dir = false;
-        }
-    }
-    false
-}
-
 /// Returns a short name for a linked worktree suitable for UI display
 ///
 /// Uses the main worktree path to come up with a short name that disambiguates
@@ -11097,6 +11076,108 @@ pub fn linked_worktree_short_name(
         path_style.file_name(parent)?.to_str()?.to_string()
     };
     Some(name.into())
+}
+
+pub fn delta_checkout_short_name(
+    clone: &DeltaClone,
+    folder_path: &Path,
+    path_style: PathStyle,
+) -> Option<SharedString> {
+    let folder_path = clone.checkout_path.as_deref().unwrap_or(folder_path);
+    let namespace = path_style
+        .parent(&clone.path)
+        .and_then(|clone_parent| path_style.file_name(clone_parent))
+        .and_then(|namespace| namespace.to_str());
+    let clone_directory_name = path_style.file_name(&clone.path)?.to_str()?;
+    let clone_name = Some(
+        clone_directory_name
+            .strip_suffix(git::DOT_GIT)
+            .unwrap_or(clone_directory_name),
+    )
+    .filter(|clone_name| !clone_name.is_empty());
+    let is_primary_checkout = !clone.is_linked_worktree && clone.checkout_path.is_some();
+    let linked_name = if !is_primary_checkout {
+        let folder_name = path_style.file_name(folder_path)?.to_str()?;
+        let repository_names = [
+            clone_name,
+            path_style
+                .file_name(repo_identity_path(&clone.path, path_style))
+                .and_then(|name| name.to_str()),
+        ];
+        let parent_name = path_style
+            .parent(folder_path)
+            .and_then(|folder_parent| path_style.file_name(folder_parent))
+            .and_then(|parent_name| parent_name.to_str())
+            .filter(|_| repository_names.contains(&Some(folder_name)));
+        Some(match parent_name {
+            Some(parent_name) => format!("{parent_name}/{folder_name}"),
+            None => folder_name.to_string(),
+        })
+    } else {
+        None
+    };
+    let is_in_namespace_folder = is_primary_checkout
+        && namespace.is_some_and(|namespace| {
+            std::iter::successors(Some(folder_path), |path| path_style.parent(path)).any(|path| {
+                path_style.file_name(path).and_then(|name| name.to_str()) == Some(namespace)
+            })
+        });
+    let name = [
+        namespace,
+        clone_name
+            .filter(|clone_name| !is_in_namespace_folder || is_numbered_mount_name(clone_name)),
+        linked_name.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("/");
+    (!name.is_empty()).then(|| name.into())
+}
+
+pub async fn discover_root_repository_group_path(
+    folder_path: &Path,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    let metadata = worktree::discover_confirmed_root_repo_metadata(folder_path, fs).await?;
+    Some(
+        root_repository_group_path(
+            folder_path,
+            &metadata.common_dir,
+            metadata.is_linked_worktree,
+            metadata.source_common_dir.as_deref(),
+            PathStyle::local(),
+        )
+        .to_path_buf(),
+    )
+}
+
+pub(crate) fn root_repository_group_path<'a>(
+    folder_path: &'a Path,
+    common_dir: &'a Path,
+    is_linked_worktree: bool,
+    source_common_dir: Option<&'a Path>,
+    path_style: PathStyle,
+) -> &'a Path {
+    if is_submodule_git_dir(common_dir) {
+        return folder_path;
+    }
+    let repository_path = repo_identity_path(common_dir, path_style);
+    if !is_linked_worktree
+        && repository_path != folder_path
+        && folder_path.starts_with(repository_path)
+    {
+        return folder_path;
+    }
+    source_common_dir.map_or(repository_path, |source_common_dir| {
+        repo_identity_path(source_common_dir, path_style)
+    })
+}
+
+fn is_numbered_mount_name(name: &str) -> bool {
+    name.rsplit_once('-').is_some_and(|(_, number)| {
+        !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+    })
 }
 
 fn get_permalink_in_rust_registry_src(
