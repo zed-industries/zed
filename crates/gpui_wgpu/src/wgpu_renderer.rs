@@ -706,6 +706,7 @@ impl WgpuRendererCore {
             format: wgpu::TextureFormat::Rgba32Uint,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
+            texture_binding_view_dimension: None,
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let capacity = u64::from(width) * u64::from(height) * INSTANCE_TEXTURE_TEXEL_SIZE;
@@ -1330,7 +1331,7 @@ impl WgpuRendererCore {
         target_view: &wgpu::TextureView,
         size: Size<DevicePixels>,
         clear_color: wgpu::Color,
-    ) -> Result<wgpu::SubmissionIndex> {
+    ) -> Result<Option<wgpu::SubmissionIndex>> {
         anyhow::ensure!(
             size.width.0 > 0 && size.height.0 > 0,
             "invalid render target size: {size:?}"
@@ -1370,7 +1371,7 @@ impl WgpuRendererCore {
         frame_view: &wgpu::TextureView,
         size: Size<DevicePixels>,
         clear_color: wgpu::Color,
-    ) -> Result<wgpu::SubmissionIndex> {
+    ) -> Result<Option<wgpu::SubmissionIndex>> {
         let mut instance_offset = 0;
         let instance_bindings = self
             .write_instances(scene, &mut instance_offset)
@@ -1584,6 +1585,7 @@ impl WgpuRendererCore {
                 format: DEPTH_FORMAT,
                 usage,
                 view_formats: &[],
+                texture_binding_view_dimension: None,
             });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.depth_texture = Some(DepthTexture { texture, view });
@@ -2340,6 +2342,7 @@ impl WgpuHeadlessRenderer {
                 format: self.core.target_format,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
+                texture_binding_view_dimension: None,
             });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.render_target = Some(HeadlessRenderTarget { texture, view });
@@ -2453,7 +2456,7 @@ impl WgpuHeadlessRenderer {
             .resources
             .device
             .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission),
+                submission_index: submission,
                 timeout: Some(std::time::Duration::from_secs(30)),
             })
             .map_err(|error| anyhow::anyhow!("Failed to wait for headless rendering: {error}"))?;
