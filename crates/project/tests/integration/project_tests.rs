@@ -16746,6 +16746,13 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
             windows_1252_text,
             "",
         ),
+        case(
+            "iso_2022_jp.txt",
+            encoding_rs::ISO_2022_JP,
+            false,
+            "上の行\nplain\n最後の行",
+            "",
+        ),
         case("utf_8_bom.txt", encoding_rs::UTF_8, true, unicode_text, ""),
         // Git can't split raw UTF-16 into lines.
         Case {
@@ -16803,6 +16810,18 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
                 encoding_rs::WINDOWS_1252,
                 false,
                 "x = \"café\"\n&#128512;\nz = 1\n",
+                "",
+            )
+        },
+        // Shift_JIS stores `¥` as the byte of `\`, so the buffer is blamed as UTF-8.
+        Case {
+            replacement: "¥",
+            committed_rows: vec![2..3],
+            ..case(
+                "sjis_alias.c",
+                encoding_rs::SHIFT_JIS,
+                false,
+                "int a; /* 日本語のコメント */\n\\\nint c;\n",
                 "",
             )
         },

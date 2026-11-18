@@ -4,7 +4,7 @@ use crate::repository::{GitBinary, RepoPath};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
-use file_content::encode_text_exact;
+use file_content::ExactEncoder;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, TryFutureExt, try_join};
 use itertools::Itertools as _;
@@ -34,12 +34,9 @@ impl Blame {
         encoding: &'static Encoding,
         has_bom: bool,
     ) -> Result<Self> {
-        let stored_contents =
-            stored_contents(git, path, content, line_ending, encoding, has_bom).await;
-        let source = match &stored_contents {
-            Some(stored_contents) => BlameSource::StoredContents(stored_contents),
-            None => BlameSource::Contents(content, line_ending),
-        };
+        let source = stored_contents(git, path, content, line_ending, encoding, has_bom)
+            .await
+            .unwrap_or(BlameSource::Contents(content, line_ending));
         let entries = run_git_blame(git, path, source).await?;
         Self::with_commit_details(git, entries).await
     }
@@ -91,19 +88,19 @@ const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
 #[derive(Clone, Copy)]
 enum BlameSource<'a> {
     Contents(&'a Rope, LineEnding),
-    StoredContents(&'a [u8]),
+    StoredContents(&'a Rope, LineEnding, &'static Encoding, bool),
     Revision(Oid),
 }
 
 /// The contents as stored on disk, if that is what Git compares with history.
-async fn stored_contents(
+async fn stored_contents<'a>(
     git: &GitBinary,
     path: &RepoPath,
-    content: &Rope,
+    content: &'a Rope,
     line_ending: LineEnding,
     encoding: &'static Encoding,
     has_bom: bool,
-) -> Option<Vec<u8>> {
+) -> Option<BlameSource<'a>> {
     if encoding == UTF_8 && !has_bom {
         return None;
     }
@@ -114,9 +111,16 @@ async fn stored_contents(
     if !compares_stored_bytes {
         return None;
     }
-    let text = text::chunks_with_line_ending(content, line_ending).collect::<String>();
-    // A replaced character could match committed text.
-    encode_text_exact(text, encoding, has_bom)
+    let mut encoder = ExactEncoder::new(encoding, has_bom);
+    let is_exact = text::chunks_with_line_ending(content, line_ending)
+        .all(|chunk| encoder.encode(chunk).is_some())
+        && encoder.finish().is_some();
+    is_exact.then_some(BlameSource::StoredContents(
+        content,
+        line_ending,
+        encoding,
+        has_bom,
+    ))
 }
 
 /// Git applies textconv to history but not to stdin, and can't split raw UTF-16 into lines.
@@ -225,7 +229,17 @@ async fn run_git_blame(
                     stdin.write_all(chunk.as_bytes()).await?;
                 }
             }
-            BlameSource::StoredContents(contents) => stdin.write_all(contents).await?,
+            BlameSource::StoredContents(contents, line_ending, encoding, has_bom) => {
+                let mut encoder = ExactEncoder::new(encoding, has_bom);
+                for chunk in text::chunks_with_line_ending(contents, line_ending) {
+                    let bytes = encoder
+                        .encode(chunk)
+                        .context("encoding the contents to blame")?;
+                    stdin.write_all(bytes).await?;
+                }
+                let bytes = encoder.finish().context("encoding the contents to blame")?;
+                stdin.write_all(&bytes).await?;
+            }
             BlameSource::Revision(..) => {}
         }
         stdin.flush().await?;
