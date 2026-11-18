@@ -188,6 +188,12 @@ impl ContextMenuEntry {
         self
     }
 
+    fn has_action(&self, action: &dyn Action) -> bool {
+        self.action
+            .as_ref()
+            .is_some_and(|entry_action| entry_action.partial_eq(action))
+    }
+
     pub fn documentation_aside(
         mut self,
         side: DocumentationSide,
@@ -894,6 +900,32 @@ impl ContextMenu {
             show_end_slot_on_hover: false,
         }));
         self
+    }
+
+    /// Sets the disabled state of the first entry matching the action and notifies observers.
+    /// Does nothing if no entry matches.
+    pub fn set_action_disabled(
+        &mut self,
+        action: &dyn Action,
+        disabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = self.items.iter_mut().find_map(|item| match item {
+            ContextMenuItem::Entry(entry) if entry.has_action(action) => Some(entry),
+            _ => None,
+        });
+        if let Some(entry) = entry {
+            entry.disabled = disabled;
+            cx.notify();
+        }
+    }
+
+    /// Returns the disabled state of the first entry matching the action, or `None` if none matches.
+    pub fn is_action_disabled(&self, action: &dyn Action) -> Option<bool> {
+        self.items.iter().find_map(|item| match item {
+            ContextMenuItem::Entry(entry) if entry.has_action(action) => Some(entry.disabled),
+            _ => None,
+        })
     }
 
     pub fn link(self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {

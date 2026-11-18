@@ -10,8 +10,10 @@ use strum::IntoEnumIterator;
 use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
-use crate::linux::platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
-use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
+use crate::linux::platform::{PIPE_READ_TIMEOUT, parse_uri_list, read_fd_with_timeout};
+use gpui::{
+    ClipboardContentTypes, ClipboardEntry, ClipboardItem, ExternalPaths, Image, ImageFormat, hash,
+};
 
 /// Text mime types that we'll offer to other programs.
 pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
@@ -95,6 +97,15 @@ impl<T: ReceiveData> DataOffer<T> {
         }
     }
 
+    fn read_paths(&self, connection: &Connection) -> Option<ExternalPaths> {
+        if !self.has_mime_type(FILE_LIST_MIME_TYPE) {
+            return None;
+        }
+        let bytes = self.read_bytes(connection, FILE_LIST_MIME_TYPE)?;
+        let paths = parse_uri_list(&bytes);
+        (!paths.is_empty()).then(|| ExternalPaths(paths))
+    }
+
     fn read_text(&self, connection: &Connection) -> Option<ClipboardItem> {
         let mime_type = self.mime_types.iter().find(|&mime_type| {
             ALLOWED_TEXT_MIME_TYPES
@@ -133,6 +144,20 @@ impl<T: ReceiveData> DataOffer<T> {
         }
         None
     }
+}
+
+fn content_types_for_mime_types(mime_types: &[String]) -> ClipboardContentTypes {
+    let mut content_types = ClipboardContentTypes::empty();
+    for mime_type in mime_types {
+        if ALLOWED_TEXT_MIME_TYPES.contains(&mime_type.as_str()) {
+            content_types |= ClipboardContentTypes::TEXT;
+        } else if ImageFormat::iter().any(|format| format.mime_type() == mime_type) {
+            content_types |= ClipboardContentTypes::IMAGE;
+        } else if mime_type == FILE_LIST_MIME_TYPE {
+            content_types |= ClipboardContentTypes::EXTERNAL_PATHS;
+        }
+    }
+    content_types
 }
 
 impl Clipboard {
@@ -200,12 +225,33 @@ impl Clipboard {
             return self.contents.clone();
         }
 
-        let item = offer
-            .read_text(&self.connection)
-            .or_else(|| offer.read_image(&self.connection))?;
+        let item = if let Some(paths) = offer.read_paths(&self.connection) {
+            let mut entries = vec![ClipboardEntry::ExternalPaths(paths)];
+            if let Some(text) = offer.read_text(&self.connection) {
+                entries.extend(text.into_entries());
+            }
+            ClipboardItem { entries }
+        } else {
+            offer
+                .read_text(&self.connection)
+                .or_else(|| offer.read_image(&self.connection))?
+        };
 
         self.cached_read = Some(item.clone());
         Some(item)
+    }
+
+    pub fn content_types(&self) -> ClipboardContentTypes {
+        let Some(offer) = self.current_offer.as_ref() else {
+            return ClipboardContentTypes::empty();
+        };
+        if offer.has_mime_type(&self.self_mime) {
+            return self
+                .contents
+                .as_ref()
+                .map_or(ClipboardContentTypes::empty(), ClipboardItem::content_types);
+        }
+        content_types_for_mime_types(&offer.mime_types)
     }
 
     pub fn read_primary(&mut self) -> Option<ClipboardItem> {
@@ -253,5 +299,40 @@ impl Clipboard {
                 },
             )
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_content_types_for_mime_types() {
+        for (mime_types, expected) in [
+            (
+                vec![
+                    "text/uri-list",
+                    "x-special/gnome-copied-files",
+                    "text/plain;charset=utf-8",
+                ],
+                ClipboardContentTypes::TEXT | ClipboardContentTypes::EXTERNAL_PATHS,
+            ),
+            (
+                vec![ImageFormat::Png.mime_type()],
+                ClipboardContentTypes::IMAGE,
+            ),
+            (vec!["UTF8_STRING"], ClipboardContentTypes::TEXT),
+            (vec!["text/plain"], ClipboardContentTypes::empty()),
+            (
+                vec!["application/octet-stream", "text/html"],
+                ClipboardContentTypes::empty(),
+            ),
+        ] {
+            let mime_types = mime_types
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            assert_eq!(content_types_for_mime_types(&mime_types), expected);
+        }
     }
 }

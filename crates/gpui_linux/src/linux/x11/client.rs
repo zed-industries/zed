@@ -5,12 +5,9 @@ use calloop::{
     generic::{FdWrapper, Generic},
 };
 use collections::HashMap;
-use core::str;
 use gpui::{Capslock, GraphicalEnvironment};
 use gpui_util::ResultExt as _;
-use http_client::Url;
 use log::Level;
-use smallvec::SmallVec;
 use std::{
     cell::{RefCell, RefMut},
     collections::{BTreeMap, HashSet},
@@ -52,18 +49,18 @@ use crate::linux::{
     DEFAULT_CURSOR_ICON_NAME, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
     is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
     log_cursor_icon_warning, modifiers_from_xkb, new_xkb_context, open_uri_internal,
-    platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
+    platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES, parse_uri_list},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, FileDropEvent, FrameRequestSource,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay,
-    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowButtonLayout, WindowParams,
-    WindowVisibility, point, px,
+    AnyWindowHandle, Bounds, ClipboardContentTypes, ClipboardItem, ClipboardReadError, CursorStyle,
+    FileDropEvent, FrameRequestSource, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    Pixels, PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout,
+    PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size, Task, TouchPhase,
+    WindowButtonLayout, WindowParams, WindowVisibility, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -1012,26 +1009,14 @@ impl X11Client {
                 let Some(reply) = reply else {
                     return Some(());
                 };
-                if let Ok(file_list) = str::from_utf8(&reply.value) {
-                    let paths: SmallVec<[_; 2]> = file_list
-                        .lines()
-                        .filter_map(|path| Url::parse(path).log_err())
-                        .filter_map(|url| match url.to_file_path() {
-                            Ok(url) => Some(url),
-                            Err(()) => {
-                                log::error!("Failed turn {url:?} into a file path");
-                                None
-                            }
-                        })
-                        .collect();
-                    let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                        position: state.xdnd_state.position,
-                        paths: gpui::ExternalPaths(paths),
-                    });
-                    drop(state);
-                    window.handle_input(input);
-                    self.0.borrow_mut().xdnd_state.retrieved = true;
-                }
+                let paths = parse_uri_list(&reply.value);
+                let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                    position: state.xdnd_state.position,
+                    paths: gpui::ExternalPaths(paths),
+                });
+                drop(state);
+                window.handle_input(input);
+                self.0.borrow_mut().xdnd_state.retrieved = true;
             }
             Event::ConfigureNotify(event) => {
                 let bounds = Bounds {
@@ -1876,6 +1861,28 @@ impl X11Client {
             .get_any(clipboard::ClipboardKind::Clipboard)
             .context("X11: Failed to read from clipboard (clipboard)")
             .log_with_level(log::Level::Debug)
+    }
+
+    pub(crate) fn clipboard_content_types(
+        &self,
+    ) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        let state = self.0.borrow();
+        if state
+            .clipboard
+            .is_owner(clipboard::ClipboardKind::Clipboard)
+        {
+            return Task::ready(Ok(state
+                .clipboard_item
+                .as_ref()
+                .map_or(ClipboardContentTypes::empty(), ClipboardItem::content_types)));
+        }
+
+        let query = state.clipboard.content_types_query();
+        state
+            .common
+            .borrow()
+            .background_executor
+            .spawn(async move { query.run() })
     }
 
     pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {

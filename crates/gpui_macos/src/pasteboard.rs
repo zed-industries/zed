@@ -18,7 +18,8 @@ use strum::IntoEnumIterator as _;
 use uuid::Uuid;
 
 use gpui::{
-    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+    ClipboardContentTypes, ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image,
+    ImageFormat, hash,
 };
 
 pub struct Pasteboard {
@@ -110,6 +111,27 @@ impl Pasteboard {
         None
     }
 
+    pub fn content_types(&self) -> ClipboardContentTypes {
+        let Some(types) = self.inner.types() else {
+            return ClipboardContentTypes::empty();
+        };
+        let mut content_types = ClipboardContentTypes::empty();
+        if types.containsObject(unsafe { NSPasteboardTypeString }) {
+            content_types |= ClipboardContentTypes::TEXT;
+        }
+        if ImageFormat::iter().any(|format| types.containsObject(UTType::from(format).inner())) {
+            content_types |= ClipboardContentTypes::IMAGE;
+        }
+        #[expect(
+            deprecated,
+            reason = "Preserve the existing file-copy pasteboard format"
+        )]
+        if types.containsObject(unsafe { NSFilenamesPboardType }) {
+            content_types |= ClipboardContentTypes::EXTERNAL_PATHS;
+        }
+        content_types
+    }
+
     fn read_image(&self, format: ImageFormat) -> Option<ClipboardItem> {
         let ut_type = UTType::from(format);
 
@@ -129,13 +151,13 @@ impl Pasteboard {
 
     fn read_string_from_pasteboard(&self) -> Option<ClipboardEntry> {
         let pasteboard_types = self.inner.types()?;
-        let string_type = NSString::from_str("public.utf8-plain-text");
+        let string_type = unsafe { NSPasteboardTypeString };
 
-        if !pasteboard_types.containsObject(&string_type) {
+        if !pasteboard_types.containsObject(string_type) {
             return None;
         }
 
-        let text_bytes = self.data_for_type(&string_type)?;
+        let text_bytes = self.data_for_type(string_type)?;
 
         let text = String::from_utf8_lossy(&text_bytes).to_string();
         let metadata = self
@@ -309,6 +331,30 @@ mod tests {
     use objc2::rc::autoreleasepool;
 
     use super::*;
+
+    #[test]
+    fn test_clipboard_content_types() {
+        let pasteboard = Pasteboard::unique();
+        assert_eq!(pasteboard.content_types(), ClipboardContentTypes::empty());
+
+        pasteboard.write(ClipboardItem::new_string("text".to_string()));
+        assert_eq!(pasteboard.content_types(), ClipboardContentTypes::TEXT);
+
+        unsafe {
+            simulate_external_file_copy(&pasteboard, &["/test.txt"]);
+        }
+        assert_eq!(
+            pasteboard.content_types(),
+            ClipboardContentTypes::EXTERNAL_PATHS | ClipboardContentTypes::TEXT,
+        );
+
+        let image = Image::from_bytes(
+            ImageFormat::Svg,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>"#.to_vec(),
+        );
+        pasteboard.write(ClipboardItem::new_image(&image));
+        assert_eq!(pasteboard.content_types(), ClipboardContentTypes::IMAGE);
+    }
 
     #[test]
     fn test_string() {
