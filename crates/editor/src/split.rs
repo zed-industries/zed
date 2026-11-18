@@ -663,11 +663,11 @@ impl SplittableEditor {
                     cx.notify();
                 }
             }),
-            // Other entities can keep the rhs editor alive after this editor is released.
-            // Without this teardown, its shared scroll anchor can reference the released lhs display map.
+            // Either editor can outlive this one and the other editor. A scroll anchor set by the
+            // other side can't be converted once that side's display map is released.
             cx.on_release(|this, cx| {
-                if let Some(lhs) = this.lhs.take() {
-                    Self::detach_lhs(lhs, &this.rhs_editor, cx);
+                if let Some(lhs) = &this.lhs {
+                    Self::unshare_scroll_anchors(&lhs.editor, &this.rhs_editor, cx);
                 }
             }),
         ];
@@ -1164,19 +1164,39 @@ impl SplittableEditor {
         let Some(lhs) = self.lhs.take() else {
             return;
         };
-        Self::detach_lhs(lhs, &self.rhs_editor, cx);
+
+        // Converting an anchor set by the other side relies on split state that the teardown below removes.
+        Self::unshare_scroll_anchors(&lhs.editor, &self.rhs_editor, cx);
+
+        lhs.editor.update(cx, |editor, _| {
+            editor.set_on_local_selections_changed(None);
+        });
+
+        self.rhs_editor.update(cx, |rhs, cx| {
+            rhs.set_on_local_selections_changed(None);
+            rhs.set_delegate_expand_excerpts(false);
+            rhs.buffer().update(cx, |buffer, cx| {
+                buffer.set_show_deleted_hunks(true, cx);
+                buffer.set_use_extended_diff_range(false, cx);
+            });
+            rhs.display_map.update(cx, |dm, cx| {
+                dm.set_companion(None, cx);
+            });
+            rhs.inlay_hint_visibility_changed(cx);
+        });
         cx.notify();
     }
 
-    fn detach_lhs(lhs: LhsEditor, rhs_editor: &Entity<Editor>, cx: &mut App) {
-        // Detach the stale lhs editor from the shared scroll anchor while the split companion still exists,
-        // so its anchor can be converted to lhs native before rhs tears down split specific state.
-        lhs.editor.update(cx, |editor, cx| {
+    fn unshare_scroll_anchors(
+        lhs_editor: &Entity<Editor>,
+        rhs_editor: &Entity<Editor>,
+        cx: &mut App,
+    ) {
+        lhs_editor.update(cx, |editor, cx| {
             let lhs_snapshot = editor.display_map.update(cx, |dm, cx| dm.snapshot(cx));
             editor
                 .scroll_manager
                 .unshare_scroll_anchor(&lhs_snapshot, cx);
-            editor.set_on_local_selections_changed(None);
         });
 
         rhs_editor.update(cx, |rhs, cx| {
@@ -1189,17 +1209,6 @@ impl SplittableEditor {
                     shared.scroll_anchor = native_anchor;
                     shared.display_map_id = Some(rhs_display_map_id);
                 });
-
-            rhs.set_on_local_selections_changed(None);
-            rhs.set_delegate_expand_excerpts(false);
-            rhs.buffer().update(cx, |buffer, cx| {
-                buffer.set_show_deleted_hunks(true, cx);
-                buffer.set_use_extended_diff_range(false, cx);
-            });
-            rhs.display_map.update(cx, |dm, cx| {
-                dm.set_companion(None, cx);
-            });
-            rhs.inlay_hint_visibility_changed(cx);
         });
     }
 
