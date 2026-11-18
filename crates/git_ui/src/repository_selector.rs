@@ -293,7 +293,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
                     .w_full()
                     .min_w_0()
                     .gap_1()
-                    .child(Label::new(display_name).single_line().truncate())
+                    .child(Label::new(display_name).single_line().truncate().flex_1())
                     .when(is_active, |this| {
                         this.child(
                             Icon::new(IconName::Check)

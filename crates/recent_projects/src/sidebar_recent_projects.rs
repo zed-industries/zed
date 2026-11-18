@@ -326,8 +326,12 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             .ordered_paths()
             .map(|p| p.compact())
             .map(|path| {
-                let (label, path_match) =
-                    highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
+                let (label, path_match) = highlights_for_path(
+                    path.as_ref(),
+                    workspace.effective_path_style(),
+                    &hit.positions,
+                    path_start_offset,
+                );
                 path_start_offset += path_match.text.len();
                 label
             })
@@ -342,7 +346,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
 
         let highlighted_match = HighlightedMatchWithPaths {
             prefix,
-            match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
+            match_label: HighlightedMatch::join(match_labels.into_iter(), ", "),
             paths: Vec::new(),
             active: false,
         };

@@ -1215,7 +1215,40 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("   ", window, cx);
         });
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        let validation_state = panel
+            .state
+            .edit_state
+            .as_ref()
+            .map(|edit_state| &edit_state.validation_state);
+        assert!(
+            matches!(
+                validation_state,
+                Some(ValidationState::Error(message))
+                    if message == "File or directory name cannot be empty."
+            ),
+            "Unexpected validation state: {validation_state:?}"
+        );
         assert!(panel.confirm_edit(true, window, cx).is_none());
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text(" a ", window, cx);
+        });
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        let validation_state = panel
+            .state
+            .edit_state
+            .as_ref()
+            .map(|edit_state| &edit_state.validation_state);
+        assert!(
+            matches!(
+                validation_state,
+                Some(ValidationState::Warning(message))
+                    if message == "File or directory name contains leading or trailing whitespace."
+            ),
+            "Unexpected validation state: {validation_state:?}"
+        );
         panel.cancel(&menu::Cancel, window, cx);
     });
     cx.run_until_parked();
