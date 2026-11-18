@@ -59,7 +59,7 @@ impl FastFloat for f32 {
 }
 
 /// A path's curves binned into tiles for one display scale.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub(crate) struct PathTiles {
     bounds: Bounds<ScaledPixels>,
     tiles: Vec<PathTile>,
