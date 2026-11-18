@@ -154,9 +154,7 @@ impl SearchOption {
                 SearchSource::Buffer => {
                     let focus_handle = focus_handle.clone();
                     button.on_click(move |_: &ClickEvent, window, cx| {
-                        if !focus_handle.is_focused(window) {
-                            window.focus(&focus_handle, cx);
-                        }
+                        window.focus(&focus_handle, cx);
                         window.dispatch_action(action.boxed_clone(), cx);
                     })
                 }
@@ -164,9 +162,7 @@ impl SearchOption {
                     let focus_handle = focus_handle.clone();
                     let options = self.as_options();
                     button.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        if !focus_handle.is_focused(window) {
-                            window.focus(&focus_handle, cx);
-                        }
+                        window.focus(&focus_handle, cx);
                         this.toggle_search_option(options, window, cx);
                     }))
                 }

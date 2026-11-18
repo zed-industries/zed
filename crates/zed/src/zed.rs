@@ -2245,7 +2245,7 @@ pub fn handle_keymap_file_changes(
                 match load_result {
                     KeymapFileLoadResult::Success { key_bindings } => {
                         reload_keymaps(cx, key_bindings);
-                        dismiss_app_notification(&notification_id.clone(), cx);
+                        dismiss_app_notification(&notification_id, cx);
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
                         key_bindings,

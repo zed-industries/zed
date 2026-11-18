@@ -154,7 +154,6 @@ pub(crate) fn deserialize_terminal_panel(
                                 &restored_pane,
                                 interim_pane,
                                 SplitDirection::Right,
-                                cx,
                             );
                         }
                         if let Some(focused_interim_pane) = focused_interim_pane {
