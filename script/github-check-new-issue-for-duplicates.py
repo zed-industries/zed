@@ -32,12 +32,11 @@ import json
 import os
 import re
 import sys
-import time
 from datetime import datetime, timedelta
 
 import requests
+from github_helpers import github_graphql, github_rest_api, post_github_comment
 
-GITHUB_API = "https://api.github.com"
 REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
 TRACKING_ISSUE_NUMBER = 46355
@@ -54,32 +53,10 @@ STOPWORDS = {
     "the", "this", "when", "while", "with", "won't", "work", "working", "zed",
 }
 
-# HTTP statuses we'll retry on for GET requests
-TRANSIENT_HTTP_STATUSES = {429, 500, 502, 503, 504}
-
 
 def log(message):
     """Print to stderr so it doesn't interfere with JSON output on stdout."""
     print(message, file=sys.stderr)
-
-
-def github_api_get(path, params=None):
-    """Fetch JSON from the GitHub API, retrying transient failures. Raises on non-2xx status."""
-    url = f"{GITHUB_API}/{path.lstrip('/')}"
-    for attempt in range(3):
-        try:
-            response = requests.get(url, headers=GITHUB_HEADERS, params=params)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            transient = isinstance(e, (requests.ConnectionError, requests.Timeout)) or (
-                isinstance(e, requests.HTTPError) and e.response.status_code in TRANSIENT_HTTP_STATUSES
-            )
-            if not transient or attempt == 2:
-                raise
-            wait = 2 ** attempt
-            log(f"  Transient GitHub API error ({e}); retrying in {wait}s")
-            time.sleep(wait)
 
 
 def github_search_issues(query, per_page=50, sort=None):
@@ -87,49 +64,20 @@ def github_search_issues(query, per_page=50, sort=None):
     params = {"q": query, "per_page": per_page}
     if sort:
         params.update({"sort": sort, "order": "desc"})
-    return github_api_get("/search/issues", params).get("items", [])
-
-
-def github_api_graphql(query, variables=None):
-    """Run a GraphQL query against the GitHub API, retrying transient failures. """
-    url = f"{GITHUB_API}/graphql"
-    for attempt in range(3):
-        try:
-            response = requests.post(
-                url, headers=GITHUB_HEADERS, json={"query": query, "variables": variables or {}}
-            )
-            response.raise_for_status()
-            data = response.json()
-            if "errors" in data:
-                raise ValueError(f"GraphQL errors: {json.dumps(data['errors'])[:300]}")
-            return data["data"]
-        except requests.RequestException as e:
-            transient = isinstance(e, (requests.ConnectionError, requests.Timeout)) or (
-                isinstance(e, requests.HTTPError) and e.response.status_code in TRANSIENT_HTTP_STATUSES
-            )
-            if not transient or attempt == 2:
-                raise
-            wait = 2 ** attempt
-            log(f"  Transient GitHub GraphQL error ({e}); retrying in {wait}s")
-            time.sleep(wait)
+    return github_rest_api("GET", "search/issues", params=params).get("items", [])
 
 
 def check_team_membership(org, team_slug, username):
     """Check if user is an active member of a team."""
     try:
-        data = github_api_get(f"/orgs/{org}/teams/{team_slug}/memberships/{username}")
+        data = github_rest_api(
+            "GET", f"orgs/{org}/teams/{team_slug}/memberships/{username}"
+        )
         return data.get("state") == "active"
     except requests.HTTPError as e:
         if e.response.status_code == 404:
             return False
         raise
-
-
-def post_comment(issue_number: int, body):
-    url = f"{GITHUB_API.rstrip('/')}/repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}/comments"
-    response = requests.post(url, headers=GITHUB_HEADERS, json={"body": body})
-    response.raise_for_status()
-    log(f"  Posted comment on #{issue_number}")
 
 
 def format_candidate_reference(match):
@@ -288,7 +236,9 @@ def fetch_issue(issue_number: int):
     """Fetch issue from GitHub and return as a dict."""
     log(f"Fetching issue #{issue_number}")
 
-    issue_data = github_api_get(f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}")
+    issue_data = github_rest_api(
+        "GET", f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}"
+    )
     issue = {
         "number": issue_number,
         "title": issue_data["title"],
@@ -320,8 +270,9 @@ def fetch_area_labels():
 
     labels = []
     page = 1
-    while page_labels := github_api_get(
-        f"/repos/{REPO_OWNER}/{REPO_NAME}/labels",
+    while page_labels := github_rest_api(
+        "GET",
+        f"repos/{REPO_OWNER}/{REPO_NAME}/labels",
         params={"per_page": 100, "page": page},
     ):
         labels.extend(page_labels)
@@ -481,7 +432,9 @@ def parse_duplicate_magnets():
     """
     log(f"Parsing duplicate magnets from #{TRACKING_ISSUE_NUMBER}")
 
-    issue_data = github_api_get(f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{TRACKING_ISSUE_NUMBER}")
+    issue_data = github_rest_api(
+        "GET", f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{TRACKING_ISSUE_NUMBER}"
+    )
     body = issue_data.get("body") or ""
 
     # parse the issue body
@@ -528,7 +481,9 @@ def enrich_magnets(magnets):
     """Fetch details for magnets and normalize them as candidates."""
     log(f"  Fetching details for {len(magnets)} magnets")
     for magnet in magnets:
-        data = github_api_get(f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{magnet['number']}")
+        data = github_rest_api(
+            "GET", f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{magnet['number']}"
+        )
         magnet.update({
             "key": f"issue:{magnet['number']}",
             "kind": "issue",
@@ -743,8 +698,9 @@ def enrich_popular_candidate_comments(candidates):
         ):
             continue
         try:
-            comments = github_api_get(
-                f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{candidate['number']}/comments",
+            comments = github_rest_api(
+                "GET",
+                f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{candidate['number']}/comments",
                 params={"per_page": 100},
             )
         except requests.RequestException as error:
@@ -795,7 +751,7 @@ def search_discussions(issue, detected_areas, search_queries, max_searches=6):
     for search_type, query in queries[:max_searches]:
         log(f"  Discussion search ({search_type}): {query}")
         try:
-            data = github_api_graphql(gql, {"q": query})
+            data = github_graphql(gql, {"q": query})
             for result_rank, node in enumerate(data["search"]["nodes"]):
                 if not node:
                     continue
@@ -1322,21 +1278,11 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="Skip posting comment, just log what would be posted")
     args = parser.parse_args()
 
-    github_token = os.environ.get("GITHUB_TOKEN")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
 
-    if not github_token:
-        log("Error: GITHUB_TOKEN not set")
-        sys.exit(1)
     if not anthropic_key:
         log("Error: ANTHROPIC_API_KEY not set")
         sys.exit(1)
-
-    GITHUB_HEADERS = {
-        "Authorization": f"Bearer {github_token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
 
     issue = fetch_issue(args.issue_number)
     if should_skip(issue):
@@ -1376,7 +1322,10 @@ if __name__ == "__main__":
         else:
             log("Posting comment")
             try:
-                post_comment(issue["number"], comment_body)
+                post_github_comment(
+                    REPO_OWNER, REPO_NAME, issue["number"], comment_body
+                )
+                log(f"  Posted comment on #{issue['number']}")
                 commented = True
             except requests.RequestException as e:
                 log(f"  Failed to post comment: {e}")

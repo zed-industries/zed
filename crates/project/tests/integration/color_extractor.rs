@@ -63,7 +63,7 @@ fn only_whole_label_matches_are_allowed() {
     for (color_str, _) in COLOR_TABLE.iter() {
         let color = extract_color(&CompletionItem {
             kind: Some(CompletionItemKind::COLOR),
-            label: format!("{} foo", color_str).to_string(),
+            label: format!("{} foo", color_str),
             detail: None,
             documentation: None,
             ..Default::default()
@@ -94,7 +94,7 @@ fn only_whole_detail_matches_are_allowed() {
         let color = extract_color(&CompletionItem {
             kind: Some(CompletionItemKind::COLOR),
             label: "".to_string(),
-            detail: Some(format!("{} foo", color_str).to_string()),
+            detail: Some(format!("{} foo", color_str)),
             documentation: None,
             ..Default::default()
         });
@@ -110,9 +110,7 @@ fn can_extract_from_documentation_start() {
             kind: Some(CompletionItemKind::COLOR),
             label: "".to_string(),
             detail: None,
-            documentation: Some(Documentation::String(
-                format!("{} foo", color_str).to_string(),
-            )),
+            documentation: Some(Documentation::String(format!("{} foo", color_str))),
             ..Default::default()
         });
 
@@ -127,9 +125,7 @@ fn can_extract_from_documentation_end() {
             kind: Some(CompletionItemKind::COLOR),
             label: "".to_string(),
             detail: None,
-            documentation: Some(Documentation::String(
-                format!("foo {}", color_str).to_string(),
-            )),
+            documentation: Some(Documentation::String(format!("foo {}", color_str))),
             ..Default::default()
         });
 
@@ -144,9 +140,7 @@ fn cannot_extract_from_documentation_middle() {
             kind: Some(CompletionItemKind::COLOR),
             label: "".to_string(),
             detail: None,
-            documentation: Some(Documentation::String(
-                format!("foo {} foo", color_str).to_string(),
-            )),
+            documentation: Some(Documentation::String(format!("foo {} foo", color_str))),
             ..Default::default()
         });
 

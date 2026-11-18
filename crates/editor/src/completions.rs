@@ -230,16 +230,27 @@ impl Editor {
 
         // Cursors are right-biased, so an edit inserting text at one drags it along. Pin a
         // left-biased copy, keyed by the current anchor so cursors the user moves are skipped.
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let cursors_to_pin = self
+        let cursor_heads = self
             .selections
             .disjoint_anchors()
             .iter()
             .filter(|selection| selection.start == selection.end)
-            .map(|selection| (selection.head(), snapshot.anchor_before(selection.head())))
-            .collect::<HashMap<_, _>>();
+            .map(|selection| selection.head())
+            .collect::<Vec<_>>();
 
         Some(cx.spawn_in(window, async move |editor, cx| {
+            if let Some(waiter) =
+                buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied())
+            {
+                waiter.await?;
+            }
+            let cursors_to_pin = editor.update(cx, |editor, cx| {
+                let snapshot = editor.buffer.read(cx).snapshot(cx);
+                cursor_heads
+                    .into_iter()
+                    .map(|head| (head, snapshot.anchor_before(head)))
+                    .collect::<HashMap<_, _>>()
+            })?;
             if let Some(transaction) = on_type_formatting.await? {
                 let (formatted_buffer_id, formatted_ranges) = buffer.update(cx, |buffer, _| {
                     let formatted_ranges = buffer

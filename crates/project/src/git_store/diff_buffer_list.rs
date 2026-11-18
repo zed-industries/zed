@@ -1,7 +1,7 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt, future::LocalBoxFuture};
 use git::{
     repository::RepoPath,
     status::{DiffTreeType, FileStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus},
@@ -45,6 +45,7 @@ pub struct DiffBufferList {
     tree_diff: Option<TreeDiff>,
     statuses_by_path: Option<SumTree<StatusEntry>>,
     tree_diff_base_task: Option<Task<()>>,
+    tree_diff_error: Option<SharedString>,
     _subscription: Subscription,
     update_needed: postage::watch::Sender<()>,
     _task: Task<()>,
@@ -105,6 +106,7 @@ impl DiffBufferList {
             tree_diff: None,
             statuses_by_path: None,
             tree_diff_base_task: None,
+            tree_diff_error: None,
             _subscription: git_store_subscription,
             _task: worker,
             update_needed: send,
@@ -130,6 +132,7 @@ impl DiffBufferList {
         self.tree_diff = None;
         self.statuses_by_path = None;
         self.tree_diff_base_task = None;
+        self.tree_diff_error = None;
         cx.emit(BranchDiffEvent::FileListChanged);
         *self.update_needed.borrow_mut() = ();
     }
@@ -144,6 +147,7 @@ impl DiffBufferList {
         self.tree_diff = None;
         self.statuses_by_path = None;
         self.tree_diff_base_task = None;
+        self.tree_diff_error = None;
         self.diff_base = diff_base;
 
         cx.emit(BranchDiffEvent::DiffBaseChanged);
@@ -230,11 +234,40 @@ impl DiffBufferList {
         }
 
         let task = cx.spawn(async move |this, cx| {
-            Self::reload_tree_diff(this, cx).await.log_err();
+            let Err(error) = Self::reload_tree_diff(this.clone(), cx).await else {
+                return;
+            };
+            log::error!("failed to load tree diff: {error:#}");
+            let error = SharedString::from(format!("{error:#}"));
+            this.update(cx, |this, cx| {
+                // Reloads retry on every status change. Announcing the same
+                // failure each time would refresh every consumer, including
+                // editor gutters when this is the display diff.
+                if this.tree_diff_error.as_ref() != Some(&error) {
+                    this.tree_diff_error = Some(error);
+                    cx.emit(BranchDiffEvent::FileListChanged);
+                }
+            })
+            .log_err();
         });
 
         self.tree_diff_base_task = Some(task);
         cx.notify();
+    }
+
+    /// The error from the last failed tree diff reload, such as a base ref
+    /// that no longer exists.
+    pub fn tree_diff_error(&self) -> Option<&SharedString> {
+        self.tree_diff_error.as_ref()
+    }
+
+    /// Whether a merge-base list is still waiting for its first tree diff, so
+    /// `load_buffers` can't list any files yet.
+    pub fn is_awaiting_tree_diff(&self) -> bool {
+        self.diff_base.is_merge_base()
+            && self.repo.is_some()
+            && self.tree_diff.is_none()
+            && self.tree_diff_error.is_none()
     }
 
     pub fn is_tree_base_loading(&self) -> bool {
@@ -281,6 +314,7 @@ impl DiffBufferList {
             this.committed_tree_diff = Some(committed_tree_diff);
             this.tree_diff = Some(tree_diff);
             this.statuses_by_path = statuses_by_path;
+            this.tree_diff_error = None;
             cx.emit(BranchDiffEvent::FileListChanged);
             cx.notify();
         })
@@ -344,7 +378,7 @@ impl DiffBufferList {
                 );
 
                 output.push(DiffBuffer {
-                    repo_path: item.repo_path.clone(),
+                    repo_path: item.repo_path,
                     load: task,
                     file_status: status,
                 });
@@ -390,8 +424,10 @@ impl DiffBufferList {
         repo: Entity<Repository>,
         git_store: Entity<GitStore>,
         cx: &Context<Self>,
-    ) -> Task<Result<LoadedDiffBuffer>> {
-        cx.spawn(async move |_, cx| {
+    ) -> LocalBoxFuture<'static, Result<LoadedDiffBuffer>> {
+        let mut cx = cx.to_async();
+        async move {
+            let cx = &mut cx;
             let buffer = git_store
                 .update(cx, |git_store, cx| {
                     git_store.buffer_store.update(cx, |buffer_store, cx| {
@@ -466,7 +502,8 @@ impl DiffBufferList {
                 diff: changes,
                 conflict_set,
             })
-        })
+        }
+        .boxed_local()
     }
 }
 
@@ -536,9 +573,9 @@ pub struct LoadedDiffBuffer {
     pub conflict_set: Option<Entity<ConflictSet>>,
 }
 
-#[derive(Debug)]
 pub struct DiffBuffer {
     pub repo_path: RepoPath,
     pub file_status: FileStatus,
-    pub load: Task<Result<LoadedDiffBuffer>>,
+    /// Not started until polled, so the consumer controls load concurrency.
+    pub load: LocalBoxFuture<'static, Result<LoadedDiffBuffer>>,
 }

@@ -246,7 +246,7 @@ mod tests {
     use lsp::Uri;
     use project::Project;
     use serde_json::json;
-    use settings::{AllLanguageSettingsContent, DelayMs, SettingsStore};
+    use settings::{AllLanguageSettingsContent, DelayMs, SettingsStore, SplicingVec};
     use std::future::Future;
     use util::{
         path,
@@ -979,7 +979,7 @@ mod tests {
             settings
                 .edit_predictions
                 .get_or_insert(Default::default())
-                .disabled_globs = Some(vec![".env*".to_string()]);
+                .disabled_globs = Some(SplicingVec::from(vec![".env*".to_string()]));
         });
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);

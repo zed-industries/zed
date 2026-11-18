@@ -3,9 +3,13 @@ mod icon_decoration;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use decorated_icon::*;
-use gpui::{AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation, img, svg};
+use gpui::{
+    AnimationElement, AnyElement, Hsla, ImgResourceLoader, IntoElement, Rems, Resource,
+    TimedTransformation, Transformation, img, svg,
+};
 pub use icon_decoration::*;
 pub use icons::*;
 
@@ -145,8 +149,10 @@ enum IconSource {
 pub struct Icon {
     source: IconSource,
     color: Color,
+    group_hover_color: Option<Color>,
     size: Rems,
     transformation: Transformation,
+    rotation_period: Option<Duration>,
 }
 
 impl Icon {
@@ -154,8 +160,10 @@ impl Icon {
         Self {
             source: IconSource::Embedded(icon.path().into()),
             color: Color::default(),
+            group_hover_color: None,
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
+            rotation_period: None,
         }
     }
 
@@ -172,8 +180,10 @@ impl Icon {
         Self {
             source,
             color: Color::default(),
+            group_hover_color: None,
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
+            rotation_period: None,
         }
     }
 
@@ -181,8 +191,16 @@ impl Icon {
         Self {
             source: IconSource::ExternalSvg(svg),
             color: Color::default(),
+            group_hover_color: None,
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
+            rotation_period: None,
+        }
+    }
+
+    pub fn preload(&self, cx: &mut App) {
+        if let IconSource::External(path) = &self.source {
+            drop(cx.fetch_asset::<ImgResourceLoader>(&Resource::Path(path.clone())));
         }
     }
 
@@ -193,6 +211,15 @@ impl Icon {
 
     pub fn size(mut self, size: IconSize) -> Self {
         self.size = size.rems();
+        self
+    }
+
+    /// Sets the color used while the enclosing unnamed (`""`) group is hovered,
+    /// such as the one set up by [`crate::ButtonLike`].
+    ///
+    /// Not to be exposed outside of the `ui` crate.
+    pub(crate) fn group_hover_color(mut self, color: impl Into<Option<Color>>) -> Self {
+        self.group_hover_color = color.into();
         self
     }
 
@@ -210,31 +237,44 @@ impl Transformable for Icon {
         self.transformation = transformation;
         self
     }
+
+    /// Has no effect on icons loaded from raster image files.
+    fn animate_rotation(mut self, period: Duration) -> Self {
+        self.rotation_period = Some(period);
+        self
+    }
 }
 
 impl RenderOnce for Icon {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        match self.source {
-            IconSource::Embedded(path) => svg()
-                .with_transformation(self.transformation)
-                .size(self.size)
-                .flex_none()
-                .path(path)
-                .text_color(self.color.color(cx))
-                .into_any_element(),
-            IconSource::ExternalSvg(path) => svg()
-                .external_path(path)
-                .with_transformation(self.transformation)
-                .size(self.size)
-                .flex_none()
-                .text_color(self.color.color(cx))
-                .into_any_element(),
-            IconSource::External(path) => img(path)
-                .size(self.size)
-                .flex_none()
-                .text_color(self.color.color(cx))
-                .into_any_element(),
-        }
+        let color = self.color.color(cx);
+        let svg = match self.source {
+            IconSource::Embedded(path) => svg().path(path),
+            IconSource::ExternalSvg(path) => svg().external_path(path),
+            IconSource::External(path) => {
+                return img(path)
+                    .size(self.size)
+                    .flex_none()
+                    .text_color(color)
+                    .into_any_element();
+            }
+        };
+        let group_hover_color = self.group_hover_color.map(|color| color.color(cx));
+
+        svg.with_transformation(self.transformation)
+            .when_some(self.rotation_period, |svg, period| {
+                svg.with_timed_transformation(TimedTransformation::rotation(
+                    period,
+                    self.transformation,
+                ))
+            })
+            .size(self.size)
+            .flex_none()
+            .text_color(color)
+            .when_some(group_hover_color, |this, hover_color| {
+                this.group_hover("", |style| style.text_color(hover_color))
+            })
+            .into_any_element()
     }
 }
 

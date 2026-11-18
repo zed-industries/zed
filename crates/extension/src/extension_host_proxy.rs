@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use fs::Fs;
-use gpui::{App, Global, ReadGlobal, SharedString, Task};
-use language::{BinaryStatus, LanguageLoader, LanguageMatcher, LanguageName};
+use gpui::{App, EntityId, Global, ReadGlobal, SharedString, Task};
+use language::{BinaryStatus, ExtensionLanguagesUpdateOutcome, LanguageName, LanguageRegistration};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
@@ -228,59 +228,30 @@ impl ExtensionGrammarProxy for ExtensionHostProxy {
 }
 
 pub trait ExtensionLanguageProxy: Send + Sync + 'static {
-    fn register_language(
-        &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: Arc<LanguageMatcher>,
-        hidden: bool,
-        load: LanguageLoader,
-    ) -> bool;
-
-    fn is_language_registered(&self, language: &LanguageName) -> bool;
-
-    fn remove_languages(
+    /// Applies the removals before the registrations, as a single update.
+    ///
+    /// The returned outcome contains exactly one status per registration, in the
+    /// order the registrations were passed.
+    fn update_languages(
         &self,
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
-    );
+        registrations: Vec<LanguageRegistration>,
+    ) -> ExtensionLanguagesUpdateOutcome;
 }
 
 impl ExtensionLanguageProxy for ExtensionHostProxy {
-    #[ztracing::instrument(skip_all, fields(lang = language.0.as_str()))]
-    fn register_language(
-        &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: Arc<LanguageMatcher>,
-        hidden: bool,
-        load: LanguageLoader,
-    ) -> bool {
-        let Some(proxy) = self.language_proxy.read().clone() else {
-            return false;
-        };
-
-        proxy.register_language(language, grammar, matcher, hidden, load)
-    }
-
-    fn is_language_registered(&self, language: &LanguageName) -> bool {
-        let Some(proxy) = self.language_proxy.read().clone() else {
-            return false;
-        };
-
-        proxy.is_language_registered(language)
-    }
-
-    fn remove_languages(
+    #[ztracing::instrument(skip_all)]
+    fn update_languages(
         &self,
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
-    ) {
+        registrations: Vec<LanguageRegistration>,
+    ) -> ExtensionLanguagesUpdateOutcome {
         let Some(proxy) = self.language_proxy.read().clone() else {
-            return;
+            return ExtensionLanguagesUpdateOutcome::rejected(registrations.len());
         };
-
-        proxy.remove_languages(languages_to_remove, grammars_to_remove)
+        proxy.update_languages(languages_to_remove, grammars_to_remove, registrations)
     }
 }
 
@@ -301,6 +272,7 @@ pub trait ExtensionLanguageServerProxy: Send + Sync + 'static {
 
     fn update_language_server_status(
         &self,
+        source: Option<EntityId>,
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     );
@@ -335,6 +307,7 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
 
     fn update_language_server_status(
         &self,
+        source: Option<EntityId>,
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     ) {
@@ -342,7 +315,7 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
             return;
         };
 
-        proxy.update_language_server_status(language_server_id, status)
+        proxy.update_language_server_status(source, language_server_id, status)
     }
 }
 

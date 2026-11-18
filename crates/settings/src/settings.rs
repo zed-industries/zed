@@ -26,7 +26,7 @@ pub mod private {
 
 use gpui::{App, Global};
 
-use rust_embed::RustEmbed;
+use crate as settings;
 use std::env;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
@@ -54,6 +54,22 @@ pub use settings_store::{
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
 pub use keymap_file::ActionSequence;
+
+#[derive(Clone, Debug, Default, RegisterSetting)]
+pub struct CopilotSettings {
+    pub enterprise_uri: Option<String>,
+}
+
+impl Settings for CopilotSettings {
+    fn from_settings(content: &SettingsContent) -> Self {
+        Self {
+            enterprise_uri: content
+                .copilot
+                .as_ref()
+                .and_then(|copilot| copilot.enterprise_uri.clone()),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveSettingsProfileName(pub String);
@@ -117,12 +133,15 @@ impl fmt::Display for WorktreeId {
     }
 }
 
-#[derive(RustEmbed)]
-#[folder = "../../assets"]
-#[include = "settings/*"]
-#[include = "keymaps/*"]
-#[exclude = "*.DS_Store"]
-pub struct SettingsAssets;
+// Dev builds read the checkout's files at runtime instead of embedding them;
+// see the `assets` crate for the rationale.
+util::fs_embed! {
+    pub struct SettingsAssets,
+    crate_relative = "../../assets",
+    root_relative = "assets",
+    include = ["settings/*", "keymaps/*"],
+    exclude = ["*.DS_Store"],
+}
 
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());

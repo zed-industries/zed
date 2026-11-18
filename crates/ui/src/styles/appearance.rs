@@ -14,6 +14,9 @@ fn window_appearance(cx: &mut App) -> WindowBackgroundAppearance {
 pub fn theme_is_transparent(cx: &mut App) -> bool {
     matches!(
         window_appearance(cx),
-        WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred
+        WindowBackgroundAppearance::Transparent
+            | WindowBackgroundAppearance::Blurred
+            | WindowBackgroundAppearance::MicaBackdrop
+            | WindowBackgroundAppearance::MicaAltBackdrop
     )
 }

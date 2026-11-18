@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/language_detection.rs"
+test = false
+doctest = false
 
 [dependencies]
 betlang.workspace = true

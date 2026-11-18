@@ -14,7 +14,8 @@
       "cmd-shift-space": "editor::ShowSignatureHelp", // Trigger Parameter Hints
       "ctrl-shift-cmd-right": "editor::SelectLargerSyntaxNode", // Expand AST Selection
       "ctrl-shift-cmd-left": "editor::SelectSmallerSyntaxNode", // Shrink AST Selection
-      "cmd-k cmd-c": ["editor::ToggleComments", { "advance_downwards": false }], // Add Line Comment (closest analog)
+      "cmd-k cmd-c": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }], // Add Line Comment (closest analog)
+      "cmd-/": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }],
       "cmd-k f12": "editor::GoToDefinitionSplit", // Open Definition to the Side
     },
   },

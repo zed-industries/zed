@@ -22,6 +22,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: bar
     pub cursor_shape: Option<CursorShape>,
+    /// Cursor movement animation settings.
+    pub cursor_animation: Option<CursorAnimationSettingsContent>,
     /// Determines how snippets are sorted relative to other completion items.
     ///
     /// Default: inline
@@ -136,7 +138,7 @@ pub struct EditorSettingsContent {
 
     /// How many lines to expand the multibuffer excerpts by default
     ///
-    /// Default: 3
+    /// Default: 5
     pub expand_excerpt_lines: Option<u32>,
 
     /// How many lines of context to provide in multibuffer excerpts by default
@@ -220,7 +222,7 @@ pub struct EditorSettingsContent {
     ///
     /// Shows all diagnostics if not specified.
     ///
-    /// Default: warning
+    /// Default: all
     pub diagnostics_max_severity: Option<DiagnosticSeverityContent>,
 
     /// Whether to show code action button at start of buffer line.
@@ -362,6 +364,15 @@ impl RelativeLineNumbers {
             RelativeLineNumbers::Wrapped => true,
         }
     }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CursorAnimationSettingsContent {
+    /// Whether cursor movement animation is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
 }
 
 // Toolbar related settings

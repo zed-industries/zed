@@ -4,9 +4,10 @@ use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
+use util::serde::default_true;
 
 #[with_fallible_options]
-#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ExtensionSettingsContent {
     /// The extensions that should be automatically installed by Zed.
     ///
@@ -18,8 +19,24 @@ pub struct ExtensionSettingsContent {
     pub auto_install_extensions: HashMap<Arc<str>, bool>,
     #[serde(default)]
     pub auto_update_extensions: HashMap<Arc<str>, bool>,
+    /// Whether to suggest installing extensions based on the files you open.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub suggest_extensions: bool,
     /// The capabilities granted to extensions.
     pub granted_extension_capabilities: Option<Vec<ExtensionCapabilityContent>>,
+}
+
+impl Default for ExtensionSettingsContent {
+    fn default() -> Self {
+        Self {
+            auto_install_extensions: HashMap::default(),
+            auto_update_extensions: HashMap::default(),
+            suggest_extensions: true,
+            granted_extension_capabilities: None,
+        }
+    }
 }
 
 /// A capability for an extension.

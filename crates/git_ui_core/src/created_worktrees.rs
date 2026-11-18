@@ -27,7 +27,7 @@ use anyhow::{Context as _, Result};
 use db::kvp::KeyValueStore;
 use gpui::{App, AsyncApp, Entity};
 use project::git_store::Repository;
-use remote::{RemoteConnectionOptions, remote_connection_identity};
+use remote::RemoteConnectionOptions;
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
 
@@ -42,7 +42,7 @@ struct CreatedWorktreeRecord {
 fn record_key(worktree_path: &Path, remote: Option<&RemoteConnectionOptions>) -> String {
     let host = match remote {
         None => "local".to_string(),
-        Some(options) => remote_connection_identity(options).persistence_key(),
+        Some(options) => options.host_key(),
     };
     // Paths cannot contain newlines in practice, so this separator is
     // unambiguous.

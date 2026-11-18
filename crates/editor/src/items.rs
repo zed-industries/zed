@@ -26,8 +26,11 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{BufferOffset, MultiBufferOffset, MultiBufferRow, PathKey};
 use project::{
-    File, Project, ProjectItem as _, ProjectPath, git_store::GitStore, lsp_store::FormatTrigger,
-    project_settings::ProjectSettings, search::SearchQuery,
+    File, Project, ProjectItem as _, ProjectPath,
+    git_store::GitStore,
+    lsp_store::{FormatTrigger, LanguageServerShowDocumentRequest},
+    project_settings::ProjectSettings,
+    search::SearchQuery,
 };
 use rope::TextSummary;
 use rpc::proto::{self, update_view};
@@ -43,15 +46,20 @@ use std::{
 };
 use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection, ToPoint as _};
 use ui::{IconDecorationKind, prelude::*};
-use util::{ResultExt, TryFutureExt, debug_panic, paths::PathExt, rel_path::RelPath};
+use util::{
+    ResultExt, TryFutureExt, debug_panic,
+    paths::{PathExt, UrlExt as _},
+    rel_path::RelPath,
+};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, OpenOptions, OpenVisible, ToolbarItemLocation, ViewId,
+    Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
+        SearchableItemHandle, SelectSearchOptions,
     },
 };
 use workspace::{
@@ -656,6 +664,7 @@ impl Item for Editor {
             } else {
                 buffer.clip_point(data.cursor_position, Bias::Left)
             };
+            let destination_anchor = buffer.anchor_before(offset);
 
             let mut scroll_anchor = data.scroll_anchor;
             if !buffer.can_resolve(&scroll_anchor.anchor) {
@@ -666,12 +675,23 @@ impl Item for Editor {
 
             drop(buffer);
 
-            if newest_selection.head() == offset {
+            let was_folded = |cx: &mut Context<Self>| {
+                self.display_snapshot(cx)
+                    .folds_in_range(offset..offset)
+                    .next()
+                    .is_some()
+            };
+            let buffer_was_folded = |cx: &Context<Self>| {
+                destination_anchor
+                    .buffer_id()
+                    .is_some_and(|buffer_id| self.is_buffer_folded(buffer_id, cx))
+            };
+            if newest_selection.head() == offset && !was_folded(cx) && !buffer_was_folded(cx) {
                 false
             } else {
                 self.set_scroll_anchor(scroll_anchor, window, cx);
                 self.change_selections(
-                    SelectionEffects::default().nav_history(false),
+                    SelectionEffects::default().nav_history(false).unfold(),
                     window,
                     cx,
                     |s| s.select_ranges([offset..offset]),
@@ -776,15 +796,9 @@ impl Item for Editor {
         };
 
         let description = params.detail.and_then(|detail| {
-            let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-            let description = path.trim();
-
-            if description.is_empty() {
-                return None;
-            }
-
+            let description = self.tab_description(detail, cx)?;
             Some(util::truncate_and_trailoff(
-                description,
+                &description,
                 params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
             ))
         });
@@ -799,6 +813,7 @@ impl Item for Editor {
 
         h_flex()
             .gap_1()
+            .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
             .when(params.truncate_title_middle, |this| {
                 this.w_full().min_w_0().overflow_hidden()
             })
@@ -904,23 +919,8 @@ impl Item for Editor {
         self.capability(cx)
     }
 
-    // Note: this mirrors the logic in `Editor::toggle_read_only`, but is reachable
-    // without relying on focus-based action dispatch.
-    fn toggle_read_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_capability(
-                    match buffer.capability() {
-                        Capability::ReadWrite => Capability::Read,
-                        Capability::Read => Capability::ReadWrite,
-                        Capability::ReadOnly => Capability::ReadOnly,
-                    },
-                    cx,
-                );
-            });
-        }
-        cx.notify();
-        window.refresh();
+    fn read_only_toggle_buffer(&self, cx: &App) -> Option<Entity<Buffer>> {
+        self.buffer.read(cx).as_singleton()
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
@@ -1632,6 +1632,17 @@ fn clip_ranges<'a>(
 impl EventEmitter<SearchEvent> for Editor {}
 
 impl Editor {
+    /// Panes keep increasing `detail` until tabs for files with the same name look different.
+    pub fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString> {
+        let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+        let description = path.trim();
+        if description.is_empty() {
+            None
+        } else {
+            Some(description.to_string().into())
+        }
+    }
+
     pub fn update_restoration_data(
         &self,
         cx: &mut Context<Self>,
@@ -2113,12 +2124,18 @@ impl SearchableItem for Editor {
         self.expect_bounds_change = self.last_bounds;
     }
 
-    fn set_search_is_case_sensitive(
+    fn set_select_search_options(
         &mut self,
-        case_sensitive: Option<bool>,
+        select_search_options: Option<SelectSearchOptions>,
         _cx: &mut Context<Self>,
     ) {
-        self.select_next_is_case_sensitive = case_sensitive;
+        if self.select_next_options == select_search_options {
+            return;
+        }
+
+        self.select_next_options = select_search_options;
+        self.select_next_state = None;
+        self.select_prev_state = None;
     }
 }
 
@@ -2504,6 +2521,68 @@ fn compute_modified_ranges(
     merged
 }
 
+pub(crate) fn handle_lsp_show_document(
+    workspace: &mut Workspace,
+    request: &LanguageServerShowDocumentRequest,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<()> {
+    let request = request.clone();
+    if request.external {
+        cx.open_url(request.uri.as_str());
+        request.respond(true);
+        return Task::ready(());
+    }
+    let Ok(abs_path) = request.uri.to_file_path_ext(workspace.path_style(cx)) else {
+        log::error!(
+            "language server requested to show document with unsupported uri {}",
+            request.uri.as_str()
+        );
+        request.respond(false);
+        return Task::ready(());
+    };
+    let open_task = workspace.open_abs_path(
+        abs_path,
+        OpenOptions {
+            visible: Some(OpenVisible::None),
+            focus: Some(request.take_focus),
+            ..OpenOptions::default()
+        },
+        window,
+        cx,
+    );
+    cx.spawn_in(window, async move |_, cx| {
+        let success = match open_task.await {
+            Ok(item) => match item.downcast::<Editor>().zip(request.selection) {
+                Some((editor, selection)) => editor
+                    .update_in(cx, |editor, window, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let range = language::range_from_lsp(selection);
+                        let start = snapshot.point_utf16_to_offset(
+                            snapshot.clip_point_utf16(range.start, Bias::Left),
+                        );
+                        let end = snapshot.point_utf16_to_offset(
+                            snapshot.clip_point_utf16(range.end, Bias::Left),
+                        );
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |selections| selections.select_ranges([start..end]),
+                        );
+                    })
+                    .is_ok(),
+                None => true,
+            },
+            Err(error) => {
+                log::error!("failed to show document for a language server: {error:#}");
+                false
+            }
+        };
+        request.respond(success);
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::editor_tests::init_test;
@@ -2518,7 +2597,38 @@ mod tests {
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use util::{path, paths::PathWithPosition, rel_path::RelPath};
+    use workspace::item::ItemHandle as _;
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
+
+    #[gpui::test]
+    fn test_read_only_toggle_requires_singleton_buffer(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| Buffer::local("text", cx));
+        let (singleton_editor, cx) = cx.add_window_view({
+            let buffer = buffer.clone();
+            |window, cx| Editor::for_buffer(buffer, None, window, cx)
+        });
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer_editor = cx.new_window_entity(|window, cx| {
+            Editor::for_multibuffer(multibuffer.clone(), None, window, cx)
+        });
+
+        cx.update(|window, cx| {
+            assert_eq!(
+                singleton_editor.read_only_toggle_buffer(cx).as_ref(),
+                Some(&buffer)
+            );
+            singleton_editor.toggle_read_only(window, cx);
+            assert_eq!(buffer.read(cx).capability(), Capability::Read);
+            singleton_editor.toggle_read_only(window, cx);
+            assert_eq!(buffer.read(cx).capability(), Capability::ReadWrite);
+
+            assert_eq!(multibuffer_editor.read_only_toggle_buffer(cx), None);
+            multibuffer_editor.toggle_read_only(window, cx);
+            assert_eq!(multibuffer.read(cx).capability(), Capability::ReadWrite);
+        });
+    }
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {

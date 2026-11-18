@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/sidebar.rs"
+doctest = false
 
 [features]
 default = []

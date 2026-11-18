@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Maintain a GitHub project as a search filter for second-line issue triage.
+Maintain a GitHub project as a search filter for the current issue triage shift.
 
-GitHub issue search can't express "created at least one business day ago", so
-this script keeps the project's membership equal to the open issues created in
-that window, adding issues that have become eligible and removing the ones that
-have aged out.
+GitHub issue search can't express "created since last Friday 14:00 CET", so
+this script keeps the project's membership equal to the open issues created
+since then, adding new issues and removing the ones that have been closed or
+have aged out at the Monday reset.
 
 Requires:
     requests (pip install requests)
@@ -15,101 +15,33 @@ Usage (called by the workflow, not directly):
 """
 
 import os
-import time
 import urllib.parse
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import requests
+from github_helpers import add_github_project_item, github_graphql, github_rest_api
 
-RETRYABLE_STATUS_CODES = {502, 503, 504}
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 5
-
-GITHUB_API_URL = "https://api.github.com"
 REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
-# The eligibility window's boundaries are calendar days in this timezone. GitHub
-# search interprets bare dates as UTC, so the window is pinned to a fixed zone to
-# stay aligned with a consistent business day regardless of where the job runs.
-# ZoneInfo (not a fixed offset) so daylight saving is handled automatically.
-BUSINESS_DAY_TZ = ZoneInfo("America/Los_Angeles")
+TRIAGE_TZ = ZoneInfo("Europe/Berlin")
+HANDOFF_HOUR = 14
 
 
-def github_graphql(query, variables):
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.post(
-            f"{GITHUB_API_URL}/graphql",
-            headers=GITHUB_HEADERS,
-            json={"query": query, "variables": variables},
-            timeout=30,
-        )
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            print(
-                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
-            )
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        result = response.json()
-        if "errors" in result:
-            raise RuntimeError(f"GraphQL error: {result['errors']}")
-        return result["data"]
-    raise RuntimeError("github_graphql: retry loop exited without return")
+def window_start(now):
+    # The Friday handoff before this week's Monday. The board resets on Monday
+    # rather than at the handoff itself so the outgoing shift keeps its leftovers
+    # through Friday afternoon.
+    friday = now.date() - timedelta(days=now.isoweekday() + 2)
+    return datetime(friday.year, friday.month, friday.day, HANDOFF_HOUR, tzinfo=TRIAGE_TZ)
 
 
-def github_rest_get(path):
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.get(
-            f"{GITHUB_API_URL}/{path}", headers=GITHUB_HEADERS, timeout=30
-        )
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            print(
-                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
-            )
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        return response.json()
-    raise RuntimeError("github_rest_get: retry loop exited without return")
-
-
-def day_start(day):
-    # First instant of a calendar day in the business-day timezone.
-    return datetime(day.year, day.month, day.day, 0, 0, 0, tzinfo=BUSINESS_DAY_TZ)
-
-
-def day_end(day):
-    # Last instant of a calendar day in the business-day timezone.
-    return datetime(day.year, day.month, day.day, 23, 59, 59, tzinfo=BUSINESS_DAY_TZ)
-
-
-def eligibility_window(today):
-    # Returns the inclusive (start, end) day-edge instants bounding the window.
-    weekday = today.isoweekday()  # Monday = 1
-    # Nothing advances over the weekend; evaluate as of the preceding Friday.
-    if weekday >= 6:
-        today -= timedelta(days=weekday - 5)
-        weekday = 5
-    this_monday = today - timedelta(days=weekday - 1)
-    # Floored at the prior week's Thursday; the Monday reset drops older issues.
-    window_start = this_monday - timedelta(days=4)
-    # Eligible once a full business day has elapsed since creation: two business
-    # days back from today, so Mon and Tue reach across the weekend.
-    window_end = today - timedelta(days=4 if weekday <= 2 else 2)
-    return day_start(window_start), day_end(window_end)
-
-
-def eligible_issues(window_start, window_end):
-    query = (
-        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open "
-        f"created:{window_start.isoformat()}..{window_end.isoformat()}"
-    )
+def eligible_issues(start):
+    query = f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open created:>={start.isoformat()}"
     issues = {}
     page = 1
     while True:
-        data = github_rest_get(
-            f"search/issues?q={urllib.parse.quote(query)}&per_page=100&page={page}"
+        data = github_rest_api(
+            "GET", f"search/issues?q={urllib.parse.quote(query)}&per_page=100&page={page}"
         )
         for item in data["items"]:
             issues[item["node_id"]] = item["number"]
@@ -165,13 +97,6 @@ def project_items(project_id):
         cursor = items["pageInfo"]["endCursor"]
 
 
-def add_to_project(project_id, content_id):
-    github_graphql(
-        "mutation($p: ID!, $c: ID!) { addProjectV2ItemById(input: {projectId: $p, contentId: $c}) { item { id } } }",
-        {"p": project_id, "c": content_id},
-    )
-
-
 def remove_from_project(project_id, item_id):
     github_graphql(
         "mutation($p: ID!, $i: ID!) { deleteProjectV2Item(input: {projectId: $p, itemId: $i}) { deletedItemId } }",
@@ -180,11 +105,10 @@ def remove_from_project(project_id, item_id):
 
 
 def sync_project(project_id, dry_run=False):
-    today = datetime.now(BUSINESS_DAY_TZ).date()
-    window_start, window_end = eligibility_window(today)
-    print(f"window: created:{window_start.isoformat()}..{window_end.isoformat()}")
+    start = window_start(datetime.now(TRIAGE_TZ))
+    print(f"window: created:>={start.isoformat()}")
 
-    eligible = eligible_issues(window_start, window_end)
+    eligible = eligible_issues(start)
     current = list(project_items(project_id))
     on_board = {content_id for _, content_id, _ in current}
 
@@ -192,7 +116,7 @@ def sync_project(project_id, dry_run=False):
         if content_id not in on_board:
             print(f"+ #{number}")
             if not dry_run:
-                add_to_project(project_id, content_id)
+                add_github_project_item(project_id, content_id)
 
     for item_id, content_id, number in current:
         if content_id not in eligible:
@@ -202,11 +126,6 @@ def sync_project(project_id, dry_run=False):
 
 
 if __name__ == "__main__":
-    GITHUB_HEADERS = {
-        "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
     project_number = int(os.environ["PROJECT_NUMBER"])
     project_id = fetch_project_id(project_number)
     sync_project(project_id, os.environ.get("DRY_RUN") == "true")

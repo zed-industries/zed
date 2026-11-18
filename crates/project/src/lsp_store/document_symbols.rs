@@ -107,7 +107,7 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_servers = self.relevant_server_ids_for_capability_check(buffer, cx);
+        let current_servers = self.language_server_ids_for_request(buffer, &GetDocumentSymbols, cx);
 
         let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
@@ -356,7 +356,7 @@ fn flatten_document_symbols(
         output.push(OutlineItem {
             depth,
             range,
-            selection_range: selection_range.clone(),
+            selection_range,
             source_range_for_text,
             text: text.into(),
             highlight_ranges: Vec::new(),

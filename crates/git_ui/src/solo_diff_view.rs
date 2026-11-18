@@ -18,7 +18,7 @@ use gpui::{
 use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use project::{
-    Project,
+    Project, ProjectPath,
     git_store::{Repository, RepositoryId},
 };
 use settings::{Settings, SettingsStore, StatusStyle};
@@ -451,6 +451,10 @@ impl Item for SoloDiffView {
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(

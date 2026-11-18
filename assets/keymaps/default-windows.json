@@ -229,13 +229,6 @@
     },
   },
   {
-    "context": "AgentPanel > Markdown",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-c": "markdown::CopyAsMarkdown",
-    },
-  },
-  {
     "context": "AgentFeedbackMessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -387,6 +380,15 @@
     "bindings": {
       "ctrl-enter": "agent::Chat",
       "enter": "editor::Newline",
+    },
+  },
+  {
+    "context": "Elicitation || (Elicitation > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+      "tab": "menu::SelectNext",
+      "shift-tab": "menu::SelectPrevious",
     },
   },
   {
@@ -557,8 +559,8 @@
       "ctrl-k ctrl-i": "editor::Hover",
       "ctrl-k ctrl-b": "editor::BlameHover",
       "ctrl-k ctrl-f": "editor::FormatSelections",
-      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false }],
-      "ctrl-k ctrl-c": ["editor::ToggleComments", { "advance_downwards": false }],
+      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": true }],
+      "ctrl-k ctrl-c": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": true }],
       "ctrl-k ctrl-/": "editor::ToggleBlockComments",
       "shift-alt-a": "editor::ToggleBlockComments",
       "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
@@ -613,6 +615,14 @@
     },
   },
   {
+    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv || extension == jsonl || extension == ndjson)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-k v": "tabular_data::OpenPreviewToTheSide",
+      "ctrl-shift-v": "tabular_data::OpenPreview",
+    },
+  },
+  {
     "context": "Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
@@ -624,6 +634,7 @@
     "context": "Workspace",
     "use_key_equivalents": true,
     "bindings": {
+      "alt-/": "which_key::ShowPendingBindings",
       // Move focus between the major regions of the window (editor, open
       // panels, status bar). Accessibility navigation; mirrors VS Code's
       // "Focus Next/Previous Part". `ctrl-f6` mirrors `f6` so region navigation
@@ -715,8 +726,9 @@
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
       "f5": "debugger::Rerun",
-      "ctrl-f4": "workspace::CloseActiveDock",
-      "ctrl-w": "workspace::CloseActiveDock",
+      "ctrl-f4": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-w": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-alt-w": "workspace::CloseActiveDock",
     },
   },
   {
@@ -768,6 +780,8 @@
     "bindings": {
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
+      "ctrl-up": "menu::SelectPrevious",
+      "ctrl-down": "menu::SelectNext",
     },
   },
   {
@@ -814,6 +828,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::ConfirmRename",
+    },
+  },
+  {
+    "context": "Editor && inline_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
     },
   },
   {
@@ -885,6 +906,27 @@
     "bindings": {
       "up": "editor::SignatureHelpPrevious",
       "down": "editor::SignatureHelpNext",
+    },
+  },
+  {
+    "context": "Editor && DebuggerHover",
+    "bindings": {
+      "escape": "editor::Cancel",
+      "left": "editor::DebuggerHoverCollapseSelected",
+      "down": "editor::DebuggerHoverSelectNext",
+      "up": "editor::DebuggerHoverSelectPrevious",
+      "right": "editor::DebuggerHoverExpandSelected",
+    },
+  },
+  {
+    "context": "DebuggerHoverMenu",
+    "bindings": {
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel",
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "home": "menu::SelectFirst",
+      "end": "menu::SelectLast",
     },
   },
   // Custom bindings
@@ -994,6 +1036,8 @@
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
       "ctrl-k ctrl-shift-f": "project_panel::NewSearchInDirectory",
+      "menu": "project_panel::OpenContextMenu",
+      "shift-f10": "project_panel::OpenContextMenu",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel",
@@ -1014,6 +1058,18 @@
     },
   },
   {
+    "context": "GitPanel && (ChangesList || HistoryList) && !GitBranchSelector && !GitRepositorySelector",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "shift-up": "menu::SelectPrevious",
+      "shift-down": "menu::SelectNext",
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel",
+    },
+  },
+  {
     "context": "GitPanel && ChangesList && !GitBranchSelector && !GitRepositorySelector",
     "use_key_equivalents": true,
     "bindings": {
@@ -1021,7 +1077,6 @@
       "down": "git_panel::NextEntry",
       "left": "git_panel::CollapseSelectedEntry",
       "right": "git_panel::ExpandSelectedEntry",
-      "enter": "menu::Confirm",
       "alt-y": "git::StageFile",
       "shift-alt-y": "git::UnstageFile",
       "space": "git::ToggleStaged",
@@ -1030,7 +1085,6 @@
       "ctrl-k ctrl-shift-c": "workspace::CopyRelativePath",
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
-      "escape": "git_panel::ToggleFocus",
       "alt-enter": "menu::SecondaryConfirm",
       "delete": ["git::RestoreFile", { "skip_prompt": false }],
       "backspace": ["git::RestoreFile", { "skip_prompt": false }],
@@ -1213,6 +1267,13 @@
     },
   },
   {
+    "context": "LspCommandSelector > Picker > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "tab": "lsp_command_selector::ToggleArgumentsFocus",
+    },
+  },
+  {
     "context": "ChannelModal > Picker > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -1232,6 +1293,13 @@
     "bindings": {
       "ctrl-p": "file_finder::Toggle",
       "ctrl-shift-i": "search::ToggleIncludeIgnored",
+    },
+  },
+  {
+    "context": "CommandPalette || (CommandPalette > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-backspace": "command_palette::RemoveSelected",
     },
   },
   {
@@ -1644,6 +1712,41 @@
       "ctrl-enter": "skill_creator::SaveSkill",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "TableView",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": ["tabular_data::MoveFocusedCell", { "direction": "up" }],
+      "down": ["tabular_data::MoveFocusedCell", { "direction": "down" }],
+      "left": ["tabular_data::MoveFocusedCell", { "direction": "left" }],
+      "right": ["tabular_data::MoveFocusedCell", { "direction": "right" }],
+      "pageup": ["tabular_data::MoveFocusedCell", { "direction": "up", "unit": "page" }],
+      "pagedown": ["tabular_data::MoveFocusedCell", { "direction": "down", "unit": "page" }],
+      "home": ["tabular_data::MoveFocusedCell", { "direction": "left", "unit": "edge" }],
+      "end": ["tabular_data::MoveFocusedCell", { "direction": "right", "unit": "edge" }],
+      "ctrl-up": ["tabular_data::MoveFocusedCell", { "direction": "up", "unit": "edge" }],
+      "ctrl-down": ["tabular_data::MoveFocusedCell", { "direction": "down", "unit": "edge" }],
+      "ctrl-left": ["tabular_data::MoveFocusedCell", { "direction": "left", "unit": "edge" }],
+      "ctrl-right": ["tabular_data::MoveFocusedCell", { "direction": "right", "unit": "edge" }],
+      "ctrl-home": ["tabular_data::MoveFocusedCell", { "direction": "up", "unit": "edge" }],
+      "ctrl-end": ["tabular_data::MoveFocusedCell", { "direction": "down", "unit": "edge" }],
+      "shift-up": ["tabular_data::ExtendSelection", { "direction": "up" }],
+      "shift-down": ["tabular_data::ExtendSelection", { "direction": "down" }],
+      "shift-left": ["tabular_data::ExtendSelection", { "direction": "left" }],
+      "shift-right": ["tabular_data::ExtendSelection", { "direction": "right" }],
+      "shift-pageup": ["tabular_data::ExtendSelection", { "direction": "up", "unit": "page" }],
+      "shift-pagedown": ["tabular_data::ExtendSelection", { "direction": "down", "unit": "page" }],
+      "shift-home": ["tabular_data::ExtendSelection", { "direction": "left", "unit": "edge" }],
+      "shift-end": ["tabular_data::ExtendSelection", { "direction": "right", "unit": "edge" }],
+      "ctrl-shift-up": ["tabular_data::ExtendSelection", { "direction": "up", "unit": "edge" }],
+      "ctrl-shift-down": ["tabular_data::ExtendSelection", { "direction": "down", "unit": "edge" }],
+      "ctrl-shift-left": ["tabular_data::ExtendSelection", { "direction": "left", "unit": "edge" }],
+      "ctrl-shift-right": ["tabular_data::ExtendSelection", { "direction": "right", "unit": "edge" }],
+      "ctrl-shift-home": ["tabular_data::ExtendSelection", { "direction": "up", "unit": "edge" }],
+      "ctrl-shift-end": ["tabular_data::ExtendSelection", { "direction": "down", "unit": "edge" }],
+      "escape": "tabular_data::ClearSelection",
     },
   },
 ]

@@ -1,3 +1,4 @@
+pub mod chat_completion;
 mod provider;
 mod rate_limiter;
 mod request;
@@ -7,7 +8,7 @@ pub mod util;
 
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::CompletionRequestStatus;
-use http_client::{StatusCode, http};
+use http::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Sub};
@@ -29,6 +30,12 @@ pub use crate::util::{
     parse_tool_arguments,
 };
 pub use gpui_shared_string::SharedString;
+
+/// The events of a streaming completion, as produced by a provider.
+pub type LanguageModelCompletionStream = futures::stream::BoxStream<
+    'static,
+    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+>;
 
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -59,6 +66,36 @@ pub enum LanguageModelCompletionEvent {
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
     Compaction(CompactionUpdate),
+    /// Transformations the provider applied or flagged while processing the request.
+    InputTransformations(Vec<InputTransformation>),
+}
+
+/// Provider-reported refusal metadata, not an inferred content classification.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct RefusalDetails {
+    pub reason: String,
+    /// Only categories explicitly identified as blocking; empty means unavailable.
+    pub categories: Vec<String>,
+    pub stage: Option<RefusalStage>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalStage {
+    Input,
+    Output,
+}
+
+/// A provider-reported transformation or mismatch affecting request content.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct InputTransformation {
+    /// Provider-specific transformation type, including unrecognized future types.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Provider-specific location, such as `messages.1.content.0`.
+    pub path: String,
+    /// Provider-specific reason, such as `prefix_binding_mismatch`.
+    pub reason: String,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -85,7 +122,9 @@ impl LanguageModelCompletionEvent {
                 Ok(Some(LanguageModelCompletionEvent::Queued { position }))
             }
             CompletionRequestStatus::Started => Ok(Some(LanguageModelCompletionEvent::Started)),
-            CompletionRequestStatus::Unknown | CompletionRequestStatus::StreamEnded => Ok(None),
+            CompletionRequestStatus::KeepAlive
+            | CompletionRequestStatus::Unknown
+            | CompletionRequestStatus::StreamEnded => Ok(None),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -148,9 +187,18 @@ impl ProviderErrorCategory {
             StatusCode::BAD_REQUEST if is_invalid_encrypted_content_message(message) => {
                 Self::InvalidEncryptedContent
             }
-            StatusCode::BAD_REQUEST if is_context_window_exceeded_message(message) => {
-                Self::PromptTooLarge { tokens: None }
-            }
+            // Anthropic reports a context-window overflow as HTTP 400 with a
+            // "prompt is too long" message rather than HTTP 413, so a
+            // bad request must be sniffed for both providers' phrasings.
+            StatusCode::BAD_REQUEST => match parse_prompt_too_long(message) {
+                Some(tokens) => Self::PromptTooLarge {
+                    tokens: Some(tokens),
+                },
+                None if is_context_window_exceeded_message(message) => {
+                    Self::PromptTooLarge { tokens: None }
+                }
+                None => Self::InvalidRequest,
+            },
             StatusCode::UNAUTHORIZED => Self::Authentication,
             StatusCode::FORBIDDEN => Self::Permission,
             StatusCode::NOT_FOUND => Self::EndpointNotFound,
@@ -158,7 +206,6 @@ impl ProviderErrorCategory {
             StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
                 tokens: parse_prompt_too_long(message),
             },
-            StatusCode::BAD_REQUEST => Self::InvalidRequest,
             StatusCode::CONFLICT => Self::Conflict,
             StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => Self::Timeout,
             StatusCode::TOO_MANY_REQUESTS => Self::RateLimit,
@@ -234,6 +281,13 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    /// The provider no longer offers a model with this id, for example after
+    /// its settings or fetched model list changed.
+    #[error("{provider} no longer offers the model {}", model.0)]
+    ModelUnavailable {
+        provider: LanguageModelProviderName,
+        model: LanguageModelId,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -360,6 +414,39 @@ impl LanguageModelCompletionError {
         }
     }
 
+    /// Whether retrying the same request after a delay may succeed.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::ProviderRejection {
+                provider,
+                status,
+                retry_after,
+                category,
+                ..
+            } => {
+                *category != ProviderErrorCategory::PaymentRequired
+                    && (status.is_some_and(|status| is_retryable_provider_status(provider, status))
+                        || matches!(
+                            category,
+                            ProviderErrorCategory::RateLimit
+                                | ProviderErrorCategory::Overloaded
+                                | ProviderErrorCategory::Timeout
+                                | ProviderErrorCategory::InternalServer
+                        )
+                        || retry_after.is_some())
+            }
+            Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => true,
+            Self::DataRetentionConsentRequired { .. }
+            | Self::NoApiKey { .. }
+            | Self::SerializeRequest { .. }
+            | Self::BuildRequestBody { .. }
+            | Self::DeserializeResponse { .. }
+            | Self::StreamEndedUnexpectedly { .. }
+            | Self::ModelUnavailable { .. }
+            | Self::Other(_) => false,
+        }
+    }
+
     /// Returns the delay before a retry attempt, honoring a provider-supplied
     /// delay before falling back to exponential backoff from five to forty
     /// seconds.
@@ -368,26 +455,12 @@ impl LanguageModelCompletionError {
     /// transient, and error kinds without shared retry semantics, return
     /// `None`.
     pub fn retry_delay(&self, attempt: usize) -> Option<Duration> {
-        if attempt == 0 {
+        if attempt == 0 || !self.is_transient() {
             return None;
         }
 
         match self {
-            Self::ProviderRejection {
-                status,
-                retry_after,
-                category,
-                ..
-            } if status.is_some_and(is_retryable_provider_status)
-                || matches!(
-                    category,
-                    ProviderErrorCategory::RateLimit
-                        | ProviderErrorCategory::Overloaded
-                        | ProviderErrorCategory::Timeout
-                        | ProviderErrorCategory::InternalServer
-                )
-                || retry_after.is_some() =>
-            {
+            Self::ProviderRejection { retry_after, .. } => {
                 (*retry_after).or_else(|| exponential_backoff(attempt))
             }
             Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => {
@@ -395,11 +468,11 @@ impl LanguageModelCompletionError {
             }
             Self::DataRetentionConsentRequired { .. }
             | Self::NoApiKey { .. }
-            | Self::ProviderRejection { .. }
             | Self::SerializeRequest { .. }
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            | Self::ModelUnavailable { .. }
             | Self::Other(_) => None,
         }
     }
@@ -437,8 +510,13 @@ fn category_from_cloud_failure(code: &str, message: &str) -> ProviderErrorCatego
     }
 }
 
-fn is_retryable_provider_status(status: StatusCode) -> bool {
-    status.is_server_error() || matches!(status.as_u16(), 408 | 425 | 429)
+fn is_retryable_provider_status(provider: &LanguageModelProviderName, status: StatusCode) -> bool {
+    // OpenAI sometimes returns 404 during service disruptions instead of a server-error status.
+    // Retrying adds only bounded delay and network traffic when the endpoint is genuinely absent,
+    // while potentially hiding a spurious failure from the user when the outage is transient.
+    status.is_server_error()
+        || matches!(status.as_u16(), 408 | 425 | 429)
+        || (provider == &OPEN_AI_PROVIDER_NAME && status == StatusCode::NOT_FOUND)
 }
 
 fn exponential_backoff(attempt: usize) -> Option<Duration> {
@@ -467,13 +545,19 @@ fn is_invalid_encrypted_content_message(message: &str) -> bool {
         == Some("invalid_encrypted_content")
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
-    Refusal,
+    Refusal(Option<RefusalDetails>),
+}
+
+impl StopReason {
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, Self::Refusal(_))
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
@@ -643,11 +727,12 @@ impl LanguageModelToolUseInput {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageModelEffortLevel {
     pub name: SharedString,
     pub value: SharedString,
     pub is_default: bool,
+    pub supports_disabling_thinking: Option<bool>,
 }
 
 /// An error that occurred when trying to authenticate the language model provider.
@@ -989,6 +1074,7 @@ mod tests {
             "Rate limit exceeded".to_string(),
             Some(retry_after),
         );
+        assert!(error.is_transient());
         assert_eq!(error.retry_delay(1), Some(retry_after));
 
         let error = LanguageModelCompletionError::from_http_status(
@@ -997,6 +1083,7 @@ mod tests {
             "Internal server error".to_string(),
             None,
         );
+        assert!(error.is_transient());
         assert_eq!(error.retry_delay(0), None);
         assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
         assert_eq!(error.retry_delay(2), Some(Duration::from_secs(10)));
@@ -1019,8 +1106,42 @@ mod tests {
                 category,
             );
 
+            assert!(error.is_transient());
             assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
         }
+    }
+
+    #[test]
+    fn test_open_ai_not_found_is_transient() {
+        let error = LanguageModelCompletionError::from_http_status(
+            OPEN_AI_PROVIDER_NAME,
+            StatusCode::NOT_FOUND,
+            "Not found".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::EndpointNotFound,
+                ..
+            }
+        ));
+        assert!(error.is_transient());
+        assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_not_found_is_permanent_for_other_providers() {
+        let error = LanguageModelCompletionError::from_http_status(
+            ANTHROPIC_PROVIDER_NAME,
+            StatusCode::NOT_FOUND,
+            "Not found".to_string(),
+            None,
+        );
+
+        assert!(!error.is_transient());
+        assert_eq!(error.retry_delay(1), None);
     }
 
     #[test]
@@ -1034,6 +1155,7 @@ mod tests {
             ProviderErrorCategory::Other,
         );
 
+        assert!(!error.is_transient());
         assert_eq!(error.retry_delay(1), None);
     }
 
