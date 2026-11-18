@@ -3527,7 +3527,6 @@ impl GitPanel {
                         .collect::<Vec<_>>()
                 });
                 this.update_visible_entries(window, cx);
-                cx.notify();
                 checkouts
             })?;
             // Dropping a checkout task cancels it and leaves its pending op
@@ -5575,7 +5574,7 @@ impl GitPanel {
                     .committer_name
                     .clone()
                     .or_else(|| participant.user.name.clone())
-                    .unwrap_or_else(|| participant.user.username.clone().to_string());
+                    .unwrap_or_else(|| participant.user.username.to_string());
                 new_co_authors.push((name, email.clone()))
             }
         }
@@ -5597,7 +5596,7 @@ impl GitPanel {
             .name
             .clone()
             .or_else(|| user.name.clone())
-            .unwrap_or_else(|| user.username.clone().to_string());
+            .unwrap_or_else(|| user.username.to_string());
         Some((name, email))
     }
 
@@ -6714,7 +6713,7 @@ impl GitPanel {
         E: std::fmt::Debug + std::fmt::Display,
     {
         if let Ok(Some(workspace)) = weak_this.update(cx, |this, _cx| this.workspace.upgrade()) {
-            let _ = workspace.update(cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 workspace.show_error(format!("Failed to generate commit message: {err}"), cx);
             });
         }

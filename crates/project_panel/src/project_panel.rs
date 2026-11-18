@@ -14,7 +14,6 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fs::TrashId;
-use git;
 use git::status::GitSummary;
 use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
@@ -2109,7 +2108,7 @@ impl ProjectPanel {
                         already_exists = true;
                     }
                 } else {
-                    let new_path = match entry.path.clone().parent() {
+                    let new_path = match entry.path.parent() {
                         Some(parent) => parent.join(&filename),
                         None => filename.to_owned(),
                     };
@@ -3976,9 +3975,7 @@ impl ProjectPanel {
 
                         // Create parent directories if needed
                         if let Some(parent) = destination_path.parent() {
-                            if !parent.exists() {
-                                fs.create_dir(parent).await.log_err();
-                            }
+                            fs.create_dir(parent).await.log_err();
                         }
 
                         let download_task = this.update(cx, |this, cx| {

@@ -542,14 +542,12 @@ struct SearchState {
 }
 
 struct SplitState {
-    left_ratio: f32,
     visible_left_ratio: f32,
 }
 
 impl SplitState {
     fn new() -> Self {
         Self {
-            left_ratio: 1.0,
             visible_left_ratio: 1.0,
         }
     }
@@ -575,12 +573,7 @@ impl SplitState {
         self.visible_left_ratio = new_ratio.clamp(min_ratio, max_ratio);
     }
 
-    fn commit_ratio(&mut self) {
-        self.left_ratio = self.visible_left_ratio;
-    }
-
     fn on_double_click(&mut self) {
-        self.left_ratio = 1.0;
         self.visible_left_ratio = 1.0;
     }
 }
@@ -4711,11 +4704,9 @@ impl Render for GitGraph {
                         state.on_drag_move(event, window, cx);
                     });
                 }))
-                .on_drop::<DraggedSplitHandle>(cx.listener(|this, _event, _window, cx| {
-                    this.commit_details_split_state.update(cx, |state, _cx| {
-                        state.commit_ratio();
-                    });
-                }))
+                // Registering a drop target ends the drag here; the ratio was
+                // already applied while dragging.
+                .on_drop::<DraggedSplitHandle>(|_, _, _| {})
                 .when(self.selected_entry_idx.is_some(), |this| {
                     this.child(self.render_commit_view_resize_handle(window, cx))
                         .child(self.render_commit_detail_panel(window, cx))
