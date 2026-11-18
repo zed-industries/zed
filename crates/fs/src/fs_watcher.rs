@@ -1,3 +1,4 @@
+use collections::FxHashMap;
 use futures::{Stream, StreamExt as _};
 use gpui::{BackgroundExecutor, Task};
 use notify::{Event, EventKind};
@@ -569,6 +570,11 @@ impl WatchKey {
         #[cfg(target_os = "macos")]
         {
             use unicode_normalization::UnicodeNormalization as _;
+
+            if lossy.is_ascii() {
+                return lossy.to_ascii_lowercase();
+            }
+
             lossy.chars().nfc().collect::<String>().to_lowercase()
         }
 
@@ -835,7 +841,7 @@ enum Coverage {
 /// The registered watch paths for one backend, keyed by [`WatchKey`] so that
 /// add (dedup), remove, and dispatch share a single notion of path identity.
 #[derive(Default)]
-struct WatchPaths(HashMap<WatchKey, PathRegistrationState>);
+struct WatchPaths(FxHashMap<WatchKey, PathRegistrationState>);
 
 impl WatchPaths {
     fn contains(&self, key: &WatchKey) -> bool {
