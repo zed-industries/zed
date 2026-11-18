@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Installs the pinned Rust toolchain and fetches crate dependencies. Safe to run more than once.
+set -euo pipefail
+
+if ! command -v rustup >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain none
+fi
+. "$HOME/.cargo/env"
+
+rustup toolchain install
+cargo fetch --locked
