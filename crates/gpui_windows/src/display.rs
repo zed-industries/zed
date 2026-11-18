@@ -16,7 +16,9 @@ use windows::{
 };
 
 use crate::logical_point;
-use gpui::{Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, point, size};
+use gpui::{
+    Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, point, refresh_interval_from_hz, size,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
@@ -149,6 +151,38 @@ impl PlatformDisplay for WindowsDisplay {
     fn visible_bounds(&self) -> Bounds<Pixels> {
         self.visible_bounds
     }
+
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        get_monitor_info(self.handle)
+            .log_err()
+            .and_then(|info| refresh_interval_for_device(&info.szDevice))
+    }
+}
+
+/// The refresh rate of the monitor's current mode. With variable refresh
+/// rate, the mode's rate is the maximum.
+fn refresh_interval_for_device(device_name: &[u16; 32]) -> Option<std::time::Duration> {
+    let mut mode = DEVMODEW {
+        dmSize: std::mem::size_of::<DEVMODEW>() as u16,
+        ..Default::default()
+    };
+    // SAFETY: `device_name` is the null-terminated `szDevice` from
+    // `GetMonitorInfoW`, and `mode.dmSize` is initialized.
+    let found = unsafe {
+        EnumDisplaySettingsW(
+            PCWSTR(device_name.as_ptr()),
+            ENUM_CURRENT_SETTINGS,
+            &mut mode,
+        )
+    };
+    if !found.as_bool() {
+        return None;
+    }
+    // 0 and 1 mean the hardware's default rate, which isn't reported.
+    if mode.dmDisplayFrequency <= 1 {
+        return None;
+    }
+    refresh_interval_from_hz(f64::from(mode.dmDisplayFrequency))
 }
 
 fn available_monitors() -> SmallVec<[HMONITOR; 4]> {

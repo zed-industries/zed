@@ -31,7 +31,7 @@ line_comments = ["# "]
 - `line_comments` is an array of strings that are used to identify line comments in the language. This is used for the `editor::ToggleComments` keybind: {#kb editor::ToggleComments} for toggling lines of code.
 - `tab_size` defines the indentation/tab size used for this language (default is `4`).
 - `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
-- `first_line_pattern` is a regular expression that can be used alongside `path_suffixes` (above) or `file_types` in settings to match files that should use this language. For example, Zed uses this to identify Shell Scripts by matching [shebang lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
+- `first_line_pattern` is a regular expression that can be used alongside `path_suffixes` (above) or `file_types` in settings to match files that should use this language. For example, Zed uses this to identify Shell Scripts by matching [shebang lines](https://github.com/zed-industries/zed/blob/main/crates/grammars/src/bash/config.toml) in the first line of a script.
 - `debuggers` is an array of strings that are used to identify debuggers in the language. When launching a debugger's `New Process Modal`, Zed will order available debuggers by the order of entries in this array.
 
 <!--
@@ -380,7 +380,7 @@ For languages with closures, these typically should not count as functions in Ze
 
 For languages with declarations like C, provide queries that match `@class.around` or `@function.around`. The `if` and `ic` text objects will default to these if there is no inside.
 
-If you are not sure what to put in textobjects.scm, both [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects), and the [Helix editor](https://github.com/helix-editor/helix) have queries for many languages. You can refer to the Zed [built-in languages](https://github.com/zed-industries/zed/tree/main/crates/languages/src) to see how to adapt these.
+If you are not sure what to put in textobjects.scm, both [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects), and the [Helix editor](https://github.com/helix-editor/helix) have queries for many languages. You can refer to the Zed [built-in languages](https://github.com/zed-industries/zed/tree/main/crates/grammars/src) to see how to adapt these.
 
 | Capture          | Description                                                             | Vim mode                                         |
 | ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
@@ -498,6 +498,31 @@ impl zed::Extension for MyExtension {
     }
 }
 ```
+
+### Opt-In Language Servers
+
+If your extension ships a language server that users should only run when they opt in (for example, an alternative to the primary language server), list the languages it should not start for by default in `opt_in_languages`. Every language listed there must also be listed in `languages`:
+
+```toml
+[language_servers.my-alternative-server]
+name = "My Alternative LSP"
+languages = ["My Language", "My Other Language"]
+opt_in_languages = ["My Language"]
+```
+
+For the languages listed in `opt_in_languages`, the language server is not covered by the `"..."` wildcard in the [`language_servers`](../configuring-languages.md#choosing-language-servers) setting. Users enable it by naming it explicitly:
+
+```json [settings]
+{
+  "languages": {
+    "My Language": {
+      "language_servers": ["my-alternative-server", "..."]
+    }
+  }
+}
+```
+
+> **Note:** Versions of Zed that do not support `opt_in_languages` ignore it and start the language server for all of its `languages`.
 
 You can customize the handling of the language server using several optional methods in the `Extension` trait. For example, you can control how completions are styled using the `label_for_completion` method. For a complete list of methods, see the [API docs for the Zed extension API](https://docs.rs/zed_extension_api).
 

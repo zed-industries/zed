@@ -1,14 +1,10 @@
-use crate::WebDispatcher;
 use anyhow::{Context as _, anyhow};
-use futures::{
-    AsyncRead, AsyncReadExt as _, FutureExt as _, SinkExt as _, TryStreamExt as _,
-    channel::{mpsc, oneshot},
-};
+use futures::{AsyncRead, AsyncReadExt as _, FutureExt as _, TryStreamExt as _, channel::oneshot};
+use gpui::SendForegroundExecutor;
 use http_client::{AsyncBody, HttpClient, RedirectPolicy};
 use std::{
     io,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 use wasm_bindgen::JsCast as _;
@@ -21,7 +17,7 @@ extern "C" {
 }
 
 pub struct FetchHttpClient {
-    dispatcher: Arc<WebDispatcher>,
+    foreground_executor: SendForegroundExecutor,
     user_agent: Option<http_client::http::header::HeaderValue>,
     credentials: FetchCredentials,
 }
@@ -39,20 +35,22 @@ pub enum FetchCredentials {
 }
 
 impl FetchHttpClient {
-    pub(crate) fn new(dispatcher: Arc<WebDispatcher>) -> Self {
+    /// Creates a browser Fetch client using the web platform's foreground executor.
+    pub fn new(foreground_executor: SendForegroundExecutor) -> Self {
         Self {
-            dispatcher,
+            foreground_executor,
             user_agent: None,
             credentials: FetchCredentials::default(),
         }
     }
 
-    pub(crate) fn with_user_agent(
-        dispatcher: Arc<WebDispatcher>,
+    /// Creates a browser Fetch client with the given reported user agent.
+    pub fn with_user_agent(
+        foreground_executor: SendForegroundExecutor,
         user_agent: &str,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            dispatcher,
+            foreground_executor,
             user_agent: Some(http_client::http::header::HeaderValue::from_str(
                 user_agent,
             )?),
@@ -82,20 +80,22 @@ impl HttpClient for FetchHttpClient {
     {
         let (parts, body) = req.into_parts();
         let credentials = self.credentials;
-        let dispatcher = self.dispatcher.clone();
+        let foreground_executor = self.foreground_executor.clone();
 
         Box::pin(async move {
             let body_bytes = read_body_to_bytes(body).await?;
             let (sender, receiver) = oneshot::channel();
 
-            dispatcher.dispatch_function_on_main_thread(move || {
-                wasm_bindgen_futures::spawn_local(async move {
-                    let result = fetch(parts, body_bytes, credentials).await;
-                    if sender.send(result).is_err() {
-                        log::debug!("fetch response receiver was dropped");
-                    }
-                });
-            });
+            foreground_executor
+                .spawn(async move {
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let result = fetch(parts, body_bytes, credentials).await;
+                        if sender.send(result).is_err() {
+                            log::debug!("fetch response receiver was dropped");
+                        }
+                    });
+                })
+                .detach();
 
             receiver.await.context("browser fetch task was canceled")?
         })
@@ -211,7 +211,7 @@ async fn read_body_to_bytes(mut body: AsyncBody) -> anyhow::Result<Option<Vec<u8
 const RESPONSE_BODY_CHANNEL_CAPACITY: usize = 8;
 
 struct ReadableStreamBody {
-    chunks: futures::stream::IntoAsyncRead<mpsc::Receiver<io::Result<Vec<u8>>>>,
+    chunks: futures::stream::IntoAsyncRead<Pin<Box<async_channel::Receiver<io::Result<Vec<u8>>>>>>,
     // Dropping this sender resolves the pump's cancellation future, which
     // cancels the browser-side `ReadableStream`.
     _cancellation: oneshot::Sender<()>,
@@ -219,7 +219,10 @@ struct ReadableStreamBody {
 
 impl ReadableStreamBody {
     fn new(reader: web_sys::ReadableStreamDefaultReader) -> Self {
-        let (chunks_sender, chunks_receiver) = mpsc::channel(RESPONSE_BODY_CHANNEL_CAPACITY);
+        // The pump runs on the browser main thread while a worker may read the
+        // body. futures::mpsc's internal mutex can park the main thread.
+        let (chunks_sender, chunks_receiver) =
+            async_channel::bounded(RESPONSE_BODY_CHANNEL_CAPACITY);
         let (cancellation, cancellation_receiver) = oneshot::channel();
         wasm_bindgen_futures::spawn_local(pump_response_body(
             reader,
@@ -227,7 +230,7 @@ impl ReadableStreamBody {
             cancellation_receiver,
         ));
         Self {
-            chunks: chunks_receiver.into_async_read(),
+            chunks: Box::pin(chunks_receiver).into_async_read(),
             _cancellation: cancellation,
         }
     }
@@ -245,7 +248,7 @@ impl AsyncRead for ReadableStreamBody {
 
 async fn pump_response_body(
     reader: web_sys::ReadableStreamDefaultReader,
-    mut chunks: mpsc::Sender<io::Result<Vec<u8>>>,
+    chunks: async_channel::Sender<io::Result<Vec<u8>>>,
     cancellation: oneshot::Receiver<()>,
 ) {
     let cancellation = cancellation.fuse();

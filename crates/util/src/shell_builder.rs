@@ -12,6 +12,7 @@ pub struct ShellBuilder {
     interactive: bool,
     /// Whether to redirect stdin to /dev/null for the spawned command as a subshell.
     redirect_stdin: bool,
+    substitute_variables: bool,
     kind: ShellKind,
 }
 
@@ -31,10 +32,16 @@ impl ShellBuilder {
             interactive: true,
             kind,
             redirect_stdin: false,
+            substitute_variables: true,
         }
     }
     pub fn non_interactive(mut self) -> Self {
         self.interactive = false;
+        self
+    }
+
+    pub fn literal_args(mut self) -> Self {
+        self.substitute_variables = false;
         self
     }
 
@@ -90,10 +97,14 @@ impl ShellBuilder {
             };
             let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
                 command.push(' ');
-                let shell_variable = self.kind.to_shell_variable(arg);
+                let shell_variable = if self.substitute_variables {
+                    Cow::Owned(self.kind.to_shell_variable(arg))
+                } else {
+                    Cow::Borrowed(arg.as_str())
+                };
                 command.push_str(&match self.kind.try_quote(&shell_variable) {
                     Some(shell_variable) => shell_variable,
-                    None => Cow::Owned(shell_variable),
+                    None => shell_variable,
                 });
                 command
             });
@@ -268,6 +279,31 @@ mod test {
                 "-i",
                 "-c",
                 "echo '$env.hello' '$env.world' nothing '--($env.something)' '$' '${test'"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_literal_args_skip_variable_substitution() {
+        let shell = Shell::Program("nu".to_owned());
+        let (program, args) = ShellBuilder::new(&shell, false)
+            .non_interactive()
+            .literal_args()
+            .build(
+                Some("ssh".into()),
+                &[
+                    "host".to_string(),
+                    "cd \"$HOME\"/project && exec \"$HOME\"/'a b' exec".to_string(),
+                    "${braced}".to_string(),
+                ],
+            );
+
+        assert_eq!(program, "nu");
+        assert_eq!(
+            args,
+            vec![
+                "-c",
+                "ssh host \"cd \\\"$HOME\\\"/project && exec \\\"$HOME\\\"/'a b' exec\" '${braced}'"
             ]
         );
     }

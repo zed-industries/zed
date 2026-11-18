@@ -161,6 +161,7 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
     let fs = if persistent.allow_fs_write_all {
         SandboxFsPolicy::Unrestricted {
             protected_paths: Vec::new(),
+            protected_file_names: Vec::new(),
         }
     } else {
         SandboxFsPolicy::Restricted {
@@ -176,6 +177,7 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
                     .filter_map(acp_thread::granted_write_path_to_location_or_log),
             ),
             protected_paths: Vec::new(),
+            protected_file_names: Vec::new(),
         }
     };
     let network = if persistent.allow_all_hosts {
@@ -439,6 +441,7 @@ impl ThreadSandboxGrants {
         let fs = if self.allow_fs_write_all {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
             }
         } else {
             SandboxFsPolicy::Restricted {
@@ -454,6 +457,7 @@ impl ThreadSandboxGrants {
                         .filter_map(acp_thread::granted_write_path_to_location_or_log),
                 ),
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
             }
         };
         let network = if self.network_any_host {
@@ -699,6 +703,7 @@ mod tests {
                     .map(|p| HostFilesystemLocation::capture(p).expect("capture temp dir"))
                     .collect(),
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
             },
             network: if hosts.is_empty() {
                 SandboxNetPolicy::Blocked
@@ -813,6 +818,7 @@ mod tests {
                     HostFilesystemLocation::capture(build_dir.path()).expect("capture temp dir")
                 ],
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
             }
         );
         assert_eq!(
@@ -829,6 +835,7 @@ mod tests {
             SandboxFsPolicy::Restricted {
                 writable_paths: Vec::new(),
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
             }
         );
         assert_eq!(empty.network, SandboxNetPolicy::Blocked);
@@ -841,6 +848,7 @@ mod tests {
             policy.fs,
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);
@@ -865,6 +873,7 @@ mod tests {
                     HostFilesystemLocation::capture(log_dir.path()).expect("capture temp dir")
                 ],
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
             }
         );
         assert_eq!(
@@ -884,6 +893,7 @@ mod tests {
             policy.fs,
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);

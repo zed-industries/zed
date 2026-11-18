@@ -6,7 +6,6 @@ edition.workspace = true
 license = "GPL-3.0-or-later"
 
 [dependencies]
-async-process.workspace = true
 crash-handler.workspace = true
 log.workspace = true
 minidumper.workspace = true
@@ -15,6 +14,9 @@ serde.workspace = true
 serde_json.workspace = true
 system_specs.workspace = true
 zstd.workspace = true
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+async-process.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true

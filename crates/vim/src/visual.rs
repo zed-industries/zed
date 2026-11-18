@@ -344,6 +344,8 @@ impl Vim {
                 tail = movement::saturating_right(map, tail);
                 tail_x = map.x_for_display_point(tail, &text_layout_details);
             }
+            let head_row = head.row();
+            let head_buffer_row = map.start_of_relative_buffer_row(head, 0).row();
             if !is_reversed && !preserve_goal {
                 head = movement::saturating_right(map, head);
                 head_x = map.x_for_display_point(head, &text_layout_details);
@@ -364,7 +366,7 @@ impl Vim {
 
             let mut selections = Vec::new();
             let mut row = tail.row();
-            let going_up = tail.row() > head.row();
+            let going_up = tail.row() > head_row;
             let direction = if going_up { -1 } else { 1 };
 
             loop {
@@ -402,15 +404,21 @@ impl Vim {
                 // `head.row()` might be a `DisplayPoint` mapped to a soft
                 // wrapped line, hence the need for `<=` and `>=` instead of
                 // `==`.
-                if going_up && row <= head.row() || !going_up && row >= head.row() {
+                if going_up && row <= head_row || !going_up && row >= head_row {
                     break;
                 }
 
                 // Find the next or previous buffer row where the `row` should
                 // be moved to, so that wrapped lines are skipped.
-                row = map
+                let next_row = map
                     .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
                     .row();
+                let reached_head = if going_up {
+                    next_row <= head_buffer_row
+                } else {
+                    next_row >= head_buffer_row
+                };
+                row = if reached_head { head_row } else { next_row };
             }
 
             s.select(selections);
@@ -1654,6 +1662,35 @@ mod test {
             «1ˇ»2345678901234567890
             "
         });
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_end_of_document_wrapped_eof(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_wrap(12).await;
+
+        cx.set_shared_state("123456789012ˇ34\n12345678901234").await;
+        assert_eq!(cx.display_text(), "123456789012\n34\n123456789012\n34");
+        cx.simulate_shared_keystrokes("ctrl-v shift-g").await;
+        cx.shared_state()
+            .await
+            .assert_eq("123456789012«3ˇ»4\n123456789012«3ˇ»4");
+
+        cx.set_shared_state("12345678901ˇ2\n12345678901234").await;
+        cx.simulate_shared_keystrokes("ctrl-v shift-g").await;
+        cx.shared_state()
+            .await
+            .assert_eq("12345678901«2ˇ»\n12345678901«2ˇ»34");
+
+        cx.set_shared_state("12345678901234\n123456789012ˇ34").await;
+        cx.simulate_shared_keystrokes("ctrl-v g g").await;
+        cx.shared_state()
+            .await
+            .assert_eq("123456789012«3ˇ»4\n123456789012«3ˇ»4");
+
+        cx.set_shared_state("ˇ12345678901234").await;
+        cx.simulate_shared_keystrokes("g j ctrl-v k").await;
+        cx.shared_state().await.assert_eq("123456789012«3ˇ»4");
     }
 
     #[gpui::test]

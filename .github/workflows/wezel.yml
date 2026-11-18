@@ -35,6 +35,8 @@ jobs:
           ref: ${{ inputs.commit_sha }}
       - name: Install Linux build dependencies
         run: ./script/linux
+      - name: Download WASI SDK
+        run: ./script/download-wasi-sdk
       - uses: wezel-build/gh-action@49be2cba2eaa12f1b99ae1c3ee9af3c815cb3125 # v1.0.1
         with:
           token: ${{ secrets.WEZEL_RUNNER_TOKEN }}

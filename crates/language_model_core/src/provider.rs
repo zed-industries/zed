@@ -9,6 +9,7 @@ pub const OPEN_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId
 pub const OPEN_AI_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("OpenAI");
 
+pub const GOOGLE_AI_API_URL: &str = "https://generativelanguage.googleapis.com";
 pub const GOOGLE_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("google");
 pub const GOOGLE_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Google AI");

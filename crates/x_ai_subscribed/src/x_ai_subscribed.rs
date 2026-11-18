@@ -4,6 +4,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui_util::ResultExt as _;
 use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest};
 use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
@@ -19,7 +20,6 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::form_urlencoded;
-use util::ResultExt as _;
 
 pub const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai_subscribed");
 pub const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("SuperGrok");
@@ -92,10 +92,18 @@ impl State {
             .spawn({
                 let credentials_provider = credentials_provider.clone();
                 async move |this, cx| {
-                    let result = credentials_provider
-                        .read_credentials(CREDENTIALS_KEY, cx)
-                        .await;
+                    let result = language_model::read_credentials(
+                        credentials_provider.as_ref(),
+                        CREDENTIALS_KEY,
+                        cx,
+                    )
+                    .await;
                     this.update(cx, |state, cx| {
+                        state.load_task = None;
+                        cx.notify();
+                        if state.auth_generation != 0 {
+                            return;
+                        }
                         match result {
                             Ok(Some((_, bytes))) => {
                                 match serde_json::from_slice::<SuperGrokCredentials>(&bytes) {
@@ -116,8 +124,6 @@ impl State {
                                 log::error!("Failed to load SuperGrok credentials: {error:#}");
                             }
                         }
-                        state.load_task = None;
-                        cx.notify();
                     })?;
                     Ok::<(), Arc<anyhow::Error>>(())
                 }
@@ -387,6 +393,7 @@ fn supported_thinking_effort_levels(model: &SuperGrokModel) -> Vec<LanguageModel
                 name: name.into(),
                 value: value.into(),
                 is_default: Some(effort) == default_effort,
+                supports_disabling_thinking: None,
             })
         })
         .collect()
@@ -421,7 +428,10 @@ fn stream_open_ai_completion(
 ) -> BoxFuture<
     'static,
     Result<
-        futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+        futures::stream::BoxStream<
+            'static,
+            Result<ResponseStreamEvent, LanguageModelCompletionError>,
+        >,
         LanguageModelCompletionError,
     >,
 > {
@@ -1320,7 +1330,7 @@ mod tests {
                 .status(200)
                 .body(http_client::AsyncBody::default())?)
         });
-        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        let state = cx.new(|cx| State::new(http.clone(), creds_provider.clone(), cx));
         let load_task = cx
             .read(|cx| state.read(cx).load_task())
             .expect("constructor should start the credentials load");
@@ -1331,6 +1341,25 @@ mod tests {
         cx.read(|cx| {
             let state = state.read(cx);
             assert!(state.is_authenticated());
+            assert!(state.load_task().is_none());
+        });
+
+        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        state.update(cx, |state, _| state.auth_generation += 1);
+        let load_task = cx
+            .read(|cx| state.read(cx).load_task())
+            .expect("constructor should start the credentials load");
+        cx.run_until_parked();
+        load_task.await.expect("stale load should complete");
+        cx.read(|cx| {
+            let state = state.read(cx);
+            assert_eq!(
+                state
+                    .credentials
+                    .as_ref()
+                    .map(|creds| creds.access_token.as_str()),
+                None
+            );
             assert!(state.load_task().is_none());
         });
     }

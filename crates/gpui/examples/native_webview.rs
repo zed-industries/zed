@@ -23,12 +23,6 @@ mod platform {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     use std::time::Instant;
 
-    #[cfg(target_os = "macos")]
-    use cocoa::{
-        appkit::NSView,
-        base::{YES, id, nil},
-        foundation::{NSPoint, NSRect, NSSize, NSString},
-    };
     use gpui::{
         App, Bounds, Context, Div, Element, ElementId, Entity, GlobalElementId, IntoElement,
         LayoutId, MouseButton, Pixels, SharedString, Stateful, Style, Window, WindowBounds,
@@ -37,7 +31,15 @@ mod platform {
     };
     use gpui_platform::application;
     #[cfg(target_os = "macos")]
-    use objc::{class, msg_send, sel, sel_impl};
+    use objc2::{
+        class, msg_send,
+        rc::{Allocated, Retained},
+        runtime::AnyObject,
+    };
+    #[cfg(target_os = "macos")]
+    use objc2_app_kit::NSAutoresizingMaskOptions;
+    #[cfg(target_os = "macos")]
+    use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     use raw_window_handle::HasWindowHandle;
     use raw_window_handle::RawWindowHandle;
@@ -47,7 +49,7 @@ mod platform {
     #[cfg(target_os = "windows")]
     use gpui::{
         DispatchPhase, Modifiers, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-        NavigationDirection, ScrollDelta, ScrollWheelEvent,
+        NavigationDirection, ScrollDelta, ScrollEvent,
     };
     #[cfg(target_os = "windows")]
     use webview2_com::{
@@ -293,6 +295,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             }))?;
             let (device, queue) =
                 gpui::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
@@ -301,7 +304,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 .formats
                 .iter()
                 .copied()
-                .find(|format| !format.is_srgb())
+                .find(|format| !format.has_srgb_suffix())
                 .or_else(|| capabilities.formats.first().copied())
                 .ok_or_else(|| anyhow::anyhow!("native surface has no supported formats"))?;
             // Presenting must not wait for the compositor, since it runs on
@@ -313,6 +316,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format,
+                color_space: wgpu::SurfaceColorSpace::Auto,
                 width: 1,
                 height: 1,
                 present_mode,
@@ -450,7 +454,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 pass.draw(0..3, 0..1);
             }
             self.queue.submit([encoder.finish()]);
-            frame.present();
+            self.queue.present(frame);
         }
     }
 
@@ -477,13 +481,13 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 
     struct NativeWebView {
         #[cfg(target_os = "macos")]
-        gpui_view: id,
+        gpui_view: *mut AnyObject,
         // Dropped before `surface`, whose native surface it presents to.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         renderer: RefCell<NativeSurfaceRenderer>,
         surface: WindowCompositionSurface,
         #[cfg(target_os = "macos")]
-        view: id,
+        view: Retained<AnyObject>,
         #[cfg(target_os = "windows")]
         hwnd: HWND,
         #[cfg(target_os = "windows")]
@@ -502,60 +506,47 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 anyhow::anyhow!("failed to get AppKit window handle: {error:?}")
             })?;
             let gpui_view = match window_handle.as_raw() {
-                RawWindowHandle::AppKit(handle) => handle.ns_view.as_ptr() as id,
+                RawWindowHandle::AppKit(handle) => handle.ns_view.as_ptr() as *mut AnyObject,
                 _ => anyhow::bail!("native_webview requires an AppKit window"),
             };
             let surface = composition.create_native_surface()?;
             let surface_handle = surface.platform_surface()?.platform_handle()?;
             let parent = surface_handle
                 .downcast::<usize>()
-                .map(|handle| *handle as id)
+                .map(|handle| *handle as *mut AnyObject)
                 .map_err(|_| anyhow::anyhow!("native surface did not provide an AppKit view"))?;
 
             unsafe {
-                let configuration: id = msg_send![class!(WKWebViewConfiguration), new];
-                let view: id = msg_send![class!(WKWebView), alloc];
-                let view: id = msg_send![
-                    view,
-                    initWithFrame: NSRect::new(
-                        NSPoint::new(0., 0.),
-                        NSSize::new(0., 0.),
-                    )
-                    configuration: configuration
+                let configuration: Retained<AnyObject> =
+                    msg_send![class!(WKWebViewConfiguration), new];
+                let allocated: Allocated<AnyObject> = msg_send![class!(WKWebView), alloc];
+                let view: Option<Retained<AnyObject>> = msg_send![
+                    allocated,
+                    initWithFrame: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.)),
+                    configuration: &*configuration
                 ];
-                if view.is_null() {
-                    let _: () = msg_send![configuration, release];
-                    anyhow::bail!("failed to create WKWebView");
-                }
-
-                let _: () = msg_send![view, setWantsLayer: YES];
-                view.setAutoresizingMask_(
-                    cocoa::appkit::NSViewWidthSizable | cocoa::appkit::NSViewHeightSizable,
-                );
-                let layer: id = msg_send![view, layer];
-                let border_color: id = msg_send![
+                let view = view.ok_or_else(|| anyhow::anyhow!("failed to create WKWebView"))?;
+                let _: () = msg_send![&*view, setWantsLayer: true];
+                let _: () = msg_send![&*view, setAutoresizingMask:
+                    NSAutoresizingMaskOptions::ViewWidthSizable
+                        | NSAutoresizingMaskOptions::ViewHeightSizable];
+                let layer: *mut AnyObject = msg_send![&*view, layer];
+                let border_color: Retained<AnyObject> = msg_send![
                     class!(NSColor),
-                    colorWithSRGBRed: 63. / 255.
-                    green: 64. / 255.
-                    blue: 67. / 255.
-                    alpha: 1.
+                    colorWithSRGBRed: 63.0_f64 / 255.,
+                    green: 64.0_f64 / 255.,
+                    blue: 67.0_f64 / 255.,
+                    alpha: 1.0_f64
                 ];
-                let border_color: id = msg_send![border_color, CGColor];
-                let _: () = msg_send![layer, setMasksToBounds: YES];
-                let _: () = msg_send![layer, setCornerRadius: 8.];
-                let _: () = msg_send![layer, setBorderWidth: 1.];
+                let border_color: *const std::ffi::c_void = msg_send![&*border_color, CGColor];
+                let _: () = msg_send![layer, setMasksToBounds: true];
+                let _: () = msg_send![layer, setCornerRadius: 8.0_f64];
+                let _: () = msg_send![layer, setBorderWidth: 1.0_f64];
                 let _: () = msg_send![layer, setBorderColor: border_color];
-
-                #[allow(
-                    clippy::disallowed_methods,
-                    reason = "the owned NSString is explicitly released after loading"
-                )]
-                let html = NSString::alloc(nil).init_str(PAGE);
-                let _: id = msg_send![view, loadHTMLString: html baseURL: nil];
-                parent.addSubview_(view);
-
-                let _: () = msg_send![html, release];
-                let _: () = msg_send![configuration, release];
+                let html = NSString::from_str(PAGE);
+                let _: *mut AnyObject = msg_send![&*view,
+                    loadHTMLString: &*html, baseURL: std::ptr::null::<AnyObject>()];
+                let _: () = msg_send![parent, addSubview: &*view];
 
                 Ok(Self {
                     gpui_view,
@@ -670,7 +661,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         #[cfg(target_os = "macos")]
         fn focus_parent(&self) {
             unsafe {
-                let window: id = msg_send![self.view, window];
+                let window: *mut AnyObject = msg_send![&*self.view, window];
                 if !window.is_null() {
                     let _: bool = msg_send![window, makeFirstResponder: self.gpui_view];
                 }
@@ -754,8 +745,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         #[cfg(target_os = "macos")]
         fn drop(&mut self) {
             unsafe {
-                NSView::removeFromSuperview(self.view);
-                let _: () = msg_send![self.view, release];
+                let _: () = msg_send![&*self.view, removeFromSuperview];
             }
         }
 
@@ -771,14 +761,6 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 
     struct NativeWebViewElement {
         webview: Rc<NativeWebView>,
-    }
-
-    impl IntoElement for NativeWebViewElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
     }
 
     impl Element for NativeWebViewElement {
@@ -920,7 +902,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                         }
                     }
                 });
-                window.on_mouse_event(move |event: &ScrollWheelEvent, phase, _, _| {
+                window.on_mouse_event(move |event: &ScrollEvent, phase, _, _| {
                     if phase == DispatchPhase::Bubble {
                         let amount = match event.delta {
                             ScrollDelta::Pixels(delta) => f32::from(delta.y),

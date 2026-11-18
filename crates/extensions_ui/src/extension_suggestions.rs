@@ -196,6 +196,9 @@ fn show_suggestion(
     if workspace.has_notification(&notification_id) {
         return;
     }
+    if !ExtensionSettings::get_global(cx).suggest_extensions {
+        return;
+    }
 
     let extension_store = ExtensionStore::global(cx);
     let extension_store = extension_store.read(cx);
@@ -231,7 +234,17 @@ fn show_suggestion(
                 .secondary_icon(IconName::Close)
                 .secondary_icon_color(Color::Error)
                 .secondary_on_click(move |_window, cx| dismiss_suggestion(&extension_id, cx))
+                .secondary_menu_entry("Disable Suggestions", |_window, cx| {
+                    disable_extension_suggestions(cx)
+                })
         })
+    });
+}
+
+fn disable_extension_suggestions(cx: &mut App) {
+    let fs = AppState::global(cx).fs.clone();
+    settings::update_settings_file(fs, cx, |content, _| {
+        content.extension.suggest_extensions = false;
     });
 }
 
@@ -324,6 +337,54 @@ mod tests {
 
         open_file(&workspace, "main.rs", cx).await;
 
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_no_suggestion_when_suggest_extensions_disabled(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.extension.suggest_extensions = false;
+                });
+            });
+        });
+        let (workspace, cx) = open_test_workspace(&app_state, cx).await;
+
+        open_file(&workspace, "index.html", cx).await;
+        open_file(&workspace, "main.gleam", cx).await;
+
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_disabling_extension_suggestions_stops_suggestions(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let (workspace, cx) = open_test_workspace(&app_state, cx).await;
+        open_file(&workspace, "index.html", cx).await;
+        assert_eq!(
+            notification_ids(&workspace, cx),
+            vec![notification_id(EMMET_EXTENSION_ID)]
+        );
+
+        let notification = notification_views(&workspace, cx)
+            .pop()
+            .unwrap()
+            .downcast::<MessageNotification>()
+            .ok()
+            .unwrap();
+        cx.update(|_, cx| disable_extension_suggestions(cx));
+        notification.update(cx, |notification, cx| notification.dismiss(cx));
+        cx.run_until_parked();
+
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+        cx.update(|_, cx| {
+            assert!(!ExtensionSettings::get_global(cx).suggest_extensions);
+            assert!(!suggestion_dismissed(EMMET_EXTENSION_ID, cx));
+        });
+
+        open_file(&workspace, "other.html", cx).await;
         assert_eq!(notification_ids(&workspace, cx), Vec::new());
     }
 
@@ -877,7 +938,7 @@ mod tests {
         LanguageConfig {
             name: name.into(),
             matcher: LanguageMatcher {
-                path_suffixes: vec![path_suffix.to_string()],
+                path_suffixes: vec![path_suffix.into()],
                 ..LanguageMatcher::default()
             }
             .into(),

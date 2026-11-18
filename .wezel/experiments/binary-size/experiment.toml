@@ -1,19 +1,13 @@
 #:schema ../../schema.json
 
-description = "Measures stripped and unstripped release binary size"
+description = "Measures the size of the Zed binary shipped in the Linux bundle"
 
-[step.cargo.build-release]
-command = "build"
-build_target = ["zed"]
-profile = "release"
+[step.exec.bundle-linux]
+cmd = "./script/bundle-linux --skip-sentry"
 
-[step.filesize.measure-unstripped]
-glob = "target/release/zed"
-summary.unstripped-binary-size = { outcome = "target/release/zed" }
+[step.exec.extract-bundled-binary]
+cmd = "editor_path=$(tar -tzf target/release/zed-linux-$(uname -m).tar.gz | grep '/libexec/zed-editor$') && tar -xOzf target/release/zed-linux-$(uname -m).tar.gz \"$editor_path\" > target/release/zed-bundled"
 
-[step.exec.strip-copy]
-cmd = "cp target/release/zed target/release/zed-stripped && strip target/release/zed-stripped"
-
-[step.filesize.measure-stripped]
-glob = "target/release/zed-stripped"
-summary.stripped-binary-size = { outcome = "target/release/zed-stripped" }
+[step.filesize.measure-bundled]
+glob = "target/release/zed-bundled"
+summary.bundled-binary-size = { outcome = "target/release/zed-bundled" }

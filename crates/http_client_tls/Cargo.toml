@@ -17,7 +17,7 @@ doctest = false
 test = false
 
 [dependencies]
-log.workspace = true
+log = { workspace = true, features = ["serde"] }
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
 webpki-roots.workspace = true

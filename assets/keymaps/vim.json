@@ -89,6 +89,8 @@
       "ctrl-y": "vim::LineUp",
       // "g" commands
       "g shift-r": "vim::PushReplaceWithRegister",
+      // Neovim "g r" global defaults. See https://neovim.io/doc/user/lsp/#gra.
+      "g r t": "editor::GoToTypeDefinition",
       "g r n": "editor::Rename",
       "g r r": "editor::FindAllReferences",
       "g r i": "editor::GoToImplementation",
@@ -326,6 +328,9 @@
       "g ?": "vim::ConvertToRot13",
       // "g ?": "vim::ConvertToRot47",
       "\"": "vim::PushRegister",
+      // visual mode tree-sitter related commands. See https://neovim.io/doc/user/treesitter/#v_%5Dn.
+      "] n": "vim::SelectNextSyntaxNode",
+      "[ n": "vim::SelectPreviousSyntaxNode",
     },
   },
   {
@@ -474,7 +479,7 @@
       "shift-g": "vim::HelixGotoLine",
 
       // Changes
-      "shift-r": "editor::Paste",
+      "shift-r": "vim::HelixReplaceWithYanked",
       "`": "vim::ConvertToLowerCase",
       "alt-`": "vim::ConvertToUpperCase",
       "insert": "vim::InsertBefore", // not a helix default
@@ -1009,6 +1014,20 @@
     },
   },
   {
+    "context": "Editor && DebuggerHover && VimControl && (vim_mode == normal || vim_mode == helix_normal)",
+    "bindings": {
+      "escape": "editor::Cancel",
+      "h": "editor::DebuggerHoverCollapseSelected",
+      "j": "editor::DebuggerHoverSelectNext",
+      "k": "editor::DebuggerHoverSelectPrevious",
+      "l": "editor::DebuggerHoverExpandSelected",
+      "left": "editor::DebuggerHoverCollapseSelected",
+      "down": "editor::DebuggerHoverSelectNext",
+      "up": "editor::DebuggerHoverSelectPrevious",
+      "right": "editor::DebuggerHoverExpandSelected"
+    }
+  },
+  {
     // netrw compatibility
     "context": "ProjectPanel && not_editing",
     "bindings": {
@@ -1216,6 +1235,8 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+      "ctrl-o": "pane::GoBack",
+      "ctrl-i": "pane::GoForward",
       "g g": "markdown::ScrollToTop",
       "shift-g": "markdown::ScrollToBottom",
       "/": "buffer_search::Deploy",

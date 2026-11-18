@@ -43,7 +43,9 @@ impl Editor {
                 .filter(|_| self.is_empty(cx))
                 .unwrap_or(&self.display_map);
 
-            display_map.update(cx, |map, cx| map.set_font(font, font_size, cx));
+            if display_map.update(cx, |map, cx| map.set_font(font, font_size, cx)) {
+                self.inlay_hint_visibility_changed(cx);
+            }
         }
         self.style = Some(style);
     }
@@ -257,6 +259,10 @@ impl Editor {
         wrap_guides
     }
 
+    pub(super) fn soft_wrap_indent(&self, cx: &App) -> SoftWrapIndent {
+        self.buffer.read(cx).language_settings(cx).soft_wrap_indent
+    }
+
     pub fn soft_wrap_mode(&self, cx: &App) -> SoftWrap {
         let settings = self.buffer.read(cx).language_settings(cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
@@ -273,17 +279,29 @@ impl Editor {
 
     // Called by the element. This method is not designed to be called outside of the editor
     // element's layout code because it does not notify when rewrapping is computed synchronously.
-    pub(super) fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut App) -> bool {
-        if self.is_empty(cx) {
+    pub(super) fn set_wrap_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
+        let indent = self.soft_wrap_indent(cx);
+        let changed = if self.is_empty(cx) {
             self.placeholder_display_map
                 .as_ref()
                 .map_or(false, |display_map| {
-                    display_map.update(cx, |map, cx| map.set_wrap_width(width, cx))
+                    display_map.update(cx, |map, cx| {
+                        let wrap_width_changed = map.set_wrap_width(width, cx);
+                        let indent_changed = map.set_soft_wrap_indent(indent, cx);
+                        wrap_width_changed || indent_changed
+                    })
                 })
         } else {
-            self.display_map
-                .update(cx, |map, cx| map.set_wrap_width(width, cx))
+            self.display_map.update(cx, |map, cx| {
+                let wrap_width_changed = map.set_wrap_width(width, cx);
+                let indent_changed = map.set_soft_wrap_indent(indent, cx);
+                wrap_width_changed || indent_changed
+            })
+        };
+        if changed {
+            self.inlay_hint_visibility_changed(cx);
         }
+        changed
     }
 
     pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {

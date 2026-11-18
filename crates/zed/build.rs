@@ -24,9 +24,8 @@ fn main() {
     }
 
     if cfg!(target_os = "macos") {
-        println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
+        println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=12.0");
 
-        // Weakly link ReplayKit to ensure Zed can be used on macOS 10.15+.
         println!("cargo:rustc-link-arg=-Wl,-weak_framework,ReplayKit");
 
         // Seems to be required to enable Swift concurrency
@@ -35,7 +34,6 @@ fn main() {
         // Register exported Objective-C selectors, protocols, etc
         println!("cargo:rustc-link-arg=-Wl,-ObjC");
 
-        // weak link to support Catalina
         println!("cargo:rustc-link-arg=-Wl,-weak_framework,ScreenCaptureKit");
     }
 

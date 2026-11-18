@@ -61,6 +61,12 @@ impl Connection {
 
             let mut did_migrate = false;
             for (index, migration) in migrations.iter().enumerate() {
+                if completed_migrations
+                    .get(index)
+                    .is_some_and(|(_, _, completed)| completed.as_str() == *migration)
+                {
+                    continue;
+                }
                 let migration =
                     sqlformat::format(migration, &sqlformat::QueryParams::None, Default::default());
                 if let Some((_, _, completed_migration)) = completed_migrations.get(index) {

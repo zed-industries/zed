@@ -601,6 +601,7 @@ impl SelectionsCollection {
             snapshot,
             collection: self,
             selections_changed: false,
+            preserve_buffer_positions: false,
         };
 
         let result = change(&mut mutable_collection);
@@ -690,6 +691,7 @@ pub struct MutableSelectionsCollection<'snap, 'a> {
     collection: &'a mut SelectionsCollection,
     snapshot: &'snap DisplaySnapshot,
     selections_changed: bool,
+    preserve_buffer_positions: bool,
 }
 
 impl<'snap, 'a> fmt::Debug for MutableSelectionsCollection<'snap, 'a> {
@@ -702,6 +704,10 @@ impl<'snap, 'a> fmt::Debug for MutableSelectionsCollection<'snap, 'a> {
 }
 
 impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
+    pub(crate) fn preserve_buffer_positions(&mut self) {
+        self.preserve_buffer_positions = true;
+    }
+
     pub fn display_snapshot(&self) -> DisplaySnapshot {
         self.snapshot.clone()
     }
@@ -903,9 +909,12 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
         let map = self.display_snapshot();
-        let resolved_selections =
-            resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(&selections, &map)
-                .collect::<Vec<_>>();
+        let resolved_selections = resolve_selections::<MultiBufferOffset, _>(
+            &selections,
+            &map,
+            !self.preserve_buffer_positions,
+        )
+        .collect::<Vec<_>>();
         self.select(resolved_selections);
     }
 

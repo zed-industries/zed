@@ -255,6 +255,7 @@ pub(crate) fn composed_scene_layers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Bounds, ContentMask, Quad, ScaledPixels, Scene, point, size};
 
     #[test]
     fn composition_surfaces_have_stable_identity_and_explicit_order() -> Result<()> {
@@ -330,6 +331,47 @@ mod tests {
         assert_eq!(overlay_layer.surface, overlay);
         assert_eq!(overlay_layer.ranges, [4..7]);
         assert_eq!(tree.kind(native)?, CompositionSurfaceKind::Native);
+        Ok(())
+    }
+
+    #[test]
+    fn surface_ranges_split_inside_a_layer_replay_as_balanced_scenes() -> Result<()> {
+        let mut tree = CompositionTree::new();
+        let base = tree.insert(CompositionSurfaceKind::Gpui, None)?;
+        let overlay = tree.insert(CompositionSurfaceKind::Gpui, None)?;
+        let bounds = Bounds::new(
+            point(ScaledPixels(0.), ScaledPixels(0.)),
+            size(ScaledPixels(10.), ScaledPixels(10.)),
+        );
+        let quad = Quad {
+            bounds,
+            content_mask: ContentMask { bounds },
+            ..Default::default()
+        };
+
+        let mut scene = Scene::default();
+        scene.push_layer();
+        scene.insert_primitive(quad);
+        let overlay_start = scene.len();
+        scene.insert_primitive(quad);
+        scene.pop_layer();
+        let base_start = scene.len();
+        scene.insert_primitive(quad);
+        scene.finish();
+
+        let starts = [(base, 0), (overlay, overlay_start), (base, base_start)];
+        let layers = composed_scene_layers(&tree, &starts, scene.len())?;
+        let mut quads_by_surface = Vec::new();
+        for layer in &layers {
+            let mut surface_scene = Scene::default();
+            for range in &layer.ranges {
+                surface_scene.replay_balanced(range.clone(), &scene)?;
+            }
+            surface_scene.finish();
+            quads_by_surface.push((layer.surface, surface_scene.quads.len()));
+        }
+
+        assert_eq!(quads_by_surface, [(base, 2), (overlay, 1)]);
         Ok(())
     }
 

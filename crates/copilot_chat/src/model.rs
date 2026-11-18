@@ -53,6 +53,7 @@ pub fn language_model(model: &CopilotChatModel) -> LanguageModel {
                     name,
                     value: language_model::SharedString::from(level.clone()),
                     is_default: level == "high",
+                    supports_disabling_thinking: None,
                 }
             })
             .collect()
@@ -62,16 +63,26 @@ pub fn language_model(model: &CopilotChatModel) -> LanguageModel {
         supports_streaming_tools: true,
         supports_images: model.supports_vision(),
         supports_thinking: model.can_think(),
+        supports_system_prompt_updates: if model.supports_messages() {
+            anthropic::supports_mid_conversation_system_messages(model.id())
+        } else {
+            model.supports_response()
+        },
         supported_effort_levels: supported_effort_levels.into(),
         tool_choice_support: LanguageModelToolChoiceSupport {
             auto: supports_tools,
             any: supports_tools,
             none: supports_tools,
         },
-        cost_info: LanguageModelCostInfo::RequestCost {
-            cost_per_request: model.multiplier(),
-        }
-        .into(),
+        cost_info: match model.token_cost() {
+            Some(cost) => Some(LanguageModelCostInfo::TokenCost {
+                input_token_cost_per_1m: cost.input_dollars_per_1m,
+                output_token_cost_per_1m: cost.output_dollars_per_1m,
+            }),
+            None => model
+                .multiplier()
+                .map(|cost_per_request| LanguageModelCostInfo::RequestCost { cost_per_request }),
+        },
         max_input_tokens: model.max_prompt_tokens().unwrap_or(model.max_token_count()),
         max_output_tokens: model.max_output_tokens(),
         ..LanguageModel::new(
@@ -154,7 +165,12 @@ pub fn stream_completion(
             }
 
             if model.supports_adaptive_thinking() {
-                if anthropic_request.thinking.is_some() {
+                if matches!(
+                    anthropic_request.thinking,
+                    Some(
+                        anthropic::Thinking::Enabled { .. } | anthropic::Thinking::Adaptive { .. }
+                    )
+                ) {
                     anthropic_request.thinking = Some(anthropic::Thinking::Adaptive {
                         display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
                         // Thinking block binding needs a beta header on
@@ -610,7 +626,9 @@ impl CopilotResponsesEventMapper {
                     Some(copilot_responses::IncompleteReason::MaxOutputTokens) => {
                         StopReason::MaxTokens
                     }
-                    Some(copilot_responses::IncompleteReason::ContentFilter) => StopReason::Refusal,
+                    Some(copilot_responses::IncompleteReason::ContentFilter) => {
+                        StopReason::Refusal(None)
+                    }
                     _ => self
                         .pending_stop_reason
                         .take()
@@ -1682,7 +1700,7 @@ mod tests {
         let mapped = map_events(events);
         assert!(matches!(
             mapped.last().unwrap(),
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal)
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(None))
         ));
     }
 

@@ -6,7 +6,7 @@ If you are looking for the Zed extension registry, see the [`zed-industries/exte
 
 ## Structure
 
-Currently, Zed includes support for a number of languages without requiring installing an extension. Those languages can be found under [`crates/languages/src`](https://github.com/zed-industries/zed/tree/main/crates/languages/src).
+Currently, Zed includes support for a number of languages without requiring installing an extension. Their grammars, queries, and configs can be found under [`crates/grammars/src`](https://github.com/zed-industries/zed/tree/main/crates/grammars/src), and their language server adapters under [`crates/languages/src`](https://github.com/zed-industries/zed/tree/main/crates/languages/src).
 
 Support for all other languages is done via extensions. This directory ([extensions/](https://github.com/zed-industries/zed/tree/main/extensions/)) contains some of the officially maintained extensions. These extensions use the same [zed_extension_api](https://docs.rs/zed_extension_api/latest/zed_extension_api/) available to all [Zed Extensions](https://zed.dev/extensions) for providing [language servers](https://zed.dev/docs/extensions/languages#language-servers), [tree-sitter grammars](https://zed.dev/docs/extensions/languages#grammar) and [tree-sitter queries](https://zed.dev/docs/extensions/languages#tree-sitter-queries).
 

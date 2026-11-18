@@ -25,7 +25,6 @@ serde_json_lenient.workspace = true
 theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
-util_macros.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 
