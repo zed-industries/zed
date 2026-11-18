@@ -11500,6 +11500,101 @@ mod tests {
         assert_eq!(preview, None);
     }
 
+    fn edit_active_file_diff(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
+        let editor = workspace
+            .read_with(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .unwrap();
+        editor.update_in(cx, |editor, window, cx| {
+            editor.insert("edited ", window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_edited_file_diff_keeps_its_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({ ".git": {}, "a.txt": "a", "b.txt": "b" }),
+            &[
+                ("a.txt", StatusCode::Modified),
+                ("b.txt", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        open_file_diff_from_keyboard(&panel, "a.txt", &mut cx);
+        edit_active_file_diff(&workspace, &mut cx);
+        let (open, preview) = file_diff_tabs(&workspace, &mut cx);
+        assert_eq!(open, ["a.txt"]);
+        assert_eq!(preview, None, "an edited diff should stop being a preview");
+
+        open_file_diff_from_keyboard(&panel, "b.txt", &mut cx);
+        let (open, preview) = file_diff_tabs(&workspace, &mut cx);
+        assert_eq!(open, ["a.txt", "b.txt"], "the edited diff should stay open");
+        assert_eq!(preview.as_deref(), Some("b.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_closing_edited_file_diff_prompts_to_save(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({ ".git": {}, "a.txt": "a" }),
+            &[("a.txt", StatusCode::Modified)],
+        )
+        .await;
+
+        open_file_diff_from_keyboard(&panel, "a.txt", &mut cx);
+        edit_active_file_diff(&workspace, &mut cx);
+
+        let close_task = workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.active_pane().clone().update(cx, |pane, cx| {
+                let item_id = pane.active_item().unwrap().item_id();
+                pane.close_item_by_id(item_id, workspace::SaveIntent::Close, window, cx)
+            })
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        assert_eq!(file_diff_tabs(&workspace, &mut cx).0, ["a.txt"]);
+
+        cx.simulate_prompt_answer("Don't Save");
+        close_task.await.unwrap();
+        assert!(file_diff_tabs(&workspace, &mut cx).0.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_file_diff_of_file_edited_earlier_opens_as_preview_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, project, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({ ".git": {}, "a.txt": "a" }),
+            &[("a.txt", StatusCode::Modified)],
+        )
+        .await;
+        let buffer = project
+            .update(&mut cx, |project, cx| {
+                project.open_local_buffer(path!("/project/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(&mut cx, |buffer, cx| {
+            buffer.edit([(0..0, "edited ")], None, cx);
+        });
+        project
+            .update(&mut cx, |project, cx| {
+                project.save_buffer(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        open_file_diff_from_keyboard(&panel, "a.txt", &mut cx);
+        let (open, preview) = file_diff_tabs(&workspace, &mut cx);
+        assert_eq!(open, ["a.txt"]);
+        assert_eq!(preview.as_deref(), Some("a.txt"));
+    }
+
     #[gpui::test]
     async fn test_ignore_actions_use_multiple_selected_entries(cx: &mut TestAppContext) {
         init_test(cx);
