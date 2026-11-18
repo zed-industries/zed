@@ -1315,7 +1315,7 @@ impl PromptEditor<BufferCodegen> {
             inline_assistant_model_selector(fs.clone(), prompt_editor.focus_handle(cx), window, cx);
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
-            editor: prompt_editor.clone(),
+            editor: prompt_editor,
             mention_set,
             workspace,
             model_selector,
@@ -1455,7 +1455,7 @@ impl PromptEditor<TerminalCodegen> {
             inline_assistant_model_selector(fs.clone(), prompt_editor.focus_handle(cx), window, cx);
 
         let mut this = Self {
-            editor: prompt_editor.clone(),
+            editor: prompt_editor,
             mention_set,
             workspace,
             model_selector,
