@@ -129,6 +129,7 @@ pub struct LanguageModel {
     /// request. Only meaningful when `supports_thinking` is `true`.
     pub supports_disabling_thinking: bool,
     pub supports_fast_mode: bool,
+    pub supports_ultrafast_mode: bool,
     /// Whether instruction updates can retain their positions in conversation history.
     pub supports_system_prompt_updates: bool,
     /// The effort levels that can be used when thinking.
@@ -222,6 +223,7 @@ impl LanguageModel {
             supports_thinking: false,
             supports_disabling_thinking: true,
             supports_fast_mode: false,
+            supports_ultrafast_mode: false,
             supports_system_prompt_updates: false,
             supported_effort_levels: Arc::default(),
             supports_server_side_compaction: false,

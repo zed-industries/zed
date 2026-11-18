@@ -790,6 +790,7 @@ pub enum ServiceTier {
     Scale,
     #[serde(alias = "fast")]
     Priority,
+    Ultrafast,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

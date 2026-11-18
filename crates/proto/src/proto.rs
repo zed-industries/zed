@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 pub mod error;
 mod macros;
 mod typed_envelope;

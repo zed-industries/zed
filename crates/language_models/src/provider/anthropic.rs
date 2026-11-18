@@ -1019,6 +1019,7 @@ fn language_model(model: &anthropic::Model) -> LanguageModel {
         },
         supports_thinking: model.supports_thinking,
         supports_fast_mode: model.supports_speed,
+        supports_ultrafast_mode: false,
         refusal_fallback_model_id: model
             .id
             .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)

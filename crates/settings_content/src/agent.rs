@@ -459,6 +459,16 @@ impl AgentSettingsContent {
         });
     }
 
+    pub fn set_commit_message_model(&mut self, provider: String, model: String) {
+        self.commit_message_model = Some(LanguageModelSelection {
+            provider: provider.into(),
+            model,
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        });
+    }
+
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
     }

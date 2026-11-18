@@ -3921,17 +3921,15 @@ impl ThreadView {
         let following = self.is_following(cx);
 
         self.should_be_following = !following;
-        if self.thread.read(cx).status() == ThreadStatus::Generating {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    if following {
-                        workspace.unfollow(CollaboratorId::Agent, window, cx);
-                    } else {
-                        workspace.follow(CollaboratorId::Agent, window, cx);
-                    }
-                })
-                .ok();
-        }
+        self.workspace
+            .update(cx, |workspace, cx| {
+                if following {
+                    workspace.unfollow(CollaboratorId::Agent, window, cx);
+                } else {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                }
+            })
+            .ok();
 
         telemetry::event!("Follow Agent Selected", following = !following);
     }
@@ -11819,6 +11817,7 @@ impl ThreadView {
                 active_editor.update_in(cx, |editor, window, cx| {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     if snapshot.as_singleton().is_some()
+                        && let Some(agent_location) = agent_location
                         && let Some(anchor) = snapshot.anchor_in_excerpt(agent_location.position)
                     {
                         editor.change_selections(Default::default(), window, cx, |selections| {
@@ -15919,6 +15918,103 @@ mod tests {
         }
 
         fn flush(&self) {}
+    }
+
+    #[gpui::test]
+    async fn test_open_tool_call_location_without_resolved_buffer(cx: &mut gpui::TestAppContext) {
+        use agent_client_protocol::v1::schema as acp;
+
+        crate::conversation_view::tests::init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({"notes.txt": "first\nsecond\nthird\n"}),
+        )
+        .await;
+        fs.insert_file(
+            path!("/project/screenshot.png"),
+            b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        let connection = acp_thread::StubAgentConnection::new();
+        crate::test_support::open_thread_with_connection(&panel, connection.clone(), cx);
+        let session_id = crate::test_support::active_session_id(&panel, cx);
+        let thread_view = panel.read_with(cx, |panel, cx| {
+            panel.active_thread_view(cx).expect("active thread view")
+        });
+
+        let send_read =
+            |id: &'static str, path: &str, line: Option<u32>, cx: &mut gpui::VisualTestContext| {
+                cx.update(|_window, cx| {
+                    connection.send_update(
+                        session_id.clone(),
+                        acp::SessionUpdate::ToolCall(
+                            acp::ToolCall::new(acp::ToolCallId::new(id), "Read")
+                                .kind(acp::ToolKind::Read)
+                                .locations(vec![acp::ToolCallLocation::new(path).line(line)]),
+                        ),
+                        cx,
+                    );
+                });
+                thread_view.read_with(cx, |thread_view, cx| {
+                    thread_view
+                        .thread
+                        .read(cx)
+                        .tool_call(&acp_v2::ToolCallId::new(id))
+                        .expect("tool call")
+                        .0
+                })
+            };
+        let open_location = |entry_ix: usize, cx: &mut gpui::VisualTestContext| {
+            thread_view.update_in(cx, |thread_view, window, cx| {
+                thread_view.open_tool_call_location(entry_ix, 0, window, cx);
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                workspace.active_item(cx).expect("location should open")
+            })
+        };
+
+        let image_ix = send_read("read-image", path!("/project/screenshot.png"), None, cx);
+        cx.run_until_parked();
+        thread_view.read_with(cx, |thread_view, cx| {
+            let (_, resolved) = thread_view.thread.read(cx).entries()[image_ix]
+                .location(0)
+                .expect("location");
+            assert!(resolved.is_none(), "binary files never resolve to a buffer");
+        });
+        let item = open_location(image_ix, cx);
+        cx.read(|cx| {
+            assert_eq!(item.tab_content_text(0, cx), "screenshot.png");
+            assert!(item.downcast::<Editor>().is_none());
+        });
+
+        // Clicking before resolution finishes still opens the reported line.
+        let text_ix = send_read("read-text", path!("/project/notes.txt"), Some(2), cx);
+        let editor = open_location(text_ix, cx)
+            .downcast::<Editor>()
+            .expect("text file should open in an editor");
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(1, 0)
+            );
+        });
     }
 }
 

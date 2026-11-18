@@ -496,7 +496,7 @@ impl Database {
                 .exec(&*tx)
                 .await?;
             if participant_update.rows_affected == 0 {
-                return Err(anyhow!("room does not exist or was already joined"))?;
+                Err(anyhow!("room does not exist or was already joined"))?;
             }
 
             let mut reshared_projects = Vec::new();
@@ -507,7 +507,7 @@ impl Database {
                     .await?
                     .context("project does not exist")?;
                 if project.host_user_id != Some(user_id) {
-                    return Err(anyhow!("no such project"))?;
+                    Err(anyhow!("no such project"))?;
                 }
 
                 let mut collaborators = project
