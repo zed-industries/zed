@@ -10150,7 +10150,7 @@ mod tests {
 
     #[gpui::test]
     fn test_underline_exclusions_preserve_device_geometry(cx: &mut TestAppContext) {
-        test_underline_paint_at_scales(cx, |window| {
+        test_paint_at_scales(cx, |window| {
             let (numerator, denominator) = match window.scale_factor() {
                 1.0 => (1, 1),
                 1.25 => (5, 4),
@@ -10259,7 +10259,7 @@ mod tests {
 
     #[gpui::test]
     fn test_underline_exclusions_preserve_helvetica_warning_edge(cx: &mut TestAppContext) {
-        test_underline_paint_at_scales(cx, |window| {
+        test_paint_at_scales(cx, |window| {
             if window.scale_factor() != 2.0 {
                 return;
             }
@@ -10298,7 +10298,7 @@ mod tests {
 
     #[gpui::test]
     fn test_underline_exclusions_preserve_content_mask_and_opacity(cx: &mut TestAppContext) {
-        test_underline_paint_at_scales(cx, |window| {
+        test_paint_at_scales(cx, |window| {
             let scale = window.scale_factor();
             let original_mask = window.content_mask();
             let original_opacity = window.element_opacity();
@@ -10356,7 +10356,7 @@ mod tests {
 
     #[gpui::test]
     fn test_underline_exclusions_adversarial_permutations(cx: &mut TestAppContext) {
-        test_underline_paint_at_scales(cx, |window| {
+        test_paint_at_scales(cx, |window| {
             let style = UnderlineStyle {
                 thickness: px(1.),
                 color: None,
@@ -10576,40 +10576,6 @@ mod tests {
                     });
                 },
             )
-        }
-    }
-
-    struct UnderlineTestView(Rc<dyn Fn(&mut Window)>);
-
-    impl Render for UnderlineTestView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let paint = self.0.clone();
-            canvas(
-                |_, _, _| {},
-                move |_, _, window, _| {
-                    window.content_mask_stack.push(ContentMask {
-                        bounds: Bounds::from_corners(
-                            point(px(-1000.), px(-1000.)),
-                            point(px(1000.), px(1000.)),
-                        ),
-                    });
-                    paint(window);
-                    window.content_mask_stack.pop();
-                },
-            )
-            .size_full()
-        }
-    }
-
-    fn test_underline_paint_at_scales(
-        cx: &mut TestAppContext,
-        paint: impl Fn(&mut Window) + 'static,
-    ) {
-        let window = cx.add_window(move |_, _| UnderlineTestView(Rc::new(paint)));
-        for scale in [1., 1.25, 1.5, 2., 3.] {
-            cx.simulate_window_scale_factor_change(window.into(), scale);
-            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-                .unwrap();
         }
     }
 
