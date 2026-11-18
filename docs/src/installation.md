@@ -67,19 +67,22 @@ If this script is insufficient for your use case, you run into problems running 
 
 ### macOS
 
-Zed supports the following macOS releases:
+Zed requires macOS 12.0 (Monterey) or later.
 
-| Version       | Codename | Apple Status   | Zed Status          |
-| ------------- | -------- | -------------- | ------------------- |
-| macOS 26.x    | Tahoe    | Supported      | Supported           |
-| macOS 15.x    | Sequoia  | Supported      | Supported           |
-| macOS 14.x    | Sonoma   | Supported      | Supported           |
-| macOS 13.x    | Ventura  | Supported      | Supported           |
-| macOS 12.x    | Monterey | EOL 2024-09-16 | Supported           |
-| macOS 11.x    | Big Sur  | EOL 2023-09-26 | Partially Supported |
-| macOS 10.15.x | Catalina | EOL 2022-09-12 | Partially Supported |
+| Version            | Codename    | Apple Status   | Zed Status          |
+| ------------------ | ----------- | -------------- | ------------------- |
+| macOS 27.x         | Golden Gate | Supported      | Supported           |
+| macOS 26.x         | Tahoe       | Supported      | Supported           |
+| macOS 15.x         | Sequoia     | Supported      | Supported           |
+| macOS 14.x         | Sonoma      | EOL 2026-09-14 | Supported           |
+| macOS 13.x         | Ventura     | EOL 2025-09-15 | Supported           |
+| macOS 12.x (12.3+) | Monterey    | EOL 2024-09-16 | Supported           |
+| macOS 12.0–12.2    | Monterey    | EOL 2024-09-16 | Partially Supported |
 
-The macOS releases labelled "Partially Supported" (Big Sur and Catalina) do not support screen sharing via Zed Collaboration. These features use the [LiveKit SDK](https://livekit.io) which relies upon [ScreenCaptureKit.framework](https://developer.apple.com/documentation/screencapturekit/) only available on macOS 12 (Monterey) and newer.
+The macOS releases labelled "Partially Supported" (Monterey 12.0–12.2) do not support screen sharing via Zed Collaboration.
+Screen sharing uses [ScreenCaptureKit.framework](https://developer.apple.com/documentation/screencapturekit/), which is available on macOS 12.3 and newer.
+
+Apple support status and EOL dates are from [endoflife.date](https://endoflife.date/macos).
 
 #### Mac Hardware
 

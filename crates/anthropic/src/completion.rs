@@ -108,6 +108,7 @@ pub async fn collect_compaction_result(
             | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
             | LanguageModelCompletionEvent::StartMessage { .. }
             | LanguageModelCompletionEvent::ReasoningDetails(_)
+            | LanguageModelCompletionEvent::InputTransformations(_)
             | LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started)
             | LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(_)) => {}
         }
@@ -292,7 +293,11 @@ pub fn into_anthropic(
 ) -> Result<crate::Request> {
     let requires_adaptive_thinking = matches!(
         model.as_str(),
-        "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-haiku-5-5"
+        "claude-fable-5-2"
+            | "claude-mythos-5-2"
+            | "claude-opus-5-5"
+            | "claude-sonnet-5-5"
+            | "claude-haiku-5-5"
     );
     let mode = if requires_adaptive_thinking {
         AnthropicModelMode::AdaptiveThinking
@@ -305,6 +310,7 @@ pub fn into_anthropic(
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
     let mut any_message_wants_cache = false;
+    let supports_system_updates = crate::supports_mid_conversation_system_messages(&model);
 
     for message in request.messages {
         if message.contents_empty() {
@@ -353,10 +359,32 @@ pub fn into_anthropic(
                 });
             }
             Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
+                if supports_system_updates && !new_messages.is_empty() {
+                    anyhow::ensure!(
+                        message
+                            .content
+                            .iter()
+                            .all(|content| matches!(content, MessageContent::Text(_))),
+                        "Anthropic system updates must contain only text"
+                    );
+                    new_messages.push(Message {
+                        role: crate::Role::System,
+                        content: vec![RequestContent::Text {
+                            text: message.string_contents(),
+                            cache_control: (cache_mode == AnthropicPromptCacheMode::Legacy
+                                && message.cache)
+                                .then_some(CacheControl {
+                                    cache_type: CacheControlType::Ephemeral,
+                                    ttl: None,
+                                }),
+                        }],
+                    });
+                } else {
+                    if !system_message.is_empty() {
+                        system_message.push_str("\n\n");
+                    }
+                    system_message.push_str(&message.string_contents());
                 }
-                system_message.push_str(&message.string_contents());
             }
         }
     }
@@ -724,14 +752,20 @@ impl AnthropicEventMapper {
             }
             Event::MessageStart { message } => {
                 update_usage(&mut self.usage, &message.usage);
-                vec![
+                let mut events = vec![
                     Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
                         &self.usage,
                     ))),
                     Ok(LanguageModelCompletionEvent::StartMessage {
                         message_id: message.id,
                     }),
-                ]
+                ];
+                if !message.input_transformations.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::InputTransformations(
+                        message.input_transformations,
+                    )));
+                }
+                events
             }
             Event::MessageDelta { delta, usage } => {
                 update_usage(&mut self.usage, &usage);
@@ -740,7 +774,18 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
-                        "refusal" => StopReason::Refusal,
+                        "refusal" => {
+                            StopReason::Refusal(Some(language_model_core::RefusalDetails {
+                                reason: "refusal".into(),
+                                categories: delta
+                                    .stop_details
+                                    .and_then(|details| details.category)
+                                    .into_iter()
+                                    .collect(),
+                                // Classifier timing does not identify which content triggered it.
+                                stage: None,
+                            }))
+                        }
                         "compaction" => StopReason::EndTurn,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
@@ -764,7 +809,9 @@ impl AnthropicEventMapper {
                         "Anthropic ended the stream without finishing its compaction summary"
                     )))];
                 }
-                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
+                vec![Ok(LanguageModelCompletionEvent::Stop(
+                    self.stop_reason.clone(),
+                ))]
             }
             Event::Error { error } => {
                 vec![Err(completion_error_from_anthropic_api(
@@ -912,6 +959,12 @@ mod tests {
                     cache: true,
                     reasoning_details: None,
                 },
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Prefer terse answers.\n".into())],
+                    cache: true,
+                    reasoning_details: None,
+                },
             ],
             thread_id: None,
             prompt_cache_key: None,
@@ -934,8 +987,8 @@ mod tests {
         };
 
         let anthropic_request = into_anthropic(
-            request,
-            "claude-3-5-sonnet".to_string(),
+            request.clone(),
+            "claude-opus-4-8".to_string(),
             0.7,
             4096,
             AnthropicModelMode::Default,
@@ -950,8 +1003,12 @@ mod tests {
         );
         // No message content block should carry cache_control anymore; the
         // conversation breakpoint is set via top-level automatic caching.
-        assert_eq!(anthropic_request.messages.len(), 1);
-        for block in &anthropic_request.messages[0].content {
+        assert_eq!(anthropic_request.messages.len(), 2);
+        for block in anthropic_request
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+        {
             let cache_control = match block {
                 RequestContent::Text { cache_control, .. }
                 | RequestContent::Thinking { cache_control, .. }
@@ -979,6 +1036,15 @@ mod tests {
 
         // System prompt is emitted in array form with a long-TTL breakpoint on
         // the final text block.
+        let serialized = serde_json::to_value(&anthropic_request).unwrap();
+        assert_eq!(serialized["system"][0]["text"], "You are helpful.");
+        assert_eq!(
+            serialized["messages"][1],
+            serde_json::json!({
+                "role": "system",
+                "content": [{"type": "text", "text": "Prefer terse answers.\n"}]
+            }),
+        );
         match anthropic_request.system {
             Some(StringOrContents::Content(ref blocks)) => {
                 assert_eq!(blocks.len(), 1);
@@ -1005,6 +1071,51 @@ mod tests {
                 ttl: Some(CacheTtl::OneHour),
             })
         ));
+
+        let mut later_user_message = request.clone();
+        later_user_message
+            .messages
+            .push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Another user message.".into())],
+                cache: true,
+                reasoning_details: None,
+            });
+        let later_user_message = into_anthropic(
+            later_user_message,
+            "claude-opus-4-8".to_string(),
+            0.7,
+            4096,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+        assert_eq!(
+            later_user_message
+                .messages
+                .iter()
+                .map(|message| &message.role)
+                .collect::<Vec<_>>(),
+            vec![&crate::Role::User, &crate::Role::System, &crate::Role::User],
+        );
+
+        let legacy_request = into_anthropic(
+            request,
+            "claude-3-5-sonnet".to_string(),
+            0.7,
+            4096,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(&legacy_request).unwrap();
+        assert_eq!(
+            serialized["system"][0]["text"],
+            "You are helpful.\n\nPrefer terse answers.\n"
+        );
+        assert_eq!(legacy_request.messages.len(), 1);
     }
 
     #[test]
@@ -1139,6 +1250,8 @@ mod tests {
         // its requests opt into dropping invalidated blocks instead. Models
         // without the prefix-binding check must not receive the beta field.
         for (model, expects_block_binding) in [
+            ("claude-fable-5-2", true),
+            ("claude-mythos-5-2", true),
             ("claude-opus-5-5", true),
             ("claude-fable-5-1", true),
             ("claude-fable-5", false),
@@ -1213,6 +1326,8 @@ mod tests {
         // outright, so those models must keep omitting the field.
         for (model, expects_explicit_opt_out) in [
             ("claude-opus-5", true),
+            ("claude-fable-5-2", false),
+            ("claude-mythos-5-2", false),
             ("claude-opus-5-5", false),
             ("claude-opus-4-8", false),
             ("claude-fable-5", false),
@@ -1267,7 +1382,10 @@ mod tests {
                     "{model} should omit the thinking field entirely"
                 );
             }
-            if model == "claude-opus-5-5" {
+            if matches!(
+                model,
+                "claude-opus-5-5" | "claude-fable-5-2" | "claude-mythos-5-2"
+            ) {
                 assert!(
                     anthropic_request.temperature.is_none(),
                     "{model} must omit temperature because adaptive thinking is always on"
@@ -1838,6 +1956,105 @@ mod tests {
             vec![LanguageModelCompletionEvent::Compaction(
                 CompactionUpdate::Failed
             )]
+        );
+    }
+
+    #[test]
+    fn refusal_stop_carries_metadata_without_explanation_text() {
+        for category in [serde_json::json!("cyber"), serde_json::Value::Null] {
+            let mut mapper =
+                AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+            let event = serde_json::from_value(serde_json::json!({
+                "type": "message_delta",
+                "delta": {
+                    "stop_reason": "refusal",
+                    "stop_sequence": null,
+                    "stop_details": {
+                        "type": "refusal",
+                        "category": category,
+                        "explanation": "private user content"
+                    }
+                },
+                "usage": {"output_tokens": 0}
+            }))
+            .unwrap();
+            let events = mapper
+                .map_event(event)
+                .into_iter()
+                .chain(mapper.map_event(Event::MessageStop))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert!(
+                matches!(&events[1], LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details)))
+                if details.categories == category.as_str().map(str::to_owned).into_iter().collect::<Vec<_>>()
+                    && details.stage.is_none() && details.reason == "refusal")
+            );
+            assert!(
+                !serde_json::to_string(&events)
+                    .unwrap()
+                    .contains("private user content")
+            );
+        }
+    }
+
+    #[test]
+    fn test_event_mapper_preserves_all_input_transformations() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "claude-fable-5-1",
+                "usage": { "input_tokens": 10, "output_tokens": 0 },
+                "input_transformations": [
+                    {
+                        "type": "thinking_dropped",
+                        "path": "messages.1.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "thinking_mismatch_allowed",
+                        "path": "messages.3.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "some_future_transformation",
+                        "path": "messages.5.content.0",
+                        "reason": "some_future_reason"
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let events = mapper
+            .map_event(start_event)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            events.last(),
+            Some(&LanguageModelCompletionEvent::InputTransformations(vec![
+                crate::InputTransformation {
+                    kind: "thinking_dropped".into(),
+                    path: "messages.1.content.0".into(),
+                    reason: "prefix_binding_mismatch".into(),
+                },
+                crate::InputTransformation {
+                    kind: "thinking_mismatch_allowed".into(),
+                    path: "messages.3.content.0".into(),
+                    reason: "prefix_binding_mismatch".into(),
+                },
+                crate::InputTransformation {
+                    kind: "some_future_transformation".into(),
+                    path: "messages.5.content.0".into(),
+                    reason: "some_future_reason".into(),
+                },
+            ]))
         );
     }
 

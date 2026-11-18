@@ -1,9 +1,10 @@
 use crate::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelId, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID, unavailable_error,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelId,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderState,
+    ZED_CLOUD_PROVIDER_ID, unavailable_error,
 };
 use collections::{BTreeMap, HashSet};
-use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
+use gpui::{App, Context, Entity, EventEmitter, Global, Task, prelude::*};
 use std::{str::FromStr, sync::Arc};
 use thiserror::Error;
 
@@ -55,6 +56,7 @@ pub struct LanguageModelRegistry {
     thread_summary_model: Option<LanguageModel>,
     compaction_model: Option<LanguageModel>,
     providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
+    authentication_tasks: BTreeMap<LanguageModelProviderId, Task<()>>,
     inline_alternatives: Vec<LanguageModel>,
     /// Set of installed extension IDs that provide language models.
     /// Used to determine which built-in providers should be hidden.
@@ -164,14 +166,31 @@ impl LanguageModelRegistry {
             subscription.detach();
         }
 
+        let provider: Arc<dyn LanguageModelProvider> = provider;
+        if self
+            .providers
+            .get(&id)
+            .is_none_or(|registered| !Arc::ptr_eq(registered, &provider))
+        {
+            self.authentication_tasks.remove(&id);
+        }
         self.providers.insert(id.clone(), provider);
         cx.emit(Event::AddedProvider(id));
     }
 
     pub fn unregister_provider(&mut self, id: LanguageModelProviderId, cx: &mut Context<Self>) {
         if self.providers.remove(&id).is_some() {
+            self.authentication_tasks.remove(&id);
             cx.emit(Event::RemovedProvider(id));
         }
+    }
+
+    pub fn authenticate_providers(&mut self, cx: &mut Context<Self>) {
+        self.authenticate_providers_with_retry(false, cx);
+    }
+
+    pub fn retry_authentication(&mut self, cx: &mut Context<Self>) {
+        self.authenticate_providers_with_retry(true, cx);
     }
 
     pub fn providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
@@ -521,6 +540,83 @@ impl LanguageModelRegistry {
     /// user will be able to cycle through results.
     pub fn inline_alternative_models(&self) -> &[LanguageModel] {
         &self.inline_alternatives
+    }
+
+    fn authenticate_providers_with_retry(&mut self, retry: bool, cx: &mut Context<Self>) {
+        for provider in self.visible_providers() {
+            let provider_id = provider.id();
+            if let Some(task) = self.authentication_tasks.get(&provider_id) {
+                if !retry {
+                    let registry = cx.weak_entity();
+                    cx.defer(move |cx| {
+                        if registry
+                            .read_with(cx, |registry, _| {
+                                registry
+                                    .providers
+                                    .get(&provider_id)
+                                    .is_some_and(|registered| Arc::ptr_eq(registered, &provider))
+                            })
+                            .unwrap_or(false)
+                        {
+                            provider.refresh_models(cx);
+                        }
+                    });
+                    continue;
+                }
+                if !task.is_ready() {
+                    continue;
+                }
+            }
+            if retry && provider.is_authenticated(cx) {
+                continue;
+            }
+            self.authentication_tasks.insert(
+                provider_id.clone(),
+                cx.spawn(async move |registry, cx| {
+                    if let Err(error) = cx.update(|cx| provider.authenticate(cx)).await {
+                        match error {
+                            AuthenticateError::CredentialsNotFound => {
+                                // Since we're authenticating these providers in the
+                                // background for the purposes of populating the
+                                // language selector, we don't care about providers
+                                // where the credentials are not found.
+                            }
+                            AuthenticateError::ConnectionRefused => {
+                                // Not logging connection refused errors as they are mostly from LM Studio's noisy auth failures.
+                                // LM Studio only has one auth method (endpoint call) which fails for users who haven't enabled it.
+                                // TODO: Better manage LM Studio auth logic to avoid these noisy failures.
+                            }
+                            _ => {
+                                // Some providers have noisy failure states that we
+                                // don't want to spam the logs with every time the
+                                // language model selector is initialized.
+                                //
+                                // Ideally these should have more clear failure modes
+                                // that we know are safe to ignore here, like what we do
+                                // with `CredentialsNotFound` above.
+                                match provider_id.0.as_ref() {
+                                    "lmstudio" | "ollama" => {
+                                        // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                                        //
+                                        // These fail noisily, so we don't log them.
+                                    }
+                                    "copilot_chat" => {
+                                        // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                                    }
+                                    _ => log::error!(
+                                        "Failed to authenticate provider: {}: {error:#}",
+                                        provider.name().0
+                                    ),
+                                }
+                            }
+                        }
+                    }
+                    registry
+                        .update(cx, |registry, cx| registry.refresh_fallback_model(cx))
+                        .ok();
+                }),
+            );
+        }
     }
 }
 

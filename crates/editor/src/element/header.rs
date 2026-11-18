@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -431,42 +432,36 @@ impl StickyHeaders {
         let line_height = layout.position_map.line_height;
 
         for line in self.lines.iter_mut().rev() {
-            window.paint_layer(
-                Bounds::new(
+            window.paint_layer(|window| {
+                let gutter_bounds = Bounds::new(
                     layout.gutter_hitbox.origin + point(Pixels::ZERO, line.offset),
-                    size(line.hitbox.size.width, line_height),
-                ),
-                |window| {
-                    let gutter_bounds = Bounds::new(
-                        layout.gutter_hitbox.origin + point(Pixels::ZERO, line.offset),
-                        size(layout.gutter_hitbox.size.width, line_height),
-                    );
-                    window.paint_quad(fill(gutter_bounds, self.gutter_background));
+                    size(layout.gutter_hitbox.size.width, line_height),
+                );
+                window.paint_quad(fill(gutter_bounds, self.gutter_background));
 
-                    let text_bounds = Bounds::new(
-                        layout.position_map.text_hitbox.origin + point(Pixels::ZERO, line.offset),
-                        size(line.available_text_width, line_height),
-                    );
-                    window.paint_quad(fill(text_bounds, self.content_background));
+                let text_bounds = Bounds::new(
+                    layout.position_map.text_hitbox.origin + point(Pixels::ZERO, line.offset),
+                    size(line.available_text_width, line_height),
+                );
+                window.paint_quad(fill(text_bounds, self.content_background));
 
-                    if line.hitbox.is_hovered(window) {
-                        let hover_overlay = cx.theme().colors().panel_overlay_hover;
-                        window.paint_quad(fill(gutter_bounds, hover_overlay));
-                        window.paint_quad(fill(text_bounds, hover_overlay));
-                    }
+                if line.hitbox.is_hovered(window) {
+                    let hover_overlay = cx.theme().colors().panel_overlay_hover;
+                    window.paint_quad(fill(gutter_bounds, hover_overlay));
+                    window.paint_quad(fill(text_bounds, hover_overlay));
+                }
 
-                    line.paint(
-                        layout,
-                        self.gutter_right_padding,
-                        line.available_text_width,
-                        layout.content_origin,
-                        line_height,
-                        whitespace_setting,
-                        window,
-                        cx,
-                    );
-                },
-            );
+                line.paint(
+                    layout,
+                    self.gutter_right_padding,
+                    line.available_text_width,
+                    layout.content_origin,
+                    line_height,
+                    whitespace_setting,
+                    window,
+                    cx,
+                );
+            });
 
             window.set_cursor_style(CursorStyle::IBeam, &line.hitbox);
         }
@@ -683,15 +678,23 @@ pub(crate) fn render_buffer_header(
     let can_open_excerpts = file.is_none_or(|file| file.can_open());
     let path_style = file.map(|file| file.path_style(cx));
     let relative_path = buffer.resolve_file_path(include_root, cx);
-    let (parent_path, filename) = if let Some(path) = &relative_path {
-        if let Some(path_style) = path_style {
-            let (dir, file_name) = path_style.split(path);
-            (dir.map(|dir| dir.to_owned()), Some(file_name.to_owned()))
-        } else {
-            (None, Some(path.clone()))
+    let (parent_path, filename) = match (&relative_path, path_style) {
+        (Some(path), Some(path_style)) => {
+            match path_style
+                .file_name(Path::new(path))
+                .and_then(OsStr::to_str)
+            {
+                Some(file_name) => (
+                    path.strip_suffix(file_name)
+                        .filter(|parent| !parent.is_empty())
+                        .map(ToOwned::to_owned),
+                    Some(file_name.to_owned()),
+                ),
+                None => (None, Some(path.clone())),
+            }
         }
-    } else {
-        (None, None)
+        (Some(path), None) => (None, Some(path.clone())),
+        (None, _) => (None, None),
     };
     let focus_handle = editor_read.focus_handle(cx);
     let colors = cx.theme().colors();
@@ -878,7 +881,7 @@ pub(crate) fn render_buffer_header(
                                                 move |editor, e: &ClickEvent, window, cx| {
                                                     editor.open_excerpts_common(
                                                         Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
+                                                        e.modifiers().secondary(cx),
                                                         window,
                                                         cx,
                                                     );
@@ -952,7 +955,7 @@ pub(crate) fn render_buffer_header(
                                                 move |editor, e: &ClickEvent, window, cx| {
                                                     editor.open_excerpts_common(
                                                         Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
+                                                        e.modifiers().secondary(cx),
                                                         window,
                                                         cx,
                                                     );
@@ -968,7 +971,7 @@ pub(crate) fn render_buffer_header(
                                 if e.modifiers().alt {
                                     editor.open_excerpts_common(
                                         Some(jump_data.clone()),
-                                        e.modifiers().secondary(),
+                                        e.modifiers().secondary(cx),
                                         window,
                                         cx,
                                     );

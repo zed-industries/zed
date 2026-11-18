@@ -38,7 +38,7 @@ impl FileIcons {
         // TODO: Associate a type with the languages and have the file's language
         //       override these associations
 
-        if let Some(typ) = path.file_name().and_then(|typ| typ.to_str()) {
+        if let Some(mut typ) = path.file_name().and_then(|typ| typ.to_str()) {
             // check if file name is in suffixes
             // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
             let maybe_path = get_icon_from_suffix(typ);
@@ -46,27 +46,19 @@ impl FileIcons {
                 return maybe_path;
             }
 
-            if let Some((stem, mut suffix)) = typ.split_once('.') {
-                // check if stem (before first dot) is in stems
-                // e.g. catch file named `Dockerfile.prod` or `Podfile.lock`
-                let maybe_path = get_icon_from_suffix(stem);
+            let mut first_prefix = None;
+            while let Some((prefix, suffix)) = typ.split_once('.') {
+                first_prefix.get_or_insert(prefix);
+                let maybe_path = get_icon_from_suffix(suffix);
                 if maybe_path.is_some() {
                     return maybe_path;
                 }
-
-                loop {
-                    // check if suffix based on first dot is in suffixes
-                    // e.g. consider `module.js` as suffix to angular's module file named `auth.module.js`
-                    let maybe_path = get_icon_from_suffix(suffix);
-                    if maybe_path.is_some() {
-                        return maybe_path;
-                    }
-
-                    let Some((_, next_suffix)) = suffix.split_once('.') else {
-                        break;
-                    };
-                    suffix = next_suffix;
-                }
+                typ = suffix;
+            }
+            if let Some(prefix) = first_prefix.and_then(get_icon_from_suffix) {
+                // check if stem (before first dot) is in stems
+                // e.g. catch file named `Dockerfile.prod` or `Podfile.lock`
+                return Some(prefix);
             }
         }
 
@@ -293,6 +285,28 @@ mod tests {
                 default,
                 FileIcons::get_folder_indicators(FolderIndicator::Icon, false, &path, cx),
                 "the default must stay `icon` so existing users see no change"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_suffix_matches_take_precedence_over_prefixes(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        cx.update(|cx| {
+            assert_eq!(
+                FileIcons::get_icon("mod.rs".as_ref(), cx),
+                Some("icons/file_icons/rust.svg".into())
+            );
+            assert_eq!(
+                FileIcons::get_icon("Dockerfile.rs".as_ref(), cx),
+                Some("icons/file_icons/rust.svg".into())
+            );
+            assert_eq!(
+                FileIcons::get_icon("go.mod".as_ref(), cx),
+                Some("icons/file_icons/go.svg".into())
             );
         });
     }

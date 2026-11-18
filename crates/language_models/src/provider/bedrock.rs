@@ -564,10 +564,10 @@ impl State {
             }
 
             // Try keychain
-            let (_, credentials_bytes) = credentials_provider
-                .read_credentials(AMAZON_AWS_URL, cx)
-                .await?
-                .ok_or(AuthenticateError::CredentialsNotFound)?;
+            let (_, credentials_bytes) =
+                language_model::read_credentials(credentials_provider.as_ref(), AMAZON_AWS_URL, cx)
+                    .await?
+                    .ok_or(AuthenticateError::CredentialsNotFound)?;
 
             let credentials_str = String::from_utf8(credentials_bytes)
                 .with_context(|| format!("invalid {PROVIDER_NAME} credentials"))?;
@@ -2711,7 +2711,7 @@ pub fn map_to_language_model_completion_events(
                                 && (message_stop.stop_reason == StopReason::ContentFiltered
                                     || message_stop.stop_reason.as_str() == "refusal")
                             {
-                                language_model::StopReason::Refusal
+                                language_model::StopReason::Refusal(None)
                             } else if state.emitted_tool_use {
                                 // Some models (e.g. Kimi) send EndTurn even when
                                 // they've made tool calls. Trust the content over
@@ -3832,7 +3832,7 @@ mod tests {
                 assert_eq!(
                     events,
                     [LanguageModelCompletionEvent::Stop(
-                        language_model::StopReason::Refusal
+                        language_model::StopReason::Refusal(None)
                     )]
                 );
             }

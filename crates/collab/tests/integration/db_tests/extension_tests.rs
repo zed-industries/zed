@@ -9,12 +9,12 @@ use collab::db::{NewExtensionVersion, queries::extensions::convert_time_to_chron
 use crate::test_both_dbs;
 
 test_both_dbs!(
-    test_extensions_by_id,
-    test_extensions_by_id_postgres,
-    test_extensions_by_id_sqlite
+    test_get_extension,
+    test_get_extension_postgres,
+    test_get_extension_sqlite
 );
 
-async fn test_extensions_by_id(db: &Arc<Database>) {
+async fn test_get_extension(db: &Arc<Database>) {
     let versions = db.get_known_extension_versions().await.unwrap();
     assert!(versions.is_empty());
 
@@ -95,9 +95,9 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let extensions = db
-        .get_extensions_by_ids(
-            &["ext1"],
+    let extension = db
+        .get_extension(
+            "ext1",
             Some(&ExtensionVersionConstraints {
                 schema_versions: 1..=1,
                 wasm_api_versions: "0.0.1".parse().unwrap()..="0.0.4".parse().unwrap(),
@@ -107,8 +107,8 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
         .unwrap();
 
     assert_eq!(
-        extensions,
-        &[ExtensionMetadata {
+        extension,
+        Some(ExtensionMetadata {
             id: "ext1".into(),
             manifest: cloud_api_types::ExtensionApiManifest {
                 name: "Extension 1".into(),
@@ -126,6 +126,6 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
             },
             published_at: t0_chrono,
             download_count: 0,
-        }]
+        })
     );
 }

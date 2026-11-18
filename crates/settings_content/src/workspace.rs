@@ -29,11 +29,11 @@ pub struct WorkspaceSettingsContent {
     pub bottom_dock_layout: Option<BottomDockLayout>,
     /// Direction to split horizontally.
     ///
-    /// Default: "up"
+    /// Default: "down"
     pub pane_split_direction_horizontal: Option<PaneSplitDirectionHorizontal>,
     /// Direction to split vertically.
     ///
-    /// Default: "left"
+    /// Default: "right"
     pub pane_split_direction_vertical: Option<PaneSplitDirectionVertical>,
     /// Centered layout related settings.
     pub centered_layout: Option<CenteredLayoutSettings>,
@@ -114,7 +114,7 @@ pub struct WorkspaceSettingsContent {
     /// Default: none
     pub max_tabs: Option<NonZeroUsize>,
     /// What to show when opening a new window.
-    /// Values: empty_tab, launchpad
+    /// Values: empty_tab, launchpad, readme
     /// Default: launchpad
     pub on_new_window: Option<OnNewWindow>,
     /// What to do when the last window is closed
@@ -202,9 +202,9 @@ pub struct ItemSettingsContent {
     ///
     /// Default: off
     pub show_diagnostics: Option<ShowDiagnostics>,
-    /// Whether to always show the close button on tabs.
+    /// When to show the close button on tabs.
     ///
-    /// Default: false
+    /// Default: hover
     pub show_close_button: Option<ShowCloseButton>,
 }
 
@@ -738,6 +738,9 @@ pub enum OnNewWindow {
     /// Show the launchpad with recent projects when opening a new window
     #[default]
     Launchpad,
+    /// Open a root-level README in a preview tab when opening a project with no open items.
+    /// Leave the pane empty if no README is found.
+    Readme,
 }
 
 #[derive(
@@ -1056,6 +1059,11 @@ pub enum ProjectPanelSortOrder {
     /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
     /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
     Unicode,
+    /// Files are grouped by their last extension (case-insensitive) in ascending order,
+    /// with extensionless files, including dotfiles such as `.gitignore`, first.
+    /// Dotfiles with a further suffix, such as `.config.json`, keep that extension.
+    /// Within a group, names use the default natural sort.
+    Extension,
 }
 
 impl From<ProjectPanelSortMode> for util::paths::SortMode {
@@ -1075,6 +1083,7 @@ impl From<ProjectPanelSortOrder> for util::paths::SortOrder {
             ProjectPanelSortOrder::Upper => Self::Upper,
             ProjectPanelSortOrder::Lower => Self::Lower,
             ProjectPanelSortOrder::Unicode => Self::Unicode,
+            ProjectPanelSortOrder::Extension => Self::Extension,
         }
     }
 }

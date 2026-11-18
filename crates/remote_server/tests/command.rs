@@ -177,7 +177,7 @@ fn test_remote_command_inherits_shell_environment() -> Result<()> {
                 working_dir: None,
             };
             let exec =
-                stdio_launcher_command(ShellKind::Posix, env!("CARGO_BIN_EXE_remote_server"))?;
+                stdio_launcher_command(ShellKind::Posix, env!("CARGO_BIN_EXE_remote-server"))?;
             let mut child = shell_launcher(home.path(), &exec).spawn()?;
             child
                 .stdin
@@ -744,7 +744,7 @@ fn test_remote_command_launcher_survives_local_nushell() -> Result<()> {
 }
 
 fn launcher() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_remote_server"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_remote-server"));
     command
         .arg("exec")
         .stdin(Stdio::piped())
@@ -757,7 +757,7 @@ fn install_helper(home: &std::path::Path) -> Result<String> {
     let helper_directory = home.join(".local/share/zed");
     std::fs::create_dir_all(&helper_directory)?;
     let helper = helper_directory.join("remote server");
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_remote_server"), &helper)?;
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_remote-server"), &helper)?;
     Ok(helper.display().to_string())
 }
 

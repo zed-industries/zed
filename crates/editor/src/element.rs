@@ -409,6 +409,10 @@ impl EditorElement {
         register_action(editor, window, Editor::select_page_up);
         register_action(editor, window, Editor::cancel);
         register_action(editor, window, Editor::blame_hover);
+        register_action(editor, window, Editor::debugger_hover_expand_selected);
+        register_action(editor, window, Editor::debugger_hover_collapse_selected);
+        register_action(editor, window, Editor::debugger_hover_select_next);
+        register_action(editor, window, Editor::debugger_hover_select_previous);
         register_action(editor, window, Editor::next_snippet_tabstop);
         register_action(editor, window, Editor::previous_snippet_tabstop);
         register_action(editor, window, Editor::copy);
@@ -579,6 +583,7 @@ impl EditorElement {
         register_action(editor, window, Editor::fold_at_level_7);
         register_action(editor, window, Editor::fold_at_level_8);
         register_action(editor, window, Editor::fold_at_level_9);
+        register_action(editor, window, Editor::fold_at_current_indentation_level);
         register_action(editor, window, Editor::fold_all);
         register_action(editor, window, Editor::fold_function_bodies);
         register_action(editor, window, Editor::fold_recursive);
@@ -3235,7 +3240,7 @@ impl EditorElement {
                 || snapshot.use_tree_sitter_for_syntax(rows.start, cx);
             let language_aware = LanguageAwareStyling {
                 tree_sitter: use_tree_sitter,
-                diagnostics: true,
+                diagnostics: snapshot.display_snapshot.diagnostics_visible(),
             };
             let chunks = snapshot.highlighted_chunks(rows.clone(), language_aware, style);
             LineWithInvisibles::from_chunks(
@@ -4455,7 +4460,7 @@ impl EditorElement {
             horizontal_offset: Pixels,
         }
 
-        let max_size = size(
+        let mut max_size = size(
             (120. * em_width) // Default size
                 .min(hitbox.size.width / 2.) // Shrink to half of the editor width
                 .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
@@ -4463,6 +4468,31 @@ impl EditorElement {
                 .min(hitbox.size.height / 2.) // Shrink to half of the editor height
                 .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
         );
+
+        let (is_single_debugger_hover, stable_debugger_hover_origin) = {
+            let editor = self.editor.read(cx);
+            (
+                editor.hover_state.is_single_debugger_hover(),
+                editor.hover_state.stable_debugger_hover_origin(),
+            )
+        };
+        if is_single_debugger_hover {
+            let available_height = stable_debugger_hover_origin
+                .map(|origin| {
+                    // Prefer scrolling below the existing origin to moving a row under the mouse.
+                    // After a resize, leave enough room for at least one row and its padding.
+                    (hitbox.bottom() - origin.y).max(line_height + px(10.))
+                })
+                .unwrap_or(hitbox.size.height)
+                .min(hitbox.size.height);
+            // The content container's limits exclude the popover's one-pixel border.
+            max_size.width = max_size
+                .width
+                .min((hitbox.size.width - px(2.)).max(Pixels::ZERO));
+            max_size.height = max_size
+                .height
+                .min((available_height - px(2.)).max(Pixels::ZERO));
+        }
 
         // Don't show hover popovers when context menu is open to avoid overlap
         let has_context_menu = self.editor.read(cx).mouse_context_menu.is_some();
@@ -4501,7 +4531,7 @@ impl EditorElement {
 
         let mut overall_height = Pixels::ZERO;
 
-        let measured_hover_popovers = hover_popovers
+        let mut measured_hover_popovers = hover_popovers
             .into_iter()
             .with_position()
             .map(|(position, mut hover_popover)| {
@@ -4605,9 +4635,9 @@ impl EditorElement {
             })
         };
 
-        let can_place_below = || {
+        let can_place_below = |popovers: &[MeasuredHoverPopover]| {
             let mut current_y = hovered_point.y + line_height;
-            measured_hover_popovers.iter().all(|popover| {
+            popovers.iter().all(|popover| {
                 let size = popover.size;
                 let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
                 let bounds = Bounds::new(popover_origin, size);
@@ -4616,10 +4646,45 @@ impl EditorElement {
             })
         };
 
+        if is_single_debugger_hover
+            && measured_hover_popovers.len() == 1
+            && let Some(popover) = measured_hover_popovers.pop()
+        {
+            let mut popover_origin = stable_debugger_hover_origin.unwrap_or_else(|| {
+                if can_place_below(std::slice::from_ref(&popover)) {
+                    point(
+                        hovered_point.x + popover.horizontal_offset,
+                        hovered_point.y + line_height,
+                    )
+                } else {
+                    point(
+                        hovered_point.x + popover.horizontal_offset,
+                        hovered_point.y - popover.size.height,
+                    )
+                }
+            });
+
+            // Preserve the origin while it fits, but keep expanded or resized hovers reachable.
+            popover_origin.x = popover_origin.x.clamp(
+                hitbox.left(),
+                (hitbox.right() - popover.size.width).max(hitbox.left()),
+            );
+            popover_origin.y = popover_origin.y.clamp(
+                hitbox.top(),
+                (hitbox.bottom() - popover.size.height).max(hitbox.top()),
+            );
+
+            window.defer_draw(popover.element, popover_origin, 2, None);
+            self.editor.update(cx, |editor, _| {
+                editor.hover_state.stable_debugger_hover_origin = Some(popover_origin);
+            });
+            return;
+        }
+
         if can_place_above {
             // try placing above hovered point
             place_popovers_above(hovered_point, measured_hover_popovers, window, cx);
-        } else if can_place_below() {
+        } else if can_place_below(&measured_hover_popovers) {
             // try placing below hovered point
             place_popovers_below(
                 hovered_point,
@@ -5019,7 +5084,7 @@ impl EditorElement {
     }
 
     fn paint_background(&self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
-        window.paint_layer(layout.hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             let scroll_top = layout.position_map.scroll_position.y;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
             window.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
@@ -5342,7 +5407,7 @@ impl EditorElement {
         }
 
         let line_height = layout.position_map.line_height;
-        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             for (hunk, hitbox) in &layout.display_hunks {
                 let hunk_to_paint = match hunk {
                     DisplayDiffHunk::Folded { .. } => {
@@ -5555,35 +5620,33 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
-            window.with_element_namespace("crease_toggles", |window| {
-                for crease_toggle in layout.crease_toggles.iter_mut().flatten() {
-                    crease_toggle.paint(window, cx);
-                }
-            });
-
-            window.with_element_namespace("expand_toggles", |window| {
-                for (expand_toggle, _) in layout.expand_toggles.iter_mut().flatten() {
-                    expand_toggle.paint(window, cx);
-                }
-            });
-
-            for bookmark in layout.bookmarks.iter_mut() {
-                bookmark.paint(window, cx);
-            }
-
-            for breakpoint in layout.breakpoints.iter_mut() {
-                breakpoint.paint(window, cx);
-            }
-
-            for test_indicator in layout.test_indicators.iter_mut() {
-                test_indicator.paint(window, cx);
-            }
-
-            if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
-                diff_review_button.paint(window, cx);
+        window.with_element_namespace("crease_toggles", |window| {
+            for crease_toggle in layout.crease_toggles.iter_mut().flatten() {
+                crease_toggle.paint(window, cx);
             }
         });
+
+        window.with_element_namespace("expand_toggles", |window| {
+            for (expand_toggle, _) in layout.expand_toggles.iter_mut().flatten() {
+                expand_toggle.paint(window, cx);
+            }
+        });
+
+        for bookmark in layout.bookmarks.iter_mut() {
+            bookmark.paint(window, cx);
+        }
+
+        for breakpoint in layout.breakpoints.iter_mut() {
+            breakpoint.paint(window, cx);
+        }
+
+        for test_indicator in layout.test_indicators.iter_mut() {
+            test_indicator.paint(window, cx);
+        }
+
+        if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
+            diff_review_button.paint(window, cx);
+        }
     }
 
     fn paint_gutter_highlights(
@@ -5621,7 +5684,7 @@ impl EditorElement {
 
         let highlight_width = 0.275 * layout.position_map.line_height;
         let highlight_corner_radii = Corners::all(0.05 * layout.position_map.line_height);
-        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             for (range, color) in &layout.highlighted_gutter_ranges {
                 let start_row = if range.start.row() < layout.visible_display_row_range.start {
                     layout.visible_display_row_range.start - DisplayRow(1)
@@ -5665,11 +5728,9 @@ impl EditorElement {
             return;
         };
 
-        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
-            for mut blame_element in blamed_display_rows.into_iter() {
-                blame_element.paint(window, cx);
-            }
-        })
+        for mut blame_element in blamed_display_rows.into_iter() {
+            blame_element.paint(window, cx);
+        }
     }
 
     fn populate_point_diagnostics(
@@ -5678,7 +5739,7 @@ impl EditorElement {
         visible_rows: Range<DisplayRow>,
         line_layouts: &mut [LineWithInvisibles],
     ) {
-        if visible_rows.is_empty() {
+        if !snapshot.display_snapshot.diagnostics_visible() || visible_rows.is_empty() {
             return;
         }
 
@@ -5911,7 +5972,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> SmallVec<[Range<DisplayPoint>; 32]> {
-        window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
             let line_end_overshoot = 0.15 * layout.position_map.line_height;
             for (range, color) in &layout.highlighted_ranges {
@@ -6008,7 +6069,7 @@ impl EditorElement {
         // A softer than perfect black
         let redaction_color = gpui::rgb(0x0e1111);
 
-        window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             for range in layout.redacted_ranges.iter() {
                 self.paint_highlighted_range(
                     range.clone(),
@@ -6109,7 +6170,7 @@ impl EditorElement {
                     },
                 };
 
-                window.paint_layer(hitbox.bounds, |window| {
+                window.paint_layer(|window| {
                     window.paint_quad(quad(
                         hitbox.bounds,
                         Corners::default(),
@@ -6612,9 +6673,7 @@ impl EditorElement {
 
     fn paint_inline_blame(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut blame_layout) = layout.inline_blame_layout.take() {
-            window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
-                blame_layout.element.paint(window, cx);
-            })
+            blame_layout.element.paint(window, cx);
         }
     }
 
@@ -6625,9 +6684,7 @@ impl EditorElement {
         cx: &mut App,
     ) {
         if let Some(mut inline_code_actions) = layout.inline_code_actions.take() {
-            window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
-                inline_code_actions.paint(window, cx);
-            })
+            inline_code_actions.paint(window, cx);
         }
     }
 
@@ -6647,54 +6704,48 @@ impl EditorElement {
             let minimap_hitbox = layout.thumb_layout.hitbox.clone();
             let dragging_minimap = self.editor.read(cx).scroll_manager.is_dragging_minimap();
 
-            window.paint_layer(layout.thumb_layout.hitbox.bounds, |window| {
-                window.with_element_namespace("minimap", |window| {
-                    layout.minimap.paint(window, cx);
-                    if let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds {
-                        let minimap_thumb_color = match layout.thumb_layout.thumb_state {
-                            ScrollbarThumbState::Idle => {
-                                cx.theme().colors().minimap_thumb_background
-                            }
-                            ScrollbarThumbState::Hovered => {
-                                cx.theme().colors().minimap_thumb_hover_background
-                            }
-                            ScrollbarThumbState::Dragging => {
-                                cx.theme().colors().minimap_thumb_active_background
-                            }
-                        };
-                        let minimap_thumb_border = match layout.thumb_border_style {
-                            MinimapThumbBorder::Full => Edges::all(ScrollbarLayout::BORDER_WIDTH),
-                            MinimapThumbBorder::LeftOnly => Edges {
-                                left: ScrollbarLayout::BORDER_WIDTH,
-                                ..Default::default()
-                            },
-                            MinimapThumbBorder::LeftOpen => Edges {
-                                right: ScrollbarLayout::BORDER_WIDTH,
-                                top: ScrollbarLayout::BORDER_WIDTH,
-                                bottom: ScrollbarLayout::BORDER_WIDTH,
-                                ..Default::default()
-                            },
-                            MinimapThumbBorder::RightOpen => Edges {
-                                left: ScrollbarLayout::BORDER_WIDTH,
-                                top: ScrollbarLayout::BORDER_WIDTH,
-                                bottom: ScrollbarLayout::BORDER_WIDTH,
-                                ..Default::default()
-                            },
-                            MinimapThumbBorder::None => Default::default(),
-                        };
+            window.with_element_namespace("minimap", |window| {
+                layout.minimap.paint(window, cx);
+                if let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds {
+                    let minimap_thumb_color = match layout.thumb_layout.thumb_state {
+                        ScrollbarThumbState::Idle => cx.theme().colors().minimap_thumb_background,
+                        ScrollbarThumbState::Hovered => {
+                            cx.theme().colors().minimap_thumb_hover_background
+                        }
+                        ScrollbarThumbState::Dragging => {
+                            cx.theme().colors().minimap_thumb_active_background
+                        }
+                    };
+                    let minimap_thumb_border = match layout.thumb_border_style {
+                        MinimapThumbBorder::Full => Edges::all(ScrollbarLayout::BORDER_WIDTH),
+                        MinimapThumbBorder::LeftOnly => Edges {
+                            left: ScrollbarLayout::BORDER_WIDTH,
+                            ..Default::default()
+                        },
+                        MinimapThumbBorder::LeftOpen => Edges {
+                            right: ScrollbarLayout::BORDER_WIDTH,
+                            top: ScrollbarLayout::BORDER_WIDTH,
+                            bottom: ScrollbarLayout::BORDER_WIDTH,
+                            ..Default::default()
+                        },
+                        MinimapThumbBorder::RightOpen => Edges {
+                            left: ScrollbarLayout::BORDER_WIDTH,
+                            top: ScrollbarLayout::BORDER_WIDTH,
+                            bottom: ScrollbarLayout::BORDER_WIDTH,
+                            ..Default::default()
+                        },
+                        MinimapThumbBorder::None => Default::default(),
+                    };
 
-                        window.paint_layer(minimap_hitbox.bounds, |window| {
-                            window.paint_quad(quad(
-                                thumb_bounds,
-                                Corners::default(),
-                                minimap_thumb_color,
-                                minimap_thumb_border,
-                                cx.theme().colors().minimap_thumb_border,
-                                BorderStyle::Solid,
-                            ));
-                        });
-                    }
-                });
+                    window.paint_quad(quad(
+                        thumb_bounds,
+                        Corners::default(),
+                        minimap_thumb_color,
+                        minimap_thumb_border,
+                        cx.theme().colors().minimap_thumb_border,
+                        BorderStyle::Solid,
+                    ));
+                }
             });
 
             if dragging_minimap {
@@ -7541,7 +7592,7 @@ impl LineWithInvisibles {
                             &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
                         };
                         let shaped_line = window.text_system().shape_line(
-                            line.clone().into(),
+                            line.as_str().into(),
                             font_size,
                             text_runs,
                             None,
@@ -10186,14 +10237,6 @@ impl ScrollbarLayoutInformation {
     }
 }
 
-impl IntoElement for EditorElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 pub struct EditorLayout {
     position_map: Rc<PositionMap>,
     hitbox: Hitbox,
@@ -10910,7 +10953,7 @@ pub fn layout_line(
         !snapshot.semantic_tokens_enabled || snapshot.use_tree_sitter_for_syntax(row, cx);
     let language_aware = LanguageAwareStyling {
         tree_sitter: use_tree_sitter,
-        diagnostics: true,
+        diagnostics: snapshot.display_snapshot.diagnostics_visible(),
     };
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), language_aware, style);
     LineWithInvisibles::from_chunks(
@@ -11389,7 +11432,8 @@ mod tests {
     };
     use buffer_diff::BufferDiff;
     use gpui::{
-        Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext, WindowHandle, font,
+        EntityInputHandler, Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext,
+        WindowHandle, font,
     };
     use language::{
         Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal,
@@ -11402,6 +11446,53 @@ mod tests {
     use std::num::NonZeroU32;
     use text::PointUtf16;
     use util::test::sample_text;
+
+    // Regression test for https://github.com/zed-industries/zed/issues/65453.
+    #[gpui::test]
+    fn test_highlight_underlines_are_only_hidden_in_minimap(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        fn has_highlight_underline(editor: &Editor, style: &EditorStyle, cx: &mut App) -> bool {
+            editor
+                .display_snapshot(cx)
+                .highlighted_chunks(
+                    DisplayRow(0)..DisplayRow(1),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
+                    style,
+                )
+                .any(|chunk| chunk.style.is_some_and(|style| style.underline.is_some()))
+        }
+
+        let single_line = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        single_line
+            .update(cx, |editor, window, cx| {
+                editor.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+                let style = editor.create_style(cx);
+                assert!(has_highlight_underline(editor, &style, cx));
+            })
+            .expect("checked single line editor");
+
+        let full = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.disable_diagnostics(cx);
+            editor
+        });
+        full.update(cx, |editor, window, cx| {
+            editor.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+            let style = editor.create_style(cx);
+            assert!(has_highlight_underline(editor, &style, cx));
+
+            let minimap =
+                editor.initialize_new_minimap(EditorSettings::get_global(cx).minimap, window, cx);
+            let minimap_style = minimap.read(cx).create_style(cx);
+            assert!(!has_highlight_underline(editor, &minimap_style, cx));
+        })
+        .expect("checked full editor and minimap");
+    }
 
     struct MinimapGeometry {
         document_lines: f64,

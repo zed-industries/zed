@@ -3,7 +3,7 @@
 //! GPUI recognizes gestures from raw [`TouchEvent`](crate::TouchEvent)s using
 //! a portable recognizer. Taps synthesize mouse presses and releases so
 //! existing click listeners and text selection work on mobile. Pans produce
-//! [`ScrollWheelEvent`](crate::ScrollWheelEvent)s, including post-release
+//! [`ScrollEvent`](crate::ScrollEvent)s, including post-release
 //! momentum. Long presses and touch drags can be claimed by element listeners.
 
 use std::collections::VecDeque;
@@ -15,8 +15,8 @@ use smallvec::SmallVec;
 
 use crate::{
     Axis, GestureEvent, InputEvent, IsZero, Modifiers, MouseButton, MouseDownEvent, MouseEvent,
-    MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchEvent, TouchId,
-    TouchPhase, point, px, seal::Sealed,
+    MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollEvent, ScrollSource, TouchEvent,
+    TouchId, TouchPhase, point, px, seal::Sealed,
 };
 
 const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
@@ -352,7 +352,7 @@ pub struct GestureKinds {
     /// Long press, surfaced as [`LongPressEvent`].
     pub long_press: bool,
     /// Pan/scroll (including fling momentum), surfaced as
-    /// [`ScrollWheelEvent`](crate::ScrollWheelEvent)s.
+    /// [`ScrollEvent`](crate::ScrollEvent)s.
     pub pan: bool,
     /// Pinch to zoom, surfaced as [`PinchEvent`](crate::PinchEvent)s.
     pub pinch: bool,
@@ -396,6 +396,49 @@ impl InputEvent for TouchDragEvent {
 }
 impl GestureEvent for TouchDragEvent {}
 impl MouseEvent for TouchDragEvent {}
+
+/// A back-navigation gesture, such as the iOS swipe from the leading screen
+/// edge.
+///
+/// Elements receive it through
+/// [`InteractiveElement::on_back_gesture`](crate::InteractiveElement::on_back_gesture).
+/// The innermost element under [`Self::start_position`] claims the whole
+/// gesture when it starts; the platform cancels the gesture if no element does.
+/// Every phase is delivered at the start position, so the claiming element
+/// should stay in place while it animates its contents.
+#[derive(Clone, Debug, Default)]
+pub struct BackGestureEvent {
+    /// The phase of the gesture.
+    pub phase: BackGesturePhase,
+    /// Where the gesture started.
+    pub start_position: Point<Pixels>,
+    /// How far the gesture has travelled toward going back, from 0 to 1.
+    pub progress: f32,
+}
+
+/// The phase of a [`BackGestureEvent`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BackGesturePhase {
+    /// The gesture began. Claiming it here routes the remaining phases to the
+    /// same element.
+    #[default]
+    Started,
+    /// The gesture moved; [`BackGestureEvent::progress`] changed.
+    Progressed,
+    /// The gesture ended and the platform decided to go back.
+    Committed,
+    /// The gesture ended without going back.
+    Cancelled,
+}
+
+impl Sealed for BackGestureEvent {}
+impl InputEvent for BackGestureEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::BackGesture(self)
+    }
+}
+impl GestureEvent for BackGestureEvent {}
+impl MouseEvent for BackGestureEvent {}
 
 /// A phased long-press gesture recognized from a touch.
 #[derive(Clone, Debug)]
@@ -496,7 +539,7 @@ pub(crate) struct TouchGestureRecognizer {
 pub(crate) enum RecognizedTouchGesture {
     /// One step of a pan (or of its post-release momentum), delivered to
     /// scroll listeners at the pan's starting position.
-    Scroll(ScrollWheelEvent),
+    Scroll(ScrollEvent),
     /// A recognized tap, delivered as a synthesized mouse press and release.
     Tap {
         down: MouseDownEvent,
@@ -1028,12 +1071,13 @@ fn scroll_event(
     position: Point<Pixels>,
     delta: Point<Pixels>,
     touch_phase: TouchPhase,
-) -> ScrollWheelEvent {
-    ScrollWheelEvent {
+) -> ScrollEvent {
+    ScrollEvent {
         position,
         delta: ScrollDelta::Pixels(delta),
         modifiers: Modifiers::default(),
         touch_phase,
+        source: ScrollSource::Touch,
     }
 }
 
@@ -2111,7 +2155,7 @@ mod tests {
         );
         assert!(matches!(
             moved.as_slice(),
-            [RecognizedTouchGesture::Scroll(ScrollWheelEvent {
+            [RecognizedTouchGesture::Scroll(ScrollEvent {
                 touch_phase: TouchPhase::Started,
                 ..
             })]
@@ -2185,7 +2229,7 @@ mod tests {
         );
         assert!(matches!(
             moved.as_slice(),
-            [RecognizedTouchGesture::Scroll(ScrollWheelEvent {
+            [RecognizedTouchGesture::Scroll(ScrollEvent {
                 touch_phase: TouchPhase::Started,
                 ..
             })]

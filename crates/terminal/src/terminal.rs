@@ -15,7 +15,6 @@ use futures::{
     channel::mpsc::{UnboundedReceiver, unbounded},
 };
 
-use alacritty_terminal::grid::Dimensions as _;
 use itertools::Itertools as _;
 use mappings::mouse::{
     alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
@@ -56,17 +55,18 @@ pub use vte::ansi::{Color, NamedColor, Rgb};
 use gpui::{
     App, AppContext as _, BackgroundExecutor, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
     Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point as GpuiPoint, Rgba, ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
+    Point as GpuiPoint, Rgba, ScrollEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 #[cfg(not(windows))]
 use crate::alacritty::current_child_signal_mask;
 use crate::alacritty::{
     AlacrittyCell, AlacrittyGridIterator, AlacrittyHyperlink, AlacrittySearch, AlacrittyTerm,
-    AlacrittyTermConfig, AlacrittyTermLock, HyperlinkMatch, PtySender, RegexSearches,
-    append_text_to_term, apply_config, clear_saved_screen, content_text, display_offset,
-    display_only_term_config, find_from_terminal_point, full_content_range, last_non_empty_lines,
-    make_content, new_term, open_pty, pty_options, pty_term_config, resize, screen_lines,
+    AlacrittyTermConfig, AlacrittyTermLock, HyperlinkMatch, OutputParser, PtySender, RegexSearches,
+    append_text_to_term, apply_config, clear_saved_screen, content_text, cursor_blinking,
+    cursor_line, display_offset, display_only_term_config, find_from_terminal_point,
+    full_content_range, history_size, last_non_empty_lines, make_content, new_term, open_pty,
+    palette_color, pty_options, pty_term_config, renderable_cells, resize, screen_lines,
     scroll_display, scroll_to_point, search_matches, selection_text, set_default_cursor_style,
     set_selection as set_term_selection, shrink_to_used, spawn_event_loop,
     toggle_vi_mode as toggle_term_vi_mode, total_lines, update_selection as update_term_selection,
@@ -1527,7 +1527,7 @@ pub struct Terminal {
     completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<AlacrittyTermLock>,
     term_config: AlacrittyTermConfig,
-    output_processor: Option<Processor<StdSyncHandler>>,
+    output_processor: Option<OutputParser>,
     output_events_tx: Option<futures::channel::mpsc::UnboundedSender<PtyEvent>>,
     output_generation: u64,
     events: VecDeque<InternalEvent>,
@@ -1687,8 +1687,7 @@ impl Terminal {
                 self.write_to_pty(format(self.last_content.terminal_bounds).into_bytes())
             }
             TerminalBackendEvent::CursorBlinkingChange => {
-                let terminal = self.term.lock();
-                let blinking = terminal.cursor_style().blinking;
+                let blinking = cursor_blinking(&self.term.lock());
                 cx.emit(Event::BlinkChanged(blinking));
             }
             TerminalBackendEvent::Bell => {
@@ -1716,7 +1715,7 @@ impl Terminal {
                 // we might respond with out of date value if a "set color" sequence is immediately
                 // followed by a color request sequence.
 
-                let color = self.term.lock().colors()[index]
+                let color = palette_color(&self.term.lock(), index)
                     .unwrap_or_else(|| to_vte_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color).into_bytes());
             }
@@ -1869,7 +1868,7 @@ impl Terminal {
                     self.path_style,
                 ) {
                     Some(hyperlink) => {
-                        let history_size = term.history_size();
+                        let history_size = history_size(term);
                         self.process_hyperlink(hyperlink, *open, history_size, cx);
                     }
                     None => {
@@ -1880,7 +1879,7 @@ impl Terminal {
             InternalEvent::ProcessHyperlink(hyperlink, open) => {
                 // history_size must be read here since process_hyperlink cannot lock term
                 // (sync() already holds the lock when dispatching events)
-                let history_size = term.history_size();
+                let history_size = history_size(term);
                 self.process_hyperlink(hyperlink.clone(), *open, history_size, cx);
             }
         }
@@ -1996,8 +1995,8 @@ impl Terminal {
     pub fn write_raw_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         let mut term = self.term.lock();
         self.output_processor
-            .get_or_insert_with(Processor::<StdSyncHandler>::new)
-            .advance(&mut *term, bytes);
+            .get_or_insert_with(OutputParser::new)
+            .advance(&mut term, bytes);
         drop(term);
         self.detect_init_command_startup_marker();
         cx.emit(Event::Wakeup);
@@ -2049,9 +2048,7 @@ impl Terminal {
         self.cwd_history.clear();
         self.pending_cwd_boundary = None;
         self.write_raw_output(bytes, cx);
-        cx.emit(Event::BlinkChanged(
-            self.term.lock().cursor_style().blinking,
-        ));
+        cx.emit(Event::BlinkChanged(cursor_blinking(&self.term.lock())));
         cx.emit(Event::BreadcrumbsChanged);
         cx.emit(Event::NewNavigationTarget(None));
         cx.emit(Event::OutputReplaced);
@@ -2325,8 +2322,8 @@ impl Terminal {
         if !self.is_remote_terminal && input.contains(&b'\r') {
             let term = self.term.lock_unfair();
             self.pending_cwd_boundary = Some(Self::scrollback_position(
-                term.grid().cursor.point.line.0,
-                term.history_size(),
+                cursor_line(&term),
+                history_size(&term),
             ));
         }
 
@@ -2518,8 +2515,7 @@ impl Terminal {
 
     pub fn with_renderable_cells<R>(&self, f: impl for<'a> FnOnce(RenderableCells<'a>) -> R) -> R {
         let term = self.term.lock_unfair();
-        let content = term.renderable_content();
-        f(RenderableCells::new(content.display_iter))
+        f(renderable_cells(&term))
     }
 
     pub fn get_content(&self) -> String {
@@ -2609,7 +2605,7 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) {
         if self.selection_phase == SelectionPhase::Selecting
-            || !modifiers.secondary()
+            || !modifiers.secondary(cx)
             || !self.last_content.terminal_bounds.bounds.contains(&position)
         {
             self.clear_hyperlink(cx);
@@ -2743,7 +2739,7 @@ impl Terminal {
         );
 
         if e.button == MouseButton::Left
-            && e.modifiers.secondary()
+            && e.modifiers.secondary(cx)
             && (TerminalSettings::get_global(cx).open_links_in_mouse_mode
                 || !self.mouse_mode(e.modifiers.shift, mode))
         {
@@ -2877,7 +2873,7 @@ impl Terminal {
                     .and_then(|cell| cell.hyperlink())
                 {
                     cx.open_url(link.uri());
-                } else if e.modifiers.secondary() {
+                } else if e.modifiers.secondary(cx) {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
                 }
@@ -2890,12 +2886,7 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(
-        &mut self,
-        e: &ScrollWheelEvent,
-        scroll_multiplier: f32,
-        mode: MouseInputMode,
-    ) {
+    pub fn scroll_wheel(&mut self, e: &ScrollEvent, scroll_multiplier: f32, mode: MouseInputMode) {
         let mouse_mode = self.mouse_mode(e.shift, mode);
         let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
 
@@ -2934,11 +2925,7 @@ impl Terminal {
         self.schedule_find_hyperlink(window.modifiers(), window.mouse_position(), cx);
     }
 
-    fn determine_scroll_lines(
-        &mut self,
-        e: &ScrollWheelEvent,
-        scroll_multiplier: f32,
-    ) -> Option<i32> {
+    fn determine_scroll_lines(&mut self, e: &ScrollEvent, scroll_multiplier: f32) -> Option<i32> {
         let line_height = self.last_content.terminal_bounds.line_height;
         match e.touch_phase {
             /* Reset scroll state on started */
@@ -3020,7 +3007,7 @@ impl Terminal {
 
         let scrollback_position = self.pending_cwd_boundary.take().unwrap_or_else(|| {
             let term = self.term.lock_unfair();
-            Self::scrollback_position(term.grid().cursor.point.line.0, term.history_size())
+            Self::scrollback_position(cursor_line(&term), history_size(&term))
         });
         self.cwd_history.push(CwdHistoryEntry {
             scrollback_position,
@@ -3423,7 +3410,7 @@ fn spawn_task_subprocess(
                 let events_tx = events_tx.clone();
                 async move {
                     let Some(mut reader) = reader else { return };
-                    let mut processor = Processor::<StdSyncHandler>::new();
+                    let mut processor = OutputParser::new();
                     let mut buffer = [0u8; 8192];
                     let mut previous_byte_was_cr = false;
                     loop {
@@ -3438,7 +3425,7 @@ fn spawn_task_subprocess(
                                     convert_lf_to_crlf(&buffer[..count], &mut previous_byte_was_cr);
                                 {
                                     let mut term = term.lock();
-                                    processor.advance(&mut *term, &converted);
+                                    processor.advance(&mut term, &converted);
                                 }
                                 events_tx
                                     .unbounded_send(PtyEvent::Event(
@@ -4154,7 +4141,7 @@ mod tests {
             assert!(terminal.last_content.mode.intersects(Modes::MOUSE_MODE));
             assert_eq!(display_offset(&terminal.term.lock()), 0);
 
-            let scroll_event = ScrollWheelEvent {
+            let scroll_event = ScrollEvent {
                 position: point(px(50.0), px(10.0)),
                 delta: ScrollDelta::Lines(point(0.0, 1.0)),
                 ..Default::default()
@@ -4183,7 +4170,7 @@ mod tests {
             );
             assert_eq!(display_offset(&terminal.term.lock()), 0);
 
-            let scroll_event = ScrollWheelEvent {
+            let scroll_event = ScrollEvent {
                 position: point(px(50.0), px(10.0)),
                 delta: ScrollDelta::Lines(point(0.0, 1.0)),
                 ..Default::default()
@@ -5263,7 +5250,7 @@ mod tests {
             let mouse_down = MouseDownEvent {
                 button: MouseButton::Left,
                 position,
-                modifiers: Modifiers::secondary_key(),
+                modifiers: Modifiers::secondary_key(cx),
                 click_count: 1,
                 first_mouse: true,
             };
@@ -5279,7 +5266,7 @@ mod tests {
             let drag_event = MouseMoveEvent {
                 position,
                 pressed_button: Some(MouseButton::Left),
-                modifiers: Modifiers::secondary_key(),
+                modifiers: Modifiers::secondary_key(cx),
             };
             terminal.mouse_drag(
                 &drag_event,
@@ -5297,7 +5284,7 @@ mod tests {
             let mouse_up = MouseUpEvent {
                 button: MouseButton::Left,
                 position,
-                modifiers: Modifiers::secondary_key(),
+                modifiers: Modifiers::secondary_key(cx),
                 click_count: 1,
             };
             terminal.mouse_up(&mouse_up, MouseInputMode::ReportToTerminal, cx);
@@ -5357,14 +5344,14 @@ mod tests {
                 let mouse_down = MouseDownEvent {
                     button: MouseButton::Left,
                     position,
-                    modifiers: Modifiers::secondary_key(),
+                    modifiers: Modifiers::secondary_key(cx),
                     click_count: 1,
                     first_mouse: true,
                 };
                 let mouse_up = MouseUpEvent {
                     button: MouseButton::Left,
                     position,
-                    modifiers: Modifiers::secondary_key(),
+                    modifiers: Modifiers::secondary_key(cx),
                     click_count: 1,
                 };
 
@@ -5400,7 +5387,7 @@ mod tests {
                 &MouseMoveEvent {
                     position: up_position,
                     pressed_button: Some(MouseButton::Left),
-                    modifiers: Modifiers::secondary_key(),
+                    modifiers: Modifiers::secondary_key(cx),
                 },
                 MouseInputMode::ReportToTerminal,
                 cx,
@@ -5680,7 +5667,7 @@ mod tests {
             }
 
             fn ctrl_mouse_move_to(&mut self, position: GpuiPoint<Pixels>) {
-                let modifiers = Modifiers::secondary_key();
+                let modifiers = Modifiers::secondary_key(self.cx);
                 let move_event = MouseMoveEvent {
                     position,
                     modifiers,
@@ -5727,7 +5714,7 @@ mod tests {
             }
 
             fn set_window_secondary_key(&mut self) {
-                self.window.set_modifiers(Modifiers::secondary_key());
+                self.window.set_modifiers(Modifiers::secondary_key(self.cx));
             }
 
             fn clear_window_secondary_key(&mut self) {
@@ -6034,7 +6021,8 @@ mod tests {
                     // Existing hovered_word cleared when secondary not held
                     cx.assert_hovered_word(None);
 
-                    cx.try_modifiers_change(Modifiers::secondary_key());
+                    let modifiers = Modifiers::secondary_key(cx.cx);
+                    cx.try_modifiers_change(modifiers);
                     Some(Expected(Wakeups(0), Notifies(2)))
                 });
                 update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
@@ -6216,7 +6204,7 @@ mod tests {
 
     mod perf {
         use super::{super::*, init_terminal_test_with_window};
-        use gpui::{ScrollDelta, ScrollWheelEvent, TestAppContext, VisualContext, point};
+        use gpui::{ScrollDelta, ScrollEvent, TestAppContext, VisualContext, point};
         use util::default;
         use util_macros::perf;
 
@@ -6242,7 +6230,7 @@ mod tests {
                     );
 
                     terminal.scroll_wheel(
-                        &ScrollWheelEvent {
+                        &ScrollEvent {
                             position,
                             delta: ScrollDelta::Lines(GpuiPoint::new(0.0, lines as f32)),
                             ..default()

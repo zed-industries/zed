@@ -32,6 +32,23 @@ pub struct ForegroundExecutor {
     not_send: PhantomData<Rc<()>>,
 }
 
+/// A thread-safe handle for spawning `Send` futures on the main thread.
+#[derive(Clone)]
+pub struct SendForegroundExecutor {
+    inner: scheduler::SendLocalExecutor,
+}
+
+impl SendForegroundExecutor {
+    /// Enqueues a future to run on the main thread, even when submitted from another thread.
+    #[track_caller]
+    pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.inner.spawn(future)
+    }
+}
+
 /// Extension trait for `Task<Result<T, E>>` that adds `detach_and_log_err` with an `&App` context.
 ///
 /// This trait is automatically implemented for all `Task<Result<T, E>>` types.
@@ -297,6 +314,13 @@ impl BackgroundExecutor {
 }
 
 impl ForegroundExecutor {
+    /// Creates a thread-safe handle that submits `Send` futures to this foreground executor.
+    pub fn to_send(&self) -> SendForegroundExecutor {
+        SendForegroundExecutor {
+            inner: self.inner.to_send(),
+        }
+    }
+
     /// Creates a new ForegroundExecutor from the given PlatformDispatcher.
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         #[cfg(any(test, feature = "test-support"))]
@@ -553,6 +577,25 @@ mod test {
 
         let app = App::new_app(platform, asset_source, http_client);
         (dispatcher, background_executor, app)
+    }
+
+    #[test]
+    fn send_foreground_executor_submits_from_worker() {
+        let dispatcher = TestDispatcher::new(0);
+        let foreground_executor = ForegroundExecutor::new(Arc::new(dispatcher.clone()));
+        let main_thread = std::thread::current().id();
+        let foreground_executor = foreground_executor.to_send();
+        let task = std::thread::spawn(move || {
+            foreground_executor.spawn(async move {
+                assert_eq!(std::thread::current().id(), main_thread);
+                42
+            })
+        })
+        .join()
+        .expect("worker must submit the foreground task");
+
+        dispatcher.run_until_parked();
+        assert_eq!(task.now_or_never(), Some(42));
     }
 
     #[test]
