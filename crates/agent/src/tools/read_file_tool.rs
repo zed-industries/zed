@@ -704,11 +704,15 @@ mod test {
             })
             .await;
         assert_eq!(
-            error_text(result.unwrap_err()),
-            "\"/outside/settings.json\" resolves to /outside/settings.json, which is outside \
-             the project workspace (or excluded from the worktree scan), so agent tools \
-             cannot access it. Project roots: /root. To grant access, open the folder in Zed \
-             via \"Add Folder to Project\" or move the file inside the project."
+            error_text(result.unwrap_err()).replace('\\', "/"),
+            format!(
+                "\"/outside/settings.json\" resolves to {}, which is outside the project \
+                 workspace (or excluded from the worktree scan), so agent tools cannot \
+                 access it. Project roots: {}. To grant access, open the folder in Zed \
+                 via \"Add Folder to Project\" or move the file inside the project.",
+                path!("/outside/settings.json").replace('\\', "/"),
+                path!("/root").replace('\\', "/"),
+            )
         );
     }
 

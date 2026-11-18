@@ -1123,11 +1123,15 @@ mod tests {
             unresolved_project_path_message("/outside/settings.json", fs.as_ref(), &roots, &error)
                 .await;
         assert_eq!(
-            message,
-            "\"/outside/settings.json\" resolves to /outside/settings.json, which is outside \
-             the project workspace (or excluded from the worktree scan), so agent tools \
-             cannot access it. Project roots: /root. To grant access, open the folder in Zed \
-             via \"Add Folder to Project\" or move the file inside the project."
+            message.replace('\\', "/"),
+            format!(
+                "\"/outside/settings.json\" resolves to {}, which is outside the project \
+                 workspace (or excluded from the worktree scan), so agent tools cannot \
+                 access it. Project roots: {}. To grant access, open the folder in Zed \
+                 via \"Add Folder to Project\" or move the file inside the project.",
+                path!("/outside/settings.json").replace('\\', "/"),
+                path!("/root").replace('\\', "/"),
+            )
         );
 
         // A path that does not exist anywhere: the original resolution error

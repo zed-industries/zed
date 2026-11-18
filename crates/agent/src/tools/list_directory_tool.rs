@@ -586,13 +586,15 @@ mod tests {
                 )
             })
             .await;
-        let error = output.unwrap_err();
+        let error = output.unwrap_err().replace('\\', "/");
         assert!(
-            error.contains(
-                "\"/outside/settings\" resolves to /outside/settings, which is outside the \
-                 project workspace (or excluded from the worktree scan), so agent tools \
-                 cannot access it. Project roots: /project."
-            ),
+            error.contains(&format!(
+                "\"/outside/settings\" resolves to {}, which is outside the project \
+                 workspace (or excluded from the worktree scan), so agent tools \
+                 cannot access it. Project roots: {}.",
+                path!("/outside/settings").replace('\\', "/"),
+                path!("/project").replace('\\', "/")
+            )),
             "unexpected error: {error}"
         );
 
