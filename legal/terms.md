@@ -23,7 +23,7 @@ By using a Product, you confirm that you have read and understand the Agreement 
 
 ## 1. Definitions
 
-- **“Agreement”** means these General Terms of Service, the Product Terms applicable to each Product Customer uses, the DPA, the [Privacy Policy](https://zed.dev/privacy-policy), and any other documents expressly incorporated into the Agreement, collectively.
+- **“Agreement”** means these General Terms of Service, the Product Terms applicable to each Product Customer uses, the DPA, the Privacy Policy, and any other documents expressly incorporated into the Agreement, collectively.
 
 - “**Account**” is defined in Section 2.2 below.
 
@@ -225,7 +225,7 @@ The Agreement consists of these General Terms, the Product Terms applicable to e
 
 ### 16.1.
 
-The Agreement, including the [Privacy Policy](https://zed.dev/privacy-policy) and any other agreements expressly incorporated by reference into the Agreement, is the entire and exclusive understanding and agreement between Customer and Zed Industries regarding Customer's use of the Products. Customer may not assign or transfer the Agreement or its rights under the Agreement, in whole or in part, by operation of law or otherwise, without Zed Industries' prior written consent. Zed Industries may assign the Agreement and all rights granted under the Agreement at any time without notice or consent. The failure to require performance of any provision will not affect Zed Industries' right to require performance at any other time after that, nor will a waiver by Zed Industries of any breach or default of the Agreement, or any provision of the Agreement, be a waiver of any subsequent breach or default or a waiver of the provision itself. Use of Section headers in the Agreement are for convenience only and will not have any impact on the interpretation of any provision. Throughout the Agreement the use of the word “including” means “including but not limited to.” If any part of the Agreement is held to be invalid or unenforceable, then the unenforceable part will be given effect to the greatest extent possible, and the remaining parts will remain in full force and effect.
+The Agreement, including the Privacy Policy and any other agreements expressly incorporated by reference into the Agreement, is the entire and exclusive understanding and agreement between Customer and Zed Industries regarding Customer's use of the Products. Customer may not assign or transfer the Agreement or its rights under the Agreement, in whole or in part, by operation of law or otherwise, without Zed Industries' prior written consent. Zed Industries may assign the Agreement and all rights granted under the Agreement at any time without notice or consent. The failure to require performance of any provision will not affect Zed Industries' right to require performance at any other time after that, nor will a waiver by Zed Industries of any breach or default of the Agreement, or any provision of the Agreement, be a waiver of any subsequent breach or default or a waiver of the provision itself. Use of Section headers in the Agreement are for convenience only and will not have any impact on the interpretation of any provision. Throughout the Agreement the use of the word “including” means “including but not limited to.” If any part of the Agreement is held to be invalid or unenforceable, then the unenforceable part will be given effect to the greatest extent possible, and the remaining parts will remain in full force and effect.
 
 ### 16.2. Notices
 
@@ -257,7 +257,7 @@ Elements of a Product may include commercial computer software. If the user or l
 
 ### 16.9. Privacy Policy
 
-Please read the [Zed Industries Privacy Policy](https://zed.dev/privacy-policy) (the “**Privacy Policy**”) carefully for information relating to our collection, use, storage, and disclosure of your personal information. The [Privacy Policy](https://zed.dev/privacy-policy) is incorporated by this reference into, and made a part of, the Agreement.
+Please read the Zed Industries Privacy Policy (the “**Privacy Policy**”) carefully for information relating to our collection, use, storage, and disclosure of your personal information. The Privacy Policy is incorporated by this reference into, and made a part of, the Agreement.
 
 ### 16.10. Additional Terms
 
@@ -265,7 +265,7 @@ Customer's use of a Product may be subject to additional terms, policies, rules,
 
 ### 16.11. Consent to Electronic Communications
 
-By using a Product, Customer consents to receiving certain electronic communications from Zed Industries as further described in the [Privacy Policy](https://zed.dev/privacy-policy). Please read the [Privacy Policy](https://zed.dev/privacy-policy) to learn more about Zed Industries' electronic communications practices. Customer agrees that any notices, agreements, disclosures, or other communications that Zed Industries sends to Customer electronically will satisfy any legal communication requirements, including that those communications be in writing. Zed Industries may send Customer emails concerning Zed Industries' products and services, as well as those of third parties. Customer may opt out of promotional emails by following the unsubscribe instructions in the promotional email itself.
+By using a Product, Customer consents to receiving certain electronic communications from Zed Industries as further described in the Privacy Policy. Please read the Privacy Policy to learn more about Zed Industries' electronic communications practices. Customer agrees that any notices, agreements, disclosures, or other communications that Zed Industries sends to Customer electronically will satisfy any legal communication requirements, including that those communications be in writing. Zed Industries may send Customer emails concerning Zed Industries' products and services, as well as those of third parties. Customer may opt out of promotional emails by following the unsubscribe instructions in the promotional email itself.
 
 ### 16.12. Contact Information
 
