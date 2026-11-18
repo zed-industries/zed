@@ -617,7 +617,7 @@ pub fn append_top_level_array_value_in_json_text(
             let increased_indent = format!("\n{space:width$}", width = indent_width);
             replace_value = replace_value.replace('\n', &increased_indent);
             replace_value.push('\n');
-            replace_value.insert_str(0, &format!("\n{space:width$}", width = indent_width));
+            replace_value.insert_str(0, &increased_indent);
         } else {
             while let Some(idx) = replace_value.find("\n ") {
                 replace_value.remove(idx + 1);
