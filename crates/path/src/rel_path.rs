@@ -313,8 +313,8 @@ impl Ord for RelPath {
         // Ranking `/` below every other byte orders paths by component.
         let rank = |byte: u8| if byte == b'/' { 0 } else { u16::from(byte) + 1 };
         const CHUNK: usize = size_of::<u128>();
-        // In a little-endian XOR of two chunks, the lowest set bit falls in
-        // the first byte where they differ.
+        // `from_le_bytes` reads chunks as little-endian on every target, so
+        // the lowest set bit of their XOR falls in the first differing byte.
         let first_difference = |left: &[u8; CHUNK], right: &[u8; CHUNK]| {
             let difference = u128::from_le_bytes(*left) ^ u128::from_le_bytes(*right);
             (difference != 0).then(|| difference.trailing_zeros() as usize / 8)
