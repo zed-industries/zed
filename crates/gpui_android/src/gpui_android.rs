@@ -8,6 +8,7 @@
 mod dispatcher;
 mod display;
 mod events;
+mod insets;
 mod keyboard;
 mod platform;
 mod vsync;

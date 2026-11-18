@@ -21,11 +21,16 @@ struct HelloAndroid {
 }
 
 impl Render for HelloAndroid {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let insets = window.insets().effective();
         div()
             .flex()
             .flex_col()
             .size_full()
+            .pt(insets.top)
+            .pr(insets.right)
+            .pb(insets.bottom)
+            .pl(insets.left)
             .bg(rgb(0x1e1e2e))
             .text_color(rgb(0xcdd6f4))
             .child(

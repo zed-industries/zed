@@ -1,12 +1,14 @@
+use crate::insets::SystemInsets;
 use android_activity::AndroidApp;
 use android_activity::ndk::native_window::FrameRateCompatibility;
 use anyhow::Context as _;
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowParams, WindowVisibility, px,
+    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, Edges,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowControls, WindowDecorations, WindowInsets, WindowParams,
+    WindowVisibility, px,
 };
 use gpui_wgpu::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use std::cell::{Cell, RefCell};
@@ -66,6 +68,7 @@ pub(crate) struct AndroidWindowCallbacks {
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) close: Option<Box<dyn FnOnce()>>,
     pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
+    pub(crate) insets_changed: Option<Box<dyn FnMut(WindowInsets)>>,
     pub(crate) hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
 }
 
@@ -89,6 +92,7 @@ pub(crate) struct AndroidWindowInner {
     pub(crate) callbacks: RefCell<AndroidWindowCallbacks>,
     pub(crate) surface_configured: Cell<bool>,
     pub(crate) appearance: Cell<WindowAppearance>,
+    system_insets: Cell<SystemInsets>,
     last_draw: Cell<Option<Instant>>,
     votes_max_frame_rate: Cell<bool>,
     pending_physical_size: Cell<Option<Size<DevicePixels>>>,
@@ -163,6 +167,7 @@ impl AndroidWindow {
             callbacks: RefCell::new(AndroidWindowCallbacks::default()),
             surface_configured: Cell::new(true),
             appearance: Cell::new(appearance),
+            system_insets: Cell::default(),
             last_draw: Cell::new(None),
             votes_max_frame_rate: Cell::new(false),
             pending_physical_size: Cell::new(None),
@@ -336,6 +341,28 @@ impl AndroidWindowInner {
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(ref mut callback) = callbacks.appearance_changed {
             callback();
+        }
+    }
+
+    pub(crate) fn set_system_insets(&self, system_insets: SystemInsets) {
+        if self.system_insets.replace(system_insets) == system_insets {
+            return;
+        }
+        let insets = self.insets();
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(ref mut callback) = callbacks.insets_changed {
+            callback(insets);
+        }
+    }
+
+    fn insets(&self) -> WindowInsets {
+        let scale = self.state.borrow().scale_factor;
+        let system_insets = self.system_insets.get();
+        let logical = |edges: Edges<DevicePixels>| edges.map(|edge| px(edge.0 as f32 / scale));
+        WindowInsets {
+            safe_area: logical(system_insets.safe_area),
+            ime: logical(system_insets.ime),
+            ..Default::default()
         }
     }
 
@@ -574,6 +601,14 @@ impl PlatformWindow for AndroidWindow {
     }
 
     fn set_client_inset(&self, _inset: Pixels) {}
+
+    fn insets(&self) -> WindowInsets {
+        self.inner.insets()
+    }
+
+    fn on_insets_changed(&self, callback: Box<dyn FnMut(WindowInsets)>) {
+        self.inner.callbacks.borrow_mut().insets_changed = Some(callback);
+    }
 
     fn show_soft_keyboard(&self) {
         self.inner.app.show_soft_input(true);

@@ -1,6 +1,7 @@
 use crate::dispatcher::AndroidDispatcher;
 use crate::display::AndroidDisplay;
 use crate::events::{self, TouchIds};
+use crate::insets::SystemInsetsReader;
 use crate::keyboard::AndroidKeyboardLayout;
 use crate::vsync::Vsync;
 use crate::window::{AndroidWindow, AndroidWindowInner};
@@ -46,6 +47,7 @@ pub struct AndroidPlatform {
     key_maps: RefCell<HashMap<i32, KeyCharacterMap>>,
     touch_ids: RefCell<TouchIds>,
     vsync: Vsync,
+    system_insets: SystemInsetsReader,
 }
 
 #[derive(Default)]
@@ -93,6 +95,7 @@ impl AndroidPlatform {
             key_maps: RefCell::new(HashMap::new()),
             touch_ids: RefCell::new(TouchIds::default()),
             vsync: Vsync::new(app.create_waker()),
+            system_insets: SystemInsetsReader::new(app.clone()),
             app,
         }
     }
@@ -105,6 +108,17 @@ impl AndroidPlatform {
     }
 
     fn handle_main_event(&self, event: MainEvent<'_>) {
+        if matches!(
+            event,
+            MainEvent::InitWindow { .. }
+                | MainEvent::WindowResized { .. }
+                | MainEvent::ContentRectChanged { .. }
+                | MainEvent::InsetsChanged { .. }
+                | MainEvent::ConfigChanged { .. }
+                | MainEvent::GainedFocus
+        ) {
+            self.system_insets.refresh();
+        }
         match event {
             MainEvent::InitWindow { .. } => {
                 self.vsync.set_running(true);
@@ -201,6 +215,9 @@ impl AndroidPlatform {
         let Some(window) = self.window() else {
             return;
         };
+        if let Some(system_insets) = self.system_insets.take() {
+            window.set_system_insets(system_insets);
+        }
         if self.vsync.take_pending() {
             window.request_frame(false);
             window.vote_frame_rate(self.display.max_refresh_rate());
