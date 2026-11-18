@@ -3672,11 +3672,18 @@ impl Window {
     #[inline]
     fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
-        if bounds.is_empty() {
-            return bounds.scale(scale_factor);
-        }
         let left = floor_to_device_pixel(bounds.left().0, scale_factor);
         let top = floor_to_device_pixel(bounds.top().0, scale_factor);
+        // Rounding outward would turn an empty region into a 1px strip at
+        // fractional positions, so return a zero size instead. Negative
+        // sizes become zero too, because the blurred shadow shader draws a
+        // negative-size hole the same as a positive one.
+        if bounds.is_empty() {
+            return Bounds::new(
+                point(ScaledPixels(left), ScaledPixels(top)),
+                Size::default(),
+            );
+        }
         let right = ceil_to_device_pixel(bounds.right().0, scale_factor).max(left);
         let bottom = ceil_to_device_pixel(bounds.bottom().0, scale_factor).max(top);
         Bounds::from_corners(
@@ -10464,7 +10471,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_cover_bounds_preserves_empty_shadow_bounds(cx: &mut TestAppContext) {
+    fn test_empty_shadow_bounds_are_not_painted(cx: &mut TestAppContext) {
         test_paint_at_scales(cx, |window| {
             let shadow = crate::BoxShadow::new(px(0.25), px(0.5), crate::red()).blur_radius(px(4.));
             for origin in [point(px(30.25), px(40.25)), point(px(-30.25), px(-40.25))] {
@@ -10486,10 +10493,7 @@ mod tests {
                         "scale={}, bounds={bounds:?}",
                         window.scale_factor()
                     );
-                    assert_eq!(
-                        window.cover_bounds(bounds),
-                        bounds.scale(window.scale_factor())
-                    );
+                    assert!(window.cover_bounds(bounds).is_empty());
                 }
             }
             let bounds = Bounds::new(point(px(30.25), px(40.25)), size(px(20.), px(20.)));
@@ -10499,13 +10503,39 @@ mod tests {
             let count = window.next_frame.scene.len();
             window.paint_drop_shadows(bounds, Default::default(), &[collapsed_shadow]);
             assert_eq!(window.next_frame.scene.len(), count);
-            assert_eq!(
-                window.cover_bounds(shape_bounds),
-                shape_bounds.scale(window.scale_factor())
-            );
+            assert!(window.cover_bounds(shape_bounds).is_empty());
 
             window.paint_drop_shadows(bounds, Default::default(), &[shadow]);
             assert_eq!(window.next_frame.scene.len(), count + 1);
+        });
+    }
+
+    #[gpui::test]
+    fn test_collapsed_inset_shadow_hole_is_an_empty_point_on_the_pixel_grid(
+        cx: &mut TestAppContext,
+    ) {
+        test_paint_at_scales(cx, |window| {
+            let bounds = Bounds::new(point(px(30.25), px(40.25)), size(px(20.), px(20.)));
+            for blur_radius in [px(0.), px(4.)] {
+                for spread_radius in [px(10.), px(12.3), px(15.), px(30.)] {
+                    let shadow = crate::BoxShadow::new(px(0.), px(0.), crate::red())
+                        .blur_radius(blur_radius)
+                        .spread_radius(spread_radius)
+                        .inset();
+                    window.next_frame.scene.clear();
+                    window.paint_inset_shadows(bounds, Default::default(), &[shadow]);
+                    let shadows = &window.next_frame.scene.shadows;
+                    assert_eq!(shadows.len(), 1);
+                    let hole = shadows[0].shape_bounds;
+                    let message = format!(
+                        "scale={}, blur={blur_radius:?}, spread={spread_radius:?}, hole={hole:?}",
+                        window.scale_factor()
+                    );
+                    assert_eq!(hole.size, crate::Size::default(), "{message}");
+                    assert_eq!(hole.origin.x.0.fract(), 0., "{message}");
+                    assert_eq!(hole.origin.y.0.fract(), 0., "{message}");
+                }
+            }
         });
     }
 
