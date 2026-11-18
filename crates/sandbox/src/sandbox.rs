@@ -1559,7 +1559,6 @@ fn map_anyhow_error(error: anyhow::Error) -> SandboxError {
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests {
     use super::*;
-    #[cfg(target_os = "macos")]
     use futures::StreamExt as _;
 
     #[test]
@@ -1809,49 +1808,22 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_rejects_unix_socket_and_tcp_port_grants() {
-        let socket_dir = tempfile::tempdir().expect("create socket dir");
-        let socket =
-            HostFilesystemLocation::capture(socket_dir.path()).expect("capture socket dir");
-        let with_socket = Sandbox::new(SandboxPolicy {
-            fs: unrestricted_fs(),
-            network: SandboxNetPolicy::Blocked,
-            allowed_unix_sockets: vec![socket],
-        });
-        assert!(matches!(
-            with_socket,
-            Err(SandboxError::UnsupportedPolicy(_))
-        ));
-
-        let with_port = Sandbox::new(SandboxPolicy {
-            fs: unrestricted_fs(),
-            network: SandboxNetPolicy::Restricted {
-                allowed_domains: Vec::new(),
-                allowed_tcp_ports: vec![22],
-            },
-            allowed_unix_sockets: Vec::new(),
-        });
-        assert!(matches!(with_port, Err(SandboxError::UnsupportedPolicy(_))));
-    }
-
-    #[cfg(target_os = "macos")]
     #[test]
     fn network_events_report_denied_hosts() {
-        let (events_sender, events) = futures::channel::mpsc::unbounded();
-        let mut sandbox = Sandbox::with_network_events(
-            SandboxPolicy {
-                fs: unrestricted_fs(),
-                network: SandboxNetPolicy::Restricted {
-                    allowed_domains: vec!["allowed.example".to_string()],
-                    allowed_tcp_ports: Vec::new(),
-                },
-                allowed_unix_sockets: Vec::new(),
+        let policy = SandboxPolicy {
+            fs: unrestricted_fs(),
+            network: SandboxNetPolicy::Restricted {
+                allowed_domains: vec!["allowed.example".to_string()],
+                allowed_tcp_ports: Vec::new(),
             },
-            events_sender,
-        )
-        .expect("create sandbox");
+            allowed_unix_sockets: Vec::new(),
+        };
+        if !host_can_run_sandbox(&policy) {
+            return;
+        }
+        let (events_sender, events) = futures::channel::mpsc::unbounded();
+        let mut sandbox =
+            Sandbox::with_network_events(policy, events_sender).expect("create sandbox");
 
         // The proxy denies the host before resolving it, so this needs no
         // network access.
@@ -1879,7 +1851,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn restricted_network_allows_only_the_proxy_and_granted_tcp_ports() {
         // The kernel completes `nc -z`'s connect from the listen backlog, so the
@@ -1898,7 +1869,7 @@ mod tests {
             .port();
 
         let (events_sender, mut events) = futures::channel::mpsc::unbounded();
-        let mut sandbox = Sandbox::with_network_events(
+        let Some(mut sandbox) = enforced_or_refused(Sandbox::with_network_events(
             SandboxPolicy {
                 fs: unrestricted_fs(),
                 network: SandboxNetPolicy::Restricted {
@@ -1908,8 +1879,9 @@ mod tests {
                 allowed_unix_sockets: Vec::new(),
             },
             events_sender,
-        )
-        .expect("create sandbox");
+        )) else {
+            return;
+        };
 
         let tcp_connects = |sandbox: &mut Sandbox, port: u16| {
             run_sandboxed(
@@ -1934,7 +1906,6 @@ mod tests {
         sandbox.drop_on_current_thread();
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn only_granted_unix_sockets_are_reachable() {
         use std::io::ErrorKind;
@@ -1967,14 +1938,15 @@ mod tests {
                 allowed_tcp_ports: Vec::new(),
             },
         ] {
-            let mut sandbox = Sandbox::new(SandboxPolicy {
+            let Some(mut sandbox) = enforced_or_refused(Sandbox::new(SandboxPolicy {
                 fs: unrestricted_fs(),
                 network: network.clone(),
                 allowed_unix_sockets: vec![
                     HostFilesystemLocation::capture(&granted_socket).expect("capture socket"),
                 ],
-            })
-            .expect("create sandbox");
+            })) else {
+                continue;
+            };
 
             let output = run_sandboxed(
                 &mut sandbox,
@@ -2038,7 +2010,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn restricted_fs_hides_paths_disallowing_reads_except_their_exceptions() {
         let project_dir = tempfile::tempdir().expect("create project dir");
@@ -2055,7 +2026,7 @@ mod tests {
         let locked_file = kept_dir.join("locked");
         std::fs::write(&locked_file, "locked\n").expect("write locked file");
 
-        let mut sandbox = Sandbox::new(SandboxPolicy {
+        let Some(mut sandbox) = enforced_or_refused(Sandbox::new(SandboxPolicy {
             fs: SandboxFsPolicy::Restricted {
                 writable_paths: vec![location(project_dir.path())],
                 protected_paths: vec![location(&locked_file)],
@@ -2065,8 +2036,9 @@ mod tests {
             },
             network: SandboxNetPolicy::Blocked,
             allowed_unix_sockets: Vec::new(),
-        })
-        .expect("create sandbox");
+        })) else {
+            return;
+        };
 
         let output = run_shell(&mut sandbox, &format!("cat '{}'", readme_file.display()));
         assert_eq!(String::from_utf8_lossy(&output.stdout), "public\n");
@@ -2109,7 +2081,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn unrestricted_fs_hides_not_yet_created_paths_disallowing_reads() {
         let root_dir = tempfile::tempdir().expect("create root dir");
@@ -2118,17 +2089,30 @@ mod tests {
         // through its nearest existing ancestor.
         let hidden_dir = root_dir.path().join("missing/hidden");
         let exception_dir = hidden_dir.join("kept");
-        let mut sandbox = Sandbox::new(SandboxPolicy {
+        // A platform that can't capture a path that doesn't exist yet refuses
+        // the policy at this point, before a sandbox is built.
+        let (Ok(hidden), Ok(exception)) = (
+            HostFilesystemLocation::capture(&hidden_dir),
+            HostFilesystemLocation::capture(&exception_dir),
+        ) else {
+            assert!(
+                !cfg!(target_os = "macos"),
+                "macOS must capture paths that don't exist yet"
+            );
+            return;
+        };
+        let Some(mut sandbox) = enforced_or_refused(Sandbox::new(SandboxPolicy {
             fs: SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
-                paths_disallowing_reads: vec![location(&hidden_dir)],
-                paths_allowing_reads: vec![location(&exception_dir)],
+                paths_disallowing_reads: vec![hidden],
+                paths_allowing_reads: vec![exception],
             },
             network: SandboxNetPolicy::Blocked,
             allowed_unix_sockets: Vec::new(),
-        })
-        .expect("create sandbox");
+        })) else {
+            return;
+        };
 
         let ordinary_file = root_dir.path().join("missing/ordinary");
         let output = run_shell(
@@ -2166,7 +2150,6 @@ mod tests {
         assert!(!output.status.success(), "wrote inside a hidden path");
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn paths_disallowing_reads_inside_allowing_are_rejected() {
         let root_dir = tempfile::tempdir().expect("create root dir");
@@ -2224,28 +2207,49 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_rejects_paths_disallowing_reads() {
-        let hidden_dir = tempfile::tempdir().expect("create hidden dir");
-        let result = Sandbox::new(SandboxPolicy {
-            fs: SandboxFsPolicy::Unrestricted {
-                protected_paths: Vec::new(),
-                protected_file_names: Vec::new(),
-                paths_disallowing_reads: vec![location(hidden_dir.path())],
-                paths_allowing_reads: Vec::new(),
-            },
-            network: SandboxNetPolicy::Blocked,
-            allowed_unix_sockets: Vec::new(),
-        });
-        assert!(matches!(result, Err(SandboxError::UnsupportedPolicy(_))));
+    /// The sandbox for a policy that only some platforms can enforce, or
+    /// `None` where the platform refuses it.
+    ///
+    /// A platform must do one or the other: accepting such a policy without
+    /// enforcing it would run the command with access the caller withheld. A
+    /// test that gets a sandbox back goes on to check the enforcement, so the
+    /// same body holds a platform to whichever of the two it claims.
+    fn enforced_or_refused(result: Result<Sandbox, SandboxError>) -> Option<Sandbox> {
+        match result {
+            Ok(sandbox) => Some(sandbox),
+            Err(SandboxError::UnsupportedPolicy(message)) => {
+                assert!(
+                    !cfg!(target_os = "macos"),
+                    "macOS must enforce every policy: {message}"
+                );
+                None
+            }
+            Err(error) => panic!("expected a sandbox or an unsupported policy, got {error}"),
+        }
+    }
+
+    /// Whether this host can run commands under `policy`, which every platform
+    /// supports. A Linux host without a usable Bubblewrap cannot; the test
+    /// then skips, unless `ZED_TEST_SANDBOX_REQUIRE_ENFORCED` is set, which
+    /// makes that a failure.
+    fn host_can_run_sandbox(policy: &SandboxPolicy) -> bool {
+        match Sandbox::can_create(policy) {
+            Ok(()) => true,
+            Err(error) => {
+                assert!(
+                    std::env::var_os("ZED_TEST_SANDBOX_REQUIRE_ENFORCED").is_none(),
+                    "this host cannot run the sandbox: {error}"
+                );
+                eprintln!("skipping: this host cannot run the sandbox: {error}");
+                false
+            }
+        }
     }
 
     fn location(path: &Path) -> HostFilesystemLocation {
         HostFilesystemLocation::capture(path).expect("capture location")
     }
 
-    #[cfg(target_os = "macos")]
     fn run_shell(sandbox: &mut Sandbox, script: &str) -> Output {
         run_sandboxed(sandbox, "/bin/sh", &["-c", script])
     }
@@ -2259,7 +2263,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
     fn run_sandboxed(sandbox: &mut Sandbox, program: &str, args: &[&str]) -> Output {
         let command = CommandAndArgs {
             program: program.to_string(),
