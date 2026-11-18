@@ -121,7 +121,6 @@ impl AndroidPlatform {
         }
         match event {
             MainEvent::InitWindow { .. } => {
-                self.vsync.set_running(true);
                 if let Some(window) = self.window() {
                     window.handle_surface_created();
                 }
@@ -131,7 +130,6 @@ impl AndroidPlatform {
                 }
             }
             MainEvent::TerminateWindow { .. } => {
-                self.vsync.set_running(false);
                 if let Some(window) = self.window() {
                     window.handle_surface_destroyed();
                 }
@@ -220,8 +218,8 @@ impl AndroidPlatform {
         }
         if self.vsync.take_pending() {
             window.request_frame(false);
-            window.vote_frame_rate(self.display.max_refresh_rate());
         }
+        window.vote_frame_rate(self.display.max_refresh_rate());
     }
 }
 
@@ -280,7 +278,10 @@ impl Platform for AndroidPlatform {
         *self.pending_launch.borrow_mut() = Some(on_finish_launching);
         let app = self.app.clone();
         while !self.quit_requested.get() {
-            app.poll_events(None, |event| {
+            let timeout = self
+                .window()
+                .and_then(|window| window.frame_rate_vote_expires_in());
+            app.poll_events(timeout, |event| {
                 match event {
                     PollEvent::Wake | PollEvent::Timeout => {}
                     PollEvent::Main(main_event) => self.handle_main_event(main_event),
@@ -340,6 +341,7 @@ impl Platform for AndroidPlatform {
             self.gpu_context.clone(),
             self.display.clone(),
             self.window_appearance(),
+            self.vsync.clone(),
         )?;
         self.display
             .set_size(window.inner.state.borrow().bounds.size);

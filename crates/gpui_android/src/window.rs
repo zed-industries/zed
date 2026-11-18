@@ -1,4 +1,5 @@
 use crate::insets::SystemInsets;
+use crate::vsync::Vsync;
 use android_activity::AndroidApp;
 use android_activity::ndk::native_window::FrameRateCompatibility;
 use anyhow::Context as _;
@@ -16,8 +17,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// How long after its last drawn frame the window keeps asking for the
+/// How long after GPUI last wanted a frame the window keeps asking for the
 /// display's highest refresh rate.
+///
+/// Frame demand lapses between the frames of a drag, since each touch move
+/// dirties the window anew, so a vote that followed demand exactly would be
+/// withdrawn and recast every frame.
 const FRAME_RATE_VOTE_HOLD: Duration = Duration::from_millis(250);
 
 /// Wraps the current `ANativeWindow` so `WgpuRenderer` can create a surface
@@ -93,7 +98,8 @@ pub(crate) struct AndroidWindowInner {
     pub(crate) surface_configured: Cell<bool>,
     pub(crate) appearance: Cell<WindowAppearance>,
     system_insets: Cell<SystemInsets>,
-    last_draw: Cell<Option<Instant>>,
+    vsync: Vsync,
+    last_frame_demand: Cell<Option<Instant>>,
     votes_max_frame_rate: Cell<bool>,
     pending_physical_size: Cell<Option<Size<DevicePixels>>>,
 }
@@ -127,6 +133,7 @@ impl AndroidWindow {
         gpu_context: GpuContext,
         display: Rc<dyn PlatformDisplay>,
         appearance: WindowAppearance,
+        vsync: Vsync,
     ) -> anyhow::Result<Self> {
         let native_window = app
             .native_window()
@@ -168,7 +175,8 @@ impl AndroidWindow {
             surface_configured: Cell::new(true),
             appearance: Cell::new(appearance),
             system_insets: Cell::default(),
-            last_draw: Cell::new(None),
+            vsync,
+            last_frame_demand: Cell::new(None),
             votes_max_frame_rate: Cell::new(false),
             pending_physical_size: Cell::new(None),
         });
@@ -226,12 +234,17 @@ impl AndroidWindowInner {
         self.surface_configured.set(true);
         self.notify_visibility_change();
         self.update_size();
+        // Frames demanded while there was no surface were dropped, and a
+        // window that is still dirty from then does not ask again.
+        self.schedule_frame();
     }
 
     /// Called on `MainEvent::TerminateWindow`: the `ANativeWindow` is about to
     /// be destroyed, so rendering must stop until a new surface arrives.
     pub(crate) fn handle_surface_destroyed(&self) {
         self.surface_configured.set(false);
+        // The vote goes away with the surface.
+        self.votes_max_frame_rate.set(false);
         self.state.borrow_mut().renderer.unconfigure_surface();
         self.notify_visibility_change();
     }
@@ -277,6 +290,16 @@ impl AndroidWindowInner {
         }
     }
 
+    /// Asks for a frame at the next display refresh. Nothing observes the
+    /// display's refreshes otherwise, so an idle window never wakes the app.
+    pub(crate) fn schedule_frame(&self) {
+        if !self.surface_configured.get() {
+            return;
+        }
+        self.last_frame_demand.set(Some(Instant::now()));
+        self.vsync.request();
+    }
+
     /// Offers GPUI a frame. A forced frame is also presented when nothing
     /// changed; otherwise an unchanged window is left alone, so an idle
     /// display can lower its refresh rate.
@@ -294,8 +317,8 @@ impl AndroidWindowInner {
         }
     }
 
-    /// Asks the system for the display's highest refresh rate while the
-    /// window is drawing, and withdraws the request once it goes idle.
+    /// Asks the system for the display's highest refresh rate while GPUI
+    /// wants frames, and withdraws the request once it has stopped.
     ///
     /// Android matches the refresh rate to how often a surface gets new
     /// frames, but frames are paced by the current rate, so without a vote
@@ -307,14 +330,14 @@ impl AndroidWindowInner {
         if !self.surface_configured.get() {
             return;
         }
-        let drawing = self
-            .last_draw
+        let wants_frames = self
+            .last_frame_demand
             .get()
-            .is_some_and(|last_draw| last_draw.elapsed() < FRAME_RATE_VOTE_HOLD);
-        if self.votes_max_frame_rate.replace(drawing) == drawing {
+            .is_some_and(|demand| demand.elapsed() < FRAME_RATE_VOTE_HOLD);
+        if self.votes_max_frame_rate.replace(wants_frames) == wants_frames {
             return;
         }
-        let frame_rate = if drawing { max_refresh_rate } else { 0.0 };
+        let frame_rate = if wants_frames { max_refresh_rate } else { 0.0 };
         if let Err(error) = self
             .state
             .borrow()
@@ -324,6 +347,15 @@ impl AndroidWindowInner {
         {
             log::warn!("failed to request a frame rate of {frame_rate} Hz: {error}");
         }
+    }
+
+    /// How long until [`Self::vote_frame_rate`] has a vote to withdraw, which
+    /// no display refresh is scheduled to prompt.
+    pub(crate) fn frame_rate_vote_expires_in(&self) -> Option<Duration> {
+        let demand = self.last_frame_demand.get()?;
+        self.votes_max_frame_rate
+            .get()
+            .then(|| FRAME_RATE_VOTE_HOLD.saturating_sub(demand.elapsed()))
     }
 
     pub(crate) fn set_active(&self, is_active: bool) {
@@ -501,6 +533,18 @@ impl PlatformWindow for AndroidWindow {
         true
     }
 
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        // Held weakly: the waker is stored in the window's invalidator, which
+        // `callbacks.request_frame` captures, so a strong reference would leak
+        // the window.
+        let inner = Rc::downgrade(&self.inner);
+        Some(Rc::new(move || {
+            if let Some(inner) = inner.upgrade() {
+                inner.schedule_frame();
+            }
+        }))
+    }
+
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.inner.callbacks.borrow_mut().request_frame = Some(callback);
     }
@@ -556,7 +600,10 @@ impl PlatformWindow for AndroidWindow {
             state.renderer.update_drawable_size(physical_size);
         }
         state.renderer.draw(scene);
-        self.inner.last_draw.set(Some(Instant::now()));
+    }
+
+    fn schedule_frame(&self) {
+        self.inner.schedule_frame();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
