@@ -3,7 +3,6 @@ use gpui::{
     AnyElement, App, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, Window,
     div, rems,
 };
-use theme::ActiveTheme;
 
 use crate::{Color, rems_from_px};
 
@@ -217,7 +216,7 @@ impl RenderOnce for Headline {
             .font(ui_font)
             .line_height(self.size.line_height())
             .text_size(self.size.rems())
-            .text_color(cx.theme().colors().text)
+            .text_color(self.color.color(cx))
             .child(self.text)
     }
 }
@@ -288,5 +287,41 @@ impl Component for Headline {
                 ),
             ])
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn test_headline_renders_in_its_color(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let (_view, cx) = cx.add_window_view(|_, _| MutedHeadlineView);
+
+        cx.update(|window, cx| {
+            let underline_colors = window
+                .painted_underlines()
+                .into_iter()
+                .map(|underline| underline.color)
+                .collect::<Vec<_>>();
+            assert_eq!(underline_colors, vec![Color::Muted.color(cx)]);
+        });
+    }
+
+    struct MutedHeadlineView;
+
+    impl Render for MutedHeadlineView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            // The test platform doesn't rasterize glyphs, but underlines use the text color.
+            div()
+                .underline()
+                .child(Headline::new("Muted").color(Color::Muted))
+        }
     }
 }
