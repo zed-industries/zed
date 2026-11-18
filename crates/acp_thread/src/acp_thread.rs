@@ -1122,7 +1122,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn location(&self, ix: usize) -> Option<(ToolCallLocation, AgentLocation)> {
+    pub fn location(&self, ix: usize) -> Option<(ToolCallLocation, Option<AgentLocation>)> {
         if let AgentThreadEntry::ToolCall(ToolCall {
             locations,
             resolved_locations,
@@ -1131,7 +1131,7 @@ impl AgentThreadEntry {
         {
             Some((
                 locations.get(ix)?.clone(),
-                resolved_locations.get(ix)?.clone()?,
+                resolved_locations.get(ix).cloned().flatten(),
             ))
         } else {
             None
@@ -18400,10 +18400,9 @@ mod tests {
         assert_eq!(absolute.path, respelled.path);
         thread.update(cx, |thread, cx| {
             let (index, call) = thread.tool_call(&id).expect("tool");
-            let (location, _) = thread.entries[index]
-                .location(0)
-                .expect("resolved location");
+            let (location, resolved) = thread.entries[index].location(0).expect("location");
             assert_eq!(location, absolute);
+            assert!(resolved.is_some());
             let resolved_locations = call.resolved_locations.clone();
             thread
                 .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("location-migration"), cx)
@@ -18427,15 +18426,17 @@ mod tests {
             let (index, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.locations, vec![respelled.clone()]);
             assert!(call.resolved_locations.is_empty());
-            assert!(thread.entries[index].location(0).is_none());
+            assert_eq!(
+                thread.entries[index].location(0),
+                Some((respelled.clone(), None))
+            );
         });
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
             let (index, _) = thread.tool_call(&id).expect("tool");
-            let (location, _) = thread.entries[index]
-                .location(0)
-                .expect("refreshed projection");
+            let (location, resolved) = thread.entries[index].location(0).expect("location");
             assert_eq!(location, respelled);
+            assert!(resolved.is_some(), "refreshed projection");
             thread
                 .update_tool_call(
                     acp_v1::ToolCallUpdate::new(
@@ -18452,7 +18453,10 @@ mod tests {
             let (index, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.locations, vec![relative.clone()]);
             assert!(call.resolved_locations.is_empty());
-            assert!(thread.entries[index].location(0).is_none());
+            assert_eq!(
+                thread.entries[index].location(0),
+                Some((relative.clone(), None))
+            );
         });
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
@@ -19066,8 +19070,10 @@ mod tests {
         thread.read_with(cx, |thread, cx| {
             let (tool_call_location, agent_location) = thread.entries[0]
                 .location(0)
-                .expect("external tool-call location should resolve");
+                .expect("external tool-call location");
             assert_eq!(tool_call_location.path, skill_path);
+            let agent_location =
+                agent_location.expect("external tool-call location should resolve");
 
             let buffer = agent_location
                 .buffer
