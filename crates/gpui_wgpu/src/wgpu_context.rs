@@ -490,9 +490,15 @@ impl WgpuContext {
 
     #[cfg(not(target_family = "wasm"))]
     pub fn instance(display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>) -> wgpu::Instance {
+        let mut flags = wgpu::InstanceFlags::default();
+        // In debug builds this flag makes naga tag shaders with `OpSource WGSL`,
+        // a source language PowerVR's Vulkan shader compiler aborts on.
+        if cfg!(target_os = "android") {
+            flags.remove(wgpu::InstanceFlags::DEBUG);
+        }
         wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
-            flags: wgpu::InstanceFlags::default(),
+            flags,
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             display,
