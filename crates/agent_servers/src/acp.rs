@@ -15,7 +15,9 @@ pub use v1::test_support;
 pub use v1::{AcpConnection, AcpSessionList, GEMINI_TERMINAL_AUTH_METHOD_ID};
 pub use v2::AcpV2Connection;
 
-use acp_thread::{AcpThread, AuthRequired, ElicitationStore, LoadError};
+use acp_thread::{
+    AcpThread, AuthRequired, ElicitationStore, LoadError, elicitation::ElicitationRequest,
+};
 use action_log::ActionLog;
 use agent_client_protocol::{
     Agent, Client, HandleDispatchFrom, Handled, JsonRpcMessage, JsonRpcResponse, Protocol,
@@ -23,6 +25,7 @@ use agent_client_protocol::{
     v2::{Builder as V2Builder, ConnectionTo as V2ConnectionTo, Responder as V2Responder},
 };
 use agent_client_protocol::{
+    schema::MaybeUndefined,
     v1::schema::{self as acp, ErrorCode},
     v2::schema as acp_v2,
 };
@@ -482,15 +485,21 @@ impl acp_thread::AgentSessionConfigOptions for ReadOnlyConfigOptions {
 
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
-    /// Whether a parent announced this session as its ACP subagent. This mirrors the
-    /// thread's subagent association, so the connection can refuse a subagent's
-    /// mutations even while its thread is being updated.
-    is_subagent: bool,
+    /// The root of an announced child session controls when the child is addressable.
+    subagent_root: Option<acp_v2::SessionId>,
+    replay: Option<Rc<RefCell<V2Replay>>>,
     suppress_abort_err: bool,
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
     config_options: Option<ConfigOptions>,
     default_config_task: Option<Task<()>>,
     _release_subscription: Subscription,
+}
+
+#[derive(Default)]
+struct V2Replay {
+    /// Each session, including each child, has its own history boundary.
+    completed: HashSet<acp_v2::SessionId>,
+    finished: bool,
 }
 
 /// Builds a v2 terminal-notification handler without selecting it for application connections.
@@ -795,8 +804,8 @@ fn close_undelivered_session(
 /// Applies a `subagent_update` received on `parent`'s stream. The first update for a
 /// session announces it: Zed creates its thread, routes the session's traffic on this
 /// connection, and hands the thread to the parent. Later updates patch the association.
-/// The update's `state` is left to the caller, since only v1 uses it as the subagent's
-/// activity.
+/// The update's `state` is left to the caller because v2 separates history from live
+/// state per session, whereas v1 uses the response as the boundary.
 fn apply_subagent_update(
     parent: &Entity<AcpThread>,
     update: &acp_v2::SubagentUpdate,
@@ -820,6 +829,23 @@ fn apply_subagent_update(
         !sessions.borrow().contains_key(&session_id),
         "Session {session_id} cannot become a subagent of {parent_session_id}"
     );
+    let (subagent_root, replay) = {
+        let sessions = sessions.borrow();
+        let parent = sessions
+            .get(&parent_session_id)
+            .context("Parent session was released")?;
+        (
+            parent
+                .subagent_root
+                .clone()
+                .unwrap_or_else(|| parent_session_id.clone()),
+            parent
+                .replay
+                .as_ref()
+                .filter(|replay| !replay.borrow().finished)
+                .cloned(),
+        )
+    };
 
     let (connection, project, parent_action_log) = {
         let parent = parent.read(cx);
@@ -873,7 +899,8 @@ fn apply_subagent_update(
         session_id,
         AcpSession {
             thread: subagent.downgrade(),
-            is_subagent: true,
+            subagent_root: Some(subagent_root),
+            replay,
             suppress_abort_err: false,
             session_modes: None,
             config_options: Some(ConfigOptions::new(Rc::new(RefCell::new(Vec::new())))),
@@ -888,12 +915,33 @@ fn apply_subagent_update(
 }
 
 fn apply_v2_session_notification(
-    notification: InboundSessionNotification,
+    mut notification: InboundSessionNotification,
     thread: &WeakEntity<AcpThread>,
     sessions: &Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    if let InboundSessionUpdate::Subagent(update) = &notification.update {
+    let (is_subagent, replay) = {
+        let sessions = sessions.borrow();
+        let session = sessions
+            .get(&notification.session_id)
+            .filter(|session| session.thread.entity_id() == thread.entity_id())
+            .context("Session was released or replaced before applying an update")?;
+        (session.subagent_root.is_some(), session.replay.clone())
+    };
+    if matches!(notification.update, InboundSessionUpdate::ReplayComplete) {
+        if let Some(replay) = replay {
+            let mut replay = replay.borrow_mut();
+            if !replay.finished {
+                replay.completed.insert(notification.session_id);
+            }
+        }
+        return Ok(());
+    }
+    let replaying = replay.is_some_and(|replay| {
+        let replay = replay.borrow();
+        !replay.finished && !replay.completed.contains(&notification.session_id)
+    });
+    if let InboundSessionUpdate::Subagent(update) = &mut notification.update {
         let parent = thread
             .upgrade()
             .context("Session was released before its subagent was announced")?;
@@ -902,10 +950,30 @@ fn apply_v2_session_notification(
             parent_session_id == notification.session_id,
             "Subagent update belongs to a different ACP session"
         );
-        // In v2 the subagent's own `state_update` reports its activity; the parent's copy
-        // only mirrors it.
-        cx.update(|cx| apply_subagent_update(&parent, update, sessions, cx))?;
-        return Ok(());
+        let state = if replaying {
+            // This is on the parent's stream. Historical grants and work state are
+            // never effective, even if the child has already finished its own replay.
+            update.capabilities = Default::default();
+            Default::default()
+        } else {
+            std::mem::take(&mut update.state)
+        };
+        return cx.update(|cx| {
+            let subagent = apply_subagent_update(&parent, update, sessions, cx)?;
+            subagent.update(cx, |subagent, cx| match state {
+                MaybeUndefined::Undefined => Ok(()),
+                MaybeUndefined::Null => subagent.clear_session_state(cx),
+                MaybeUndefined::Value(state) => subagent.update_v2_subagent_state(state, cx),
+            })
+        });
+    }
+    if is_subagent && let InboundSessionUpdate::State(state) = notification.update {
+        // A child only sends current state after its own marker. Older agents
+        // may send historical snapshots instead, without a marker.
+        if replaying {
+            return Ok(());
+        }
+        return thread.update(cx, |thread, cx| thread.update_v2_subagent_state(state, cx))?;
     }
     if let InboundSessionUpdate::ConfigOptions(update) = &notification.update {
         let config_options = {
@@ -983,9 +1051,15 @@ fn handle_v2_request_permission(
     cx: &mut AsyncApp,
     context: &ClientContext,
 ) {
+    let cancelled = || {
+        acp_v2::RequestPermissionResponse::new(acp_v2::RequestPermissionOutcome::Cancelled(
+            Default::default(),
+        ))
+    };
     let cancellation = responder.cancellation();
     if cancellation.is_cancelled() {
-        return respond_err(responder, agent_client_protocol::Error::request_cancelled());
+        responder.respond(cancelled()).log_err();
+        return;
     }
     let thread = match session_thread(context, &request.session_id) {
         Ok(thread) => thread,
@@ -1019,25 +1093,46 @@ fn handle_v2_request_permission(
                             thread.cancel_permission_request(request_id, cx)
                         })
                         .log_err();
+                    responder.respond(cancelled()).log_err();
+                } else {
+                    respond_err(responder, error);
                 }
-                respond_err(responder, error);
             }
         }
     })
     .detach();
 }
 
-fn handle_v2_create_elicitation<P: Protocol>(
+fn handle_v2_create_elicitation(
     args: acp_v2::CreateElicitationRequest,
-    responder: Responder<acp_v2::CreateElicitationResponse, P>,
+    responder: V2Responder<acp_v2::CreateElicitationResponse>,
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    handle_elicitation(args.into(), responder, true, cx, ctx);
+}
+
+fn handle_elicitation<P: Protocol>(
+    args: ElicitationRequest,
+    responder: Responder<acp_v2::CreateElicitationResponse, P>,
+    respond_with_cancel_action: bool,
+    cx: &mut AsyncApp,
+    ctx: &ClientContext,
+) {
+    let cancelled = move || {
+        if respond_with_cancel_action {
+            Ok(acp_v2::CreateElicitationResponse::new(
+                acp_v2::ElicitationAction::Cancel,
+            ))
+        } else {
+            Err(agent_client_protocol::Error::request_cancelled())
+        }
+    };
     let cancellation = responder.cancellation();
     if cancellation.is_cancelled() {
-        return respond_err(responder, agent_client_protocol::Error::request_cancelled());
+        return respond_result(responder, cancelled());
     }
-    match args.scope() {
+    match args.request.scope() {
         acp_v2::ElicitationScope::Session(scope) => {
             let thread = match session_thread(ctx, &scope.session_id) {
                 Ok(t) => t,
@@ -1072,8 +1167,10 @@ fn handle_v2_create_elicitation<P: Protocol>(
                                     thread.cancel_elicitation(&elicitation_id, cx)
                                 })
                                 .log_err();
+                            respond_result(responder, cancelled());
+                        } else {
+                            respond_err(responder, e);
                         }
-                        respond_err(responder, e);
                     }
                 }
             })
@@ -1116,8 +1213,10 @@ fn handle_v2_create_elicitation<P: Protocol>(
                                     store.cancel_elicitation(&elicitation_id, cx)
                                 })
                                 .log_err();
+                            respond_result(responder, cancelled());
+                        } else {
+                            respond_err(responder, e);
                         }
-                        respond_err(responder, e);
                     }
                 }
             })

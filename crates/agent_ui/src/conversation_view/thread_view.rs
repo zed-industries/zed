@@ -3529,7 +3529,10 @@ impl ThreadView {
                 elicitation_id.clone(),
                 matches!(elicitation.status, ElicitationStatus::Pending { .. }),
                 match &elicitation.request.mode {
-                    acp_v2::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    acp_v2::ElicitationMode::Form(mode) => Some((
+                        mode.requested_schema.clone(),
+                        elicitation.v1_string_patterns.clone(),
+                    )),
                     _ => None,
                 },
             )
@@ -3540,11 +3543,13 @@ impl ThreadView {
         };
 
         if is_pending
-            && let Some(schema) = schema
+            && let Some((schema, patterns)) = schema
             && !self.elicitation_form_states.contains_key(&id)
         {
-            self.elicitation_form_states
-                .insert(id, ElicitationFormState::new(&schema, window, cx));
+            self.elicitation_form_states.insert(
+                id,
+                ElicitationFormState::with_v1_string_patterns(&schema, patterns, window, cx),
+            );
         } else if !is_pending {
             self.elicitation_form_states.remove(&id);
         }
