@@ -4182,7 +4182,7 @@ impl AgentPanel {
         for conversation_view in conversation_views {
             if *thread_id == conversation_view.read(cx).thread_id {
                 if let Some(thread_view) = conversation_view.read(cx).root_thread_view() {
-                    thread_view.update(cx, |view, cx| view.cancel_generation(cx));
+                    thread_view.update(cx, |view, cx| view.stop_all_work(cx));
                     return true;
                 }
             }

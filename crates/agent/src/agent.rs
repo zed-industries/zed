@@ -4199,6 +4199,40 @@ pub(crate) fn interrupted_background_command_message(
     )
 }
 
+// Stopping a thread from the sidebar also stops the work it started in the
+// background. These messages say what will never report back.
+
+pub(crate) fn stopped_background_agent_message(
+    subagent_session_id: &acp_v2::SessionId,
+    title: &str,
+) -> String {
+    format!(
+        "{BACKGROUND_AGENT_RESULT_PREFIX}{subagent_session_id}\" status=\"stopped\">\n\
+         The user stopped this thread, which also stopped the agent \"{title}\" before it \
+         reported back. What it did until then is kept in its own thread. Check its \
+         effects before relying on them.\n\
+         </background_agent_result>\n\n\
+         This message was generated automatically when the user stopped this thread. It \
+         was not written by the user."
+    )
+}
+
+pub(crate) fn stopped_background_command_message(
+    terminal_id: &acp_v2::TerminalId,
+    command: &str,
+) -> String {
+    format!(
+        "{BACKGROUND_COMMAND_RESULT_PREFIX} terminal_id=\"{}\" status=\"stopped\">\n\
+         Command: {command}\n\n\
+         The user stopped this thread, which also killed this command before it finished. \
+         Its output was not kept. Check its effects before relying on them.\n\
+         </background_command_result>\n\n\
+         This message was generated automatically when the user stopped this thread. It \
+         was not written by the user.",
+        terminal_id.0
+    )
+}
+
 /// Delivers `message` to a thread as a new message. A thread that is mid-turn
 /// is steered: its turn ends at the next message boundary and the message
 /// follows, the way a steering message from the user does. An idle thread

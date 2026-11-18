@@ -777,7 +777,8 @@ struct BackgroundCommand {
     id: acp_v2::TerminalId,
     command: SharedString,
     terminal: Rc<dyn TerminalHandle>,
-    /// Whether the agent stopped it, and so already has its output.
+    /// Whether the agent stopped it, and so already has its output, or the
+    /// user stopped the thread. Either way its result is not delivered.
     stopped_by_agent: bool,
 }
 
@@ -4873,6 +4874,65 @@ impl Thread {
             .find(|command| &command.id == id)?;
         command.stopped_by_agent = true;
         Some(command.terminal.clone())
+    }
+
+    /// Stops the subagents and commands this thread started in the background,
+    /// on behalf of the user stopping the thread. As with `stop_agent` and
+    /// `stop_command`, nothing they produce is delivered back, so no turn
+    /// starts. Instead, each one leaves a message after the history saying the
+    /// user stopped it, which the model reads before the user's next message.
+    /// The task resolves once the subagents have stopped.
+    pub fn stop_background_work(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let mut notices = Vec::new();
+
+        let subagents = self
+            .background_subagents
+            .iter()
+            .filter_map(|subagent| subagent.upgrade())
+            .collect::<Vec<_>>();
+        let mut stopping = Vec::with_capacity(subagents.len());
+        for subagent in subagents {
+            let (session_id, title) = {
+                let subagent = subagent.read(cx);
+                (
+                    subagent.id().clone(),
+                    subagent.title().unwrap_or_else(|| "Agent".into()),
+                )
+            };
+            notices.push(crate::stopped_background_agent_message(&session_id, &title));
+            stopping.push(subagent.update(cx, |thread, cx| thread.stop_for_parent(cx)));
+        }
+
+        let mut terminals = Vec::new();
+        for command in &mut self.background_commands {
+            if command.stopped_by_agent {
+                continue;
+            }
+            command.stopped_by_agent = true;
+            notices.push(crate::stopped_background_command_message(
+                &command.id,
+                &command.command,
+            ));
+            terminals.push(command.terminal.clone());
+        }
+
+        if notices.is_empty() {
+            return Task::ready(());
+        }
+        for text in notices {
+            self.messages.push(Arc::new(Message::User(UserMessage {
+                id: ClientUserMessageId::new(),
+                content: Arc::from([UserMessageContent::Text(text)]),
+            })));
+        }
+        cx.notify();
+
+        cx.spawn(async move |_, cx| {
+            for terminal in terminals {
+                terminal.kill(cx).log_err();
+            }
+            futures::future::join_all(stopping).await;
+        })
     }
 
     /// The commands this thread left running in the background, as terminal

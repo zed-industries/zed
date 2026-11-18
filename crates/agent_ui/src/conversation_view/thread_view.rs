@@ -2748,6 +2748,26 @@ impl ThreadView {
         cx.notify();
     }
 
+    /// Cancels the turn like `cancel_generation`, then stops the subagents and
+    /// commands the thread started in the background, which outlive its turn.
+    /// This is what stopping a thread from the sidebar means: the sidebar shows
+    /// a thread with background work as running even while it is idle.
+    pub fn stop_all_work(&mut self, cx: &mut Context<Self>) {
+        self.cancel_generation(cx);
+        let Some(native_thread) = self.as_native_thread(cx) else {
+            return;
+        };
+        let Some(turn_cancelled) = self._cancel_task.take() else {
+            return;
+        };
+        self._cancel_task = Some(cx.spawn(async move |_, cx| {
+            turn_cancelled.await;
+            native_thread
+                .update(cx, |thread, cx| thread.stop_background_work(cx))
+                .await;
+        }));
+    }
+
     fn cancel_tool_call(&self, tool_call_id: acp_v2::ToolCallId, cx: &mut Context<Self>) {
         let cancellation = self
             .thread
