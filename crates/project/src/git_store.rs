@@ -71,12 +71,14 @@ use settings::{GitDiffBaseSetting, Settings, SettingsLocation, SettingsStore, Wo
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
+    cell::RefCell,
     cmp::Ordering,
     collections::{BTreeSet, HashSet, VecDeque, hash_map::Entry},
     future::Future,
     mem,
     ops::Range,
     path::{Path, PathBuf},
+    rc::{Rc, Weak},
     str::FromStr,
     sync::{
         Arc,
@@ -218,6 +220,160 @@ fn pending_hunks(
             )
         })
         .collect()
+}
+
+struct DiffBaseLoad {
+    buffer_id: BufferId,
+    repo_path: RepoPath,
+    kind: DiffBaseLoadKind,
+}
+
+enum DiffBaseLoadKind {
+    /// HEAD and index text.
+    Committed(oneshot::Sender<Result<DiffBasesChange>>),
+    /// Index text.
+    Staged(oneshot::Sender<Result<Option<String>>>),
+}
+
+impl DiffBaseLoad {
+    fn revisions(&self) -> Vec<String> {
+        let path = self.repo_path.as_unix_str();
+        match self.kind {
+            DiffBaseLoadKind::Committed(_) => vec![format!("HEAD:{path}"), format!(":{path}")],
+            DiffBaseLoadKind::Staged(_) => vec![format!(":{path}")],
+        }
+    }
+
+    /// Sends this load's result, given the result of loading its `revisions`.
+    fn finish(self, texts: Result<Vec<Option<Vec<u8>>>>) {
+        match self.kind {
+            DiffBaseLoadKind::Committed(result_tx) => {
+                let result = texts.and_then(|texts| {
+                    let mut texts = texts.into_iter();
+                    let head = texts.next().flatten().map(decode_git_text).transpose()?;
+                    let index = texts.next().flatten().map(decode_git_text).transpose()?;
+                    Ok(if head == index {
+                        DiffBasesChange::SetBoth(head)
+                    } else {
+                        DiffBasesChange::SetEach { index, head }
+                    })
+                });
+                result_tx.send(result).ok();
+            }
+            // Like `GitRepository::load_index_text`, treats an unreadable index entry as a
+            // missing one, so the unstaged diff still opens.
+            DiffBaseLoadKind::Staged(result_tx) => {
+                let index = texts
+                    .context("failed to load index text")
+                    .warn_on_err()
+                    .and_then(|texts| texts.into_iter().next().flatten());
+                result_tx.send(index.map(decode_git_text).transpose()).ok();
+            }
+        }
+    }
+}
+
+/// Loads all groups' revisions with one `git cat-file` process. One unreadable revision fails the
+/// whole batch, so after a failure each group is retried in its own process.
+async fn load_revision_groups(
+    backend: &dyn GitRepository,
+    mut groups: Vec<Vec<String>>,
+) -> Vec<Result<Vec<Option<Vec<u8>>>>> {
+    // `git cat-file --batch` reads one revision per line, so `load_revisions` fails any batch with
+    // a newline in a revision. Loading those groups on their own keeps them from sending every
+    // other group to the retries below.
+    let separate_groups = groups
+        .iter_mut()
+        .enumerate()
+        .filter(|(_, group)| group.iter().any(|revision| revision.contains('\n')))
+        .map(|(index, group)| (index, mem::take(group)))
+        .collect::<Vec<_>>();
+    let mut results = match backend.load_revisions(groups.concat()).await {
+        Ok(texts) => {
+            let mut texts = texts.into_iter();
+            groups
+                .iter()
+                .map(|group| Ok(texts.by_ref().take(group.len()).collect()))
+                .collect()
+        }
+        Err(error) if groups.len() == 1 => vec![Err(error)],
+        Err(error) => {
+            log::warn!(
+                "retrying {} revision groups separately: {error:#}",
+                groups.len()
+            );
+            let mut results = Vec::with_capacity(groups.len());
+            for group in groups {
+                results.push(backend.load_revisions(group).await);
+            }
+            results
+        }
+    };
+    for (index, group) in separate_groups {
+        if let Some(result) = results.get_mut(index) {
+            *result = backend.load_revisions(group).await;
+        }
+    }
+    results
+}
+
+async fn load_diff_bases(state: RepositoryState, loads: Vec<DiffBaseLoad>, cx: AsyncApp) {
+    match state {
+        RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+            // A batch can hold many texts, so decode them off the main thread.
+            cx.background_spawn(async move {
+                let groups = loads.iter().map(DiffBaseLoad::revisions).collect();
+                let results = load_revision_groups(backend.as_ref(), groups).await;
+                for (load, texts) in loads.into_iter().zip(results) {
+                    load.finish(texts);
+                }
+            })
+            .await;
+        }
+        RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+            use proto::open_uncommitted_diff_response::Mode;
+
+            let project_id = project_id.to_proto();
+            for load in loads {
+                let buffer_id = load.buffer_id.to_proto();
+                match load.kind {
+                    DiffBaseLoadKind::Committed(result_tx) => {
+                        let result = async {
+                            let response = client
+                                .request(proto::OpenUncommittedDiff {
+                                    project_id,
+                                    buffer_id,
+                                })
+                                .await?;
+                            let mode =
+                                Mode::try_from(response.mode).ok().context("Invalid mode")?;
+                            Ok(match mode {
+                                Mode::IndexMatchesHead => {
+                                    DiffBasesChange::SetBoth(response.committed_text)
+                                }
+                                Mode::IndexAndHead => DiffBasesChange::SetEach {
+                                    head: response.committed_text,
+                                    index: response.staged_text,
+                                },
+                            })
+                        }
+                        .await;
+                        result_tx.send(result).ok();
+                    }
+                    DiffBaseLoadKind::Staged(result_tx) => {
+                        let result = client
+                            .request(proto::OpenUnstagedDiff {
+                                project_id,
+                                buffer_id,
+                            })
+                            .await
+                            .map(|response| response.staged_text);
+                        result_tx.send(result).ok();
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn decode_git_text(bytes: Vec<u8>) -> Result<String> {
@@ -702,6 +858,8 @@ pub struct Repository {
     job_debug_queue: job_debug_queue::GitJobDebugQueue,
     pending_ops: SumTree<PendingOps>,
     job_id: JobId,
+    // The most recent diff base load job's loads, and `job_id` just after that job was queued.
+    pending_diff_base_loads: (JobId, Weak<RefCell<Vec<DiffBaseLoad>>>),
     askpass_delegates: RemoteAskPassDelegates,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
@@ -6513,6 +6671,8 @@ impl Repository {
             .shared();
         self.job_sender.close_channel();
         self._worker_task = Task::ready(());
+        // Loads queued on the old worker are canceled with it, so later loads need a new job.
+        self.pending_diff_base_loads = Default::default();
         self.active_jobs.clear();
         self.job_debug_queue
             .mark_unfinished_complete(job_debug_queue::CompletedJobStatus::Skipped);
@@ -6597,6 +6757,7 @@ impl Repository {
             latest_askpass_id: 0,
             job_sender: mpsc::unbounded().0,
             job_id: 0,
+            pending_diff_base_loads: Default::default(),
             active_jobs: Default::default(),
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             initial_graph_data: Default::default(),
@@ -6652,6 +6813,7 @@ impl Repository {
             active_jobs: Default::default(),
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             job_id: 0,
+            pending_diff_base_loads: Default::default(),
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
@@ -6750,29 +6912,34 @@ impl Repository {
 
                 let buffer_diff_base_changes = cx
                     .background_spawn(async move {
-                        let mut revisions = Vec::new();
+                        let mut revision_groups = Vec::new();
                         for (_, repo_path, is_symlink, current_index_text, current_head_text) in
                             &repo_diff_state_updates
                         {
+                            let mut revisions = Vec::new();
                             if current_index_text.is_some() && !*is_symlink {
                                 revisions.push(format!(":{}", repo_path.as_unix_str()));
                             }
                             if current_head_text.is_some() && !*is_symlink {
                                 revisions.push(format!("HEAD:{}", repo_path.as_unix_str()));
                             }
+                            revision_groups.push(revisions);
                         }
-
-                        let mut loaded_revisions = backend
-                            .load_revisions(revisions)
-                            .await
-                            .log_err()
-                            .into_iter()
-                            .flatten();
+                        let loaded_groups =
+                            load_revision_groups(backend.as_ref(), revision_groups).await;
 
                         let mut changes = Vec::new();
-                        for (buffer, _, is_symlink, current_index_text, current_head_text) in
-                            &repo_diff_state_updates
+                        for (
+                            (buffer, _, is_symlink, current_index_text, current_head_text),
+                            loaded_revisions,
+                        ) in repo_diff_state_updates.iter().zip(loaded_groups)
                         {
+                            // A buffer whose texts fail to load keeps its current diff bases.
+                            let Some(loaded_revisions) = loaded_revisions.log_err() else {
+                                changes.push((buffer.clone(), None));
+                                continue;
+                            };
+                            let mut loaded_revisions = loaded_revisions.into_iter();
                             let index_text = (current_index_text.is_some() && !*is_symlink)
                                 .then(|| loaded_revisions.next().flatten())
                                 .flatten()
@@ -10309,25 +10476,13 @@ impl Repository {
         repo_path: RepoPath,
         cx: &App,
     ) -> Task<Result<Option<String>>> {
-        let rx = self.send_job("load_staged_text", None, move |state, _| async move {
-            match state {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .load_index_text(repo_path)
-                    .await
-                    .map(decode_git_text)
-                    .transpose(),
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let response = client
-                        .request(proto::OpenUnstagedDiff {
-                            project_id: project_id.to_proto(),
-                            buffer_id: buffer_id.to_proto(),
-                        })
-                        .await?;
-                    Ok(response.staged_text)
-                }
-            }
+        let (result_tx, result_rx) = oneshot::channel();
+        self.queue_diff_base_load(DiffBaseLoad {
+            buffer_id,
+            repo_path,
+            kind: DiffBaseLoadKind::Staged(result_tx),
         });
-        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+        cx.spawn(|_: &mut AsyncApp| async move { result_rx.await? })
     }
 
     fn load_committed_text(
@@ -10336,57 +10491,35 @@ impl Repository {
         repo_path: RepoPath,
         cx: &App,
     ) -> Task<Result<DiffBasesChange>> {
-        let rx = self.send_job("load_committed_text", None, move |state, _| async move {
-            match state {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let revisions = vec![
-                        format!("HEAD:{}", repo_path.as_unix_str()),
-                        format!(":{}", repo_path.as_unix_str()),
-                    ];
-                    let mut loaded_revisions = backend.load_revisions(revisions).await?.into_iter();
-                    let committed_text = loaded_revisions
-                        .next()
-                        .flatten()
-                        .map(decode_git_text)
-                        .transpose()?;
-                    let staged_text = loaded_revisions
-                        .next()
-                        .flatten()
-                        .map(decode_git_text)
-                        .transpose()?;
-                    let diff_bases_change = if committed_text == staged_text {
-                        DiffBasesChange::SetBoth(committed_text)
-                    } else {
-                        DiffBasesChange::SetEach {
-                            index: staged_text,
-                            head: committed_text,
-                        }
-                    };
-                    anyhow::Ok(diff_bases_change)
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    use proto::open_uncommitted_diff_response::Mode;
-
-                    let response = client
-                        .request(proto::OpenUncommittedDiff {
-                            project_id: project_id.to_proto(),
-                            buffer_id: buffer_id.to_proto(),
-                        })
-                        .await?;
-                    let mode = Mode::try_from(response.mode).ok().context("Invalid mode")?;
-                    let bases = match mode {
-                        Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
-                        Mode::IndexAndHead => DiffBasesChange::SetEach {
-                            head: response.committed_text,
-                            index: response.staged_text,
-                        },
-                    };
-                    Ok(bases)
-                }
-            }
+        let (result_tx, result_rx) = oneshot::channel();
+        self.queue_diff_base_load(DiffBaseLoad {
+            buffer_id,
+            repo_path,
+            kind: DiffBaseLoadKind::Committed(result_tx),
         });
+        cx.spawn(|_: &mut AsyncApp| async move { result_rx.await? })
+    }
 
-        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    fn queue_diff_base_load(&mut self, load: DiffBaseLoad) {
+        // Joining only the most recently queued job keeps loads ordered with other git jobs.
+        let (next_job_id, loads) = &self.pending_diff_base_loads;
+        if *next_job_id == self.job_id
+            && let Some(loads) = loads.upgrade()
+        {
+            loads.borrow_mut().push(load);
+            return;
+        }
+        // The job owns the only `Rc`, so its loads are canceled if it's dropped without running,
+        // and no load can join once it starts.
+        let loads = Rc::new(RefCell::new(vec![load]));
+        let pending_loads = Rc::downgrade(&loads);
+        let _ = self.send_job("load_diff_bases", None, move |state, cx| async move {
+            let loads = Rc::into_inner(loads)
+                .map(RefCell::into_inner)
+                .unwrap_or_default();
+            load_diff_bases(state, loads, cx).await;
+        });
+        self.pending_diff_base_loads = (self.job_id, pending_loads);
     }
 
     pub fn load_commit_template_text(
@@ -12068,6 +12201,235 @@ mod tests {
                 "regular file should have a git diff base"
             );
         });
+    }
+
+    async fn setup_repository(
+        cx: &mut TestAppContext,
+        contents_by_path: &[(&str, String)],
+    ) -> (Arc<FakeFs>, Entity<Project>, Entity<Repository>) {
+        use util::path;
+
+        let project_root = Path::new(path!("/project"));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(project_root, json!({ ".git": {} })).await;
+        fs.set_head_and_index_for_repo(&project_root.join(".git"), contents_by_path);
+        let project = Project::test(fs.clone(), [project_root], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        (fs, project, repository)
+    }
+
+    #[gpui::test]
+    async fn test_diff_base_loads_fail_when_their_job_is_dropped(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, repository) = setup_repository(cx, &[]).await;
+
+        let load_both = |repository: &mut Repository, cx: &mut Context<Repository>| {
+            let buffer_id = BufferId::new(1).unwrap();
+            (
+                repository.load_committed_text(buffer_id, repo_path("a.txt"), cx),
+                repository.load_staged_text(buffer_id, repo_path("a.txt"), cx),
+            )
+        };
+        let queued_loads = repository.update(cx, |repository, cx| {
+            let loads = load_both(repository, cx);
+            // Cancels the worker. Running the executor then drops its queued job and its end of
+            // the job channel.
+            repository._worker_task = Task::ready(());
+            loads
+        });
+        cx.run_until_parked();
+        let unsent_loads = repository.update(cx, load_both);
+        cx.run_until_parked();
+        for (committed, staged) in [queued_loads, unsent_loads] {
+            assert!(committed.now_or_never().expect("load hung").is_err());
+            assert!(staged.now_or_never().expect("load hung").is_err());
+        }
+    }
+
+    #[gpui::test]
+    async fn test_diff_base_loads_join_only_the_newest_queued_job(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, repository) = setup_repository(cx, &[("a.txt", "old\n".into())]).await;
+
+        let ((committed, staged), index_write, staged_after_write) =
+            repository.update(cx, |repository, cx| {
+                let buffer_id = BufferId::new(1).unwrap();
+                let first_job_id = repository.job_id;
+                let batched_loads = (
+                    repository.load_committed_text(buffer_id, repo_path("a.txt"), cx),
+                    repository.load_staged_text(buffer_id, repo_path("a.txt"), cx),
+                );
+                assert_eq!(repository.job_id, first_job_id + 1);
+                let index_write = repository.spawn_set_index_text_job(
+                    repo_path("a.txt"),
+                    Some("new\n".into()),
+                    encoding_rs::UTF_8,
+                    false,
+                    None,
+                    cx,
+                );
+                let staged_after_write =
+                    repository.load_staged_text(buffer_id, repo_path("a.txt"), cx);
+                assert_eq!(repository.job_id, first_job_id + 3);
+                (batched_loads, index_write, staged_after_write)
+            });
+        assert!(matches!(
+            committed.await.unwrap(),
+            DiffBasesChange::SetBoth(Some(text)) if text == "old\n"
+        ));
+        assert_eq!(staged.await.unwrap().as_deref(), Some("old\n"));
+        index_write.await.unwrap().unwrap();
+        assert_eq!(staged_after_write.await.unwrap().as_deref(), Some("new\n"));
+    }
+
+    #[gpui::test]
+    async fn test_diff_base_load_with_unreadable_revision_fails_alone(cx: &mut TestAppContext) {
+        init_test(cx);
+        let paths = ["a.txt", "b.txt", "c.txt"];
+        let (fs, _, repository) =
+            setup_repository(cx, &paths.map(|path| (path, format!("{path}\n")))).await;
+        fs.with_git_state(Path::new(util::path!("/project/.git")), false, |state| {
+            state
+                .simulated_unreadable_revisions
+                .insert("HEAD:b.txt".into());
+        })
+        .unwrap();
+
+        let ([committed_a, committed_b, committed_c], staged_b) =
+            repository.update(cx, |repository, cx| {
+                let buffer_id = BufferId::new(1).unwrap();
+                (
+                    paths
+                        .map(|path| repository.load_committed_text(buffer_id, repo_path(path), cx)),
+                    repository.load_staged_text(buffer_id, repo_path("b.txt"), cx),
+                )
+            });
+        assert!(matches!(
+            committed_a.await.unwrap(),
+            DiffBasesChange::SetBoth(Some(text)) if text == "a.txt\n"
+        ));
+        assert!(committed_b.await.is_err());
+        assert!(matches!(
+            committed_c.await.unwrap(),
+            DiffBasesChange::SetBoth(Some(text)) if text == "c.txt\n"
+        ));
+        assert_eq!(staged_b.await.unwrap().as_deref(), Some("b.txt\n"));
+    }
+
+    #[gpui::test]
+    async fn test_diff_base_load_with_newline_in_path_loads_separately(cx: &mut TestAppContext) {
+        init_test(cx);
+        let paths = ["a.txt", "new\nline.txt", "c.txt"];
+        let (fs, _, repository) =
+            setup_repository(cx, &paths.map(|path| (path, format!("{path}\n")))).await;
+        let dot_git = Path::new(util::path!("/project/.git"));
+        cx.run_until_parked();
+        fs.with_git_state(dot_git, false, |state| state.load_revisions_calls.clear())
+            .unwrap();
+
+        let [committed_a, committed_newline, committed_c] =
+            repository.update(cx, |repository, cx| {
+                let buffer_id = BufferId::new(1).unwrap();
+                paths.map(|path| repository.load_committed_text(buffer_id, repo_path(path), cx))
+            });
+        assert!(matches!(
+            committed_a.await.unwrap(),
+            DiffBasesChange::SetBoth(Some(text)) if text == "a.txt\n"
+        ));
+        assert!(committed_newline.await.is_err());
+        assert!(matches!(
+            committed_c.await.unwrap(),
+            DiffBasesChange::SetBoth(Some(text)) if text == "c.txt\n"
+        ));
+        let calls = fs
+            .with_git_state(dot_git, false, |state| {
+                mem::take(&mut state.load_revisions_calls)
+            })
+            .unwrap();
+        assert_eq!(
+            calls,
+            [
+                vec!["HEAD:a.txt", ":a.txt", "HEAD:c.txt", ":c.txt"],
+                vec!["HEAD:new\nline.txt", ":new\nline.txt"],
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_diff_base_load_after_worker_respawn_starts_a_new_job(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, project, repository) = setup_repository(cx, &[("a.txt", "a\n".into())]).await;
+        let environment = project.read_with(cx, |project, _| project.environment().downgrade());
+
+        let (canceled_load, load) = repository.update(cx, |repository, cx| {
+            let buffer_id = BufferId::new(1).unwrap();
+            let canceled_load = repository.load_staged_text(buffer_id, repo_path("a.txt"), cx);
+            repository.respawn_local_worker(environment, fs, true, cx);
+            let load = repository.load_staged_text(buffer_id, repo_path("a.txt"), cx);
+            (canceled_load, load)
+        });
+        assert!(canceled_load.await.is_err());
+        assert_eq!(load.await.unwrap().as_deref(), Some("a\n"));
+    }
+
+    #[gpui::test]
+    async fn test_diff_base_reload_with_unreadable_revision_fails_alone(cx: &mut TestAppContext) {
+        use util::path;
+
+        init_test(cx);
+        let project_root = Path::new(path!("/project"));
+        let dot_git = project_root.join(".git");
+        let names = ["a.txt", "b.txt", "c.txt"];
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            project_root,
+            json!({ ".git": {}, "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n" }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(&dot_git, &names.map(|name| (name, format!("old {name}"))));
+        let project = Project::test(fs.clone(), [project_root], cx).await;
+        let mut buffers_and_diffs = Vec::new();
+        for name in names {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(project_root.join(name), cx)
+                })
+                .await
+                .unwrap();
+            let diff = project
+                .update(cx, |project, cx| {
+                    project.open_uncommitted_diff(buffer.clone(), cx)
+                })
+                .await
+                .unwrap();
+            buffers_and_diffs.push((buffer, diff));
+        }
+
+        fs.with_git_state(&dot_git, false, |state| {
+            state
+                .simulated_unreadable_revisions
+                .insert("HEAD:b.txt".into());
+        })
+        .unwrap();
+        fs.set_head_and_index_for_repo(&dot_git, &names.map(|name| (name, format!("new {name}"))));
+        cx.run_until_parked();
+
+        let base_texts = buffers_and_diffs
+            .iter()
+            .map(|(_, diff)| diff.read_with(cx, |diff, cx| diff.base_text_string(cx)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            base_texts,
+            [
+                Some("new a.txt".into()),
+                Some("old b.txt".into()),
+                Some("new c.txt".into()),
+            ]
+        );
     }
 
     #[gpui::test]
