@@ -514,7 +514,7 @@ impl ToOffset for Anchor {
 }
 
 impl ToPoint for Anchor {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point {
         self.summary(snapshot)
     }
     fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> rope::PointUtf16 {

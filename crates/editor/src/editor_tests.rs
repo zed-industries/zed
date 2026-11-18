@@ -18681,7 +18681,7 @@ async fn test_snippet_placeholder_choices(cx: &mut TestAppContext) {
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
-    _ = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
         let snippet = Snippet::parse("type ${1|,i32,u32|} = $2").unwrap();
 
         editor
@@ -18734,7 +18734,7 @@ async fn test_snippet_choices_menu_survives_completion_refresh(cx: &mut TestAppC
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
-    _ = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
         let snippet = Snippet::parse("type ${1|i32,u32|} = $2").unwrap();
 
         editor
@@ -18789,7 +18789,7 @@ async fn test_snippet_tabstop_navigation_with_placeholders(cx: &mut TestAppConte
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
-    _ = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
         let snippet = Snippet::parse("type ${1|,i32,u32|} = $2; $3").unwrap();
 
         editor
@@ -18853,7 +18853,7 @@ async fn test_snippet_tabstop_navigation_with_placeholders(cx: &mut TestAppConte
         );
     });
 
-    _ = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
         editor.select_all(&SelectAll, window, cx);
         editor.backspace(&Backspace, window, cx);
 
@@ -22668,9 +22668,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            signature_help_provider: Some(lsp::SignatureHelpOptions {
-                ..Default::default()
-            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -22988,9 +22986,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            signature_help_provider: Some(lsp::SignatureHelpOptions {
-                ..Default::default()
-            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -23200,9 +23196,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            signature_help_provider: Some(lsp::SignatureHelpOptions {
-                ..Default::default()
-            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -23458,9 +23452,7 @@ async fn test_signature_help_multiple_signatures(cx: &mut TestAppContext) {
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            signature_help_provider: Some(lsp::SignatureHelpOptions {
-                ..Default::default()
-            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -26197,9 +26189,7 @@ async fn test_as_is_completions(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                ..Default::default()
-            }),
+            completion_provider: Some(lsp::CompletionOptions::default()),
             ..Default::default()
         },
         cx,
@@ -26250,9 +26240,7 @@ async fn test_panic_during_c_completions(cx: &mut TestAppContext) {
     let mut cx = EditorLspTestContext::new(
         language,
         lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                ..lsp::CompletionOptions::default()
-            }),
+            completion_provider: Some(lsp::CompletionOptions::default()),
             ..lsp::ServerCapabilities::default()
         },
         cx,
@@ -41486,12 +41474,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     let project = Project::test(fs, [path!("/root/a").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let _fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            ..FakeLspAdapter::default()
-        },
-    );
+    let _fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
@@ -42604,9 +42587,7 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                ..Default::default()
-            }),
+            completion_provider: Some(lsp::CompletionOptions::default()),
             ..Default::default()
         },
         cx,
@@ -44967,12 +44948,7 @@ async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
     let language = rust_lang();
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(language.clone());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            ..FakeLspAdapter::default()
-        },
-    );
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer1 = project
         .update(cx, |project, cx| {

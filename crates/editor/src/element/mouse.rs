@@ -935,11 +935,6 @@ impl EditorElement {
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
         {
-            #[allow(
-                clippy::collapsible_if,
-                clippy::needless_return,
-                reason = "The cfg-block below makes this a false positive"
-            )]
             if !text_hitbox.is_hovered(window) || editor.read_only(cx) {
                 return;
             }
