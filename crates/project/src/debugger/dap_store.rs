@@ -818,6 +818,33 @@ impl DapStore {
         })
     }
 
+    /// Chromium hands a launch to a running process that owns the same profile, and on macOS
+    /// closing a browser's last window keeps that process alive. A browser left by an earlier
+    /// session would then receive the new launch's blank window while the new adapter fails,
+    /// and the earlier session's reconnect would attach to that window, so close it first.
+    pub(super) fn close_browsers_sharing_profile(
+        &mut self,
+        binary: &DebugAdapterBinary,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let Some(profile) = LaunchedBrowser::launch_profile(binary) else {
+            return Task::ready(());
+        };
+        let (conflicting, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.launched_browsers)
+            .into_iter()
+            .partition(|browser| browser.profile() == &profile);
+        self.launched_browsers = kept;
+        if conflicting.is_empty() {
+            return Task::ready(());
+        }
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            for browser in conflicting {
+                browser.close_and_wait_for_exit(&executor).await.log_err();
+            }
+        })
+    }
+
     fn shutdown_on_workspace_close(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
         if let Some(task) = &self.workspace_shutdown_task {
             return task.clone();

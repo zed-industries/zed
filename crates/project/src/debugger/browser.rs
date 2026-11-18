@@ -1,22 +1,26 @@
 use anyhow::{Context as _, Result, bail};
 use async_tungstenite::{client_async, tungstenite};
 use dap::adapters::DebugAdapterBinary;
-use futures::{AsyncReadExt as _, StreamExt as _};
+use futures::{AsyncReadExt as _, FutureExt as _, StreamExt as _};
+use gpui::BackgroundExecutor;
 use http_client::{HttpClient, HttpRequestExt as _};
 use serde::Deserialize;
 use smol::net::TcpStream;
+use std::{path::PathBuf, time::Duration};
 use url::Url;
 
 #[derive(PartialEq, Eq)]
 pub(super) struct LaunchedBrowser {
     endpoint: Url,
+    profile: BrowserProfile,
 }
 
+/// The `--user-data-dir` a launched browser runs with, or `None` for js-debug's default profile.
+pub(super) type BrowserProfile = Option<PathBuf>;
+
 impl LaunchedBrowser {
-    pub async fn capture(
-        binary: &DebugAdapterBinary,
-        http_client: &dyn HttpClient,
-    ) -> Result<Option<Self>> {
+    /// The profile of a browser that Zed tracks for this launch, if it tracks one.
+    pub fn launch_profile(binary: &DebugAdapterBinary) -> Option<BrowserProfile> {
         let configuration = &binary.request_args.configuration;
         if binary.request_args.request != dap::StartDebuggingRequestArgumentsRequest::Launch
             || !matches!(
@@ -29,10 +33,49 @@ impl LaunchedBrowser {
                 .get("browserLaunchLocation")
                 .and_then(serde_json::Value::as_str)
                 == Some("ui")
+            || configuration
+                .get("port")
+                .and_then(serde_json::Value::as_u64)
+                .is_none()
         {
-            return Ok(None);
+            return None;
         }
-        let Some(port) = configuration
+        let mut arguments = configuration
+            .get("runtimeArgs")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str);
+        while let Some(argument) = arguments.next() {
+            if let Some(directory) = argument.strip_prefix("--user-data-dir=") {
+                return Some(Some(PathBuf::from(directory)));
+            }
+            if argument == "--user-data-dir" {
+                return Some(arguments.next().map(PathBuf::from));
+            }
+        }
+        Some(
+            configuration
+                .get("userDataDir")
+                .and_then(serde_json::Value::as_str)
+                .map(PathBuf::from),
+        )
+    }
+
+    pub fn profile(&self) -> &BrowserProfile {
+        &self.profile
+    }
+
+    pub async fn capture(
+        binary: &DebugAdapterBinary,
+        http_client: &dyn HttpClient,
+    ) -> Result<Option<Self>> {
+        let Some(profile) = Self::launch_profile(binary) else {
+            return Ok(None);
+        };
+        let Some(port) = binary
+            .request_args
+            .configuration
             .get("port")
             .and_then(serde_json::Value::as_u64)
         else {
@@ -64,7 +107,43 @@ impl LaunchedBrowser {
         // The browser ID in the endpoint prevents closing a different process if the port is reused.
         Ok(Some(Self {
             endpoint: version.web_socket_debugger_url,
+            profile,
         }))
+    }
+
+    /// Closes the browser and waits for it to release its profile, so a browser launched next
+    /// with the same profile starts its own process instead of handing its window to this one.
+    pub async fn close_and_wait_for_exit(self, executor: &BackgroundExecutor) -> Result<()> {
+        let host = self
+            .endpoint
+            .host_str()
+            .context("Browser debugging endpoint has no host")?
+            .to_owned();
+        let port = self
+            .endpoint
+            .port_or_known_default()
+            .context("Browser debugging endpoint has no port")?;
+        let singleton_lock = self
+            .profile
+            .as_ref()
+            .map(|profile| profile.join("SingletonLock"));
+        futures::select_biased! {
+            result = self.close().fuse() => result?,
+            _ = executor.timer(Duration::from_secs(3)).fuse() => {
+                bail!("Timed out closing a browser launched by the debugger")
+            }
+        }
+        for _ in 0..50 {
+            let endpoint_closed = TcpStream::connect((host.as_str(), port)).await.is_err();
+            let profile_released = singleton_lock
+                .as_ref()
+                .is_none_or(|lock| std::fs::symlink_metadata(lock).is_err());
+            if endpoint_closed && profile_released {
+                return Ok(());
+            }
+            executor.timer(Duration::from_millis(100)).await;
+        }
+        bail!("The browser launched by the debugger did not exit")
     }
 
     pub async fn close(self) -> Result<()> {
@@ -117,7 +196,7 @@ impl LaunchedBrowser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{AsyncBufReadExt as _, AsyncWriteExt as _, FutureExt as _};
+    use futures::{AsyncBufReadExt as _, AsyncWriteExt as _};
     use http_client::{AsyncBody, FakeHttpClient, Response};
     use serde_json::json;
     use smol::net::TcpListener;
@@ -141,6 +220,49 @@ mod tests {
                 request,
             },
         }
+    }
+
+    #[test]
+    fn identifies_the_profile_of_tracked_browser_launches() {
+        let launch = dap::StartDebuggingRequestArgumentsRequest::Launch;
+        let profile =
+            |configuration| LaunchedBrowser::launch_profile(&binary(configuration, launch));
+        assert_eq!(
+            profile(json!({
+                "type": "pwa-chrome", "port": 9222,
+                "runtimeArgs": ["--disable-gpu", "--user-data-dir=/chrome-dev"],
+            })),
+            Some(Some(PathBuf::from("/chrome-dev")))
+        );
+        assert_eq!(
+            profile(json!({
+                "type": "pwa-msedge", "port": 9222,
+                "runtimeArgs": ["--user-data-dir", "/edge-dev"],
+            })),
+            Some(Some(PathBuf::from("/edge-dev")))
+        );
+        assert_eq!(
+            profile(json!({"type": "pwa-chrome", "port": 9222, "userDataDir": "/configured"})),
+            Some(Some(PathBuf::from("/configured")))
+        );
+        assert_eq!(
+            profile(json!({"type": "pwa-chrome", "port": 9222})),
+            Some(None)
+        );
+        for configuration in [
+            json!({"type": "pwa-chrome"}),
+            json!({"type": "pwa-node", "port": 9222}),
+            json!({"type": "pwa-chrome", "port": 9222, "browserLaunchLocation": "ui"}),
+        ] {
+            assert_eq!(profile(configuration), None);
+        }
+        assert_eq!(
+            LaunchedBrowser::launch_profile(&binary(
+                json!({"type": "pwa-chrome", "port": 9222}),
+                dap::StartDebuggingRequestArgumentsRequest::Attach,
+            )),
+            None
+        );
     }
 
     #[test]
@@ -239,6 +361,7 @@ mod tests {
                 endpoint: Url::parse(&format!(
                     "ws://127.0.0.1:{port}/devtools/browser/exited-browser"
                 ))?,
+                profile: None,
             };
             let server = smol::spawn(async move {
                 let (stream, _) = listener.accept().await?;
@@ -364,7 +487,12 @@ mod tests {
                     .iter()
                     .any(|target| target["targetId"] == other["targetId"])
             );
-            LaunchedBrowser { endpoint }.close().await?;
+            LaunchedBrowser {
+                endpoint,
+                profile: None,
+            }
+            .close()
+            .await?;
             futures::select_biased! {
                 status = process.status().fuse() => { status?; },
                 _ = futures::FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(3))) => bail!("Browser process survived workspace cleanup"),

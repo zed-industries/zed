@@ -1021,6 +1021,13 @@ impl Session {
         let parent_session = self.parent_session.clone();
 
         cx.spawn(async move |this, cx| {
+            if parent_session.is_none() {
+                dap_store
+                    .update(cx, |store, cx| {
+                        store.close_browsers_sharing_profile(&binary, cx)
+                    })?
+                    .await;
+            }
             let mode = RunningMode::new(
                 id,
                 parent_session,
