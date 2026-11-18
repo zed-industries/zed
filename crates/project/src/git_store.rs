@@ -113,7 +113,6 @@ pub struct GitStore {
     display_diffs: HashMap<RepositoryId, DisplayDiff>,
     worktree_ids: HashMap<RepositoryId, HashSet<WorktreeId>>,
     active_repo_id: Option<RepositoryId>,
-    #[allow(clippy::type_complexity)]
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
@@ -1186,9 +1185,7 @@ impl GitStore {
 
         _subscriptions.push(cx.observe_global::<SettingsStore>(|this, cx| {
             let setting = ProjectSettings::get_global(cx).git.diff_base;
-            if setting != this.diff_base {
-                this.set_diff_base(setting, cx);
-            }
+            this.set_diff_base(setting, cx);
             this.activate_parked_repositories_where_parking_disabled(cx);
         }));
 
@@ -2229,11 +2226,6 @@ impl GitStore {
         diff_state.read(cx).unstaged_diff.as_ref()?.upgrade()
     }
 
-    pub fn get_staged_diff(&self, buffer_id: BufferId, cx: &App) -> Option<Entity<BufferDiff>> {
-        let diff_state = self.diffs.get(&buffer_id)?;
-        diff_state.read(cx).staged_diff()
-    }
-
     pub fn get_uncommitted_diff(
         &self,
         buffer_id: BufferId,
@@ -2241,16 +2233,6 @@ impl GitStore {
     ) -> Option<Entity<BufferDiff>> {
         let diff_state = self.diffs.get(&buffer_id)?;
         diff_state.read(cx).uncommitted_diff.as_ref()?.upgrade()
-    }
-
-    pub fn get_diff_since_oid(
-        &self,
-        buffer_id: BufferId,
-        oid: Option<git::Oid>,
-        cx: &App,
-    ) -> Option<Entity<BufferDiff>> {
-        let diff_state = self.diffs.get(&buffer_id)?;
-        diff_state.read(cx).oid_diff(oid)
     }
 
     /// Whether this buffer's index text is known to match its committed text
@@ -5469,7 +5451,7 @@ impl BufferGitState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
-        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
+        self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
     }
 
     fn reparse_conflict_markers(
@@ -6249,8 +6231,8 @@ impl RepositorySnapshot {
         let mut updated_statuses: Vec<proto::StatusEntry> = Vec::new();
         let mut removed_statuses: Vec<String> = Vec::new();
 
-        let mut new_statuses = self.statuses_by_path.iter().peekable();
-        let mut old_statuses = old.statuses_by_path.iter().peekable();
+        let mut new_statuses = self.statuses_by_path.iter();
+        let mut old_statuses = old.statuses_by_path.iter();
 
         let mut current_new_entry = new_statuses.next();
         let mut current_old_entry = old_statuses.next();
@@ -6392,17 +6374,6 @@ impl RepositorySnapshot {
         );
 
         Ok(self.path_style.join(&worktree_directory, project_name))
-    }
-
-    /// The main worktree is the original checkout that other worktrees were
-    /// created from.
-    ///
-    /// For example, if you had both `~/code/zed` and `~/code/worktrees/zed-2`,
-    /// then `~/code/zed` is the main worktree and `~/code/worktrees/zed-2` is a linked worktree.
-    ///
-    /// Submodules also return `true` here, since they are not linked worktrees.
-    pub fn is_main_worktree(&self) -> bool {
-        !self.is_linked_worktree()
     }
 
     /// Returns true if this repository is a linked worktree, that is, one that
@@ -7168,14 +7139,6 @@ impl Repository {
         self.snapshot.abs_path_to_repo_path(&abs_path)
     }
 
-    pub fn contains_sub_repo(&self, other: &Entity<Self>, cx: &App) -> bool {
-        other
-            .read(cx)
-            .snapshot
-            .work_directory_abs_path
-            .starts_with(&self.snapshot.work_directory_abs_path)
-    }
-
     pub fn commit_message_buffer(&self) -> Option<&Entity<Buffer>> {
         self.commit_message_buffer.as_ref()
     }
@@ -7677,13 +7640,11 @@ impl Repository {
                 .initial_graph_data
                 .entry(graph_data_key.clone())
                 .and_modify(|graph_data| {
-                    if !graph_data.subscribers.is_empty() {
-                        graph_data.subscribers.retain(|sender| {
-                            sender
-                                .try_send(Ok(initial_graph_commit_data.clone()))
-                                .is_ok()
-                        });
-                    }
+                    graph_data.subscribers.retain(|sender| {
+                        sender
+                            .try_send(Ok(initial_graph_commit_data.clone()))
+                            .is_ok()
+                    });
 
                     for commit_data in initial_graph_commit_data {
                         graph_data

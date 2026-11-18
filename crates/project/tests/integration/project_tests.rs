@@ -25,7 +25,6 @@ use buffer_diff::{
     BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
 };
 use collections::{BTreeSet, HashMap, HashSet};
-use encoding_rs;
 use fs::{FakeFs, PathEventKind, RealFs, RenameOptions};
 use futures::{FutureExt as _, StreamExt, channel::oneshot, future};
 use git::{
@@ -1719,9 +1718,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         "Python",
         FakeLspAdapter {
             name: "ty",
-            capabilities: lsp::ServerCapabilities {
-                ..Default::default()
-            },
+            capabilities: Default::default(),
             ..Default::default()
         },
     );
@@ -1815,7 +1812,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .await;
 
     assert!(currently_active_toolchain.is_none());
-    let _ = project
+    project
         .update(cx, |this, cx| {
             let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
             this.activate_toolchain(
@@ -17297,7 +17294,6 @@ async fn test_staging_random_hunks_with_edits(
         )
     }
 
-    #[allow(clippy::type_complexity)]
     fn capture_diff_state(
         diff: &Entity<BufferDiff>,
         cx: &mut gpui::TestAppContext,
@@ -21610,7 +21606,6 @@ fn assert_entry_git_state(
 #[cfg(any())]
 const GIT_STATUS_CONFLICTED: &str = "UU";
 
-#[allow(clippy::disallowed_methods)]
 fn git_cmd(work_dir: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(work_dir)

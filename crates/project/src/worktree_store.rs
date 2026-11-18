@@ -283,7 +283,6 @@ pub struct WorktreeStore {
     retain_worktrees: bool,
     worktrees: Vec<WorktreeHandle>,
     scanning_enabled: bool,
-    #[allow(clippy::type_complexity)]
     loading_worktrees:
         HashMap<Arc<SanitizedPath>, Shared<Task<Result<Entity<Worktree>, Arc<anyhow::Error>>>>>,
     initial_scan_complete: (watch::Sender<bool>, watch::Receiver<bool>),
@@ -1119,21 +1118,6 @@ impl WorktreeStore {
         }
         self.update_initial_scan_state(cx);
         self.send_project_updates(cx);
-    }
-
-    pub fn worktree_for_main_worktree_path(
-        &self,
-        path: &Path,
-        cx: &App,
-    ) -> Option<Entity<Worktree>> {
-        self.visible_worktrees(cx).find(|worktree| {
-            let worktree = worktree.read(cx);
-            if let Some(common_dir) = worktree.root_repo_common_dir() {
-                common_dir.parent() == Some(path)
-            } else {
-                worktree.abs_path().as_ref() == path
-            }
-        })
     }
 
     fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {

@@ -2899,13 +2899,6 @@ impl FakeFs {
         .unwrap();
     }
 
-    pub fn set_create_worktree_error(&self, dot_git: &Path, message: Option<String>) {
-        self.with_git_state(dot_git, true, |state| {
-            state.simulated_create_worktree_error = message;
-        })
-        .unwrap();
-    }
-
     /// Makes subsequent `remove_dir` calls for `path` fail with `message`.
     pub fn set_remove_dir_error(&self, path: impl AsRef<Path>, message: String) {
         self.state

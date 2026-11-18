@@ -98,12 +98,7 @@ impl LspCommand for ExpandMacro {
         _: LanguageServerId,
         _: AsyncApp,
     ) -> anyhow::Result<ExpandedMacro> {
-        Ok(message
-            .map(|message| ExpandedMacro {
-                name: message.name,
-                expansion: message.expansion,
-            })
-            .unwrap_or_default())
+        Ok(message.unwrap_or_default())
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtExpandMacro {
@@ -239,12 +234,7 @@ impl LspCommand for OpenDocs {
         _: LanguageServerId,
         _: AsyncApp,
     ) -> anyhow::Result<DocsUrls> {
-        Ok(message
-            .map(|message| DocsUrls {
-                web: message.web,
-                local: message.local,
-            })
-            .unwrap_or_default())
+        Ok(message.unwrap_or_default())
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtOpenDocs {

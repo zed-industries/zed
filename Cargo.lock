@@ -17970,11 +17970,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "futures 0.3.34",
  "gpui",
  "hex",
  "log",
- "parking_lot",
  "pretty_assertions",
  "proto",
  "schemars 1.0.4",

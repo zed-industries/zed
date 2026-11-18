@@ -417,28 +417,6 @@ impl ContextServerStore {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn test_maintain_server_loop(
-        context_server_factory: Option<ContextServerFactory>,
-        registry: Entity<ContextServerDescriptorRegistry>,
-        worktree_store: Entity<WorktreeStore>,
-        weak_project: Option<WeakEntity<Project>>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::new_internal(
-            true,
-            context_server_factory,
-            registry,
-            worktree_store,
-            weak_project,
-            ContextServerStoreState::Local {
-                downstream_client: None,
-                is_headless: false,
-            },
-            cx,
-        )
-    }
-
-    #[cfg(feature = "test-support")]
     pub fn set_context_server_factory(&mut self, factory: ContextServerFactory) {
         self.context_server_factory = Some(factory);
     }
