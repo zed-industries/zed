@@ -3,7 +3,7 @@ title: Zed Industries Privacy Policy
 slug: privacy-policy
 ---
 
-**Last Updated**: November 17, 2026
+**Last Updated**: November 18, 2026
 
 ## Summary
 

@@ -3,7 +3,7 @@ title: Zed Product Terms
 slug: terms/zed
 ---
 
-**Last Updated:** November 17, 2026
+**Last Updated:** November 18, 2026
 
 These Zed Product Terms apply to Customer’s access to and use of the downloadable Zed code-editing application and related online or cloud services (the “**Zed Product**”) made available by Zed Industries. They supplement the [General Terms of Service](https://zed.dev/terms) (the “**General Terms**”), which are incorporated by reference, and form part of the Agreement. Capitalized terms not defined here have the meanings given in the [General Terms](https://zed.dev/terms) or, for terms used in connection with the Processing of Personal Data, the DPA.
 

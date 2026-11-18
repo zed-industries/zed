@@ -5,7 +5,7 @@ slug: terms
 
 *These General Terms of Service, together with the Product Terms applicable to each Product Customer uses, govern Customer's use of Zed Industries' Products.*
 
-**Last Updated**: November 17, 2026
+**Last Updated**: November 18, 2026
 
 Welcome, and thank you for your interest in Zed Industries, Inc. (“**Zed Industries**,” “**we**,” or “**us**”) and our websites at [www.zed.dev](https://www.zed.dev) and [www.delta.dev](https://delta.dev), along with our Software and Services (each Software and/or Services offering with its own Product Terms, a “**Product**,” and collectively, the “**Products**”). These General Terms of Service are a legally binding contract between you and Zed Industries regarding your use of the Products.
 
