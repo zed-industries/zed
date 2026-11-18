@@ -3672,6 +3672,9 @@ impl Window {
     #[inline]
     fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
+        if bounds.is_empty() {
+            return bounds.scale(scale_factor);
+        }
         let left = floor_to_device_pixel(bounds.left().0, scale_factor);
         let top = floor_to_device_pixel(bounds.top().0, scale_factor);
         let right = ceil_to_device_pixel(bounds.right().0, scale_factor).max(left);
@@ -3684,13 +3687,8 @@ impl Window {
 
     #[inline]
     fn snapped_content_mask(&self) -> ContentMask<ScaledPixels> {
-        let bounds = self.content_mask().bounds;
         ContentMask {
-            bounds: if bounds.is_empty() {
-                bounds.scale(self.scale_factor())
-            } else {
-                self.cover_bounds(bounds)
-            },
+            bounds: self.cover_bounds(self.content_mask().bounds),
         }
     }
 
