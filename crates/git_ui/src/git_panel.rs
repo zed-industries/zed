@@ -656,7 +656,7 @@ enum CommitHistory {
     Loading,
     /// A non-empty list can still grow on later fetches.
     /// An empty list means the repository has no commits.
-    Loaded(Rc<[CommitHistoryEntry]>),
+    Loaded(Vec<CommitHistoryEntry>),
     Error(SharedString),
 }
 
@@ -669,7 +669,7 @@ fn last_op_keeps_staged_changes(ops: &pending_op::PendingOps) -> bool {
 }
 
 fn commit_history_from_response(
-    entries: Rc<[CommitHistoryEntry]>,
+    entries: Vec<CommitHistoryEntry>,
     is_loading: bool,
     error: Option<SharedString>,
 ) -> CommitHistory {
@@ -680,7 +680,7 @@ fn commit_history_from_response(
     } else if is_loading {
         CommitHistory::Loading
     } else {
-        CommitHistory::Loaded(Rc::from([]))
+        CommitHistory::Loaded(Vec::new())
     }
 }
 
@@ -1361,6 +1361,7 @@ pub struct GitPanel {
     active_tab: GitPanelTab,
     commit_history_scroll_handle: UniformListScrollHandle,
     commit_history: CommitHistory,
+    loaded_commit_history_log_source: Option<LogSource>,
     focused_history_entry: Option<usize>,
     active_history_sha: Option<Oid>,
     history_keyboard_nav: bool,
@@ -1405,6 +1406,19 @@ impl From<&Arc<InitialGraphCommitData>> for CommitHistoryEntry {
                 .collect(),
         }
     }
+}
+
+/// Returns the commits following `existing` when `existing` is still a prefix of
+/// `commits`, judged by its first and last entries.
+fn commits_after_prefix<'a>(
+    existing: &[CommitHistoryEntry],
+    commits: &'a [Arc<InitialGraphCommitData>],
+) -> Option<&'a [Arc<InitialGraphCommitData>]> {
+    let (first, last) = (existing.first()?, existing.last()?);
+    let new_commits = commits.get(existing.len()..)?;
+    let is_prefix =
+        commits.first()?.sha == first.sha && commits.get(existing.len() - 1)?.sha == last.sha;
+    is_prefix.then_some(new_commits)
 }
 
 const MAX_PANEL_EDITOR_LINES: usize = 6;
@@ -1770,6 +1784,7 @@ impl GitPanel {
                 active_tab: GitPanelTab::Changes,
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
                 commit_history: CommitHistory::Loading,
+                loaded_commit_history_log_source: None,
                 focused_history_entry: None,
                 active_history_sha: None,
                 history_keyboard_nav: false,
@@ -5861,6 +5876,7 @@ impl GitPanel {
             }
             self.git_access = None;
             self._repo_subscriptions.clear();
+            self.loaded_commit_history_log_source = None;
             if self.active_tab == GitPanelTab::History {
                 self.set_commit_history(CommitHistory::Loading, cx);
             }
@@ -8077,6 +8093,11 @@ impl GitPanel {
                         event,
                         RepositoryEvent::GraphEvent(_, _) | RepositoryEvent::TagsChanged
                     ) {
+                        if *event == RepositoryEvent::TagsChanged {
+                            // Retagging keeps every sha, so the prefix check alone
+                            // would keep entries with outdated tags.
+                            this.loaded_commit_history_log_source = None;
+                        }
                         if this.active_tab == GitPanelTab::History {
                             this.fetch_commit_history_entries(cx);
                         }
@@ -8099,22 +8120,66 @@ impl GitPanel {
 
         let Some(log_source) = Self::commit_history_log_source(&active_repository, cx) else {
             // No HEAD commit at all (unborn/empty repository).
-            self.set_commit_history(CommitHistory::Loaded(Rc::from([])), cx);
+            self.loaded_commit_history_log_source = None;
+            self.set_commit_history(CommitHistory::Loaded(Vec::new()), cx);
             return;
         };
         let log_order = LogOrder::DateOrder;
 
-        let (entries, is_loading, error) = active_repository.update(cx, |repository, cx| {
+        let same_log_source = self.loaded_commit_history_log_source.as_ref() == Some(&log_source);
+        self.loaded_commit_history_log_source = Some(log_source.clone());
+
+        // The log arrives in chunks of `GRAPH_CHUNK_SIZE` commits, each emitting
+        // a graph event. Rebuilding the whole list per chunk is quadratic, which
+        // freezes the UI for repositories with a million commits, so append only
+        // the new commits when the loaded ones are still a prefix of the log.
+        let mut appended_entries = None;
+        let rebuilt = active_repository.update(cx, |repository, cx| {
             let response = repository.graph_data(log_source, log_order, 0..usize::MAX, cx);
-            let entries: Rc<[CommitHistoryEntry]> = response
+            if same_log_source
+                && let CommitHistory::Loaded(existing) = &self.commit_history
+                && let Some(new_commits) = commits_after_prefix(existing, response.commits)
+            {
+                appended_entries = Some(
+                    new_commits
+                        .iter()
+                        .map(CommitHistoryEntry::from)
+                        .collect::<Vec<_>>(),
+                );
+                return None;
+            }
+            let entries = response
                 .commits
                 .iter()
                 .map(CommitHistoryEntry::from)
                 .collect();
-            (entries, response.is_loading, response.error)
+            Some(commit_history_from_response(
+                entries,
+                response.is_loading,
+                response.error,
+            ))
         });
 
-        self.set_commit_history(commit_history_from_response(entries, is_loading, error), cx);
+        if let Some(commit_history) = rebuilt {
+            self.set_commit_history(commit_history, cx);
+        } else if let Some(new_entries) = appended_entries
+            && !new_entries.is_empty()
+            && let CommitHistory::Loaded(existing) = &mut self.commit_history
+        {
+            let first_new_index = existing.len();
+            existing.extend(new_entries);
+            if self.focused_history_entry.is_none()
+                && let Some(active_history_sha) = self.active_history_sha
+            {
+                self.focused_history_entry = existing
+                    .iter()
+                    .enumerate()
+                    .skip(first_new_index)
+                    .find(|(_, entry)| entry.sha == active_history_sha)
+                    .map(|(index, _)| index);
+            }
+            cx.notify();
+        }
     }
 
     fn set_commit_history(&mut self, commit_history: CommitHistory, cx: &mut Context<Self>) {
@@ -8166,11 +8231,10 @@ impl GitPanel {
         let CommitHistory::Loaded(entries) = &self.commit_history else {
             return None;
         };
-        let entries = entries.clone();
+        let item_count = entries.len();
         let active_repository = self.active_repository.as_ref()?;
         let workspace = self.workspace.clone();
         let repo_weak = active_repository.downgrade();
-        let item_count = entries.len();
         let commit_history_scroll_handle = self.commit_history_scroll_handle.clone();
         let remote = self.git_remote(cx);
 
@@ -8205,9 +8269,21 @@ impl GitPanel {
                         let git_panel = cx.weak_entity();
                         move |range, window, cx| {
                             let date_style = GitPanelSettings::get_global(cx).date_style;
+                            // Cloning only the visible rows keeps rendering cheap
+                            // for histories with millions of commits.
+                            let entries = git_panel
+                                .upgrade()
+                                .and_then(|panel| {
+                                    panel
+                                        .read(cx)
+                                        .commit_history_entries()
+                                        .get(range.clone())
+                                        .map(<[_]>::to_vec)
+                                })
+                                .unwrap_or_default();
                             let visible_data: Vec<Option<Arc<CommitData>>> = repo_weak
                                 .update(cx, |repository, cx| {
-                                    entries[range.clone()]
+                                    entries
                                         .iter()
                                         .map(|entry| {
                                             match repository.fetch_commit_data(entry.sha, false, cx)
@@ -8220,7 +8296,7 @@ impl GitPanel {
                                 })
                                 .unwrap_or_default();
 
-                            entries[range.clone()]
+                            entries
                                 .iter()
                                 .zip(visible_data)
                                 .enumerate()
@@ -11560,7 +11636,7 @@ mod tests {
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.commit_history, CommitHistory::Loaded(Rc::from([])));
+            assert_eq!(panel.commit_history, CommitHistory::Loaded(Vec::new()));
         });
     }
 
@@ -11591,10 +11667,10 @@ mod tests {
         panel.read_with(cx, |panel, _| {
             assert_eq!(
                 panel.commit_history,
-                CommitHistory::Loaded(Rc::from([CommitHistoryEntry {
+                CommitHistory::Loaded(vec![CommitHistoryEntry {
                     sha,
                     tag_names: Vec::new(),
-                }]))
+                }])
             );
         });
     }
@@ -11881,14 +11957,50 @@ mod tests {
     }
 
     #[test]
+    fn test_commits_after_prefix() {
+        let commits = (0..4u8)
+            .map(|index| {
+                Arc::new(git::repository::InitialGraphCommitData {
+                    sha: Oid::from_bytes(&[index; 20]).unwrap(),
+                    parents: SmallVec::new(),
+                    ref_names: Vec::new(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let entries = |commits: &[Arc<InitialGraphCommitData>]| {
+            commits
+                .iter()
+                .map(CommitHistoryEntry::from)
+                .collect::<Vec<_>>()
+        };
+        let shas = |commits: &[Arc<InitialGraphCommitData>]| {
+            commits.iter().map(|commit| commit.sha).collect::<Vec<_>>()
+        };
+
+        let tail = commits_after_prefix(&entries(&commits[..2]), &commits).unwrap();
+        assert_eq!(shas(tail), shas(&commits[2..]));
+        assert!(
+            commits_after_prefix(&entries(&commits), &commits)
+                .unwrap()
+                .is_empty()
+        );
+
+        // The log restarted with fewer commits than are loaded.
+        assert!(commits_after_prefix(&entries(&commits), &commits[..2]).is_none());
+        // The log now starts at a different commit, e.g. after switching branches.
+        assert!(commits_after_prefix(&entries(&commits[1..3]), &commits).is_none());
+        assert!(commits_after_prefix(&[], &commits).is_none());
+    }
+
+    #[test]
     fn test_commit_history_from_response() {
         let sha: Oid = "0123456789012345678901234567890123456789".parse().unwrap();
         let error = SharedString::from("git log failed");
-        let entries: Rc<[CommitHistoryEntry]> = Rc::from([CommitHistoryEntry {
+        let entries = vec![CommitHistoryEntry {
             sha,
             tag_names: Vec::new(),
-        }]);
-        let no_entries: Rc<[CommitHistoryEntry]> = Rc::from([]);
+        }];
+        let no_entries: Vec<CommitHistoryEntry> = Vec::new();
 
         // Commits win even while the fetch task still reports `is_loading`.
         assert_eq!(
