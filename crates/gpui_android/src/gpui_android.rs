@@ -10,6 +10,7 @@ mod display;
 mod events;
 mod keyboard;
 mod platform;
+mod vsync;
 mod window;
 
 pub use android_activity::AndroidApp;

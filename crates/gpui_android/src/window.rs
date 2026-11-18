@@ -1,16 +1,22 @@
 use android_activity::AndroidApp;
+use android_activity::ndk::native_window::FrameRateCompatibility;
 use anyhow::Context as _;
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult,
-    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowDecorations, WindowParams, WindowVisibility, px,
+    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
+    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    WindowDecorations, WindowParams, WindowVisibility, px,
 };
 use gpui_wgpu::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// How long after its last drawn frame the window keeps asking for the
+/// display's highest refresh rate.
+const FRAME_RATE_VOTE_HOLD: Duration = Duration::from_millis(250);
 
 /// Wraps the current `ANativeWindow` so `WgpuRenderer` can create a surface
 /// from it via raw-window-handle.
@@ -83,6 +89,8 @@ pub(crate) struct AndroidWindowInner {
     pub(crate) callbacks: RefCell<AndroidWindowCallbacks>,
     pub(crate) surface_configured: Cell<bool>,
     pub(crate) appearance: Cell<WindowAppearance>,
+    last_draw: Cell<Option<Instant>>,
+    votes_max_frame_rate: Cell<bool>,
     pending_physical_size: Cell<Option<Size<DevicePixels>>>,
 }
 
@@ -155,6 +163,8 @@ impl AndroidWindow {
             callbacks: RefCell::new(AndroidWindowCallbacks::default()),
             surface_configured: Cell::new(true),
             appearance: Cell::new(appearance),
+            last_draw: Cell::new(None),
+            votes_max_frame_rate: Cell::new(false),
             pending_physical_size: Cell::new(None),
         });
 
@@ -206,6 +216,8 @@ impl AndroidWindowInner {
             }
             state.raw_window = raw_window;
         }
+        // Votes belong to the surface that was just replaced.
+        self.votes_max_frame_rate.set(false);
         self.surface_configured.set(true);
         self.notify_visibility_change();
         self.update_size();
@@ -260,18 +272,52 @@ impl AndroidWindowInner {
         }
     }
 
-    pub(crate) fn request_frame(&self, force_render: bool, signal_source: FrameRequestSource) {
+    /// Offers GPUI a frame. A forced frame is also presented when nothing
+    /// changed; otherwise an unchanged window is left alone, so an idle
+    /// display can lower its refresh rate.
+    pub(crate) fn request_frame(&self, force_render: bool) {
         if !self.surface_configured.get() {
             return;
         }
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(ref mut callback) = callbacks.request_frame {
             callback(RequestFrameOptions {
-                require_presentation: true,
+                require_presentation: force_render,
                 force_render,
-                signal_at: None,
-                signal_source,
+                ..Default::default()
             });
+        }
+    }
+
+    /// Asks the system for the display's highest refresh rate while the
+    /// window is drawing, and withdraws the request once it goes idle.
+    ///
+    /// Android matches the refresh rate to how often a surface gets new
+    /// frames, but frames are paced by the current rate, so without a vote
+    /// a display that settled at a low rate never speeds up again.
+    pub(crate) fn vote_frame_rate(&self, max_refresh_rate: Option<f32>) {
+        let Some(max_refresh_rate) = max_refresh_rate else {
+            return;
+        };
+        if !self.surface_configured.get() {
+            return;
+        }
+        let drawing = self
+            .last_draw
+            .get()
+            .is_some_and(|last_draw| last_draw.elapsed() < FRAME_RATE_VOTE_HOLD);
+        if self.votes_max_frame_rate.replace(drawing) == drawing {
+            return;
+        }
+        let frame_rate = if drawing { max_refresh_rate } else { 0.0 };
+        if let Err(error) = self
+            .state
+            .borrow()
+            .raw_window
+            .native_window
+            .set_frame_rate(frame_rate, FrameRateCompatibility::Default)
+        {
+            log::warn!("failed to request a frame rate of {frame_rate} Hz: {error}");
         }
     }
 
@@ -483,6 +529,7 @@ impl PlatformWindow for AndroidWindow {
             state.renderer.update_drawable_size(physical_size);
         }
         state.renderer.draw(scene);
+        self.inner.last_draw.set(Some(Instant::now()));
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

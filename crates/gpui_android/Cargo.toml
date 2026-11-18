@@ -18,8 +18,12 @@ anyhow.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_wgpu.workspace = true
+jni = "0.22"
 libc.workspace = true
 log.workspace = true
+# `android-activity` re-exports `ndk`; this enables the frame-rate API on it,
+# which exists from Android 11 (API 30).
+ndk = { version = "0.9", default-features = false, features = ["nativewindow", "api-level-30"] }
 parking_lot.workspace = true
 raw-window-handle = "0.6"
 uuid.workspace = true

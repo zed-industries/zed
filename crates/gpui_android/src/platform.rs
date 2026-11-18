@@ -2,6 +2,7 @@ use crate::dispatcher::AndroidDispatcher;
 use crate::display::AndroidDisplay;
 use crate::events::{self, TouchIds};
 use crate::keyboard::AndroidKeyboardLayout;
+use crate::vsync::Vsync;
 use crate::window::{AndroidWindow, AndroidWindowInner};
 use android_activity::input::KeyCharacterMap;
 use android_activity::{AndroidApp, MainEvent, PollEvent};
@@ -20,7 +21,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
 
 static ANDROID_APP: OnceLock<AndroidApp> = OnceLock::new();
 
@@ -30,9 +30,6 @@ static ANDROID_APP: OnceLock<AndroidApp> = OnceLock::new();
 pub fn init(app: AndroidApp) {
     ANDROID_APP.set(app).ok();
 }
-
-const POLL_TIMEOUT: Duration = Duration::from_millis(8);
-const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 pub struct AndroidPlatform {
     app: AndroidApp,
@@ -48,7 +45,7 @@ pub struct AndroidPlatform {
     quit_requested: Cell<bool>,
     key_maps: RefCell<HashMap<i32, KeyCharacterMap>>,
     touch_ids: RefCell<TouchIds>,
-    last_frame: Cell<Instant>,
+    vsync: Vsync,
 }
 
 #[derive(Default)]
@@ -83,20 +80,20 @@ impl AndroidPlatform {
         }
 
         Self {
-            app,
             background_executor,
             foreground_executor,
             main_receiver,
             text_system,
             gpu_context: GpuContext::default(),
-            display: Rc::new(AndroidDisplay::new()),
+            display: Rc::new(AndroidDisplay::new(&app)),
             active_window: RefCell::new(None),
             callbacks: RefCell::new(AndroidPlatformCallbacks::default()),
             pending_launch: RefCell::new(None),
             quit_requested: Cell::new(false),
             key_maps: RefCell::new(HashMap::new()),
             touch_ids: RefCell::new(TouchIds::default()),
-            last_frame: Cell::new(Instant::now()),
+            vsync: Vsync::new(app.create_waker()),
+            app,
         }
     }
 
@@ -110,6 +107,7 @@ impl AndroidPlatform {
     fn handle_main_event(&self, event: MainEvent<'_>) {
         match event {
             MainEvent::InitWindow { .. } => {
+                self.vsync.set_running(true);
                 if let Some(window) = self.window() {
                     window.handle_surface_created();
                 }
@@ -119,6 +117,7 @@ impl AndroidPlatform {
                 }
             }
             MainEvent::TerminateWindow { .. } => {
+                self.vsync.set_running(false);
                 if let Some(window) = self.window() {
                     window.handle_surface_destroyed();
                 }
@@ -136,6 +135,7 @@ impl AndroidPlatform {
                 log::info!("insets changed: content_rect={:?}", self.app.content_rect());
             }
             MainEvent::ConfigChanged { .. } => {
+                self.display.update_max_refresh_rate(&self.app);
                 if let Some(window) = self.window() {
                     window.update_size();
                     window.set_appearance(self.window_appearance());
@@ -143,8 +143,7 @@ impl AndroidPlatform {
             }
             MainEvent::RedrawNeeded { .. } => {
                 if let Some(window) = self.window() {
-                    window.request_frame(true, gpui::FrameRequestSource::NativeCallback);
-                    self.last_frame.set(Instant::now());
+                    window.request_frame(true);
                 }
             }
             MainEvent::InputAvailable => self.process_input(),
@@ -198,13 +197,13 @@ impl AndroidPlatform {
         }
     }
 
-    fn maybe_request_frame(&self) {
-        if self.last_frame.get().elapsed() < FRAME_INTERVAL {
+    fn handle_display_refresh(&self) {
+        let Some(window) = self.window() else {
             return;
-        }
-        if let Some(window) = self.window() {
-            self.last_frame.set(Instant::now());
-            window.request_frame(false, gpui::FrameRequestSource::LocalSchedule);
+        };
+        if self.vsync.take_pending() {
+            window.request_frame(false);
+            window.vote_frame_rate(self.display.max_refresh_rate());
         }
     }
 }
@@ -264,14 +263,14 @@ impl Platform for AndroidPlatform {
         *self.pending_launch.borrow_mut() = Some(on_finish_launching);
         let app = self.app.clone();
         while !self.quit_requested.get() {
-            app.poll_events(Some(POLL_TIMEOUT), |event| {
+            app.poll_events(None, |event| {
                 match event {
                     PollEvent::Wake | PollEvent::Timeout => {}
                     PollEvent::Main(main_event) => self.handle_main_event(main_event),
                     _ => {}
                 }
                 self.drain_main_runnables();
-                self.maybe_request_frame();
+                self.handle_display_refresh();
             });
         }
         let mut callbacks = self.callbacks.borrow_mut();
