@@ -2573,7 +2573,7 @@ impl BedrockLanguageModelProvider {
         &self,
         config: &MantleModel,
         request_limiter: &RateLimiter,
-        mut request: LanguageModelRequest,
+        request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
     {
@@ -2589,7 +2589,6 @@ impl BedrockLanguageModelProvider {
             .boxed();
         }
 
-        request.retain_reasoning_for_provider(None);
         let model_id = config.request_id().to_string();
         let max_output_tokens = Some(config.max_output_tokens());
 
@@ -3350,14 +3349,16 @@ pub fn map_to_language_model_completion_events(
 
                     let source = match &result {
                         Some(Ok(
-                            LanguageModelCompletionEvent::Thinking { signature: Some(_), .. }
+                            LanguageModelCompletionEvent::Thinking {
+                                signature: Some(_), ..
+                            }
                             | LanguageModelCompletionEvent::RedactedThinking { .. },
                         )) => state.reasoning_model.take(),
                         _ => None,
                     };
                     let details = source.map(|source| {
                         Ok(LanguageModelCompletionEvent::ReasoningDetails(
-                            serde_json::json!({"bedrock_model": source, "zed_reasoning_provider": PROVIDER_ID}),
+                            serde_json::json!({"bedrock_model": source}),
                         ))
                     });
                     Some(([details, result], state))
@@ -4659,6 +4660,10 @@ mod tests {
                 _ => None,
             })
             .context("reasoning source")?;
+        assert_eq!(
+            *details,
+            serde_json::json!({"bedrock_model": "openai.chat"})
+        );
         let data = recorded
             .iter()
             .find_map(|event| match event {
@@ -4666,34 +4671,6 @@ mod tests {
                 _ => None,
             })
             .context("opaque reasoning")?;
-        let mut switched = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![
-                    MessageContent::RedactedThinking(data.clone()),
-                    MessageContent::Text("answer".into()),
-                ],
-                reasoning_details: Some(details.clone()),
-                cache: false,
-            }],
-            ..Default::default()
-        };
-        switched.retain_reasoning_for_provider(Some(&LanguageModelProviderId::new("openrouter")));
-        assert_eq!(
-            switched.messages[0].content,
-            [MessageContent::Text("answer".into())]
-        );
-        let wire = crate::provider::open_router::into_open_router(
-            switched,
-            &open_router::Model {
-                name: "vendor/chat".into(),
-                ..Default::default()
-            },
-            None,
-        )?;
-        let wire = serde_json::to_value(wire)?;
-        assert!(wire["messages"][0].get("reasoning_details").is_none());
-        assert_eq!(wire["messages"][0]["content"], "answer");
         for model in [&with_effort, &without_effort] {
             let request = into_bedrock(
                 LanguageModelRequest {
