@@ -379,6 +379,8 @@ actions!(
         ToggleThinkingEffortMenu,
         /// Toggles fast mode for models that support it.
         ToggleFastMode,
+        /// Switches between Fast and Ultrafast when faster responses are enabled.
+        CycleResponseSpeed,
         /// Scroll the output by one page up.
         ScrollOutputPageUp,
         /// Scroll the output by one page down.

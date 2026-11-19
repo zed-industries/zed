@@ -1544,7 +1544,7 @@ impl Thread {
 
         self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
         self.thinking_effort = selection.effort.clone();
-        self.speed = selection.speed.filter(|_| model.supports_fast_mode());
+        self.speed = selection.speed.filter(|speed| model.supports_speed(*speed));
         self.prompt_capabilities_tx
             .send(Self::prompt_capabilities(Some(&model)))
             .log_err();
@@ -4399,7 +4399,7 @@ impl Thread {
             thinking_allowed: self.thinking_enabled
                 || !model.supports_disabling_thinking_at_effort(self.thinking_effort.as_deref()),
             thinking_effort: self.thinking_effort.clone(),
-            speed: self.speed(),
+            speed: self.speed().filter(|speed| model.supports_speed(*speed)),
             compact_at_tokens: None,
             max_output_tokens: None,
         };
@@ -4816,7 +4816,7 @@ impl Thread {
             thinking_allowed,
             thinking_effort,
             speed: if preserves_request_prefix {
-                self.speed()
+                self.speed().filter(|speed| model.supports_speed(*speed))
             } else {
                 None
             },
@@ -8685,6 +8685,7 @@ mod tests {
         let model = fake.update_model("fake", |model| {
             supports_tools_and_tool_choice(model);
             model.supports_thinking = true;
+            model.supports_ultrafast_mode = true;
             model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
         });
 
@@ -8694,7 +8695,7 @@ mod tests {
                 thread.set_model(model.clone(), cx);
                 thread.set_thinking_enabled(true, cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
-                thread.set_speed(Speed::Fast, cx);
+                thread.set_speed(Speed::Ultrafast, cx);
             });
         });
 
@@ -8740,7 +8741,7 @@ mod tests {
             compaction_request.thinking_effort,
             completion_request.thinking_effort
         );
-        assert_eq!(completion_request.speed, Some(Speed::Fast));
+        assert_eq!(completion_request.speed, Some(Speed::Ultrafast));
         assert_eq!(compaction_request.speed, completion_request.speed);
         // The compaction request extends the previous request with the
         // assistant response and the compaction prompt.
