@@ -118,8 +118,7 @@ impl LineWrapper {
         let mut width_before_grapheme = px(0.);
         let mut candidates = fragments
             .iter()
-            .flat_map(move |fragment| fragment.wrap_boundary_candidates())
-            .peekable();
+            .flat_map(move |fragment| fragment.wrap_boundary_candidates());
         iter::from_fn(move || {
             for candidate in candidates.by_ref() {
                 let ix = index;
