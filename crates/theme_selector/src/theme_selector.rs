@@ -134,7 +134,7 @@ impl ThemeSelector {
         self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
-                .set_showing_original_theme(event.modifiers.alt, cx);
+                .set_compare_key_held(event.modifiers.alt, cx);
         });
     }
 }
@@ -161,7 +161,8 @@ struct ThemeSelectorDelegate {
     new_theme: Arc<Theme>,
     /// Whether the original theme is temporarily being shown instead of the
     /// currently selected new theme.
-    showing_original_theme: bool,
+    compare_button_held: bool,
+    compare_key_held: bool,
     selection_completed: bool,
     selected_theme: Option<Arc<Theme>>,
     selected_index: usize,
@@ -229,7 +230,8 @@ impl ThemeSelectorDelegate {
             original_system_appearance,
             original_theme_id,
             new_theme: original_theme, // Start with the original theme.
-            showing_original_theme: false,
+            compare_button_held: false,
+            compare_key_held: false,
             selected_index,
             selection_completed: false,
             selected_theme: None,
@@ -278,12 +280,13 @@ impl ThemeSelectorDelegate {
     fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
         self.new_theme = new_theme;
 
-        if !self.showing_original_theme {
+        if !self.showing_original_theme() {
             self.override_global_theme(cx);
         }
     }
 
-    /// Updates the global (in-memory) theme settings to show the currently selected new theme.
+    /// Updates the global (in-memory) theme settings to show the currently
+    /// selected new theme.
     fn override_global_theme(&self, cx: &mut App) {
         SettingsStore::update_global(cx, |store, _| {
             override_global_theme(
@@ -295,18 +298,42 @@ impl ThemeSelectorDelegate {
         });
     }
 
-    fn set_showing_original_theme(
+    fn set_compare_key_held(
         &mut self,
-        showing_original_theme: bool,
+        state: bool,
         cx: &mut Context<Picker<ThemeSelectorDelegate>>,
     ) {
-        if self.selection_completed || self.showing_original_theme == showing_original_theme {
+        if self.selection_completed || self.compare_key_held == state {
             return;
         }
 
-        self.showing_original_theme = showing_original_theme;
+        self.compare_key_held = state;
+        self.update_showing_original_theme(cx);
+    }
 
-        if showing_original_theme {
+    fn set_compare_button_held(
+        &mut self,
+        state: bool,
+        cx: &mut Context<Picker<ThemeSelectorDelegate>>,
+    ) {
+        if self.selection_completed || self.compare_button_held == state {
+            return;
+        }
+
+        self.compare_button_held = state;
+        self.update_showing_original_theme(cx);
+    }
+
+    fn showing_original_theme(&self) -> bool {
+        self.compare_button_held || self.compare_key_held
+    }
+
+    fn update_showing_original_theme(&mut self, cx: &mut Context<Picker<ThemeSelectorDelegate>>) {
+        if self.selection_completed {
+            return;
+        }
+
+        if self.showing_original_theme() {
             SettingsStore::update_global(cx, |store, _| {
                 store.override_global(self.original_theme_settings.clone());
             });
@@ -318,53 +345,58 @@ impl ThemeSelectorDelegate {
     }
 }
 
-/// Renders the footer button that, while pressed, shows the theme that was set before the selector
-/// was opened, just like holding `alt` does.
-///
-/// `set_showing_original_theme` is called with whether the original theme should be shown.
+/// Renders the footer button that, while pressed, shows the theme that was set
+/// before the selector was opened, just like holding `alt` does.
 pub(crate) fn render_compare_button(
-    set_showing_original_theme: impl Fn(bool, &mut App) + 'static,
+    set_compare_button_held: impl Fn(bool, &mut App) + 'static,
     cx: &App,
 ) -> impl IntoElement {
-    let set_showing_original_theme = Rc::new(set_showing_original_theme);
+    let set_compare_button_held = Rc::new(set_compare_button_held);
 
-    // There's no action bound to holding `alt`, so the keystroke is built by hand, using `alt` as
-    // the key in order to have it rendered just like the keybindings of other buttons.
+    // There's no action bound to holding `alt`, so the keystroke is built by
+    // hand, using `alt` as the key in order to have it rendered just like the
+    // keybindings of other buttons.
     let alt_keystroke = KeybindingKeystroke::from_keystroke(Keystroke {
         modifiers: Modifiers::none(),
         key: "alt".into(),
         key_char: None,
     });
 
-    // `Button` only reports clicks, so pressing and releasing is handled by a wrapping element.
+    // `Button` only reports clicks, so pressing and releasing is handled by a
+    // wrapping element.
     div()
         .on_mouse_down(MouseButton::Left, {
-            let set_showing_original_theme = set_showing_original_theme.clone();
+            let set_compare_button_held = set_compare_button_held.clone();
             move |_, window, cx| {
-                // Like clickable buttons do, keep the mouse down from moving focus away from the
-                // picker's editor.
+                // Like clickable buttons do, keep the mouse down from moving
+                // focus away from the picker's editor.
                 window.prevent_default();
-                set_showing_original_theme(true, cx);
+                set_compare_button_held(true, cx);
             }
         })
-        // The mouse may be released anywhere in the window, so the release is handled both over
-        // and outside of the button. The original theme is kept if `alt` is still being held.
+        // The mouse may be released anywhere in the window, so the release is
+        // handled both over and outside of the button. The original theme is
+        // kept if `alt` is still being held.
         .capture_any_mouse_up({
-            let set_showing_original_theme = set_showing_original_theme.clone();
-            move |event, window, cx| {
+            let set_compare_button_held = set_compare_button_held.clone();
+            move |event, _window, cx| {
                 if event.button == MouseButton::Left {
-                    set_showing_original_theme(window.modifiers().alt, cx);
+                    set_compare_button_held(false, cx);
                 }
             }
         })
-        .on_mouse_up_out(MouseButton::Left, move |_, window, cx| {
-            set_showing_original_theme(window.modifiers().alt, cx);
+        .on_mouse_up_out(MouseButton::Left, move |_, _window, cx| {
+            set_compare_button_held(false, cx);
         })
         .child(
-            Button::new("compare-theme", "Compare").key_binding(KeyBinding::from_keystrokes(
-                [alt_keystroke].into(),
-                KeyBinding::is_vim_mode(cx),
-            )),
+            div()
+                .debug_selector(|| "compare-theme-button".to_string())
+                .child(Button::new("compare-theme", "Compare").key_binding(
+                    KeyBinding::from_keystrokes(
+                        [alt_keystroke].into(),
+                        KeyBinding::is_vim_mode(cx),
+                    ),
+                )),
         )
 }
 
@@ -632,16 +664,15 @@ impl PickerDelegate for ThemeSelectorDelegate {
         // The button is kept while the original theme is being shown, even if the selection moves
         // to the original theme, so that releasing the button is still handled.
         let show_compare_button =
-            self.showing_original_theme || !self.is_original_theme(self.selected_index);
+            self.showing_original_theme() || !self.is_original_theme(self.selected_index);
         let compare_button = show_compare_button.then(|| {
             let picker = cx.entity().downgrade();
+
             render_compare_button(
-                move |showing_original_theme, cx| {
+                move |state, cx| {
                     picker
                         .update(cx, |picker, cx| {
-                            picker
-                                .delegate
-                                .set_showing_original_theme(showing_original_theme, cx);
+                            picker.delegate.set_compare_button_held(state, cx);
                         })
                         .log_err();
                 },
@@ -816,7 +847,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_theme_selector_shows_original_theme_while_alt_is_held(cx: &mut TestAppContext) {
+    async fn test_theme_selector_shows_original_while_alt_is_held(cx: &mut TestAppContext) {
         let app_state = setup_test(cx).await;
         let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
         let (multi_workspace, cx) =
@@ -850,6 +881,41 @@ mod tests {
             "Test Dark A",
             "selected theme should be shown again once alt is released"
         );
+    }
+
+    #[gpui::test]
+    async fn test_theme_selector_shows_original_while_button_is_held(cx: &mut TestAppContext) {
+        let app_state = setup_test(cx).await;
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let original_theme_name = shown_theme_name(cx);
+        let picker = open_theme_selector(&workspace, cx);
+
+        select_theme(&picker, "Test Light", cx);
+        assert_eq!(shown_theme_name(cx), "Test Light");
+        assert_ne!(shown_theme_name(cx), original_theme_name);
+
+        let button_center = cx
+            .debug_bounds("compare-theme-button")
+            .expect("should be able to find button's bounds")
+            .center();
+
+        cx.simulate_mouse_down(button_center, MouseButton::Left, Modifiers::none());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+
+        // Simulate pressing and then releasing `alt` to ensure it doesn't
+        // affect the theme comparison, as the mouse button is still held.
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+
+        cx.simulate_mouse_up(button_center, MouseButton::Left, Modifiers::none());
+        assert_eq!(shown_theme_name(cx), "Test Light");
+        assert_ne!(shown_theme_name(cx), original_theme_name);
     }
 
     #[gpui::test]
