@@ -2967,7 +2967,7 @@ async fn resolve_local_workspace_identity(
     Some(PathList::new(&identity_paths))
 }
 
-fn dedupe_recent_workspaces(
+pub fn dedupe_recent_workspaces(
     workspaces: impl IntoIterator<Item = RecentWorkspace>,
 ) -> Vec<RecentWorkspace> {
     let mut indices_by_key: HashMap<

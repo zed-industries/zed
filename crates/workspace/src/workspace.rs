@@ -87,7 +87,7 @@ pub use pane_group::{
     SplitDirection,
 };
 pub use persistence::{
-    RecentWorkspace, WorkspaceDb, delete_unloaded_items,
+    RecentWorkspace, WorkspaceDb, dedupe_recent_workspaces, delete_unloaded_items,
     model::{
         DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
         SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
