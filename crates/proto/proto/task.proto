@@ -67,3 +67,12 @@ message GetTerminalShell {
 message GetTerminalShellResponse {
   Shell shell = 1;
 }
+
+message HasTerminalChildProcesses {
+  uint64 project_id = 1;
+  string terminal_id = 2;
+}
+
+message HasTerminalChildProcessesResponse {
+  bool has_child_processes = 1;
+}

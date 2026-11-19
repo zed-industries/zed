@@ -14024,6 +14024,7 @@ dependencies = [
  "url",
  "usvg",
  "util",
+ "uuid",
  "watch",
  "wax",
  "which",

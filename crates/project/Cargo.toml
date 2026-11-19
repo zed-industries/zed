@@ -102,6 +102,7 @@ tracing.workspace = true
 url.workspace = true
 usvg.workspace = true
 util.workspace = true
+uuid.workspace = true
 watch.workspace = true
 wax.workspace = true
 which.workspace = true
