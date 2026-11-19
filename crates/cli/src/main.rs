@@ -997,6 +997,12 @@ mod flatpak {
     const EXTRA_LIB_ENV_NAME: &str = "ZED_FLATPAK_LIB_PATH";
     const NO_ESCAPE_ENV_NAME: &str = "ZED_FLATPAK_NO_ESCAPE";
 
+    const ENV_VARS_TO_FORWARD: &[&str] = &[
+        // Git configuration
+        "GIT_CONFIG",
+        "GIT_CONFIG_*",
+    ];
+
     fn restart_cli_args(flatpak_dir: &Path, invocation_args: &[OsString]) -> Vec<OsString> {
         let mut args = Vec::with_capacity(invocation_args.len() + 2);
 
@@ -1030,6 +1036,7 @@ mod flatpak {
         if let Some(flatpak_dir) = get_flatpak_dir() {
             let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
             args.append(&mut get_xdg_env_args());
+            args.append(&mut get_env_args(ENV_VARS_TO_FORWARD));
             args.push("--env=ZED_UPDATE_EXPLANATION=Please use flatpak to update zed".into());
             args.push(
                 format!(
@@ -1095,6 +1102,31 @@ mod flatpak {
         env::vars()
             .filter(|(key, _)| xdg_keys.contains(&key.as_str()))
             .map(|(key, val)| format!("--env=FLATPAK_{}={}", key, val).into())
+            .collect()
+    }
+
+    fn get_env_args(patterns: &[&str]) -> Vec<OsString> {
+        env::vars_os()
+            .filter(|(key, _)| {
+                let Some(key) = key.to_str() else {
+                    return false;
+                };
+
+                patterns.iter().any(|pattern| {
+                    if let Some(prefix) = pattern.strip_suffix('*') {
+                        key.starts_with(prefix)
+                    } else {
+                        key == *pattern
+                    }
+                })
+            })
+            .map(|(key, value)| {
+                let mut arg = OsString::from("--env=");
+                arg.push(key);
+                arg.push("=");
+                arg.push(value);
+                arg
+            })
             .collect()
     }
 
