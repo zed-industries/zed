@@ -4,14 +4,19 @@
 //! responder is the native view whose handle GPUI has focused, and GPUI's own
 //! view otherwise. The overrides here keep AppKit from moving it anywhere else,
 //! except when the user clicks into a native view.
+//!
+//! A native view with keyboard input sees each key press first. GPUI is only
+//! offered a key ahead of it for a pending or reserved binding, and otherwise
+//! receives the keys that no view used, as AppKit passes them back up.
 
 use super::{
     MacWindowState, convert_mouse_position, current_capslock, current_modifiers, get_window_state,
-    handle_key_event, with_input_handler,
+    window_state_if_set, with_input_handler,
 };
+use crate::events::platform_input_from_native;
 use gpui::{
-    ModifiersChangedEvent, NativeViewId, Pixels, PlatformInput, Point, Rgba, ScaledPixels, Scene,
-    WindowBackgroundAppearance,
+    Bounds, KeyDownEvent, ModifiersChangedEvent, NativeViewId, Pixels, PlatformInput, Point, Rgba,
+    ScaledPixels, Scene, WindowBackgroundAppearance,
 };
 use objc2::{
     class, msg_send,
@@ -19,9 +24,7 @@ use objc2::{
     runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel},
     sel,
 };
-use objc2_app_kit::{
-    NSColor, NSEventModifierFlags, NSEventType, NSView, NSWindowOrderingMode, NSWorkspace,
-};
+use objc2_app_kit::{NSColor, NSEventType, NSView, NSWindowOrderingMode, NSWorkspace};
 use objc2_foundation::{NSComparisonResult, NSPoint, NSRect, NSSize};
 use parking_lot::Mutex;
 use std::{
@@ -41,33 +44,89 @@ pub(super) struct NativeViews {
     /// The view a mouse-down event is being delivered to, which may take
     /// first responder even though GPUI has not focused it yet.
     clicked: Option<NativeViewId>,
-    /// Set while the window offers a key equivalent to GPUI ahead of the
-    /// native first responder, so the view hierarchy doesn't offer it again.
-    offered_key_equivalent: bool,
+    /// Set while the window routes a key equivalent between a native view and
+    /// GPUI itself, so the GPUI view doesn't also handle it.
+    routing_key_equivalent: bool,
+    /// Set while a key press is delivered to a native view, which can ask the
+    /// window to perform the same key as an equivalent before it has decided
+    /// whether to use it.
+    delivering_key_down: bool,
+    /// The key equivalent GPUI was already offered once no view performed it.
+    /// AppKit delivers it again as a key press, which must not reach GPUI twice.
+    passed_up_key_equivalent: Option<Retained<AnyObject>>,
     /// The views the last scene showed, from back to front.
     stacking: Vec<NativeViewId>,
     /// The color the window was last given behind its native views.
     pub(super) background: Option<Rgba>,
     pub(super) hit_test_callback: Option<HitTestCallback>,
     pub(super) focused_callback: Option<Box<dyn FnMut(NativeViewId)>>,
+    pub(super) key_down_before_callback: Option<Box<dyn FnMut(KeyDownEvent) -> bool>>,
 }
 
 struct AttachedView {
     id: NativeViewId,
     view: Retained<NSView>,
-    /// The frame the view was last given, or `None` while it is hidden.
-    frame: Option<[f64; 4]>,
+    /// The view's superview, which clips it to its element's content mask.
+    container: Retained<NSView>,
+    /// Where the view was last placed, or `None` while it is hidden.
+    placement: Option<Placement>,
+}
+
+/// Where a native view is shown, as `[x, y, width, height]` frames in points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Placement {
+    /// The visible part of the view, in the window's content view.
+    container: [f64; 4],
+    /// The whole view, in its container.
+    view: [f64; 4],
+}
+
+impl Placement {
+    /// Places a view with the given bounds and clip, both in device pixels
+    /// from the top left of the GPUI view, whose frame is `gpui_frame`.
+    /// Returns `None` if the clip leaves none of the view visible.
+    fn new(
+        bounds: Bounds<ScaledPixels>,
+        content_mask: Bounds<ScaledPixels>,
+        scale_factor: f64,
+        gpui_frame: [f64; 4],
+    ) -> Option<Self> {
+        let visible = bounds.intersect(&content_mask);
+        if visible.is_empty() {
+            return None;
+        }
+        // AppKit measures from the bottom left of the enclosing view.
+        let to_frame = |bounds: Bounds<ScaledPixels>| {
+            let [gpui_x, gpui_y, _, gpui_height] = gpui_frame;
+            let to_points = |value: ScaledPixels| f64::from(value) / scale_factor;
+            let height = to_points(bounds.size.height);
+            [
+                gpui_x + to_points(bounds.origin.x),
+                gpui_y + gpui_height - to_points(bounds.origin.y) - height,
+                to_points(bounds.size.width),
+                height,
+            ]
+        };
+        let container = to_frame(visible);
+        let [x, y, width, height] = to_frame(bounds);
+        Some(Self {
+            container,
+            view: [x - container[0], y - container[1], width, height],
+        })
+    }
 }
 
 impl NativeViews {
     fn shown(&self, id: NativeViewId) -> Option<&AttachedView> {
         self.views
             .iter()
-            .find(|attached| attached.id == id && attached.frame.is_some())
+            .find(|attached| attached.id == id && attached.placement.is_some())
     }
 
     fn is_showing_any(&self) -> bool {
-        self.views.iter().any(|attached| attached.frame.is_some())
+        self.views
+            .iter()
+            .any(|attached| attached.placement.is_some())
     }
 
     /// The attached view that contains `responder`, if it is a view inside one.
@@ -124,6 +183,7 @@ impl Drop for Attachment {
         unsafe {
             // AppKit would otherwise hand first responder to the window itself.
             give_up_first_responder(native_window, gpui_view, &attached.view);
+            attached.container.removeFromSuperview();
             attached.view.removeFromSuperview();
         }
     }
@@ -142,23 +202,29 @@ pub(super) unsafe fn attach(
 ) -> Option<Box<dyn Any>> {
     // SAFETY: The caller guarantees `view` is a live `NSView`.
     let view = unsafe { Retained::retain(view.as_ptr().cast::<NSView>()) }?;
-    let mut lock = window_state.lock();
-    let gpui_view = lock.native_view.as_ptr();
-    view.setHidden(true);
-    // SAFETY: The GPUI view is live and in the window's content view.
-    unsafe {
+    let gpui_view = window_state.lock().native_view.as_ptr();
+    // SAFETY: The GPUI view is live and in the window's content view, and this
+    // runs on the main thread. The window state is unlocked because AppKit calls
+    // back into the window as its view hierarchy changes.
+    let container = unsafe {
+        let container: Retained<NSView> = msg_send![class!(NSView), new];
+        let _: () = msg_send![&*container, setClipsToBounds: true];
+        container.setHidden(true);
+        container.addSubview(&view);
         let content_view: *mut AnyObject = msg_send![gpui_view, superview];
         let _: () = msg_send![
             content_view,
-            addSubview: &*view,
+            addSubview: &*container,
             positioned: NSWindowOrderingMode::Below,
             relativeTo: gpui_view
         ];
-    }
-    lock.native_views.views.push(AttachedView {
+        container
+    };
+    window_state.lock().native_views.views.push(AttachedView {
         id,
         view,
-        frame: None,
+        container,
+        placement: None,
     });
     Some(Box::new(Attachment {
         window_state: Rc::downgrade(window_state),
@@ -201,8 +267,8 @@ pub(super) fn update_background(state: &mut MacWindowState, scene: &Scene) {
 /// What a scene changes about the window's attached views.
 #[derive(Default)]
 pub(super) struct Layout {
-    /// Views to move to a new frame, or to hide for `None`.
-    frames: Vec<(NativeViewId, Retained<NSView>, Option<[f64; 4]>)>,
+    /// Views to place somewhere new, or to hide for `None`.
+    placements: Vec<(NativeViewId, Option<Placement>)>,
     /// The views the scene shows, from back to front, if that order changed.
     stacking: Option<Vec<NativeViewId>>,
 }
@@ -215,29 +281,29 @@ pub(super) fn plan_layout(state: &MacWindowState, scene: &Scene) -> Layout {
     let scale_factor = state.scale_factor() as f64;
     // SAFETY: The GPUI view is live for as long as the window state.
     let gpui_frame: NSRect = unsafe { msg_send![state.native_view.as_ptr(), frame] };
-    let to_points = |value: ScaledPixels| f64::from(value) / scale_factor;
+    let gpui_frame = [
+        gpui_frame.origin.x,
+        gpui_frame.origin.y,
+        gpui_frame.size.width,
+        gpui_frame.size.height,
+    ];
 
-    let mut frames = Vec::new();
+    let mut placements = Vec::new();
     for attached in &state.native_views.views {
         let placement = scene
             .native_views
             .iter()
-            .find(|placement| placement.id == attached.id)
-            .map(|placement| {
-                let bounds = placement.bounds;
-                let height = to_points(bounds.size.height);
-                [
-                    gpui_frame.origin.x + to_points(bounds.origin.x),
-                    // AppKit measures from the bottom of the content view.
-                    gpui_frame.origin.y + gpui_frame.size.height
-                        - to_points(bounds.origin.y)
-                        - height,
-                    to_points(bounds.size.width),
-                    height,
-                ]
+            .find(|native_view| native_view.id == attached.id)
+            .and_then(|native_view| {
+                Placement::new(
+                    native_view.bounds,
+                    native_view.content_mask.bounds,
+                    scale_factor,
+                    gpui_frame,
+                )
             });
-        if attached.frame != placement {
-            frames.push((attached.id, attached.view.clone(), placement));
+        if attached.placement != placement {
+            placements.push((attached.id, placement));
         }
     }
 
@@ -250,25 +316,30 @@ pub(super) fn plan_layout(state: &MacWindowState, scene: &Scene) -> Layout {
         }
     }
     let stacking = (stacking != state.native_views.stacking).then_some(stacking);
-    Layout { frames, stacking }
+    Layout {
+        placements,
+        stacking,
+    }
 }
 
 /// Applies a planned layout. The window state must be unlocked, because AppKit
 /// calls back into it when a view's frame or first responder changes.
 pub(super) fn apply_layout(window_state: &Rc<Mutex<MacWindowState>>, layout: Layout) {
-    if layout.frames.is_empty() && layout.stacking.is_none() {
+    if layout.placements.is_empty() && layout.stacking.is_none() {
         return;
     }
-    let (native_window, gpui_view, stacking) = {
+    let (native_window, gpui_view, placements, stacking) = {
         let mut lock = window_state.lock();
-        for (id, _, frame) in &layout.frames {
+        let mut placements = Vec::new();
+        for (id, placement) in layout.placements {
             if let Some(attached) = lock
                 .native_views
                 .views
                 .iter_mut()
-                .find(|attached| attached.id == *id)
+                .find(|attached| attached.id == id)
             {
-                attached.frame = *frame;
+                attached.placement = placement;
+                placements.push((attached.view.clone(), attached.container.clone(), placement));
             }
         }
         let stacking = layout.stacking.map(|stacking| {
@@ -276,13 +347,13 @@ pub(super) fn apply_layout(window_state: &Rc<Mutex<MacWindowState>>, layout: Lay
                 .iter()
                 .rev()
                 .filter_map(|id| lock.native_views.views.iter().find(|view| view.id == *id))
-                .map(|attached| Retained::as_ptr(&attached.view))
+                .map(|attached| Retained::as_ptr(&attached.container))
                 .collect();
             let attached = lock
                 .native_views
                 .views
                 .iter()
-                .map(|attached| Retained::as_ptr(&attached.view))
+                .map(|attached| Retained::as_ptr(&attached.container))
                 .collect();
             lock.native_views.stacking = stacking;
             Stacking {
@@ -291,18 +362,27 @@ pub(super) fn apply_layout(window_state: &Rc<Mutex<MacWindowState>>, layout: Lay
                 attached,
             }
         });
-        (lock.native_window, lock.native_view.as_ptr(), stacking)
+        (
+            lock.native_window,
+            lock.native_view.as_ptr(),
+            placements,
+            stacking,
+        )
     };
-    for (_, view, frame) in layout.frames {
-        match frame {
-            Some([x, y, width, height]) => {
-                view.setFrame(NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)));
-                view.setHidden(false);
+    let to_rect = |[x, y, width, height]: [f64; 4]| {
+        NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+    };
+    for (view, container, placement) in placements {
+        match placement {
+            Some(placement) => {
+                container.setFrame(to_rect(placement.container));
+                view.setFrame(to_rect(placement.view));
+                container.setHidden(false);
             }
             None => {
                 // SAFETY: The window and both views are live, and drawing runs on the main thread.
                 unsafe { give_up_first_responder(native_window, gpui_view, &view) };
-                view.setHidden(true);
+                container.setHidden(true);
             }
         }
     }
@@ -329,7 +409,7 @@ pub(super) fn apply_layout(window_state: &Rc<Mutex<MacWindowState>>, layout: Lay
 /// The order to give the content view's subviews.
 struct Stacking {
     gpui_view: *const NSView,
-    /// The views the scene shows, starting with the one painted last.
+    /// The containers of the views the scene shows, starting with the one painted last.
     front_to_back: Vec<*const NSView>,
     attached: Vec<*const NSView>,
 }
@@ -444,6 +524,10 @@ pub(super) fn add_window_methods(decl: &mut ClassBuilder) {
             sel!(performKeyEquivalent:),
             window_perform_key_equivalent as extern "C" fn(_, Sel, *mut AnyObject) -> Bool,
         );
+        decl.add_method(
+            sel!(keyDown:),
+            window_key_down as extern "C" fn(_, Sel, *mut AnyObject),
+        );
     }
 }
 
@@ -511,11 +595,28 @@ extern "C" fn hit_test(this: &AnyObject, _: Sel, point: NSPoint) -> *mut AnyObje
 }
 
 /// Notes which native view a mouse-down is headed for while AppKit delivers it,
-/// which is the only time a native view may take first responder on its own.
+/// which is the only time a native view may take first responder on its own, and
+/// offers GPUI a key press ahead of the native view that would receive it.
+///
+/// GPUI is also given the mouse-down, which reaches nothing behind the view but
+/// lets the window's own content notice a press outside it.
 extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
     // SAFETY: `this` is a live GPUI window and `event` a live `NSEvent`.
     unsafe {
-        let window_state = get_window_state(this);
+        let superclass = window_superclass(this);
+        let Some(window_state) = window_state_if_set(this) else {
+            return msg_send![super(this, superclass), sendEvent: event];
+        };
+        if let Some(key_down) = key_down_for_native_view(&window_state, this, event) {
+            if offer_key_down_before_native_view(&window_state, key_down) {
+                return;
+            }
+            window_state.lock().native_views.delivering_key_down = true;
+            let _: () = msg_send![super(this, superclass), sendEvent: event];
+            window_state.lock().native_views.delivering_key_down = false;
+            return;
+        }
+
         let event_type: NSEventType = msg_send![event, type];
         let clicked = if matches!(
             event_type,
@@ -527,10 +628,19 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
             None
         };
         if clicked.is_none() {
-            return msg_send![super(this, window_superclass(this)), sendEvent: event];
+            return msg_send![super(this, superclass), sendEvent: event];
         }
-        window_state.lock().native_views.clicked = clicked;
-        let _: () = msg_send![super(this, window_superclass(this)), sendEvent: event];
+        let window_height = {
+            let mut lock = window_state.lock();
+            lock.native_views.clicked = clicked;
+            lock.content_size().height
+        };
+        // GPUI goes first, so that focus it moves in response, such as a dismissed
+        // popover restoring focus, doesn't take keyboard input back from the view.
+        if let Some(mouse_down) = platform_input_from_native(event, Some(window_height)) {
+            pass_input_to_gpui(&window_state, mouse_down);
+        }
+        let _: () = msg_send![super(this, superclass), sendEvent: event];
         window_state.lock().native_views.clicked = None;
     }
 }
@@ -538,8 +648,10 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
 extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut AnyObject) -> Bool {
     // SAFETY: `this` is a live GPUI window and `responder` is null or a live responder.
     unsafe {
-        let window_state = get_window_state(this);
         let superclass = window_superclass(this);
+        let Some(window_state) = window_state_if_set(this) else {
+            return msg_send![super(this, superclass), makeFirstResponder: responder];
+        };
         // The state is locked while a window is still being set up, before it has native views.
         let Some(lock) = window_state.try_lock() else {
             return msg_send![super(this, superclass), makeFirstResponder: responder];
@@ -589,8 +701,77 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
     }
 }
 
-/// Offers shortcuts to GPUI before a native first responder, which would
-/// otherwise claim every key equivalent for itself.
+/// Returns the key press `event` describes, if a native view would receive it.
+///
+/// # Safety
+///
+/// `window` must be a live GPUI window and `event` a live `NSEvent`.
+unsafe fn key_down_for_native_view(
+    window_state: &Rc<Mutex<MacWindowState>>,
+    window: &AnyObject,
+    event: *mut AnyObject,
+) -> Option<KeyDownEvent> {
+    // SAFETY: The caller guarantees that `window` and `event` are live.
+    unsafe {
+        let event_type: NSEventType = msg_send![event, type];
+        if event_type != NSEventType::KeyDown {
+            return None;
+        }
+        let lock = window_state.try_lock()?;
+        if lock.native_views.views.is_empty() {
+            return None;
+        }
+        let first_responder: *mut AnyObject = msg_send![window, firstResponder];
+        lock.native_views.containing(first_responder)?;
+        let window_height = lock.content_size().height;
+        drop(lock);
+        match platform_input_from_native(event, Some(window_height))? {
+            PlatformInput::KeyDown(key_down) => Some(key_down),
+            _ => None,
+        }
+    }
+}
+
+/// Offers GPUI a key press that a native view has not seen, and returns whether GPUI used it.
+fn offer_key_down_before_native_view(
+    window_state: &Rc<Mutex<MacWindowState>>,
+    key_down: KeyDownEvent,
+) -> bool {
+    let Some(mut callback) = window_state
+        .lock()
+        .native_views
+        .key_down_before_callback
+        .take()
+    else {
+        return false;
+    };
+    let handled = callback(key_down);
+    window_state.lock().native_views.key_down_before_callback = Some(callback);
+    handled
+}
+
+/// Dispatches a key press that no native view used, and returns whether GPUI used it.
+///
+/// This skips the input method handling a key press gets when the GPUI view
+/// has keyboard input, because the native view has already done its own.
+fn pass_key_down_to_gpui(window_state: &Rc<Mutex<MacWindowState>>, key_down: KeyDownEvent) -> bool {
+    pass_input_to_gpui(window_state, PlatformInput::KeyDown(key_down))
+}
+
+/// Dispatches input in GPUI, and returns whether GPUI used it.
+fn pass_input_to_gpui(window_state: &Rc<Mutex<MacWindowState>>, input: PlatformInput) -> bool {
+    let Some(mut callback) = window_state.lock().event_callback.take() else {
+        return false;
+    };
+    let handled = !callback(input).propagate;
+    window_state.lock().event_callback = Some(callback);
+    handled
+}
+
+/// Lets the native view with keyboard input perform a key equivalent before GPUI.
+///
+/// AppKit otherwise asks the views in an order that doesn't depend on which
+/// one has keyboard input.
 extern "C" fn window_perform_key_equivalent(
     this: &AnyObject,
     _: Sel,
@@ -598,38 +779,65 @@ extern "C" fn window_perform_key_equivalent(
 ) -> Bool {
     // SAFETY: `this` is a live GPUI window and `event` a live `NSEvent`.
     unsafe {
-        let window_state = get_window_state(this);
         let superclass = window_superclass(this);
-        let gpui_view = {
-            let Some(lock) = window_state.try_lock() else {
-                return msg_send![super(this, superclass), performKeyEquivalent: event];
-            };
-            let first_responder: *mut AnyObject = msg_send![this, firstResponder];
-            let modifiers: NSEventModifierFlags = msg_send![event, modifierFlags];
-            let is_shortcut =
-                modifiers.intersects(NSEventModifierFlags::Command | NSEventModifierFlags::Control);
-            if !is_shortcut || lock.native_views.containing(first_responder).is_none() {
-                drop(lock);
-                return msg_send![super(this, superclass), performKeyEquivalent: event];
-            }
-            lock.native_view.as_ptr()
+        let Some(window_state) = window_state_if_set(this) else {
+            return msg_send![super(this, superclass), performKeyEquivalent: event];
         };
-
-        if handle_key_event(&*gpui_view, event, true).as_bool() {
+        let Some(key_down) = key_down_for_native_view(&window_state, this, event) else {
+            return msg_send![super(this, superclass), performKeyEquivalent: event];
+        };
+        let delivering_key_down = window_state.lock().native_views.delivering_key_down;
+        if !delivering_key_down
+            && offer_key_down_before_native_view(&window_state, key_down.clone())
+        {
             return Bool::YES;
         }
-        window_state.lock().native_views.offered_key_equivalent = true;
-        let handled: Bool = msg_send![super(this, superclass), performKeyEquivalent: event];
-        window_state.lock().native_views.offered_key_equivalent = false;
-        handled
+
+        window_state.lock().native_views.routing_key_equivalent = true;
+        let performed: Bool = msg_send![super(this, superclass), performKeyEquivalent: event];
+        window_state.lock().native_views.routing_key_equivalent = false;
+        if performed.as_bool() || delivering_key_down {
+            return performed;
+        }
+
+        // No view performed it. For a web view that means the page has already
+        // seen the key and left it, since a web view claims every key equivalent
+        // the first time and sends back the ones its page doesn't use.
+        window_state.lock().native_views.passed_up_key_equivalent = Retained::retain(event);
+        Bool::new(pass_key_down_to_gpui(&window_state, key_down))
     }
 }
 
-/// Whether the window already offered the current key equivalent to GPUI.
-pub(super) fn already_offered_key_equivalent(window_state: &Rc<Mutex<MacWindowState>>) -> bool {
+/// Gives GPUI a key press that came back up the responder chain unused.
+extern "C" fn window_key_down(this: &AnyObject, _: Sel, event: *mut AnyObject) {
+    // SAFETY: `this` is a live GPUI window and `event` a live `NSEvent`.
+    unsafe {
+        let superclass = window_superclass(this);
+        let Some(window_state) = window_state_if_set(this) else {
+            return msg_send![super(this, superclass), keyDown: event];
+        };
+        let Some(key_down) = key_down_for_native_view(&window_state, this, event) else {
+            return msg_send![super(this, superclass), keyDown: event];
+        };
+        let passed_up = window_state
+            .lock()
+            .native_views
+            .passed_up_key_equivalent
+            .take();
+        let already_passed_up =
+            passed_up.is_some_and(|passed_up| ptr::eq(Retained::as_ptr(&passed_up), event));
+        if !already_passed_up {
+            pass_key_down_to_gpui(&window_state, key_down);
+        }
+        // The window's own handling of an unused key press is to beep.
+    }
+}
+
+/// Whether the window is routing the current key equivalent itself.
+pub(super) fn is_routing_key_equivalent(window_state: &Rc<Mutex<MacWindowState>>) -> bool {
     window_state
         .try_lock()
-        .is_some_and(|lock| lock.native_views.offered_key_equivalent)
+        .is_some_and(|lock| lock.native_views.routing_key_equivalent)
 }
 
 /// Whether assistive technology should treat the GPUI view as focused, which
@@ -728,5 +936,46 @@ extern "C" fn resign_first_responder(this: &AnyObject, _: Sel) -> Bool {
             update_accessibility_focus(&window_state, false);
         }
         accepted
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{point, size};
+
+    #[test]
+    fn placement_clips_a_view_to_its_content_mask() {
+        let scaled = |x: f32, y: f32, width: f32, height: f32| Bounds {
+            origin: point(ScaledPixels::from(x), ScaledPixels::from(y)),
+            size: size(ScaledPixels::from(width), ScaledPixels::from(height)),
+        };
+        // A 400 by 300 point GPUI view at twice the scale, 10 points above the
+        // bottom of the content view.
+        let gpui_frame = [0., 10., 400., 300.];
+        let bounds = scaled(100., 40., 200., 400.);
+
+        let unclipped = Placement::new(bounds, scaled(0., 0., 800., 600.), 2., gpui_frame);
+        assert_eq!(
+            unclipped,
+            Some(Placement {
+                container: [50., 90., 100., 200.],
+                view: [0., 0., 100., 200.],
+            })
+        );
+
+        // Clipping the top 60 and left 20 pixels shrinks the container, and the
+        // view keeps its size and stays where it was in the window.
+        let clipped = Placement::new(bounds, scaled(120., 100., 800., 600.), 2., gpui_frame);
+        assert_eq!(
+            clipped,
+            Some(Placement {
+                container: [60., 90., 90., 170.],
+                view: [-10., 0., 100., 200.],
+            })
+        );
+
+        let hidden = Placement::new(bounds, scaled(0., 500., 800., 100.), 2., gpui_frame);
+        assert_eq!(hidden, None);
     }
 }

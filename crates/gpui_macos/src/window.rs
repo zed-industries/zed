@@ -2219,6 +2219,10 @@ impl PlatformWindow for MacWindow {
         self.0.lock().native_views.focused_callback = Some(callback);
     }
 
+    fn on_key_down_before_native_view(&self, callback: Box<dyn FnMut(KeyDownEvent) -> bool>) {
+        self.0.lock().native_views.key_down_before_callback = Some(callback);
+    }
+
     // GPUI calls this without waking the frame waker when a window only needs
     // a present, so a paused Metal link must resume here too.
     fn schedule_frame(&self) {
@@ -2665,14 +2669,39 @@ unsafe fn get_window_state(object: &AnyObject) -> Rc<Mutex<MacWindowState>> {
     }
 }
 
-unsafe fn drop_window_state(object: &AnyObject) {
+/// Returns the window state, or `None` before it is set or after it is dropped.
+///
+/// AppKit can call methods it defines on a window, unlike the delegate methods
+/// GPUI adds, while the window is still being initialized or deallocated.
+unsafe fn window_state_if_set(object: &AnyObject) -> Option<Rc<Mutex<MacWindowState>>> {
     unsafe {
         let raw = *object
             .class()
             .instance_variable(WINDOW_STATE_IVAR)
             .expect("GPUI window state ivar")
             .load::<*mut c_void>(object);
-        Rc::from_raw(raw as *mut Mutex<MacWindowState>);
+        if raw.is_null() {
+            return None;
+        }
+        let state = Rc::from_raw(raw as *mut Mutex<MacWindowState>);
+        let clone = state.clone();
+        mem::forget(state);
+        Some(clone)
+    }
+}
+
+unsafe fn drop_window_state(object: &AnyObject) {
+    unsafe {
+        let ivar = object
+            .class()
+            .instance_variable(WINDOW_STATE_IVAR)
+            .expect("GPUI window state ivar");
+        let raw = *ivar.load::<*mut c_void>(object);
+        // Cleared so that anything the superclass calls while deallocating sees no state.
+        *ivar.load_ptr::<*mut c_void>(object) = ptr::null_mut();
+        if !raw.is_null() {
+            drop(Rc::from_raw(raw as *mut Mutex<MacWindowState>));
+        }
     }
 }
 
@@ -2782,7 +2811,7 @@ extern "C" fn handle_key_equivalent(
     _: Sel,
     native_event: *mut AnyObject,
 ) -> Bool {
-    if native_view::already_offered_key_equivalent(&unsafe { get_window_state(this) }) {
+    if native_view::is_routing_key_equivalent(&unsafe { get_window_state(this) }) {
         return Bool::NO;
     }
     handle_key_event(this, native_event, true)

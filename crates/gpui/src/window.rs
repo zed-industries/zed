@@ -2331,6 +2331,16 @@ impl Window {
                     .flatten()
             })
         });
+        platform_window.on_key_down_before_native_view({
+            let mut cx = cx.to_async();
+            Box::new(move |event| {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window.dispatch_key_down_before_native_view(event, cx)
+                    })
+                    .unwrap_or(false)
+            })
+        });
         platform_window.on_native_view_focused({
             let mut cx = cx.to_async();
             Box::new(move |id| {
@@ -2756,6 +2766,7 @@ impl Window {
             return;
         }
 
+        self.end_composition_before_focusing_native_view(handle.id, cx);
         self.focus = Some(handle.id);
         self.sync_native_view_focus();
         self.focus_generation = self.focus_generation.wrapping_add(1);

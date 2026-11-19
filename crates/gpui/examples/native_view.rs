@@ -4,7 +4,11 @@
 //! - Press `cmd-shift-p` while typing in the page. The palette opens across the page's
 //!   edge, takes keyboard input, and `escape` returns the caret to the same page field.
 //! - Click the palette's button where it overlaps the page, then scroll the exposed page.
+//! - Click the page while the palette is open, which dismisses the palette.
 //! - Click the GPUI text box, type, then click back into the page.
+//! - Click an empty part of the page and press some keys. The page sees every key first,
+//!   and the sidebar lists the ones it left for GPUI. It keeps `cmd-k` for itself, while
+//!   `cmd-shift-p` is reserved, so it opens the palette whatever the page does.
 //! - Drag the divider, then load the other page or toggle the page's colors, and drag it
 //!   again. The strip that shows for a frame where the page is catching up takes the
 //!   page's own background color.
@@ -99,6 +103,7 @@ mod example {
     <p><textarea rows="3" cols="38">A textarea with some text to select.</textarea></p>
     <p contenteditable style="border: 1px solid #999; padding: 6px">An editable paragraph.</p>
     <p><a href="https://example.com">A link, for the pointing-hand cursor</a></p>
+    <p id="kept">This page keeps cmd-k for itself.</p>
     <button onclick="this.textContent = 'Clicked ' + (++window.clicks || (window.clicks = 1))">
       A page button
     </button>
@@ -106,6 +111,14 @@ mod example {
       Toggle the page's colors
     </button>
     <script>
+      document.addEventListener("keydown", (event) => {
+        if (event.metaKey && event.key === "k") {
+          event.preventDefault();
+          window.keptCount = (window.keptCount || 0) + 1;
+          document.getElementById("kept").textContent =
+            "This page kept cmd-k " + window.keptCount + " times.";
+        }
+      });
       for (let line = 1; line <= 60; line++) {
         const paragraph = document.createElement("p");
         paragraph.textContent = "Scrollable line " + line;
@@ -129,6 +142,7 @@ mod example {
         palette_text: String,
         palette_clicks: usize,
         focus_before_palette: Option<FocusHandle>,
+        keys_left_by_page: Vec<String>,
     }
 
     impl Example {
@@ -171,6 +185,9 @@ mod example {
                 load_page(&web_view, PAGE);
                 let native_view = NativeView::new(NonNull::from(&*web_view).cast(), window, cx)
                     .expect("macOS windows composite native views");
+                // The page sees keys before GPUI does, so without this a page that
+                // handled this key itself would keep the palette from opening.
+                native_view.reserve_action::<TogglePalette>();
                 (native_view, web_view)
             };
             let background_updates = cx.spawn(async move |this, cx| {
@@ -201,6 +218,7 @@ mod example {
                 palette_text: String::new(),
                 palette_clicks: 0,
                 focus_before_palette: None,
+                keys_left_by_page: Vec::new(),
             }
         }
 
@@ -241,6 +259,9 @@ mod example {
                     div()
                         .id("palette")
                         .track_focus(&self.palette_focus)
+                        .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                            this.dismiss_palette(&DismissPalette, window, cx);
+                        }))
                         .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                             if let Some(text) = &event.keystroke.key_char {
                                 this.palette_text.push_str(text);
@@ -294,6 +315,15 @@ mod example {
                 .text_color(rgb(0x1f2933))
                 .on_action(cx.listener(Self::toggle_palette))
                 .on_action(cx.listener(Self::dismiss_palette))
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    if gpui::Focusable::focus_handle(&this.web_view, cx).is_focused(window) {
+                        this.keys_left_by_page
+                            .push(event.keystroke.unparse(gpui::OperatingSystem::Mac));
+                        let excess = this.keys_left_by_page.len().saturating_sub(8);
+                        this.keys_left_by_page.drain(..excess);
+                        cx.notify();
+                    }
+                }))
                 .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                     if this.resizing_sidebar {
                         this.sidebar_width = event.position.x.clamp(px(120.), px(600.));
@@ -375,7 +405,11 @@ mod example {
                                     unsafe { load_page(&this.web_view_object, page) };
                                 })),
                         )
-                        .child("cmd-shift-p toggles the palette, escape dismisses it."),
+                        .child("cmd-shift-p toggles the palette, escape dismisses it.")
+                        .child(format!(
+                            "Keys the page left for GPUI: {}",
+                            self.keys_left_by_page.join(" ")
+                        )),
                 )
                 .child(
                     div()

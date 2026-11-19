@@ -1395,6 +1395,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Registers the callback invoked when the user moves keyboard input to
     /// a native view through the platform, such as by clicking in it.
     fn on_native_view_focused(&self, _callback: Box<dyn FnMut(crate::NativeViewId)>) {}
+    /// Registers the callback offered each key press before the native view
+    /// that has keyboard input, which returns whether it used the key.
+    ///
+    /// The native view receives the keys it doesn't use, and the ones the
+    /// view doesn't use either arrive afterwards as ordinary input.
+    fn on_key_down_before_native_view(
+        &self,
+        _callback: Box<dyn FnMut(crate::KeyDownEvent) -> bool>,
+    ) {
+    }
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
@@ -2239,6 +2249,12 @@ impl PlatformInputHandler {
     #[allow(dead_code)]
     pub fn apple_press_and_hold_enabled(&mut self) -> bool {
         self.handler.apple_press_and_hold_enabled()
+    }
+
+    /// Ends a composition from inside an update, where [`Self::unmark_text`]
+    /// cannot borrow the app.
+    pub(crate) fn unmark_text_during_update(&mut self, window: &mut Window, cx: &mut App) {
+        self.handler.unmark_text(window, cx);
     }
 
     pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {

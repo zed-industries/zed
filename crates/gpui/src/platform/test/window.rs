@@ -1,6 +1,6 @@
 use crate::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, DispatchEventResult, DisplayId, GpuSpecs,
-    HeadlessAtlas, NativeViewId, Pixels, Platform, PlatformAtlas, PlatformDisplay,
+    HeadlessAtlas, KeyDownEvent, NativeViewId, Pixels, Platform, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, RequestFrameOptions, Scene, Size, TestDisplay, TestPlatform,
     TextInputConfiguration, TextInputStateChange, WindowAppearance, WindowBackgroundAppearance,
@@ -36,6 +36,7 @@ pub(crate) struct TestWindowState {
     focused_native_view: Option<NativeViewId>,
     hit_test_native_view_callback: Option<Box<dyn FnMut(Point<Pixels>) -> Option<NativeViewId>>>,
     native_view_focused_callback: Option<Box<dyn FnMut(NativeViewId)>>,
+    key_down_before_native_view_callback: Option<Box<dyn FnMut(KeyDownEvent) -> bool>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     visibility: WindowVisibility,
@@ -131,6 +132,7 @@ impl TestWindow {
             focused_native_view: None,
             hit_test_native_view_callback: None,
             native_view_focused_callback: None,
+            key_down_before_native_view_callback: None,
             request_frame_callback: None,
             frame_wake_count: Rc::new(Cell::new(0)),
             frame_scheduled: false,
@@ -282,6 +284,17 @@ impl TestWindow {
         let id = callback(position);
         self.0.lock().hit_test_native_view_callback = Some(callback);
         id
+    }
+
+    /// Acts as if the user pressed a key while a native view had keyboard input,
+    /// and returns whether the window used the key before the view saw it.
+    pub fn simulate_key_down_before_native_view(&self, event: KeyDownEvent) -> bool {
+        let Some(mut callback) = self.0.lock().key_down_before_native_view_callback.take() else {
+            return false;
+        };
+        let handled = callback(event);
+        self.0.lock().key_down_before_native_view_callback = Some(callback);
+        handled
     }
 
     /// Acts as if the user moved keyboard input to a native view through the platform.
@@ -637,6 +650,10 @@ impl PlatformWindow for TestWindow {
 
     fn set_focused_native_view(&self, id: Option<NativeViewId>) {
         self.0.lock().focused_native_view = id;
+    }
+
+    fn on_key_down_before_native_view(&self, callback: Box<dyn FnMut(KeyDownEvent) -> bool>) {
+        self.0.lock().key_down_before_native_view_callback = Some(callback);
     }
 
     fn on_hit_test_native_view(
