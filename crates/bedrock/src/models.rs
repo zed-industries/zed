@@ -156,6 +156,15 @@ pub enum ConverseModel {
     ClaudeSonnet4,
     #[serde(rename = "claude-haiku-4-5", alias = "claude-haiku-4-5-latest")]
     ClaudeHaiku4_5,
+    #[serde(
+        rename = "claude-sonnet-5-5",
+        alias = "claude-sonnet-5-5-latest",
+        alias = "claude-sonnet-5-5-thinking",
+        alias = "claude-sonnet-5-5-thinking-latest"
+    )]
+    ClaudeSonnet5_5,
+    #[serde(rename = "claude-haiku-5-5", alias = "claude-haiku-5-5-latest")]
+    ClaudeHaiku5_5,
 
     // Meta Llama 4 models
     #[serde(rename = "llama-4-scout-17b")]
@@ -296,6 +305,8 @@ impl ConverseModel {
             Ok(Self::ClaudeOpus4_5)
         } else if id.starts_with("claude-opus-4-1") {
             Ok(Self::ClaudeOpus4_1)
+        } else if id.starts_with("claude-sonnet-5-5") {
+            Ok(Self::ClaudeSonnet5_5)
         } else if id.starts_with("claude-sonnet-5") {
             Ok(Self::ClaudeSonnet5)
         } else if id.starts_with("claude-sonnet-4-6") {
@@ -304,6 +315,8 @@ impl ConverseModel {
             Ok(Self::ClaudeSonnet4_5)
         } else if id.starts_with("claude-sonnet-4") {
             Ok(Self::ClaudeSonnet4)
+        } else if id.starts_with("claude-haiku-5-5") {
+            Ok(Self::ClaudeHaiku5_5)
         } else if id.starts_with("claude-haiku-4-5") {
             Ok(Self::ClaudeHaiku4_5)
         } else {
@@ -323,10 +336,12 @@ impl ConverseModel {
             Self::ClaudeOpus4_5 => "claude-opus-4-5",
             Self::ClaudeOpus4_1 => "claude-opus-4-1",
             Self::ClaudeSonnet5 => "claude-sonnet-5",
+            Self::ClaudeSonnet5_5 => "claude-sonnet-5-5",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5",
             Self::ClaudeSonnet4 => "claude-sonnet-4",
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5",
+            Self::ClaudeHaiku5_5 => "claude-haiku-5-5",
             Self::Llama4Scout17B => "llama-4-scout-17b",
             Self::Llama4Maverick17B => "llama-4-maverick-17b",
             Self::Gemma3_4B => "gemma-3-4b",
@@ -380,10 +395,12 @@ impl ConverseModel {
             Self::ClaudeOpus4_5 => "anthropic.claude-opus-4-5-20251101-v1:0",
             Self::ClaudeOpus4_1 => "anthropic.claude-opus-4-1-20250805-v1:0",
             Self::ClaudeSonnet5 => "anthropic.claude-sonnet-5",
+            Self::ClaudeSonnet5_5 => "anthropic.claude-sonnet-5-5",
             Self::ClaudeSonnet4_6 => "anthropic.claude-sonnet-4-6",
             Self::ClaudeSonnet4_5 => "anthropic.claude-sonnet-4-5-20250929-v1:0",
             Self::ClaudeSonnet4 => "anthropic.claude-sonnet-4-20250514-v1:0",
             Self::ClaudeHaiku4_5 => "anthropic.claude-haiku-4-5-20251001-v1:0",
+            Self::ClaudeHaiku5_5 => "anthropic.claude-haiku-5-5",
             Self::Llama4Scout17B => "meta.llama4-scout-17b-instruct-v1:0",
             Self::Llama4Maverick17B => "meta.llama4-maverick-17b-instruct-v1:0",
             Self::Gemma3_4B => "google.gemma-3-4b-it",
@@ -437,10 +454,12 @@ impl ConverseModel {
             Self::ClaudeOpus4_5 => "Claude Opus 4.5",
             Self::ClaudeOpus4_1 => "Claude Opus 4.1",
             Self::ClaudeSonnet5 => "Claude Sonnet 5",
+            Self::ClaudeSonnet5_5 => "Claude Sonnet 5.5",
             Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
+            Self::ClaudeHaiku5_5 => "Claude Haiku 5.5",
             Self::Llama4Scout17B => "Llama 4 Scout 17B",
             Self::Llama4Maverick17B => "Llama 4 Maverick 17B",
             Self::Gemma3_4B => "Gemma 3 4B",
@@ -498,6 +517,8 @@ impl ConverseModel {
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet5_5
+            | Self::ClaudeHaiku5_5
             | Self::ClaudeHaiku4_5 => 1_000_000,
             Self::ClaudeOpus4_1 => 200_000,
             Self::Llama4Scout17B | Self::Llama4Maverick17B => 128_000,
@@ -534,12 +555,14 @@ impl ConverseModel {
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
-            | Self::ClaudeSonnet5 => 128_000,
+            | Self::ClaudeSonnet5
+            | Self::ClaudeSonnet5_5 => 128_000,
             Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5 => 64_000,
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeHaiku5_5 => 64_000,
             Self::ClaudeOpus4_1 => 32_000,
             Self::Llama4Scout17B
             | Self::Llama4Maverick17B
@@ -596,6 +619,8 @@ impl ConverseModel {
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet5_5
+            | Self::ClaudeHaiku5_5
             | Self::ClaudeHaiku4_5 => true,
             Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => true,
             Self::MistralLarge3 | Self::PixtralLarge | Self::MagistralSmall => true,
@@ -637,6 +662,8 @@ impl ConverseModel {
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet5_5
+            | Self::ClaudeHaiku5_5
             | Self::ClaudeHaiku4_5 => true,
             Self::NovaLite | Self::NovaPro => true,
             Self::PixtralLarge => true,
@@ -665,6 +692,8 @@ impl ConverseModel {
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet5_5
+            | Self::ClaudeHaiku5_5
             | Self::ClaudeHaiku4_5 => true,
             Self::Custom {
                 cache_configuration,
@@ -690,6 +719,8 @@ impl ConverseModel {
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet5_5
+            | Self::ClaudeHaiku5_5
             | Self::ClaudeHaiku4_5 => true,
             Self::Custom { thinking, .. } => thinking.is_some(),
             _ => false,
@@ -706,6 +737,7 @@ impl ConverseModel {
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeSonnet5
+            | Self::ClaudeSonnet5_5
             | Self::ClaudeSonnet4_6 => true,
             Self::Custom { thinking, .. } => {
                 thinking.as_ref().is_some_and(|thinking| thinking.adaptive)
@@ -721,7 +753,8 @@ impl ConverseModel {
             | Self::ClaudeOpus5_5
             | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
-            | Self::ClaudeSonnet5 => true,
+            | Self::ClaudeSonnet5
+            | Self::ClaudeSonnet5_5 => true,
             Self::Custom { thinking, .. } => {
                 thinking.as_ref().is_some_and(|thinking| thinking.has_xhigh)
             }
@@ -849,6 +882,8 @@ impl ConverseModel {
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeSonnet4
+                | Self::ClaudeSonnet5_5
+                | Self::ClaudeHaiku5_5
                 | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite
         );
@@ -912,13 +947,15 @@ impl ConverseModel {
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeSonnet4
+                | Self::ClaudeSonnet5_5
+                | Self::ClaudeHaiku5_5
                 | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite,
                 "global",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // US Government region inference profiles
-            (Self::ClaudeOpus5_5 | Self::ClaudeSonnet4_5, "us-gov") => {
+            (Self::ClaudeOpus5_5 | Self::ClaudeSonnet4_5 | Self::ClaudeSonnet5_5, "us-gov") => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
@@ -936,6 +973,8 @@ impl ConverseModel {
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeSonnet4
+                | Self::ClaudeSonnet5_5
+                | Self::ClaudeHaiku5_5
                 | Self::ClaudeHaiku4_5
                 | Self::Llama4Scout17B
                 | Self::Llama4Maverick17B
@@ -973,6 +1012,8 @@ impl ConverseModel {
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeSonnet4
+                | Self::ClaudeSonnet5_5
+                | Self::ClaudeHaiku5_5
                 | Self::ClaudeHaiku4_5
                 | Self::NovaLite
                 | Self::NovaPro
@@ -989,6 +1030,8 @@ impl ConverseModel {
                 | Self::ClaudeOpus4_6
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
+                | Self::ClaudeSonnet5_5
+                | Self::ClaudeHaiku5_5
                 | Self::ClaudeHaiku4_5,
                 "au",
             ) => Ok(format!("{}.{}", region_group, model_id)),
@@ -1005,6 +1048,8 @@ impl ConverseModel {
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
+                | Self::ClaudeSonnet5_5
+                | Self::ClaudeHaiku5_5
                 | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite,
                 "jp",
@@ -1014,6 +1059,8 @@ impl ConverseModel {
             (
                 Self::ClaudeSonnet4_5
                 | Self::ClaudeSonnet4
+                | Self::ClaudeSonnet5_5
+                | Self::ClaudeHaiku5_5
                 | Self::ClaudeHaiku4_5
                 | Self::NovaLite
                 | Self::NovaPro
@@ -1021,9 +1068,13 @@ impl ConverseModel {
                 "apac",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            (Self::ClaudeFable5 | Self::ClaudeOpus5_5 | Self::ClaudeSonnet5, _) => {
-                Ok(format!("global.{}", model_id))
-            }
+            (
+                Self::ClaudeFable5
+                | Self::ClaudeOpus5_5
+                | Self::ClaudeSonnet5
+                | Self::ClaudeSonnet5_5,
+                _,
+            ) => Ok(format!("global.{}", model_id)),
 
             // Default: use model ID directly
             _ => Ok(model_id.into()),
@@ -1410,6 +1461,10 @@ mod tests {
             ConverseModel::DeepSeekR1.cross_region_inference_id("us-east-1", false)?,
             "us.deepseek.r1-v1:0"
         );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-sonnet-5-5"
+        );
         Ok(())
     }
 
@@ -1447,6 +1502,11 @@ mod tests {
             ConverseModel::ClaudeOpus5_5.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-opus-5-5"
         );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("eu-west-1", false)?,
+            "eu.anthropic.claude-sonnet-5-5"
+        );
+
         Ok(())
     }
 
@@ -1522,6 +1582,10 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-southeast-2", false)?,
             "au.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("ap-southeast-2", false)?,
+            "au.anthropic.claude-sonnet-5-5"
         );
         Ok(())
     }
@@ -1658,6 +1722,10 @@ mod tests {
         assert_eq!(
             ConverseModel::NovaPro.cross_region_inference_id("us-east-1", true)?,
             "us.amazon.nova-pro-v1:0"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("us-east-1", true)?,
+            "global.anthropic.claude-sonnet-5-5"
         );
         Ok(())
     }
@@ -1796,7 +1864,17 @@ mod tests {
         assert_eq!(ConverseModel::ClaudeOpus5.id(), "claude-opus-5");
         assert_eq!(ConverseModel::ClaudeOpus5_5.id(), "claude-opus-5-5");
         assert_eq!(ConverseModel::ClaudeSonnet5.id(), "claude-sonnet-5");
+        assert_eq!(ConverseModel::ClaudeSonnet5_5.id(), "claude-sonnet-5-5");
+        assert_eq!(ConverseModel::ClaudeHaiku5_5.id(), "claude-haiku-5-5");
 
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.request_id(),
+            "anthropic.claude-sonnet-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeHaiku5_5.request_id(),
+            "anthropic.claude-haiku-5-5"
+        );
         assert_eq!(
             ConverseModel::ClaudeSonnet4_5.request_id(),
             "anthropic.claude-sonnet-4-5-20250929-v1:0"
@@ -1869,6 +1947,10 @@ mod tests {
         assert!(ConverseModel::ClaudeOpus4_6.supports_thinking());
         assert!(ConverseModel::ClaudeFable5.supports_thinking());
         assert!(ConverseModel::ClaudeOpus5.supports_thinking());
+        assert!(ConverseModel::ClaudeSonnet5_5.supports_thinking());
+        assert!(ConverseModel::ClaudeHaiku5_5.supports_thinking());
+        assert!(ConverseModel::ClaudeSonnet5_5.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeSonnet5_5.supports_xhigh_adaptive_thinking());
 
         assert!(!ConverseModel::ClaudeSonnet4.supports_adaptive_thinking());
         assert!(ConverseModel::ClaudeOpus4_6.supports_adaptive_thinking());
@@ -1915,6 +1997,8 @@ mod tests {
         assert_eq!(ConverseModel::ClaudeSonnet5.max_token_count(), 1_000_000);
         assert_eq!(ConverseModel::Llama4Scout17B.max_token_count(), 128_000);
         assert_eq!(ConverseModel::NovaPremier.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeSonnet5_5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeHaiku5_5.max_token_count(), 1_000_000);
     }
 
     #[test]
@@ -1927,6 +2011,8 @@ mod tests {
         assert_eq!(ConverseModel::ClaudeSonnet5.max_output_tokens(), 128_000);
         assert_eq!(ConverseModel::ClaudeOpus4_1.max_output_tokens(), 32_000);
         assert_eq!(ConverseModel::Gemma3_4B.max_output_tokens(), 8_192);
+        assert_eq!(ConverseModel::ClaudeSonnet5_5.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeHaiku5_5.max_output_tokens(), 64_000);
     }
 
     #[test]
