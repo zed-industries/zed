@@ -163,7 +163,6 @@ impl PartialEq for UnimplementedSettingField {
 
 impl<T: 'static> SettingField<T> {
     /// Helper for settings with types that are not yet implemented.
-    #[allow(unused)]
     fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
@@ -1727,7 +1726,6 @@ fn all_language_names(cx: &App) -> Vec<SharedString> {
         .collect()
 }
 
-#[allow(unused)]
 #[derive(Clone, PartialEq, Debug)]
 enum SettingsUiFile {
     User,                                // Uses all settings.
@@ -3794,7 +3792,7 @@ impl SettingsWindow {
                         this.child(Label::new(title).size(LabelSize::Large).mt_2().mb_3())
                     })
                 })
-                .children(items.clone().into_iter().enumerate().map(
+                .children(items.iter().copied().enumerate().map(
                     |(index, (actual_item_index, item))| {
                         let is_last_item = Some(index) == last_non_header_index;
                         let next_is_header = items.get(index + 1).is_some_and(|(_, next_item)| {
