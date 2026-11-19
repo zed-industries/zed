@@ -290,12 +290,181 @@ impl LineLayout {
 
         boundaries
     }
+
+    /// Whether shaping put a glyph before one that comes earlier in the text,
+    /// as it does for right-to-left text.
+    fn is_visually_reordered(&self) -> bool {
+        self.runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter())
+            .tuple_windows()
+            .any(|(previous, glyph)| glyph.index < previous.index)
+    }
+
+    /// Wraps a line whose glyphs shaping put in visual rather than logical order.
+    ///
+    /// [`Self::compute_wrap_boundaries`] cuts the shaped line where it crosses the wrap
+    /// width from left to right, which puts the end of a right-to-left paragraph on its
+    /// first line. As UAX #9 requires (rules L1 and L2), this picks the lines in logical
+    /// order instead, measuring them from the glyph advances, and then lays out each line
+    /// in the visual order its glyphs have in the paragraph. The returned layout holds
+    /// the lines left to right, one after another, and each wrap boundary is the first
+    /// glyph of a run.
+    ///
+    /// Returns `None` when the line fits in `wrap_width`.
+    fn wrap_reordered(
+        &self,
+        text: &str,
+        wrap_width: Pixels,
+        max_lines: Option<usize>,
+    ) -> Option<(LineLayout, SmallVec<[WrapBoundary; 1]>)> {
+        // Every glyph in visual order, with the width it takes up.
+        let mut visual: Vec<(FontId, &ShapedGlyph)> = self
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(move |glyph| (run.font_id, glyph)))
+            .collect();
+        visual.sort_by_key(|(_, glyph)| glyph.position.x);
+        let advances: Vec<Pixels> = visual
+            .iter()
+            .enumerate()
+            .map(|(ix, (_, glyph))| {
+                let next_x = visual
+                    .get(ix + 1)
+                    .map_or(self.width, |(_, next)| next.position.x);
+                next_x - glyph.position.x
+            })
+            .collect();
+
+        // The same glyphs in logical order, with running totals of their advances, so
+        // that measuring a range of the text takes two lookups.
+        let mut logical: Vec<(usize, Pixels)> = visual
+            .iter()
+            .zip(&advances)
+            .map(|((_, glyph), advance)| (glyph.index, *advance))
+            .collect();
+        logical.sort_by_key(|(index, _)| *index);
+        let mut totals = Vec::with_capacity(logical.len() + 1);
+        let mut total = px(0.);
+        totals.push(total);
+        for (_, advance) in &logical {
+            total += *advance;
+            totals.push(total);
+        }
+        let first_glyph_at = |byte: usize| logical.partition_point(|(index, _)| *index < byte);
+        let width = |range: Range<usize>| {
+            totals[first_glyph_at(range.end)] - totals[first_glyph_at(range.start)]
+        };
+        // Whitespace at the end of a line hangs past the wrap width.
+        let line_width =
+            |start: usize, end: usize| width(start..start + text[start..end].trim_end().len());
+
+        // As in `compute_wrap_boundaries`, a break opportunity inside a shaped cluster
+        // is ignored.
+        let mut breaks: Vec<usize> = LineWrapper::break_indices(text)
+            .filter(|&index| {
+                index > 0
+                    && index < text.len()
+                    && logical
+                        .binary_search_by_key(&index, |(glyph_index, _)| *glyph_index)
+                        .is_ok()
+            })
+            .collect();
+        breaks.push(text.len());
+
+        let max_breaks = max_lines.map_or(usize::MAX, |lines| lines.saturating_sub(1));
+        let mut line_starts = vec![0];
+        let mut start = 0;
+        let mut last_fit = None;
+        let mut breaks = breaks.into_iter().peekable();
+        while let Some(&end) = breaks.peek() {
+            if line_width(start, end) <= wrap_width {
+                last_fit = Some(end);
+                breaks.next();
+                continue;
+            }
+            if line_starts.len() > max_breaks {
+                break;
+            }
+            // End the line at the last break that fit. When even the first word is too
+            // wide, cut it after the last cluster that fits, keeping at least one.
+            let next_start = last_fit.take().unwrap_or_else(|| {
+                let clusters = logical[first_glyph_at(start)..]
+                    .iter()
+                    .map(|(index, _)| *index)
+                    .filter(|&index| index > start && index < end)
+                    .dedup();
+                let mut cut = None;
+                for index in clusters {
+                    if cut.is_some() && width(start..index) > wrap_width {
+                        break;
+                    }
+                    cut = Some(index);
+                }
+                cut.unwrap_or(end)
+            });
+            line_starts.push(next_start);
+            start = next_start;
+        }
+        if line_starts.len() == 1 {
+            return None;
+        }
+
+        let mut runs: Vec<ShapedRun> = Vec::new();
+        let mut boundaries = SmallVec::new();
+        let mut x = px(0.);
+        for (line_ix, &line_start) in line_starts.iter().enumerate() {
+            let line_end = line_starts.get(line_ix + 1).copied().unwrap_or(text.len());
+            let line = line_start..line_end;
+            let first_run_ix = runs.len();
+            let mut current: Option<ShapedRun> = None;
+            for ((font_id, glyph), advance) in visual.iter().zip(&advances) {
+                if !line.contains(&glyph.index) {
+                    continue;
+                }
+                let mut glyph = (*glyph).clone();
+                glyph.position.x = x;
+                x += *advance;
+                match &mut current {
+                    Some(run) if run.font_id == *font_id => run.glyphs.push(glyph),
+                    _ => {
+                        runs.extend(current.take());
+                        current = Some(ShapedRun {
+                            font_id: *font_id,
+                            glyphs: vec![glyph],
+                        });
+                    }
+                }
+            }
+            runs.extend(current);
+            if line_ix > 0 && runs.len() > first_run_ix {
+                boundaries.push(WrapBoundary {
+                    run_ix: first_run_ix,
+                    glyph_ix: 0,
+                });
+            }
+        }
+
+        Some((
+            LineLayout {
+                font_size: self.font_size,
+                width: x,
+                ascent: self.ascent,
+                descent: self.descent,
+                runs,
+                len: self.len,
+            },
+            boundaries,
+        ))
+    }
 }
 
 /// A line of text that has been wrapped to fit a given width
 #[derive(Default, Debug)]
 pub struct WrappedLineLayout {
-    /// The line layout, pre-wrapping.
+    /// The line laid out on a single line, which the wrap boundaries split into the
+    /// wrapped lines. For right-to-left text, its glyphs are already in the order of
+    /// the wrapped lines.
     pub unwrapped_layout: Arc<LineLayout>,
 
     /// The boundaries at which the line was wrapped
@@ -634,15 +803,23 @@ impl LineLayoutCache {
             drop(state);
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
-            let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(
-                    text.as_ref(),
-                    wrap_width,
-                    max_lines,
-                    &mut self.wrap_scratch.borrow_mut(),
-                )
-            } else {
-                SmallVec::new()
+            let (unwrapped_layout, wrap_boundaries) = match wrap_width {
+                Some(wrap_width) if unwrapped_layout.is_visually_reordered() => {
+                    match unwrapped_layout.wrap_reordered(text.as_ref(), wrap_width, max_lines) {
+                        Some((layout, boundaries)) => (Arc::new(layout), boundaries),
+                        None => (unwrapped_layout, SmallVec::new()),
+                    }
+                }
+                Some(wrap_width) => {
+                    let boundaries = unwrapped_layout.compute_wrap_boundaries(
+                        text.as_ref(),
+                        wrap_width,
+                        max_lines,
+                        &mut self.wrap_scratch.borrow_mut(),
+                    );
+                    (unwrapped_layout, boundaries)
+                }
+                None => (unwrapped_layout, SmallVec::new()),
             };
             let layout = Arc::new(WrappedLineLayout {
                 unwrapped_layout,
@@ -966,6 +1143,134 @@ mod tests {
                 "{text:?}",
             );
         }
+    }
+
+    /// A layout with one 10px glyph per entry of `indices`, in that visual order.
+    fn make_visual_layout(text: &str, indices: &[usize]) -> LineLayout {
+        let mut layout = make_layout(
+            indices
+                .iter()
+                .enumerate()
+                .map(|(position, index)| glyph_at(position as f32 * 10., *index))
+                .collect(),
+        );
+        layout.width = px(indices.len() as f32 * 10.);
+        layout.len = text.len();
+        layout
+    }
+
+    /// The text index and x position of every glyph, per run.
+    fn runs_of(layout: &LineLayout) -> Vec<Vec<(usize, f32)>> {
+        layout
+            .runs
+            .iter()
+            .map(|run| {
+                run.glyphs
+                    .iter()
+                    .map(|glyph| (glyph.index, f32::from(glyph.position.x)))
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn boundaries_at_runs(run_ixs: &[usize]) -> SmallVec<[WrapBoundary; 1]> {
+        run_ixs
+            .iter()
+            .map(|&run_ix| WrapBoundary {
+                run_ix,
+                glyph_ix: 0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_wrap_reordered_keeps_logical_line_order() {
+        // Shaped right to left: "ודה גבא" on screen.
+        let text = "אבג דהו";
+        let layout = make_visual_layout(text, &[11, 9, 7, 6, 4, 2, 0]);
+        assert!(layout.is_visually_reordered());
+
+        let (wrapped, boundaries) = layout.wrap_reordered(text, px(40.), None).unwrap();
+        // The first word comes first, still right to left, with its trailing space on
+        // the left; the second word starts the next line.
+        assert_eq!(
+            runs_of(&wrapped),
+            [
+                vec![(6, 0.), (4, 10.), (2, 20.), (0, 30.)],
+                vec![(11, 40.), (9, 50.), (7, 60.)],
+            ]
+        );
+        assert_eq!(boundaries, boundaries_at_runs(&[1]));
+        assert_eq!(wrapped.width, px(70.));
+        assert_eq!(wrapped.len, text.len());
+    }
+
+    #[test]
+    fn test_wrap_reordered_mixed_direction_line() {
+        // A left-to-right line with a right-to-left word: "a גבא b" on screen.
+        let text = "a אבג b";
+        let layout = make_visual_layout(text, &[0, 1, 6, 4, 2, 8, 9]);
+        assert!(layout.is_visually_reordered());
+
+        let (wrapped, boundaries) = layout.wrap_reordered(text, px(40.), None).unwrap();
+        assert_eq!(
+            runs_of(&wrapped),
+            [
+                vec![(0, 0.), (1, 10.)],
+                vec![(6, 20.), (4, 30.), (2, 40.), (8, 50.)],
+                vec![(9, 60.)],
+            ]
+        );
+        assert_eq!(boundaries, boundaries_at_runs(&[1, 2]));
+    }
+
+    #[test]
+    fn test_wrap_reordered_cuts_a_word_wider_than_the_line() {
+        let text = "אבגדהו";
+        let layout = make_visual_layout(text, &[10, 8, 6, 4, 2, 0]);
+
+        let (wrapped, boundaries) = layout.wrap_reordered(text, px(25.), None).unwrap();
+        assert_eq!(
+            runs_of(&wrapped),
+            [
+                vec![(2, 0.), (0, 10.)],
+                vec![(6, 20.), (4, 30.)],
+                vec![(10, 40.), (8, 50.)],
+            ]
+        );
+        assert_eq!(boundaries, boundaries_at_runs(&[1, 2]));
+
+        // Even a single cluster wider than the line gets a line of its own.
+        let (wrapped, _) = layout.wrap_reordered(text, px(5.), None).unwrap();
+        assert_eq!(wrapped.runs.len(), 6);
+    }
+
+    #[test]
+    fn test_wrap_reordered_respects_max_lines_and_fitting_text() {
+        let text = "אבג דהו";
+        let layout = make_visual_layout(text, &[11, 9, 7, 6, 4, 2, 0]);
+        assert!(layout.wrap_reordered(text, px(70.), None).is_none());
+        assert!(layout.wrap_reordered(text, px(40.), Some(1)).is_none());
+
+        let text = "אב גד הו";
+        let layout = make_visual_layout(text, &[12, 10, 9, 7, 5, 4, 2, 0]);
+        let (wrapped, boundaries) = layout.wrap_reordered(text, px(25.), Some(2)).unwrap();
+        // The second of two lines holds the rest of the text.
+        assert_eq!(boundaries.len(), 1);
+        assert_eq!(
+            runs_of(&wrapped)[1]
+                .iter()
+                .map(|(index, _)| *index)
+                .collect::<Vec<_>>(),
+            [12, 10, 9, 7, 5]
+        );
+    }
+
+    #[test]
+    fn test_left_to_right_layout_is_not_reordered() {
+        let text = "ab cd";
+        let layout = make_visual_layout(text, &[0, 1, 2, 3, 4]);
+        assert!(!layout.is_visually_reordered());
     }
 
     #[test]
