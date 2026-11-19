@@ -15,7 +15,9 @@ pub use platform_title_bar::{
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
 use platform_title_bar::{SystemWindowTabs, TitleBarSettings};
-use project::{linked_worktree_short_name, repo_identity_path};
+use project::{
+    WorktreePaths, delta_checkout_short_name, linked_worktree_short_name, repo_identity_path,
+};
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -42,6 +44,7 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings as _, SettingsStore};
 
 use std::any::TypeId;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;
@@ -270,17 +273,28 @@ impl Render for TitleBar {
                 .map(|name| SharedString::from(name.to_string()));
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                let identity = repo_identity_path(&repo.common_dir_abs_path, path_style);
-                linked_worktree_name = linked_worktree_short_name(
-                    repo.linked_worktree_anchor_path(),
-                    repo.work_directory_abs_path.as_ref(),
-                    path_style,
-                )
-                .or_else(|| {
-                    repo.is_linked_worktree()
-                        .then_some(project_name.clone())
-                        .flatten()
-                });
+                let worktree_paths = self.project.read(cx).worktree_paths(cx);
+                let delta_checkout =
+                    delta_checkout_identity(&worktree_paths, &worktree_abs_path, path_style);
+                let identity = match &delta_checkout {
+                    Some((source_path, _)) => source_path,
+                    None => repo_identity_path(&repo.common_dir_abs_path, path_style),
+                };
+                linked_worktree_name = delta_checkout
+                    .as_ref()
+                    .map(|(_, worktree_name)| worktree_name.clone())
+                    .or_else(|| {
+                        linked_worktree_short_name(
+                            repo.linked_worktree_anchor_path(),
+                            repo.work_directory_abs_path.as_ref(),
+                            path_style,
+                        )
+                    })
+                    .or_else(|| {
+                        repo.is_linked_worktree()
+                            .then_some(project_name.clone())
+                            .flatten()
+                    });
 
                 let display_name =
                     if path_style.extension(identity) == Some(std::ffi::OsStr::new("git")) {
@@ -1448,9 +1462,23 @@ impl TitleBar {
     }
 }
 
+fn delta_checkout_identity<'a>(
+    worktree_paths: &'a WorktreePaths,
+    folder_path: &Path,
+    path_style: PathStyle,
+) -> Option<(&'a Path, SharedString)> {
+    let clone = worktree_paths.delta_clone(folder_path)?;
+    let worktree_name = delta_checkout_short_name(clone, folder_path, path_style)?;
+    let (source_path, _) = worktree_paths
+        .ordered_pairs()
+        .find(|(_, folder)| folder.as_path() == folder_path)?;
+    Some((source_path, worktree_name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::Fs as _;
     use gpui::{
         AnyWindowHandle, Empty, EntityId, SystemWindowTab, SystemWindowTabController,
         TestAppContext, VisualTestContext,
@@ -1567,6 +1595,61 @@ mod tests {
         left: false,
         right: false,
     };
+
+    #[gpui::test]
+    async fn test_delta_checkout_identity(cx: &mut TestAppContext) {
+        let (_workspace, cx) = init_test(TitleBarVisibility::Always, cx).await;
+        let fs = fs::FakeFs::new(cx.executor());
+        let source = Path::new(util::path!("/repo"));
+        let clone = Path::new(util::path!("/store/clones/thread-alpha/repo.git"));
+        let checkout = Path::new(util::path!("/store/worktrees/thread-alpha/repo"));
+        let source_objects = source.join(".git").join("objects");
+        for directory in [
+            source_objects.clone(),
+            clone.join("delta"),
+            clone.join("objects").join("info"),
+            checkout.to_path_buf(),
+        ] {
+            fs.create_dir(&directory).await.unwrap();
+        }
+        for (file, content) in [
+            (
+                source.join(".git").join("HEAD"),
+                "ref: refs/heads/main\n".to_string(),
+            ),
+            (clone.join("HEAD"), "ref: refs/heads/feature\n".to_string()),
+            (clone.join("delta").join("copy-baseline"), String::new()),
+            (
+                clone.join("objects").join("info").join("alternates"),
+                format!("{}\n", source_objects.display()),
+            ),
+            (
+                checkout.join(".git"),
+                format!("gitdir: {}\n", clone.display()),
+            ),
+        ] {
+            fs.insert_file(file, content.into_bytes()).await;
+        }
+        let project = Project::test(fs, [source, checkout], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let identities = project.read_with(cx, |project, cx| {
+            let worktree_paths = project.worktree_paths(cx);
+            [source, checkout].map(|folder_path| {
+                delta_checkout_identity(&worktree_paths, folder_path, PathStyle::local())
+                    .map(|(source_path, worktree_name)| (source_path.to_path_buf(), worktree_name))
+            })
+        });
+        assert_eq!(
+            identities,
+            [
+                None,
+                Some((source.to_path_buf(), SharedString::from("thread-alpha")))
+            ]
+        );
+    }
 
     async fn init_test(
         visibility: TitleBarVisibility,

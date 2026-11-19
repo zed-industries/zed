@@ -5297,6 +5297,14 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
     )
     .await
     .unwrap();
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.snapshot()
+                .root_repo_work_directory()
+                .map(|path| path.as_ref()),
+            Some(Path::new(path!("/linked_worktree"))),
+        );
+    });
     tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
     cx.run_until_parked();

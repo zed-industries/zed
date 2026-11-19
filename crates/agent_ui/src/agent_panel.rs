@@ -155,6 +155,11 @@ fn terminal_program_to_report(
 pub struct TerminalId(uuid::Uuid);
 
 impl TerminalId {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new() -> Self {
+        Self::new()
+    }
+
     pub(crate) fn new() -> Self {
         Self(uuid::Uuid::new_v4())
     }
