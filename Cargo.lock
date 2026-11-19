@@ -3028,6 +3028,7 @@ dependencies = [
  "plist",
  "rayon",
  "release_channel",
+ "sandbox",
  "serde",
  "serde_json",
  "tempfile",
@@ -15825,6 +15826,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "util",
  "windows 0.62.2",
  "windows-core 0.62.2",
 ]

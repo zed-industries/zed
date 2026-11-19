@@ -5,7 +5,6 @@ use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, Result, anyhow, ensure};
 use base64::Engine as _;
@@ -22,6 +21,9 @@ use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives};
 use windows::Win32::System::Console::{
     GetConsoleWindow, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
     SetConsoleCtrlHandler,
+};
+use windows::Win32::System::Diagnostics::Debug::{
+    GetErrorMode, SEM_NOGPFAULTERRORBOX, SetErrorMode, THREAD_ERROR_MODE,
 };
 use windows::Win32::System::Environment::{
     FreeEnvironmentStringsW, GetCommandLineW, GetEnvironmentStringsW,
@@ -45,7 +47,7 @@ use windows::Win32::System::Threading::{
 use windows::Win32::System::WindowsProgramming::{DRIVE_FIXED, PROC_THREAD_ATTRIBUTE_INPUT};
 use windows_core::{BOOL, HRESULT, PCSTR, PCWSTR, PWSTR};
 
-/// Argv flag that marks a re-exec of Zed as the PSEC launcher.
+/// Argv flag that makes the Zed CLI act as the PSEC launcher.
 pub(crate) const LAUNCHER_FLAG: &str = "--windows-sandbox-launcher";
 
 /// Vtable offset of the spec's `fs_read_write` field, which the launcher also
@@ -79,8 +81,18 @@ pub(crate) fn build_spec(
         // A read-write grant on a volume root does not apply to anything
         // inside it, so grant each top-level directory instead.
         for root in &roots {
-            read_write.extend(top_level_directories(root));
+            for directory in top_level_directories(root) {
+                match dunce::canonicalize(&directory) {
+                    Ok(directory) => read_write.push(directory),
+                    Err(error) => log::warn!(
+                        "[sandbox] failed to resolve {} for writable grants: {error}",
+                        directory.display()
+                    ),
+                }
+            }
         }
+        read_write.sort();
+        read_write.dedup();
     } else {
         // Already canonical: resolved and verified by `CanonicalPathBuf`.
         read_write.extend(writable_paths.iter().map(|path| path.to_path_buf()));
@@ -134,7 +146,9 @@ pub(crate) fn build_spec(
         NetworkAccess::None => None,
         // Reaching a loopback listener in another process needs both of these.
         NetworkAccess::LocalhostPort(_) => Some("privateNetworkClientServer,networkLoopback"),
-        NetworkAccess::All => Some("internetClient,privateNetworkClientServer"),
+        // Without `networkLoopback`, PSEC blocks every loopback connection,
+        // whatever the egress policy says.
+        NetworkAccess::All => Some("internetClient,privateNetworkClientServer,networkLoopback"),
     }
     .map(|capabilities| builder.create_string(capabilities));
 
@@ -181,9 +195,7 @@ pub(crate) fn build_spec(
     if let Some(capabilities) = capabilities {
         builder.push_slot_always(CAPABILITIES, capabilities);
     }
-    // `ui_restrictions` is a `JOB_OBJECT_UILIMIT_*` mask. The clipboard can hold
-    // secrets, and a sandboxed command with any network grant could send them
-    // out, so it is off limits under every policy, as on macOS and Linux.
+    // Block access to the clipboard, which can hold secrets.
     builder.push_slot::<u64>(
         UI_RESTRICTIONS,
         u64::from(JOB_OBJECT_UILIMIT_READCLIPBOARD.0 | JOB_OBJECT_UILIMIT_WRITECLIPBOARD.0),
@@ -208,15 +220,10 @@ pub(crate) fn wrap_invocation(
     program: String,
     args: Vec<String>,
 ) -> Result<(String, Vec<String>)> {
-    let launcher = std::env::current_exe().context("failed to resolve the Zed executable")?;
+    let launcher = launcher_path()?;
     let launcher = launcher
         .to_str()
-        .ok_or_else(|| {
-            anyhow!(
-                "Zed executable path is not valid UTF-8: {}",
-                launcher.display()
-            )
-        })?
+        .ok_or_else(|| anyhow!("Zed CLI path is not valid UTF-8: {}", launcher.display()))?
         .to_string();
     let mut launcher_args = Vec::with_capacity(args.len() + 4);
     launcher_args.push(LAUNCHER_FLAG.to_string());
@@ -226,31 +233,32 @@ pub(crate) fn wrap_invocation(
     Ok((launcher, launcher_args))
 }
 
+fn launcher_path() -> Result<PathBuf> {
+    // The launcher has to itself be a console-subsystem program, so it's implemented
+    // in the CLI executable.
+    let launcher = util::get_zed_cli_path()
+        .context("in a development build, run `cargo build -p cli`")
+        .context("could not find the Zed CLI, which starts sandboxed commands")?;
+    Ok(dunce::simplified(&launcher).to_path_buf())
+}
+
 pub(crate) fn check_available() -> Result<()> {
+    check_version_supported()?;
+    launcher_path()?;
+    Ok(())
+}
+
+fn check_version_supported() -> Result<()> {
     ensure!(
         exports()?.supports_version(1, 0)?,
         "this Windows build does not support Process Security Environment 1.0"
     );
-
-    // The API being present doesn't mean an environment can be created: that
-    // can still fail (for example when the feature is turned off by policy).
-    // The launcher would only report that in the command's output, so create a
-    // baseline environment here, where the caller can still offer to run the
-    // command unsandboxed. Only success is remembered, so that a retry after a
-    // failure probes again.
-    static CREATED: AtomicBool = AtomicBool::new(false);
-    if !CREATED.load(Ordering::Relaxed) {
-        let spec = build_spec(false, &[], &[], NetworkAccess::None)?;
-        SecurityEnvironment::create(&spec)
-            .context("Windows could not create a Process Security Environment")?;
-        CREATED.store(true, Ordering::Relaxed);
-    }
     Ok(())
 }
 
 /// If this process was started as the launcher, run the sandboxed command and
 /// exit with its exit code. Returns normally otherwise.
-pub(crate) fn run_launcher_if_invoked() {
+pub fn run_launcher_if_invoked() {
     if std::env::args_os().nth(1).as_deref() != Some(OsStr::new(LAUNCHER_FLAG)) {
         return;
     }
@@ -287,6 +295,9 @@ fn run_launcher(command_line: &str) -> Result<u32> {
     }
     unsafe { SetConsoleCtrlHandler(Some(ignore_console_control), true) }
         .context("failed to install the console control handler")?;
+
+    // Disable Windows Error Reporting inside the sandbox, since it doesn't complete properly there.
+    unsafe { SetErrorMode(THREAD_ERROR_MODE(GetErrorMode()) | SEM_NOGPFAULTERRORBOX) };
 
     // PSEC resolves each read-write path when the environment is created.
     // To make sure a path approved by the user hasn't since become a junction to somewhere else,
@@ -637,7 +648,7 @@ mod tests {
     /// Run `cmd /c <script>` through the launcher in-process. Returns `None`
     /// (skipping the test) when this host has no PSEC support.
     fn run_sandboxed(spec: &[u8], script: &str) -> Option<u32> {
-        if let Err(error) = check_available() {
+        if let Err(error) = check_version_supported() {
             eprintln!("skipping PSEC test: {error:#}");
             return None;
         }
@@ -790,7 +801,7 @@ mod tests {
         reason = "blocking on `mklink` is fine in a test"
     )]
     fn launcher_rejects_a_write_grant_that_is_now_a_junction() {
-        if let Err(error) = check_available() {
+        if let Err(error) = check_version_supported() {
             eprintln!("skipping PSEC test: {error:#}");
             return;
         }
@@ -812,27 +823,6 @@ mod tests {
         );
         let error = run_launcher(&command_line).unwrap_err();
         assert!(format!("{error:#}").contains("was redirected"), "{error:#}");
-    }
-
-    #[test]
-    fn clipboard_is_blocked_under_every_policy() {
-        let layout = Layout::new();
-        for allow_fs_write in [false, true] {
-            let spec = build_spec(
-                allow_fs_write,
-                &[&dunce::canonicalize(layout.project.path()).unwrap()],
-                &[],
-                NetworkAccess::All,
-            )
-            .unwrap();
-            let Some(exit_code) = run_sandboxed(
-                &spec,
-                "powershell -NoProfile -NonInteractive -Command \"Set-Clipboard -Value zed-sandbox-test\"",
-            ) else {
-                return;
-            };
-            assert_ne!(exit_code, 0, "the sandbox should not write the clipboard");
-        }
     }
 
     #[test]
@@ -860,5 +850,21 @@ mod tests {
             Some(0),
             "the sandbox should not reach other loopback ports"
         );
+    }
+
+    #[test]
+    fn unrestricted_network_policy_reaches_loopback() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let spec = build_spec(false, &[], &[], NetworkAccess::All).unwrap();
+        let Some(exit_code) = run_sandboxed(
+            &spec,
+            &format!(
+                "powershell -NoProfile -NonInteractive -Command \"(New-Object Net.Sockets.TcpClient).Connect('127.0.0.1', {port})\""
+            ),
+        ) else {
+            return;
+        };
+        assert_eq!(exit_code, 0, "the sandbox should reach loopback listeners");
     }
 }

@@ -322,7 +322,10 @@ each fixed drive root read-only, and the writable grants and the read-only
 `.git` directories nest inside that.
 
 The PTY can't attach a security environment to the process it starts, so the
-command goes through a launcher mode of `zed.exe`. The launcher creates the
+command goes through a launcher mode of the Zed CLI (`bin\zed.exe` in an
+installed build, `cli.exe` in a development build). The launcher has to be a
+console-subsystem program so that it is attached to the PTY, which a release
+`zed.exe` is not. The launcher creates the
 environment and starts the command in it with
 `PROC_THREAD_ATTRIBUTE_SECURITY_ENVIRONMENT`. The environment is created with
 `PROCESS_SECURITY_ENVIRONMENT_FLAG_TERMINATE_ON_CLOSE`, so when the launcher

@@ -8350,8 +8350,7 @@ impl AcpThread {
                     .build(Some(command.clone()), &args);
                 // The sandbox owns the network proxy (for restricted-network
                 // policies) and injects the child's proxy env vars, returning
-                // the env to spawn with. On Windows, restricted host access is
-                // rejected inside the sandbox before command preparation.
+                // the env to spawn with.
                 let (task_command, task_args, task_env, sandbox) = cx
                     .background_spawn(prepare_sandbox_wrap(
                         task_command,

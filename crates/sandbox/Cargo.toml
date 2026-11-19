@@ -64,11 +64,13 @@ tempfile.workspace = true
 base64.workspace = true
 dunce.workspace = true
 flatbuffers.workspace = true
+util.workspace = true
 windows = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_Console",
+    "Win32_System_Diagnostics_Debug",
     "Win32_System_Environment",
     "Win32_System_JobObjects",
     "Win32_System_LibraryLoader",

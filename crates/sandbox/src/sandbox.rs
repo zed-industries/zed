@@ -634,9 +634,7 @@ impl Sandbox {
 
     /// Check whether the platform sandbox can be created on this host without
     /// actually building a command or spawning the proxy. On Linux this runs a
-    /// brief `bwrap` probe, and on Windows it creates (and closes) a baseline
-    /// Process Security Environment the first time (call it off the main
-    /// thread).
+    /// brief `bwrap` probe (call it off the main thread).
     ///
     /// This answers a purely *environmental* question — is a bwrap sandbox
     /// possible here at all (a usable `bwrap`, plus the unprivileged user
@@ -993,13 +991,9 @@ impl Drop for Sandbox {
     }
 }
 
-/// Handle a possible re-exec of this binary as a sandbox helper.
-///
-/// Neither mode returns if it matches:
-/// - Linux: the in-sandbox launcher (bind validator + restricted-network
-///   bridge), run by bwrap before the real command.
-/// - Windows: the launcher that starts the command in a Process Security
-///   Environment.
+/// Handle a possible re-exec of Zed as the Linux in-sandbox launcher (bind
+/// validator + restricted-network bridge), which bwrap runs before the real
+/// command. Does not return if it matches.
 ///
 /// Call this at the top of `main`, before normal argument parsing.
 #[doc(hidden)]
@@ -1008,9 +1002,14 @@ pub fn run_sandbox_launcher_if_invoked() {
     {
         linux_bubblewrap::run_launcher_if_invoked();
     }
-    #[cfg(target_os = "windows")]
-    windows_psec::run_launcher_if_invoked();
 }
+
+/// Handle a possible invocation of the Zed CLI as the Windows launcher, which
+/// starts the command in a Process Security Environment. Does not return if it
+/// matches.
+#[cfg(target_os = "windows")]
+#[doc(hidden)]
+pub use windows_psec::run_launcher_if_invoked as run_windows_sandbox_launcher_if_invoked;
 
 // The createability probe only needs to know whether a sandbox *can* be built
 // (namespaces, `bwrap` availability); it does not enforce any grant, so it runs
