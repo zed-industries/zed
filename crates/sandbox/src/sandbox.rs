@@ -29,7 +29,7 @@ mod windows_wsl;
 mod util;
 
 #[cfg(target_os = "macos")]
-use util::canonicalize_allowing_missing_leaf;
+use util::canonicalize_allowing_missing_components;
 #[cfg(target_os = "linux")]
 use util::{CanonicalPathBuf, linux_fd_identity};
 pub use util::{
@@ -1520,7 +1520,7 @@ impl GrantableWriteDir {
         #[cfg(target_os = "macos")]
         {
             Ok(Self {
-                canonical_path: canonicalize_allowing_missing_leaf(path),
+                canonical_path: canonicalize_allowing_missing_components(path),
                 untrusted_raw_path,
                 eagerly_created: Vec::new(),
             })

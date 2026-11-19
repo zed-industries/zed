@@ -65,11 +65,11 @@ impl CanonicalPathBuf {
 
         #[cfg(target_os = "macos")]
         {
-            // `canonicalize_allowing_missing_leaf` resolves through the existing
-            // parent so a not-yet-created leaf still yields the real path
-            // Seatbelt will match against.
+            // `canonicalize_allowing_missing_components` resolves through the
+            // nearest existing ancestor so a not-yet-created path still yields
+            // the real path Seatbelt will match against.
             Ok(Self {
-                path: super::canonicalize_allowing_missing_leaf(path),
+                path: super::canonicalize_allowing_missing_components(path),
             })
         }
         #[cfg(target_os = "linux")]

@@ -93,6 +93,11 @@ impl HostFilesystemLocation {
     /// target. Protection against a *later* swap comes from persisting the
     /// resolved canonical path and rebuilding the grant with [`Self::reopen`],
     /// which verifies it.
+    ///
+    /// On macOS `raw` doesn't need to exist: missing trailing components are
+    /// resolved through the nearest existing ancestor, so a path can be
+    /// protected before it is created. On Linux the path must exist, because
+    /// the captured identity is an open handle to it.
     pub fn capture(raw: impl AsRef<Path>) -> std::io::Result<Self> {
         let raw = raw.as_ref();
         Ok(Self {
