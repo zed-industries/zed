@@ -71,7 +71,9 @@ zed -n ~/projects/myproject
 
 ### `-a`, `--add`
 
-Add paths to the currently focused workspace instead of opening a new window. When multiple workspace windows are open, files open in the focused window:
+Add paths to an existing project, preferring a matching project and then the
+focused window's active local project. Open a new window if no local project is
+open:
 
 ```sh
 zed -a newfile.txt

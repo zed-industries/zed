@@ -56,6 +56,7 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
     "MTLCommandBuffer",
     "MTLCommandEncoder",
     "MTLCommandQueue",
+    "MTLDepthStencil",
     "MTLDevice",
     "MTLDrawable",
     "MTLLibrary",

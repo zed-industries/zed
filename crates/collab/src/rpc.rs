@@ -1759,7 +1759,7 @@ async fn call(
         .has_contact(calling_user_id, called_user_id)
         .await?
     {
-        return Err(anyhow!("cannot call a user who isn't a contact"))?;
+        Err(anyhow!("cannot call a user who isn't a contact"))?;
     }
 
     let incoming_call = {
@@ -2097,7 +2097,7 @@ async fn join_project(
             removed_repositories: Default::default(),
         };
         for update in proto::split_worktree_update(message) {
-            session.peer.send(session.connection_id, update.clone())?;
+            session.peer.send(session.connection_id, update)?;
         }
 
         // Stream this worktree's diagnostics.
@@ -2809,7 +2809,7 @@ async fn request_contact(
     let requester_id = session.user_id();
     let responder_id = UserId::from_proto(request.responder_id);
     if requester_id == responder_id {
-        return Err(anyhow!("cannot add yourself as a contact"))?;
+        Err(anyhow!("cannot add yourself as a contact"))?;
     }
 
     let notifications = session
@@ -3030,7 +3030,7 @@ async fn create_channel(
             channels: vec![channel.to_proto()],
             ..Default::default()
         };
-        session.peer.send(connection_id, update.clone())?;
+        session.peer.send(connection_id, update)?;
     }
 
     Ok(())
@@ -3306,7 +3306,7 @@ async fn move_channel(
             ..Default::default()
         };
 
-        session.peer.send(connection_id, update.clone())?;
+        session.peer.send(connection_id, update)?;
     }
 
     response.send(Ack {})?;
@@ -3350,7 +3350,7 @@ async fn reorder_channel(
                 ..Default::default()
             };
 
-            session.peer.send(connection_id, update.clone())?;
+            session.peer.send(connection_id, update)?;
         }
     }
 

@@ -3886,6 +3886,137 @@ async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_remote_private_file_redaction(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".env": "TOKEN=secret\n",
+            "nested": { ".env.local": "TOKEN=secret\n" },
+            "custom.env": "TOKEN=secret\n",
+            "public.env": "TOKEN=secret\n",
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_server_settings(r#"{"private_files": ["...", "**/custom.env"]}"#, cx)
+                .expect("valid server settings");
+        });
+    });
+    let env_language = headless
+        .read_with(server_cx, |headless, _| {
+            headless.languages.language_for_name("Env")
+        })
+        .await
+        .expect("env language");
+    cx.update(|cx| {
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        editor::init(cx);
+    });
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .expect("open remote worktree");
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let cx = cx.add_empty_window();
+
+    for (path, is_private) in [
+        (".env", true),
+        ("nested/.env.local", true),
+        ("custom.env", true),
+        ("public.env", false),
+    ] {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(path)), cx)
+            })
+            .await
+            .expect("open remote buffer");
+        buffer.update(cx, |buffer, cx| {
+            assert_eq!(buffer.file().expect("remote file").is_private(), is_private);
+            buffer.set_language(Some(env_language.clone()), cx);
+        });
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+        });
+
+        for enabled in [true, false] {
+            cx.update(|_, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.editor.redact_private_values = Some(enabled);
+                    });
+                });
+            });
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.display_snapshot(cx);
+                let ranges =
+                    editor.redacted_ranges(editor::Anchor::Min..editor::Anchor::Max, &snapshot, cx);
+                let points = ranges
+                    .iter()
+                    .map(|range| range.start.to_point(&snapshot)..range.end.to_point(&snapshot))
+                    .collect::<Vec<_>>();
+                let expected = if is_private && enabled {
+                    vec![Point::new(0, 6)..Point::new(0, 12)]
+                } else {
+                    vec![]
+                };
+                assert_eq!(points, expected, "{path}, redaction enabled: {enabled}");
+            });
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_remote_private_file_rename(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({".env": "TOKEN=secret\n"}))
+        .await;
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .expect("open remote worktree");
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/.env"), cx)
+        })
+        .await
+        .expect("open remote env file");
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.file().expect("remote file").is_private());
+    });
+
+    for (from, to, is_private) in [
+        (path!("/project/.env"), path!("/project/public.env"), false),
+        (path!("/project/public.env"), path!("/project/.env"), true),
+    ] {
+        fs.rename(Path::new(from), Path::new(to), Default::default())
+            .await
+            .expect("rename remote file");
+        cx.run_until_parked();
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.file().expect("remote file").is_private(), is_private);
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(

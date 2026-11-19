@@ -691,7 +691,8 @@ pub(crate) enum PermissionSelection {
     Choice(usize),
     /// "Select options…" mode where individual command patterns can be toggled.
     /// Contains the indices of checked patterns in the `patterns` list.
-    /// All patterns start checked when this mode is first activated.
+    /// Only the pattern the user clicked is checked when this mode is first activated;
+    /// the user must explicitly check any additional patterns.
     SelectedPatterns(Vec<usize>),
 }
 
@@ -712,7 +713,7 @@ impl PermissionSelection {
         }
     }
 
-    fn has_any_checked_patterns(&self) -> bool {
+    pub(super) fn has_any_checked_patterns(&self) -> bool {
         match self {
             Self::SelectedPatterns(checked) => !checked.is_empty(),
             _ => false,
@@ -840,6 +841,11 @@ pub struct TurnFields {
     pub turn_started_at: Option<Instant>,
     pub turn_tokens: Option<u64>,
     pub reported_activity_generation: Option<u64>,
+}
+
+enum QueuedMessageDispatchSource {
+    Automatic,
+    Manual,
 }
 
 enum ThreadControlsPosition {
@@ -1229,7 +1235,7 @@ impl ThreadView {
                 this._draft_resolve_task.take();
                 return;
             }
-            let is_empty = editor.read(cx).text(cx).is_empty();
+            let is_empty = editor.read(cx).editor().read(cx).is_empty(cx);
             let draft_contents_task = if is_empty {
                 None
             } else {
@@ -2216,7 +2222,7 @@ impl ThreadView {
                 return;
             }
             if let Some(entry) = self.message_queue.try_fast_track(is_generating) {
-                self.dispatch_queued_entry(entry, window, cx);
+                self.dispatch_queued_entry(entry, QueuedMessageDispatchSource::Manual, window, cx);
             }
             return;
         }
@@ -3102,7 +3108,7 @@ impl ThreadView {
             .message_queue
             .on_generation_stopped(is_first_editor_focused)
         {
-            self.dispatch_queued_entry(entry, window, cx);
+            self.dispatch_queued_entry(entry, QueuedMessageDispatchSource::Automatic, window, cx);
             true
         } else {
             false
@@ -3120,7 +3126,7 @@ impl ThreadView {
         }
         let is_generating = self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
         if let Some(entry) = self.message_queue.send_now(id, is_generating) {
-            self.dispatch_queued_entry(entry, window, cx);
+            self.dispatch_queued_entry(entry, QueuedMessageDispatchSource::Manual, window, cx);
         }
     }
 
@@ -3130,6 +3136,7 @@ impl ThreadView {
     fn dispatch_queued_entry(
         &mut self,
         entry: QueueEntry,
+        source: QueuedMessageDispatchSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3137,7 +3144,12 @@ impl ThreadView {
 
         cx.emit(AcpThreadViewEvent::Interacted);
 
-        self.message_editor.focus_handle(cx).focus(window, cx);
+        match source {
+            QueuedMessageDispatchSource::Automatic => {}
+            QueuedMessageDispatchSource::Manual => {
+                self.message_editor.focus_handle(cx).focus(window, cx);
+            }
+        }
 
         // A queued message can itself be a built-in command (e.g. the user typed
         // `/compact` while a turn was generating). Detect that so we run it as a
@@ -3517,7 +3529,10 @@ impl ThreadView {
                 elicitation_id.clone(),
                 matches!(elicitation.status, ElicitationStatus::Pending { .. }),
                 match &elicitation.request.mode {
-                    acp_v2::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    acp_v2::ElicitationMode::Form(mode) => Some((
+                        mode.requested_schema.clone(),
+                        elicitation.v1_string_patterns.clone(),
+                    )),
                     _ => None,
                 },
             )
@@ -3528,11 +3543,13 @@ impl ThreadView {
         };
 
         if is_pending
-            && let Some(schema) = schema
+            && let Some((schema, patterns)) = schema
             && !self.elicitation_form_states.contains_key(&id)
         {
-            self.elicitation_form_states
-                .insert(id, ElicitationFormState::new(&schema, window, cx));
+            self.elicitation_form_states.insert(
+                id,
+                ElicitationFormState::with_v1_string_patterns(&schema, patterns, window, cx),
+            );
         } else if !is_pending {
             self.elicitation_form_states.remove(&id);
         }
@@ -3909,17 +3926,15 @@ impl ThreadView {
         let following = self.is_following(cx);
 
         self.should_be_following = !following;
-        if self.thread.read(cx).status() == ThreadStatus::Generating {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    if following {
-                        workspace.unfollow(CollaboratorId::Agent, window, cx);
-                    } else {
-                        workspace.follow(CollaboratorId::Agent, window, cx);
-                    }
-                })
-                .ok();
-        }
+        self.workspace
+            .update(cx, |workspace, cx| {
+                if following {
+                    workspace.unfollow(CollaboratorId::Agent, window, cx);
+                } else {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                }
+            })
+            .ok();
 
         telemetry::event!("Follow Agent Selected", following = !following);
     }
@@ -4078,7 +4093,7 @@ impl ThreadView {
                     .when_some(plan, |this, plan| {
                         this.child(self.render_plan_summary(plan, window, cx))
                             .when(plan_expanded, |parent| {
-                                parent.children(self.render_plan_body(plan, window, cx))
+                                parent.child(self.render_plan_body(plan, window, cx))
                             })
                     })
                     .when(has_plan && !changed_buffers.is_empty(), |this| {
@@ -4862,14 +4877,14 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let plan_expanded = self.plan_expanded;
-        let file_uri = match &plan.content {
-            PlanContent::File { uri } => Some(uri.clone()),
-            PlanContent::Items(_) | PlanContent::Markdown(_) => None,
+        let plan_path = match &plan.content {
+            PlanContent::Markdown { path, .. } => path.clone(),
+            PlanContent::Items(_) => None,
         };
 
         let title = match &plan.content {
             PlanContent::Items(_) => self.render_plan_items_title(plan, window, cx),
-            PlanContent::Markdown(markdown) => {
+            PlanContent::Markdown { markdown, .. } => {
                 let heading = markdown_plan_heading(markdown.read(cx).source());
                 h_flex()
                     .w_full()
@@ -4889,25 +4904,6 @@ impl ThreadView {
                         )
                     })
             }
-            PlanContent::File { uri } => h_flex()
-                .w_full()
-                .min_w_0()
-                .gap_1()
-                .child(
-                    Label::new("Plan")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    Label::new(plan_file_label(uri))
-                        .size(LabelSize::Small)
-                        .truncate(),
-                )
-                .child(
-                    Icon::new(IconName::ArrowUpRight)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
-                ),
         };
 
         h_flex()
@@ -4916,13 +4912,23 @@ impl ThreadView {
             .p_1()
             .w_full()
             .gap_1()
-            .when(plan_expanded && file_uri.is_none(), |this| {
+            .when(plan_expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
-            .when(file_uri.is_none(), |this| {
-                this.child(Disclosure::new("plan_disclosure", plan_expanded))
-            })
+            .child(Disclosure::new("plan_disclosure", plan_expanded))
             .child(title.flex_1())
+            .when_some(plan_path, |this, path| {
+                this.child(
+                    IconButton::new("open-plan-file", IconName::ArrowUpRight)
+                        .icon_size(IconSize::XSmall)
+                        .shape(ui::IconButtonShape::Square)
+                        .tooltip(Tooltip::text("Open Plan File"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_plan_file(path.clone(), window, cx);
+                            cx.stop_propagation();
+                        })),
+                )
+            })
             .child(
                 IconButton::new("dismiss-plan", IconName::Close)
                     .icon_size(IconSize::XSmall)
@@ -4933,15 +4939,40 @@ impl ThreadView {
                         cx.stop_propagation();
                     })),
             )
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if let Some(uri) = &file_uri {
-                    open_link(uri.clone(), &this.workspace, window, cx);
-                } else {
-                    this.plan_expanded = !this.plan_expanded;
-                    cx.notify();
-                }
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.plan_expanded = !this.plan_expanded;
+                cx.notify();
             }))
             .into_any_element()
+    }
+
+    fn open_plan_file(&self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let project_path = self
+            .project
+            .upgrade()
+            .and_then(|project| project.read(cx).find_project_path(&path, cx));
+        let Some(open_task) = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                if let Some(project_path) = project_path {
+                    workspace.open_path(project_path, None, true, window, cx)
+                } else {
+                    workspace.open_abs_path(
+                        path,
+                        OpenOptions {
+                            focus: Some(true),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                }
+            })
+            .log_err()
+        else {
+            return;
+        };
+        open_task.detach_and_log_err(cx);
     }
 
     fn render_plan_items_title(&self, plan: &Plan, window: &mut Window, cx: &Context<Self>) -> Div {
@@ -5015,33 +5046,24 @@ impl ThreadView {
         }
     }
 
-    fn render_plan_body(
-        &self,
-        plan: &Plan,
-        window: &mut Window,
-        cx: &Context<Self>,
-    ) -> Option<AnyElement> {
+    fn render_plan_body(&self, plan: &Plan, window: &mut Window, cx: &Context<Self>) -> AnyElement {
         match &plan.content {
-            PlanContent::Items(entries) => Some(
-                self.render_plan_entries(entries, window, cx)
-                    .into_any_element(),
-            ),
-            PlanContent::Markdown(markdown) => Some(
-                v_flex()
-                    .id("plan_markdown")
-                    .max_h_64()
-                    .overflow_y_scroll()
-                    .px_2()
-                    .py_1()
-                    .bg(cx.theme().colors().editor_background)
-                    .text_xs()
-                    .child(MarkdownElement::new(
-                        markdown.clone(),
-                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                    ))
-                    .into_any_element(),
-            ),
-            PlanContent::File { .. } => None,
+            PlanContent::Items(entries) => self
+                .render_plan_entries(entries, window, cx)
+                .into_any_element(),
+            PlanContent::Markdown { markdown, .. } => v_flex()
+                .id("plan_markdown")
+                .max_h_64()
+                .overflow_y_scroll()
+                .px_2()
+                .py_1()
+                .bg(cx.theme().colors().editor_background)
+                .text_xs()
+                .child(MarkdownElement::new(
+                    markdown.clone(),
+                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                ))
+                .into_any_element(),
         }
     }
 
@@ -6645,7 +6667,7 @@ impl ThreadView {
                             .toggleable(IconPosition::End, is_selected);
 
                         menu.push_item(entry.handler({
-                            let effort = effort_level.value.clone();
+                            let effort = effort_level.value;
                             let weak_self = weak_self.clone();
                             move |_window, cx| {
                                 let effort = effort.clone();
@@ -7710,6 +7732,7 @@ impl ThreadView {
                                         !markdown.read(cx).source().is_empty()
                                     })
                             }
+                            ToolCallContent::SessionReference(_) => true,
                             ToolCallContent::Other { markdown, .. } => {
                                 !markdown.read(cx).source().is_empty()
                             }
@@ -11799,6 +11822,7 @@ impl ThreadView {
                 active_editor.update_in(cx, |editor, window, cx| {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     if snapshot.as_singleton().is_some()
+                        && let Some(agent_location) = agent_location
                         && let Some(anchor) = snapshot.anchor_in_excerpt(agent_location.position)
                     {
                         editor.change_selections(Default::default(), window, cx, |selections| {
@@ -11922,6 +11946,9 @@ impl ThreadView {
                     })
                     .into_any_element()
             }
+            ToolCallContent::SessionReference(reference) => {
+                self.render_tool_call_session_reference(entry_ix, context_ix, reference, cx)
+            }
             ToolCallContent::Other { markdown, .. } => self.render_markdown_output(
                 markdown.clone(),
                 entry_ix,
@@ -11932,6 +11959,58 @@ impl ThreadView {
                 cx,
             ),
         }
+    }
+
+    fn render_tool_call_session_reference(
+        &self,
+        entry_ix: usize,
+        context_ix: usize,
+        reference: &acp_v2::SessionReference,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let element_id = format!("tool-call-session-reference-{entry_ix}-{context_ix}");
+        let participant = match self.session_participant_label(&reference.session_id, cx) {
+            Some(label) => div()
+                .debug_selector({
+                    let element_id = element_id.clone();
+                    move || element_id
+                })
+                .child(
+                    Button::new(SharedString::from(element_id), label)
+                        .label_size(LabelSize::Small)
+                        .tooltip(Tooltip::text("Open Session"))
+                        .on_click(cx.listener({
+                            let session_id = reference.session_id.clone();
+                            move |this, _, window, cx| {
+                                let Some(server_view) = this.server_view.upgrade() else {
+                                    return;
+                                };
+                                server_view.update(cx, |view, cx| {
+                                    view.navigate_to_thread(session_id.clone(), window, cx)
+                                });
+                            }
+                        })),
+                )
+                .into_any_element(),
+            // The reference is display-only, so a session this conversation has no thread for
+            // is shown rather than loaded.
+            None => Label::new("Unavailable Session")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+        };
+
+        h_flex()
+            .px_2()
+            .py_1()
+            .gap_1p5()
+            .child(
+                Icon::new(IconName::ForwardArrow)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(participant)
+            .into_any_element()
     }
 
     fn render_output_content_block(
@@ -14563,14 +14642,6 @@ fn markdown_plan_heading(source: &str) -> Option<&str> {
     })
 }
 
-fn plan_file_label(uri: &str) -> String {
-    Url::parse(uri)
-        .ok()
-        .and_then(|url| url.to_file_path().ok())
-        .and_then(|path| Some(path.file_name()?.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| uri.to_owned())
-}
-
 fn file_link_parts(input: &str, path_style: PathStyle) -> Option<(&str, Option<&str>)> {
     let (path, fragment) = input
         .split_once('#')
@@ -15852,6 +15923,103 @@ mod tests {
         }
 
         fn flush(&self) {}
+    }
+
+    #[gpui::test]
+    async fn test_open_tool_call_location_without_resolved_buffer(cx: &mut gpui::TestAppContext) {
+        use agent_client_protocol::v1::schema as acp;
+
+        crate::conversation_view::tests::init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({"notes.txt": "first\nsecond\nthird\n"}),
+        )
+        .await;
+        fs.insert_file(
+            path!("/project/screenshot.png"),
+            b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        let connection = acp_thread::StubAgentConnection::new();
+        crate::test_support::open_thread_with_connection(&panel, connection.clone(), cx);
+        let session_id = crate::test_support::active_session_id(&panel, cx);
+        let thread_view = panel.read_with(cx, |panel, cx| {
+            panel.active_thread_view(cx).expect("active thread view")
+        });
+
+        let send_read =
+            |id: &'static str, path: &str, line: Option<u32>, cx: &mut gpui::VisualTestContext| {
+                cx.update(|_window, cx| {
+                    connection.send_update(
+                        session_id.clone(),
+                        acp::SessionUpdate::ToolCall(
+                            acp::ToolCall::new(acp::ToolCallId::new(id), "Read")
+                                .kind(acp::ToolKind::Read)
+                                .locations(vec![acp::ToolCallLocation::new(path).line(line)]),
+                        ),
+                        cx,
+                    );
+                });
+                thread_view.read_with(cx, |thread_view, cx| {
+                    thread_view
+                        .thread
+                        .read(cx)
+                        .tool_call(&acp_v2::ToolCallId::new(id))
+                        .expect("tool call")
+                        .0
+                })
+            };
+        let open_location = |entry_ix: usize, cx: &mut gpui::VisualTestContext| {
+            thread_view.update_in(cx, |thread_view, window, cx| {
+                thread_view.open_tool_call_location(entry_ix, 0, window, cx);
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                workspace.active_item(cx).expect("location should open")
+            })
+        };
+
+        let image_ix = send_read("read-image", path!("/project/screenshot.png"), None, cx);
+        cx.run_until_parked();
+        thread_view.read_with(cx, |thread_view, cx| {
+            let (_, resolved) = thread_view.thread.read(cx).entries()[image_ix]
+                .location(0)
+                .expect("location");
+            assert!(resolved.is_none(), "binary files never resolve to a buffer");
+        });
+        let item = open_location(image_ix, cx);
+        cx.read(|cx| {
+            assert_eq!(item.tab_content_text(0, cx), "screenshot.png");
+            assert!(item.downcast::<Editor>().is_none());
+        });
+
+        // Clicking before resolution finishes still opens the reported line.
+        let text_ix = send_read("read-text", path!("/project/notes.txt"), Some(2), cx);
+        let editor = open_location(text_ix, cx)
+            .downcast::<Editor>()
+            .expect("text file should open in an editor");
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(1, 0)
+            );
+        });
     }
 }
 

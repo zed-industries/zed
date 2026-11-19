@@ -7487,6 +7487,265 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_context_uses_target_server_triggers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    for dynamic in [false, true] {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.ts": "a" })).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(typescript_lang());
+        let mut servers = Vec::new();
+        for (name, triggers) in [
+            (
+                "typescript",
+                if dynamic {
+                    None
+                } else {
+                    Some(vec![".".into()])
+                },
+            ),
+            ("emmet", Some(vec!["a".into()])),
+            ("no-triggers", None),
+        ] {
+            servers.push(language_registry.register_fake_lsp(
+                "TypeScript",
+                FakeLspAdapter {
+                    name,
+                    capabilities: lsp::ServerCapabilities {
+                        completion_provider: if dynamic && name == "typescript" {
+                            None
+                        } else {
+                            Some(lsp::CompletionOptions {
+                                trigger_characters: triggers,
+                                ..Default::default()
+                            })
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ));
+        }
+
+        let (buffer, _handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+            })
+            .await
+            .unwrap();
+        let mut fake_servers = Vec::new();
+        for server in &mut servers {
+            fake_servers.push(server.next().await.unwrap());
+        }
+        cx.run_until_parked();
+
+        if dynamic {
+            fake_servers[0]
+                .request::<lsp::request::RegisterCapability>(
+                    lsp::RegistrationParams {
+                        registrations: vec![lsp::Registration {
+                            id: "completion".into(),
+                            method: "textDocument/completion".into(),
+                            register_options: Some(json!({
+                                "documentSelector": [{ "language": "typescript", "scheme": "file" }],
+                                "triggerCharacters": ["."]
+                            })),
+                        }],
+                    },
+                    DEFAULT_LSP_REQUEST_TIMEOUT,
+                )
+                .await
+                .into_response()
+                .unwrap();
+            cx.run_until_parked();
+        }
+
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone()),
+            BTreeSet::from([".".into(), "a".into()])
+        );
+        let contexts = Arc::new(Mutex::new(HashMap::default()));
+        let _handlers = fake_servers
+            .iter()
+            .enumerate()
+            .map(|(index, server)| {
+                let contexts = contexts.clone();
+                server.set_request_handler::<lsp::request::Completion, _, _>(move |params, _| {
+                    contexts.lock().insert(index, params.context.unwrap());
+                    async move {
+                        Ok(Some(lsp::CompletionResponse::Array(vec![
+                            lsp::CompletionItem {
+                                label: "available".into(),
+                                ..Default::default()
+                            },
+                        ])))
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for (kind, trigger) in [
+            (lsp::CompletionTriggerKind::TRIGGER_CHARACTER, Some("a")),
+            (lsp::CompletionTriggerKind::TRIGGER_CHARACTER, Some(".")),
+            (lsp::CompletionTriggerKind::TRIGGER_CHARACTER, Some("!")),
+            (lsp::CompletionTriggerKind::INVOKED, None),
+            (
+                lsp::CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
+                None,
+            ),
+        ] {
+            contexts.lock().clear();
+            let context = lsp::CompletionContext {
+                trigger_kind: kind,
+                trigger_character: trigger.map(str::to_string),
+            };
+            let responses = project
+                .update(cx, |project, cx| {
+                    project.completions(&buffer, 1, context.clone(), cx)
+                })
+                .await
+                .unwrap();
+            assert_eq!(responses.len(), 3);
+            assert!(
+                responses
+                    .iter()
+                    .all(|response| response.completions.len() == 1)
+            );
+
+            let contexts = contexts.lock();
+            assert_eq!(contexts.len(), 3);
+            for (index, own_trigger) in [Some("."), Some("a"), None].into_iter().enumerate() {
+                let expected = if kind == lsp::CompletionTriggerKind::TRIGGER_CHARACTER
+                    && trigger != own_trigger
+                {
+                    DEFAULT_COMPLETION_CONTEXT
+                } else {
+                    context.clone()
+                };
+                assert_eq!(contexts[&index], expected);
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_completion_context_survives_stale_trigger_replay(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.ts": "a." })).await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let [mut primary_servers, mut secondary_servers] =
+        [("typescript", ":"), ("emmet", ".")].map(|(name, trigger)| {
+            language_registry.register_fake_lsp(
+                "TypeScript",
+                FakeLspAdapter {
+                    name,
+                    capabilities: lsp::ServerCapabilities {
+                        completion_provider: Some(lsp::CompletionOptions {
+                            trigger_characters: Some(vec![trigger.to_string()]),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+        });
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .expect("open buffer with both language servers");
+    let primary_server = primary_servers.next().await.expect("start primary server");
+    let secondary_server = secondary_servers
+        .next()
+        .await
+        .expect("start secondary server");
+    cx.run_until_parked();
+
+    let old_version = buffer.read_with(cx, |buffer, _| buffer.version());
+    let stale_operations = buffer
+        .read_with(cx, |buffer, cx| buffer.serialize_ops(Some(old_version), cx))
+        .await
+        .into_iter()
+        .map(language::proto::deserialize_operation)
+        .collect::<Result<Vec<_>>>()
+        .expect("deserialize the collaborator's old buffer state");
+
+    primary_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "additional-completion-trigger".into(),
+                    method: "textDocument/completion".into(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "typescript", "scheme": "file" }],
+                        "triggerCharacters": ["."]
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("register an additional trigger on the primary server");
+    cx.run_until_parked();
+
+    let contexts = Arc::new(Mutex::new(HashMap::default()));
+    let primary_server_id = primary_server.server.server_id();
+    let secondary_server_id = secondary_server.server.server_id();
+    let _handlers = [primary_server, secondary_server].map(|server| {
+        let contexts = contexts.clone();
+        let server_id = server.server.server_id();
+        server.set_request_handler::<lsp::request::Completion, _, _>(move |params, _| {
+            contexts.lock().insert(server_id, params.context);
+            async move { Ok(Some(lsp::CompletionResponse::Array(Vec::new()))) }
+        })
+    });
+    let context = lsp::CompletionContext {
+        trigger_kind: lsp::CompletionTriggerKind::TRIGGER_CHARACTER,
+        trigger_character: Some(".".to_string()),
+    };
+
+    for replay_stale_state in [false, true] {
+        if replay_stale_state {
+            buffer.update(cx, |buffer, cx| {
+                buffer.apply_ops(stale_operations.clone(), cx);
+            });
+        }
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone()),
+            BTreeSet::from([":".to_string(), ".".to_string()]),
+        );
+
+        contexts.lock().clear();
+        project
+            .update(cx, |project, cx| {
+                project.completions(&buffer, 2, context.clone(), cx)
+            })
+            .await
+            .expect("request completions from both servers");
+        let contexts = contexts.lock();
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(
+            contexts.get(&secondary_server_id),
+            Some(&Some(context.clone()))
+        );
+        assert_eq!(
+            contexts.get(&primary_server_id),
+            Some(&Some(context.clone())),
+            "the primary server registered '.', even after stale trigger replay: {replay_stale_state}",
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -7641,11 +7900,11 @@ async fn test_dynamic_completion_registration_honors_document_selector(
 
     assert!(buffer.read_with(cx, |buffer, _| buffer.completion_triggers().is_empty()));
 
-    let completion_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let completion_contexts = Arc::new(Mutex::new(Vec::new()));
     let _completion_requests = fake_server.set_request_handler::<lsp::request::Completion, _, _>({
-        let completion_request_count = completion_request_count.clone();
-        move |_, _| {
-            completion_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+        let completion_contexts = completion_contexts.clone();
+        move |params, _| {
+            completion_contexts.lock().push(params.context.unwrap());
             async move {
                 Ok(Some(lsp::CompletionResponse::Array(vec![
                     lsp::CompletionItem {
@@ -7664,7 +7923,7 @@ async fn test_dynamic_completion_registration_honors_document_selector(
         .await
         .unwrap();
     assert!(completions.is_empty());
-    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 0);
+    assert!(completion_contexts.lock().is_empty());
 
     fake_server
         .request::<lsp::request::RegisterCapability>(
@@ -7700,19 +7959,37 @@ async fn test_dynamic_completion_registration_honors_document_selector(
         BTreeSet::from([":".to_string()])
     );
 
-    let completions = project
-        .update(cx, |project, cx| {
-            project.completions(&buffer, 15, DEFAULT_COMPLETION_CONTEXT, cx)
-        })
-        .await
-        .unwrap()
-        .into_iter()
-        .flat_map(|response| response.completions)
-        .collect::<Vec<_>>();
+    let colon_context = lsp::CompletionContext {
+        trigger_kind: lsp::CompletionTriggerKind::TRIGGER_CHARACTER,
+        trigger_character: Some(":".to_string()),
+    };
+    for (trigger_character, expected_context) in [
+        (":", colon_context.clone()),
+        (".", DEFAULT_COMPLETION_CONTEXT),
+    ] {
+        let completions = project
+            .update(cx, |project, cx| {
+                project.completions(
+                    &buffer,
+                    15,
+                    lsp::CompletionContext {
+                        trigger_kind: lsp::CompletionTriggerKind::TRIGGER_CHARACTER,
+                        trigger_character: Some(trigger_character.to_string()),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>();
 
-    assert_eq!(completions.len(), 1);
-    assert_eq!(completions[0].new_text, "matched");
-    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 1);
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].new_text, "matched");
+        assert_eq!(completion_contexts.lock().last(), Some(&expected_context));
+    }
+    assert_eq!(completion_contexts.lock().len(), 2);
 
     fake_server
         .request::<lsp::request::RegisterCapability>(
@@ -7769,12 +8046,22 @@ async fn test_dynamic_completion_registration_honors_document_selector(
     );
     let completions = project
         .update(cx, |project, cx| {
-            project.completions(&buffer, 15, DEFAULT_COMPLETION_CONTEXT, cx)
+            project.completions(&buffer, 15, colon_context, cx)
         })
         .await
         .unwrap();
     assert_eq!(completions.len(), 1);
-    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        completion_contexts.lock().as_slice(),
+        &[
+            lsp::CompletionContext {
+                trigger_kind: lsp::CompletionTriggerKind::TRIGGER_CHARACTER,
+                trigger_character: Some(":".to_string()),
+            },
+            DEFAULT_COMPLETION_CONTEXT,
+            DEFAULT_COMPLETION_CONTEXT,
+        ]
+    );
 
     fake_server
         .request::<lsp::request::UnregisterCapability>(
@@ -7799,7 +8086,7 @@ async fn test_dynamic_completion_registration_honors_document_selector(
         .await
         .unwrap();
     assert!(completions.is_empty());
-    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 2);
+    assert_eq!(completion_contexts.lock().len(), 3);
 }
 
 #[gpui::test]
@@ -13185,15 +13472,15 @@ async fn test_visibility_for_paths_in_gitignored_dirs(cx: &mut gpui::TestAppCont
         let file_in_ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo/README.md"));
 
         assert_eq!(
-            project.visibility_for_paths(std::slice::from_ref(&root), true, cx),
+            project.visibility_for_paths(std::slice::from_ref(&root.as_path()), true, cx),
             Some(true)
         );
         assert_eq!(
-            project.visibility_for_paths(std::slice::from_ref(&file), true, cx),
+            project.visibility_for_paths(std::slice::from_ref(&file.as_path()), true, cx),
             Some(true)
         );
         assert_eq!(
-            project.visibility_for_subpaths(std::slice::from_ref(&file), cx),
+            project.visibility_for_subpaths(std::slice::from_ref(&file.as_path()), cx),
             Some(true)
         );
 
@@ -13202,17 +13489,17 @@ async fn test_visibility_for_paths_in_gitignored_dirs(cx: &mut gpui::TestAppCont
         // opening an unrelated path.
         for path in [&ignored_dir, &file_in_ignored_dir] {
             assert_eq!(
-                project.visibility_for_paths(std::slice::from_ref(path), true, cx),
+                project.visibility_for_paths(std::slice::from_ref(&path.as_path()), true, cx),
                 None,
                 "{path:?} should not be considered contained"
             );
             assert_eq!(
-                project.visibility_for_paths(std::slice::from_ref(path), false, cx),
+                project.visibility_for_paths(std::slice::from_ref(&path.as_path()), false, cx),
                 None,
                 "{path:?} should not be considered contained"
             );
             assert_eq!(
-                project.visibility_for_subpaths(std::slice::from_ref(path), cx),
+                project.visibility_for_subpaths(std::slice::from_ref(&path.as_path()), cx),
                 None,
                 "{path:?} should not be considered a contained subpath"
             );
@@ -15682,6 +15969,93 @@ async fn test_staged_diff_without_unstaged_diff(cx: &mut gpui::TestAppContext) {
                 "TWO\nTHREE\n",
                 DiffHunkStatus::modified_none(),
             )],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_diffs_opened_together(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "same.txt": "same working\n",
+            "staged.txt": "staged working\n",
+            "untracked.txt": "untracked working\n",
+            "unstaged.txt": "unstaged working\n",
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[
+            ("same.txt", "same head\n".into()),
+            ("staged.txt", "staged head\n".into()),
+            ("unstaged.txt", "unstaged head\n".into()),
+        ],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[
+            ("same.txt", "same head\n".into()),
+            ("staged.txt", "staged index\n".into()),
+            ("unstaged.txt", "unstaged index\n".into()),
+        ],
+    );
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let mut buffers = Vec::new();
+    for name in ["same.txt", "staged.txt", "untracked.txt", "unstaged.txt"] {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(Path::new(path!("/dir")).join(name), cx)
+            })
+            .await
+            .unwrap();
+        buffers.push(buffer);
+    }
+
+    // Requested in one update, so all four loads share one job.
+    let (uncommitted_diffs, unstaged_diff) = project.update(cx, |project, cx| {
+        (
+            buffers[..3]
+                .iter()
+                .map(|buffer| project.open_uncommitted_diff(buffer.clone(), cx))
+                .collect::<Vec<_>>(),
+            project.open_unstaged_diff(buffers[3].clone(), cx),
+        )
+    });
+    let uncommitted_diffs = future::try_join_all(uncommitted_diffs).await.unwrap();
+    let unstaged_diff = unstaged_diff.await.unwrap();
+    cx.run_until_parked();
+
+    let base_texts = uncommitted_diffs
+        .iter()
+        .map(|diff| {
+            diff.read_with(cx, |diff, cx| {
+                let index_text = diff
+                    .secondary_diff()
+                    .and_then(|unstaged_diff| unstaged_diff.read(cx).base_text_string(cx));
+                (diff.base_text_string(cx), index_text)
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        base_texts,
+        [
+            (Some("same head\n".into()), Some("same head\n".into())),
+            (Some("staged head\n".into()), Some("staged index\n".into())),
+            (None, None),
+        ]
+    );
+    unstaged_diff.read_with(cx, |diff, cx| {
+        assert_eq!(
+            diff.base_text_string(cx).as_deref(),
+            Some("unstaged index\n")
         );
     });
 }

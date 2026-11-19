@@ -698,6 +698,7 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
         | Model::SixSol
         | Model::SixLuna
         | Model::SixPointOneSol
+        | Model::SixPointOneTerra
         | Model::O3 => true,
         Model::Four => false,
         Model::Custom {
@@ -712,6 +713,7 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
         supports_streaming_tools: true,
         supports_thinking: supports_selectable_thinking_effort(model),
         supports_fast_mode: model.supports_priority(),
+        supports_ultrafast_mode: false,
         supports_server_side_compaction: model.supports_compaction(),
         supports_explicit_compaction: model.supports_compaction(),
         supported_effort_levels: supported_thinking_effort_levels(model).into(),

@@ -663,6 +663,8 @@ pub struct GitSettings {
     pub branch_picker: Option<BranchPickerSettingsContent>,
     /// Stash picker settings.
     pub stash_picker: Option<StashPickerSettings>,
+    /// Commit view settings.
+    pub commit_view: Option<CommitViewSettingsContent>,
     /// File diff settings.
     pub file_diff: Option<FileDiffSettingsContent>,
     /// How hunks are displayed visually in the editor.
@@ -845,7 +847,7 @@ pub struct BranchPickerSettingsContent {
     pub date_style: Option<GitDateStyle>,
     /// Whether to show author name as part of the commit information.
     ///
-    /// Default: false
+    /// Default: true
     pub show_author_name: Option<bool>,
 }
 
@@ -877,6 +879,20 @@ pub struct StashPickerSettings {
     ///
     /// Default: relative
     pub date_style: Option<GitDateStyle>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct CommitViewSettingsContent {
+    /// Whether newly opened commit views show the full commit description.
+    ///
+    /// Default: false
+    pub expand_description: Option<bool>,
+    /// Whether newly opened commit views expand every changed file.
+    ///
+    /// Default: true
+    pub expand_files: Option<bool>,
 }
 
 #[with_fallible_options]
