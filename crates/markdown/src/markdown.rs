@@ -5909,7 +5909,7 @@ mod tests {
             let languages_by_name = &markdown.parsed_markdown().languages_by_name;
             let resolved_name = |info: &str| {
                 languages_by_name
-                    .get(&SharedString::from(info.to_string()))
+                    .get(&SharedString::from(info))
                     .map(|language| language.name())
             };
             assert_eq!(resolved_name("Go Mod"), Some("Go Mod".into()));
