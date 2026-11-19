@@ -1316,7 +1316,7 @@ impl PickerDelegate for BranchListDelegate {
 
         let warning_banner = || {
             self.branch_list_error.as_deref().map(|error| {
-                let message = format!("Some branches could not be loaded: {error}");
+                let message = format!("Some branch information could not be loaded: {error}");
                 div().p_1p5().child(
                     Banner::new()
                         .severity(Severity::Warning)
