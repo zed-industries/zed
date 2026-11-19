@@ -1470,6 +1470,8 @@ async fn test_debug_scenarios_load_with_differently_cased_db_trusted_path(
     let db_trusted_paths =
         DbTrustedPaths::from_iter([(None, HashSet::from_iter([root.join("project")]))]);
     cx.update(|cx| trusted_worktrees::init(db_trusted_paths, cx));
+    // Let the respelling finish before the project opens.
+    cx.run_until_parked();
 
     let project = Project::test_with_worktree_trust(
         RealFs::new(None, cx.executor()),

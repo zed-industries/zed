@@ -62,6 +62,7 @@ async fn test_db_trusted_path_is_respelled_only_for_casing(cx: &mut TestAppConte
             cx,
         )
     });
+    // The project registers its worktree store before the respelling finishes.
     let project = Project::test_with_worktree_trust(
         fs,
         [
@@ -71,6 +72,7 @@ async fn test_db_trusted_path_is_respelled_only_for_casing(cx: &mut TestAppConte
         cx,
     )
     .await;
+    cx.run_until_parked();
     let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
     let worktree_id = |name: &str, cx: &mut TestAppContext| {
         worktree_store.read_with(cx, |store, cx| {
@@ -121,15 +123,26 @@ async fn test_db_trusted_path_in_case_sensitive_directory(cx: &mut TestAppContex
         return;
     }
     let fs = RealFs::new(None, cx.executor());
-    for name in ["safe", "SAFE", "only"] {
+    for name in ["safe", "SAFE", "only", "LINK", "PARENT\\project"] {
         fs.create_dir(&root.join(name)).await.unwrap();
+    }
+    // Junctions whose targets differ from their own names only by case.
+    for (link, target) in [("link", "LINK"), ("parent", "PARENT")] {
+        fs.create_symlink(&root.join(link), root.join(target))
+            .await
+            .unwrap();
     }
 
     cx.update(|cx| {
         init(
             DbTrustedPaths::from_iter([(
                 None,
-                HashSet::from_iter([root.join("safe"), root.join("ONLY")]),
+                HashSet::from_iter([
+                    root.join("safe"),
+                    root.join("ONLY"),
+                    root.join("link"),
+                    root.join("parent").join("project"),
+                ]),
             )]),
             cx,
         )
@@ -140,10 +153,13 @@ async fn test_db_trusted_path_in_case_sensitive_directory(cx: &mut TestAppContex
             root.join("safe").as_path(),
             root.join("SAFE").as_path(),
             root.join("only").as_path(),
+            root.join("LINK").as_path(),
+            root.join("PARENT").join("project").as_path(),
         ],
         cx,
     )
     .await;
+    cx.run_until_parked();
     let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
     let worktree_ids = worktree_store.read_with(cx, |store, cx| {
         store
@@ -167,6 +183,14 @@ async fn test_db_trusted_path_in_case_sensitive_directory(cx: &mut TestAppContex
         assert!(
             !can_trust("only"),
             "`ONLY` names no directory in a case-sensitive directory"
+        );
+        assert!(
+            !can_trust("LINK"),
+            "a trusted junction must not extend trust to its target"
+        );
+        assert!(
+            !can_trust("PARENT\\project"),
+            "a junction in a parent directory must not extend trust to its target"
         );
     });
 }

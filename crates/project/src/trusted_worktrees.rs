@@ -53,44 +53,59 @@ use util::{debug_panic, paths::SanitizedPath};
 
 use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
 
-pub fn init(mut db_trusted_paths: DbTrustedPaths, cx: &mut App) {
+pub fn init(db_trusted_paths: DbTrustedPaths, cx: &mut App) {
     if TrustedWorktrees::try_get_global(cx).is_none() {
-        if cfg!(windows)
-            && let Some(local_paths) = db_trusted_paths.remove(&None)
-        {
-            let local_paths = local_paths.into_iter().map(on_disk_casing).collect();
-            db_trusted_paths.insert(None, local_paths);
-        }
-        let trusted_worktrees = cx.new(|_| TrustedWorktreesStore::new(db_trusted_paths));
+        let trusted_worktrees = cx.new(|cx: &mut Context<TrustedWorktreesStore>| {
+            if cfg!(windows) {
+                let local_paths = db_trusted_paths.get(&None).cloned().unwrap_or_default();
+                // One path at a time, so unavailable drives occupy at most one background thread.
+                cx.spawn(async move |store, cx| {
+                    for path in local_paths {
+                        let respelled = cx
+                            .background_spawn({
+                                let path = path.clone();
+                                async move { on_disk_spelling(&path) }
+                            })
+                            .await;
+                        if let Some(respelled) = respelled {
+                            store
+                                .update(cx, |store, _| store.add_respelled_path(&path, respelled))
+                                .ok();
+                        }
+                    }
+                })
+                .detach();
+            }
+            TrustedWorktreesStore::new(db_trusted_paths)
+        });
         cx.set_global(TrustedWorktrees(trusted_worktrees))
     }
 }
 
-/// Worktrees are opened with their canonical, on-disk spelling, but a persisted trusted path
-/// keeps the casing it had when it was stored, so it stops matching once that differs (#66915).
-/// Respell such paths as they are on disk, keeping every path that resolves anywhere else.
+/// Worktrees open with their canonical, on-disk path spelling, but a persisted trusted path keeps
+/// the casing it was stored with, so it stops matching once those differ (#66915).
+/// Returns the on-disk spelling of `path` when it differs only by ASCII case.
 ///
-/// Only drive paths are resolved: UNC paths (network shares, `\\wsl.localhost`) could block
-/// the startup or boot a WSL distro.
-fn on_disk_casing(path: PathBuf) -> PathBuf {
-    let is_drive_path = matches!(
-        path.components().next(),
-        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
-    );
-    if !is_drive_path {
-        return path;
+/// Paths through a symlink or junction are skipped: resolving those may land in another directory
+/// whose name differs only by case. UNC paths (network shares, `\\wsl.localhost`) are skipped too.
+fn on_disk_spelling(path: &Path) -> Option<PathBuf> {
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return None;
+    };
+    if !matches!(prefix.kind(), Prefix::Disk(_)) {
+        return None;
     }
-    match std::fs::canonicalize(&path) {
-        Ok(canonical) => {
-            let canonical = SanitizedPath::new(&canonical).as_path();
-            if canonical.as_os_str().eq_ignore_ascii_case(path.as_os_str()) {
-                canonical.to_path_buf()
-            } else {
-                path
-            }
-        }
-        Err(_) => path,
+    let through_link = path.ancestors().any(|ancestor| {
+        std::fs::symlink_metadata(ancestor)
+            .map_or(true, |metadata| metadata.file_type().is_symlink())
+    });
+    if through_link {
+        return None;
     }
+    let canonical = std::fs::canonicalize(path).ok()?;
+    let canonical = SanitizedPath::new(&canonical).as_path();
+    (canonical != path && canonical.as_os_str().eq_ignore_ascii_case(path.as_os_str()))
+        .then(|| canonical.to_path_buf())
 }
 
 /// An initialization call to set up trust global for a particular project (remote or local).
@@ -440,6 +455,26 @@ impl TrustedWorktreesStore {
             worktree_store,
             restricted,
         ));
+    }
+
+    /// Adds the on-disk spelling of a persisted local trusted path next to it,
+    /// unless the persisted trust was cleared meanwhile.
+    /// Worktrees restricted before that stay restricted.
+    fn add_respelled_path(&mut self, path: &Path, respelled: PathBuf) {
+        let Some(local_paths) = self.db_trusted_paths.get_mut(&None) else {
+            return;
+        };
+        if !local_paths.contains(path) || !local_paths.insert(respelled.clone()) {
+            return;
+        }
+        for (worktree_store, store_data) in &self.worktree_stores {
+            if store_data.host.is_none() && worktree_store.is_upgradable() {
+                self.trusted_paths
+                    .entry(worktree_store.clone())
+                    .or_default()
+                    .insert(PathTrust::AbsPath(respelled.clone()));
+            }
+        }
     }
 
     /// Erases all trust information.
