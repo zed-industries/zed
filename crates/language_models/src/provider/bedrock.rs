@@ -6437,25 +6437,60 @@ mod tests {
         assert!(error.to_string().contains("timed out"), "{error}");
     }
 
+    fn assert_thinking_wire_fields(request: bedrock::Request, expected: Value) -> Result<()> {
+        let http_client = http_client::FakeHttpClient::create(move |mut request| {
+            let expected = expected.clone();
+            async move {
+                let mut body = Vec::new();
+                request.body_mut().read_to_end(&mut body).await?;
+                let body = serde_json::from_slice::<Value>(&body)?;
+                assert_eq!(
+                    body.get("additionalModelRequestFields")
+                        .unwrap_or(&Value::Null),
+                    &expected,
+                );
+                Ok(http_client::Response::builder().body(AsyncBody::empty())?)
+            }
+        });
+        let client = BedrockClient::from_conf(
+            bedrock::bedrock_client::Config::builder()
+                .behavior_version_latest()
+                .region(Region::new("us-east-1"))
+                .credentials_provider(Credentials::new("key", "secret", None, None, "test"))
+                .http_client(AwsHttpClient::new(http_client))
+                .identity_cache(bedrock::bedrock_client::config::IdentityCache::no_cache())
+                .timeout_config(TimeoutConfig::disabled())
+                .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
+                .retry_config(bedrock::bedrock_client::config::retry::RetryConfig::disabled())
+                .build(),
+        );
+        drop(futures::executor::block_on(bedrock::stream_completion(
+            client,
+            request,
+            CustomHeaders::default(),
+        ))?);
+        Ok(())
+    }
+
     #[test]
     fn test_always_reasoning_models_keep_reasoning_when_thinking_is_disallowed() -> Result<()> {
-        for (model, expected_thinking) in [
-            (
-                converse_model("openai.gpt-example", Some(reasoning())),
-                serde_json::json!({"Reasoning": {"effort": "Medium"}}),
-            ),
-            (
-                converse_model("anthropic.claude-example", Some(adaptive_thinking(true))),
-                serde_json::json!({"Adaptive": {"effort": "High"}}),
-            ),
-            // The `anthropic` crate lists this model as binding thinking blocks.
-            (
-                converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true))),
-                serde_json::json!({"Adaptive": {
-                    "effort": "High", "binding_controls_beta": "thinking-binding-controls-2026-08-01"
-                }}),
-            ),
+        for model in [
+            converse_model("openai.gpt-example", Some(reasoning())),
+            converse_model("anthropic.claude-example", Some(adaptive_thinking(true))),
+            converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true))),
         ] {
+            let expected_thinking = if is_openai_model(&model) {
+                bedrock::Thinking::Reasoning {
+                    effort: Some(BedrockAdaptiveThinkingEffort::Medium),
+                }
+            } else {
+                bedrock::Thinking::Adaptive {
+                    effort: BedrockAdaptiveThinkingEffort::High,
+                    binding_controls_beta: anthropic_model_id(&model)
+                        .filter(|id| anthropic::binds_thinking_blocks_to_prefix(id))
+                        .map(|_| anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string()),
+                }
+            };
             for thinking_allowed in [true, false] {
                 let request = into_bedrock(
                     LanguageModelRequest {
@@ -6467,12 +6502,35 @@ mod tests {
                     None,
                 )?;
                 assert_eq!(
-                    serde_json::to_value(request.thinking)?,
-                    expected_thinking,
+                    serde_json::to_value(&request.thinking)?,
+                    serde_json::to_value(&expected_thinking)?,
                     "{} with thinking_allowed: {thinking_allowed}",
                     model.id
                 );
                 assert_eq!(request.temperature, None);
+                let expected_fields = match &expected_thinking {
+                    bedrock::Thinking::Reasoning { .. } => {
+                        serde_json::json!({"reasoning": {"effort": "medium"}})
+                    }
+                    bedrock::Thinking::Adaptive {
+                        binding_controls_beta,
+                        ..
+                    } => {
+                        let mut fields = serde_json::json!({
+                            "thinking": {"type": "adaptive", "display": "summarized"},
+                            "output_config": {"effort": "high"}
+                        });
+                        if let Some(beta) = binding_controls_beta {
+                            fields["thinking"]["block_binding"] = serde_json::json!({
+                                "prefix_mismatch_behavior": "drop_block"
+                            });
+                            fields["anthropic_beta"] = serde_json::json!([beta]);
+                        }
+                        fields
+                    }
+                    _ => anyhow::bail!("expected effort-based thinking"),
+                };
+                assert_thinking_wire_fields(request, expected_fields)?;
             }
             assert!(!converse_language_model(&model).supports_disabling_thinking);
         }
@@ -6871,8 +6929,6 @@ mod tests {
 
     #[test]
     fn test_converse_refusals_and_forced_tool_use() -> Result<()> {
-        // The `anthropic` crate lists the first of these as rejecting forced
-        // tool use, and both as Fable models.
         let fable = converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true)));
         let earlier_fable =
             converse_model("anthropic.claude-fable-5", Some(adaptive_thinking(false)));
@@ -6883,30 +6939,66 @@ mod tests {
         assert!(fable_language_model.supports_tools);
         assert!(fable_language_model.tool_choice_support.auto);
         assert!(fable_language_model.tool_choice_support.none);
-        assert!(!fable_language_model.tool_choice_support.any);
         assert_eq!(fable_language_model.refusal_fallback_model_id, None);
-        for model in [&earlier_fable, &reasoning_model, &other_model] {
-            assert!(
+        for model in [&fable, &earlier_fable, &reasoning_model, &other_model] {
+            let expected_forced =
+                anthropic_model_id(model).is_none_or(anthropic::supports_forced_tool_use);
+            assert_eq!(
                 converse_language_model(model).tool_choice_support.any,
-                "{} should support forced tool use",
-                model.id
+                expected_forced,
+                "{}",
+                model.id,
             );
+            let forced = into_bedrock(
+                LanguageModelRequest {
+                    tool_choice: Some(LanguageModelToolChoice::Any),
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::Assistant,
+                        content: vec![MessageContent::ToolUse(
+                            language_model::LanguageModelToolUse {
+                                id: "call".into(),
+                                name: "example".into(),
+                                raw_input: "{}".into(),
+                                is_input_complete: true,
+                                thought_signature: None,
+                                input: language_model::LanguageModelToolUseInput::Json(
+                                    serde_json::json!({}),
+                                ),
+                            },
+                        )],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    ..Default::default()
+                },
+                model,
+                None,
+                None,
+            );
+            if expected_forced {
+                let request = forced?;
+                assert!(matches!(
+                    request
+                        .tools
+                        .context("tool configuration for forced tool use")?
+                        .tool_choice(),
+                    Some(BedrockToolChoice::Any(_))
+                ));
+            } else {
+                let error = forced
+                    .err()
+                    .context("forced tool use should fail locally")?;
+                assert!(
+                    error
+                        .to_string()
+                        .contains("does not support forced tool use")
+                );
+            }
         }
         assert_eq!(
             converse_language_model(&other_model).refusal_fallback_model_id,
             None
         );
-
-        let forced = into_bedrock(
-            LanguageModelRequest {
-                tool_choice: Some(LanguageModelToolChoice::Any),
-                ..Default::default()
-            },
-            &fable,
-            None,
-            None,
-        );
-        assert!(forced.is_err());
 
         for (model, reports_refusals) in [
             (fable, true),
@@ -6943,15 +7035,12 @@ mod tests {
     }
 
     #[test]
-    fn test_thinking_disallowed_sends_explicit_opt_out_only_where_required() {
-        // The `anthropic` crate lists Claude Opus 5 as running adaptive
-        // thinking by default when the `thinking` field is omitted, so
-        // suppressing thinking requires an explicit `disabled` opt-out.
-        // Earlier Claude models treat omission as "off".
-        for (base_model_id, expects_explicit_opt_out, output_limit, expected_output) in [
-            ("anthropic.claude-opus-5", true, None, 128_000),
-            ("anthropic.claude-opus-5", true, Some(8192), 8192),
-            ("anthropic.claude-opus-4-8", false, Some(256_000), 128_000),
+    fn test_thinking_disallowed_sends_explicit_opt_out_only_where_required() -> Result<()> {
+        for (base_model_id, output_limit, expected_output) in [
+            ("anthropic.claude-opus-5", None, 128_000),
+            ("anthropic.claude-opus-5", Some(8192), 8192),
+            ("anthropic.claude-opus-4-8", Some(256_000), 128_000),
+            ("vendor.chat", Some(8192), 8192),
         ] {
             let model = converse_model(base_model_id, Some(adaptive_thinking(false)));
             let request = into_bedrock(
@@ -6964,11 +7053,11 @@ mod tests {
                 &model,
                 None,
                 None,
-            )
-            .unwrap();
+            )?;
 
             assert_eq!(request.max_tokens, Some(expected_output));
-            if expects_explicit_opt_out {
+            if anthropic_model_id(&model).is_some_and(anthropic::requires_explicit_thinking_opt_out)
+            {
                 assert!(
                     matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
                     "{base_model_id} should send an explicit thinking opt-out"
@@ -6979,7 +7068,16 @@ mod tests {
                     "{base_model_id} should omit the thinking field entirely"
                 );
             }
+            let expected_fields = if anthropic_model_id(&model)
+                .is_some_and(anthropic::requires_explicit_thinking_opt_out)
+            {
+                serde_json::json!({"thinking": {"type": "disabled"}})
+            } else {
+                Value::Null
+            };
+            assert_thinking_wire_fields(request, expected_fields)?;
         }
+        Ok(())
     }
 
     #[test]
@@ -7110,7 +7208,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sign_mantle_request_sigv4_uses_mantle_service() {
+    fn test_sign_mantle_request_sigv4_uses_mantle_service() -> Result<()> {
         let credentials = Credentials::new(
             "AKIDEXAMPLE",
             "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
@@ -7118,16 +7216,15 @@ mod tests {
             None,
             "test",
         );
-        let body = br#"{"model":"openai.gpt-5.5"}"#;
+        let body = br#"{"model":"vendor.mantle-example"}"#;
         let mut request = HttpRequest::builder()
             .method(Method::POST)
             .uri("https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses")
             .header("Content-Type", "application/json")
-            .body(AsyncBody::from(body.to_vec()))
-            .unwrap();
+            .body(AsyncBody::from(body.to_vec()))?;
         let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
 
-        sign_mantle_request_sigv4_at(&mut request, body, &credentials, "us-east-1", time).unwrap();
+        sign_mantle_request_sigv4_at(&mut request, body, &credentials, "us-east-1", time)?;
 
         assert_eq!(
             request
@@ -7146,8 +7243,8 @@ mod tests {
         let authorization = request
             .headers()
             .get(AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .unwrap();
+            .context("signed authorization header")?
+            .to_str()?;
         assert!(authorization.starts_with("AWS4-HMAC-SHA256 "));
         assert!(
             authorization
@@ -7155,6 +7252,7 @@ mod tests {
         );
         assert!(authorization.contains("SignedHeaders=content-type;host"));
         assert!(authorization.contains("Signature="));
+        Ok(())
     }
 
     #[test]
@@ -7181,11 +7279,69 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_mantle_supported_regions_matches_docs() {
-        assert!(MANTLE_SUPPORTED_REGIONS.contains(&"us-east-1"));
-        assert!(MANTLE_SUPPORTED_REGIONS.contains(&"eu-west-1"));
-        assert!(!MANTLE_SUPPORTED_REGIONS.contains(&"ap-southeast-1"));
+    #[gpui::test]
+    async fn test_mantle_region_policy_rejects_unconfigured_regions_before_http(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let result = async {
+            let supported = MANTLE_SUPPORTED_REGIONS
+                .first()
+                .context("configured Mantle Region")?;
+            let unsupported = "test-region-not-configured";
+            anyhow::ensure!(!MANTLE_SUPPORTED_REGIONS.contains(&unsupported));
+            let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let http_client = http_client::FakeHttpClient::create({
+                let requests = requests.clone();
+                move |request| {
+                    let requests = requests.clone();
+                    async move {
+                        assert_eq!(
+                            request.uri().host(),
+                            Some(format!("bedrock-mantle.{supported}.api.aws").as_str())
+                        );
+                        requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(http_client::Response::builder()
+                            .body(AsyncBody::from("data: [DONE]\n\n"))?)
+                    }
+                }
+            });
+            init_provider_test(cx);
+            let model = mantle_model(false);
+            let limiter = RateLimiter::new(1);
+            for (region, allowed) in [(unsupported, false), (*supported, true)] {
+                set_bedrock_settings(cx, serde_json::json!({"region": region}))?;
+                let provider = cx.update(|cx| new_test_provider(http_client.clone(), cx));
+                provider.state.update(cx, |state, _| {
+                    state.set_auth(api_key_auth());
+                });
+                let response = provider
+                    .stream_mantle_completion(
+                        &model,
+                        &limiter,
+                        LanguageModelRequest::default(),
+                        &cx.to_async(),
+                    )
+                    .await;
+                if allowed {
+                    drop(response?);
+                    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+                } else {
+                    let error = response
+                        .err()
+                        .context("unconfigured Region should be rejected")?;
+                    assert!(error.to_string().contains(region));
+                    assert!(
+                        error
+                            .to_string()
+                            .contains(&MANTLE_SUPPORTED_REGIONS.join(", "))
+                    );
+                    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+                }
+            }
+            anyhow::Ok(())
+        }
+        .await;
+        assert!(result.is_ok(), "{result:?}");
     }
 
     fn mantle_message_item(id: &str) -> ResponseOutputItem {
@@ -7820,28 +7976,28 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_unsupported_mantle_response_fields_removes_context_management() {
+    fn test_strip_unsupported_mantle_response_fields_removes_context_management() -> Result<()> {
         let mut request = into_open_ai_response(
             LanguageModelRequest {
                 compact_at_tokens: Some(10_000),
                 ..Default::default()
             },
-            "openai.gpt-5.5",
+            "vendor.mantle-example",
             true,
             false,
             Some(128_000),
             Some(ReasoningEffort::Medium),
             false,
             &PROVIDER_ID,
-        )
-        .unwrap();
+        )?;
 
         assert!(request.context_management.is_some());
         strip_unsupported_mantle_response_fields(&mut request);
         assert!(request.context_management.is_none());
 
-        let request = serde_json::to_value(&request).unwrap();
+        let request = serde_json::to_value(&request)?;
         assert!(request.get("context_management").is_none());
+        Ok(())
     }
 
     struct NoCredentialsProvider;
