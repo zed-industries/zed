@@ -1517,6 +1517,11 @@ pub struct DisplaySnapshot {
 }
 
 impl DisplaySnapshot {
+    /// See [`BlockSnapshot::rows_version`].
+    pub(crate) fn rows_version(&self) -> u64 {
+        self.block_snapshot.rows_version()
+    }
+
     pub fn companion_snapshot(&self) -> Option<&DisplaySnapshot> {
         self.companion_display_snapshot.as_deref()
     }
