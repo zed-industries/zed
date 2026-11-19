@@ -118,4 +118,7 @@ check-filename = true
 [default.extend-words]
 flate = "flate"
 scap = "scap"
+# `RTA_OIF` in `crates/sandbox_linux/src/net.rs` is a rtnetlink attribute
+# ("output interface"), not a misspelling of "of".
+OIF = "OIF"
 writeable = "writeable"

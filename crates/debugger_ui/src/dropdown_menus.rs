@@ -103,7 +103,7 @@ impl DebugPanel {
             {
                 sessions_with_children.next();
                 SessionListEntry {
-                    leaf: single_child.clone(),
+                    leaf: single_child,
                     ancestors: vec![root.clone()],
                 }
             } else {
@@ -197,7 +197,7 @@ impl DebugPanel {
                         },
                         {
                             let weak = weak.clone();
-                            let leaf = session_entry.leaf.clone();
+                            let leaf = session_entry.leaf;
                             move |window, cx| {
                                 weak.update(cx, |panel, cx| {
                                     panel.activate_session(leaf.clone(), window, cx);

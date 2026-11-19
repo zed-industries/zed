@@ -23,8 +23,6 @@ pub trait Client: Send + Sync {
     fn guest_token(&self, room: &str, identity: &str) -> Result<String>;
 }
 
-pub struct LiveKitParticipantUpdate {}
-
 #[derive(Clone)]
 pub struct LiveKitClient {
     http: reqwest::Client,

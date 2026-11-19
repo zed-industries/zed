@@ -2,13 +2,27 @@ use agent_client_protocol::{v1::schema as v1, v2::schema as v2};
 use anyhow::{Result, bail};
 use std::collections::BTreeMap;
 
-pub fn request_from_v1(
-    request: v1::CreateElicitationRequest,
-) -> Result<v2::CreateElicitationRequest> {
+pub struct ElicitationRequest {
+    pub request: v2::CreateElicitationRequest,
+    // v2 removed `pattern`, but Zed still validates it for v1 forms.
+    pub v1_string_patterns: BTreeMap<String, String>,
+}
+
+impl From<v2::CreateElicitationRequest> for ElicitationRequest {
+    fn from(request: v2::CreateElicitationRequest) -> Self {
+        Self {
+            request,
+            v1_string_patterns: BTreeMap::new(),
+        }
+    }
+}
+
+pub fn request_from_v1(request: v1::CreateElicitationRequest) -> Result<ElicitationRequest> {
+    let mut v1_string_patterns = BTreeMap::new();
     let mode = match request.mode {
         v1::ElicitationMode::Form(mode) => v2::ElicitationMode::Form(v2::ElicitationFormMode::new(
             scope_from_v1(mode.scope)?,
-            schema_from_v1(mode.requested_schema)?,
+            schema_from_v1(mode.requested_schema, &mut v1_string_patterns)?,
         )),
         v1::ElicitationMode::Url(mode) => v2::ElicitationMode::Url(v2::ElicitationUrlMode::new(
             scope_from_v1(mode.scope)?,
@@ -26,7 +40,10 @@ pub fn request_from_v1(
         }
         _ => bail!("unsupported v1 elicitation mode"),
     };
-    Ok(v2::CreateElicitationRequest::new(mode, request.message).meta(request.meta))
+    Ok(ElicitationRequest {
+        request: v2::CreateElicitationRequest::new(mode, request.message).meta(request.meta),
+        v1_string_patterns,
+    })
 }
 
 pub fn response_to_v1(
@@ -79,7 +96,10 @@ fn request_id_from_v1(id: v1::RequestId) -> Result<v2::RequestId> {
     })
 }
 
-fn schema_from_v1(schema: v1::ElicitationSchema) -> Result<v2::ElicitationSchema> {
+fn schema_from_v1(
+    schema: v1::ElicitationSchema,
+    v1_string_patterns: &mut BTreeMap<String, String>,
+) -> Result<v2::ElicitationSchema> {
     let mut converted = v2::ElicitationSchema::new();
     converted.type_ = match schema.type_ {
         v1::ElicitationSchemaType::Object => v2::ElicitationSchemaType::Object,
@@ -89,7 +109,14 @@ fn schema_from_v1(schema: v1::ElicitationSchema) -> Result<v2::ElicitationSchema
     converted.properties = schema
         .properties
         .into_iter()
-        .map(|(name, property)| Ok((name, property_from_v1(property)?)))
+        .map(|(name, mut property)| {
+            if let v1::ElicitationPropertySchema::String(property) = &mut property
+                && let Some(pattern) = property.pattern.take()
+            {
+                v1_string_patterns.insert(name.clone(), pattern);
+            }
+            Ok((name, property_from_v1(property)?))
+        })
         .collect::<Result<_>>()?;
     converted.required = schema.required;
     converted.description = schema.description;
@@ -107,7 +134,6 @@ fn property_from_v1(
             converted.description = property.description;
             converted.min_length = property.min_length;
             converted.max_length = property.max_length;
-            converted.pattern = property.pattern;
             converted.format = property.format.map(string_format_from_v1).transpose()?;
             converted.default = property.default;
             converted.enum_values = property.enum_values;
@@ -249,7 +275,7 @@ mod tests {
 
     #[test]
     fn elicitation_request_adapter_preserves_schema_scopes_and_extensions() -> Result<()> {
-        let fixture = json!({
+        let mut fixture = json!({
             "mode": "form",
             "sessionId": "session-01",
             "toolCallId": "tool-01",
@@ -320,8 +346,16 @@ mod tests {
         });
         let request: v1::CreateElicitationRequest = serde_json::from_value(fixture.clone())?;
         let converted = request_from_v1(request)?;
-        assert_eq!(serde_json::to_value(&converted)?, fixture);
-        let v2::ElicitationMode::Form(mode) = converted.mode else {
+        assert_eq!(
+            converted.v1_string_patterns,
+            BTreeMap::from([("name".into(), "^[a-z]+$".into())])
+        );
+        fixture["requestedSchema"]["properties"]["name"]
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("expected a string property"))?
+            .remove("pattern");
+        assert_eq!(serde_json::to_value(&converted.request)?, fixture);
+        let v2::ElicitationMode::Form(mode) = converted.request.mode else {
             bail!("expected form mode");
         };
         assert!(matches!(
@@ -342,7 +376,7 @@ mod tests {
                 }
                 _ => bail!("expected request scope"),
             };
-            let converted = request_from_v1(request)?;
+            let converted = request_from_v1(request)?.request;
             let v2::ElicitationScope::Request(scope) = converted.scope() else {
                 bail!("expected request scope");
             };
@@ -370,7 +404,7 @@ mod tests {
                         .clone(),
                 );
             let request: v1::CreateElicitationRequest = serde_json::from_value(fixture.clone())?;
-            let converted = request_from_v1(request)?;
+            let converted = request_from_v1(request)?.request;
             assert!(matches!(converted.mode, v2::ElicitationMode::Other(_)));
             assert_eq!(serde_json::to_value(converted)?, fixture);
         }
@@ -380,7 +414,9 @@ mod tests {
             "requestedSchema": {"type": "object", "properties": {}, "required": []}
         });
         assert_eq!(
-            serde_json::to_value(request_from_v1(serde_json::from_value(fixture.clone())?)?)?,
+            serde_json::to_value(
+                request_from_v1(serde_json::from_value(fixture.clone())?)?.request
+            )?,
             fixture
         );
         Ok(())

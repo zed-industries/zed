@@ -4,36 +4,43 @@ use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet, IndexMap};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, ForegroundExecutor,
-    Subscription, Task,
+    Action, Anchor, AnyElement, App, BackgroundExecutor, DismissEvent, Entity, FocusHandle,
+    ForegroundExecutor, Point, Subscription, Task,
 };
 use language_model::{
     IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
+use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use ui::prelude::*;
+use ui::{PopoverMenuHandle, Tooltip, prelude::*};
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
+mod favorite_models;
+mod model_selector_components;
+
+pub use favorite_models::toggle_in_settings;
+pub use model_selector_components::{
+    ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem, ModelSelectorTooltip,
+};
 
 type OnModelChanged = Arc<dyn Fn(LanguageModel, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<LanguageModel> + 'static>;
 type OnToggleFavorite = Arc<dyn Fn(LanguageModel, bool, &mut App) + 'static>;
 
-pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
+pub type LanguageModelPicker = Picker<LanguageModelPickerDelegate>;
 
-pub fn language_model_selector(
+pub fn language_model_picker(
     get_active_model: impl Fn(&App) -> Option<LanguageModel> + 'static,
     on_model_changed: impl Fn(LanguageModel, &mut App) + 'static,
     on_toggle_favorite: impl Fn(LanguageModel, bool, &mut App) + 'static,
     popover_styles: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
-    cx: &mut Context<LanguageModelSelector>,
-) -> LanguageModelSelector {
+    cx: &mut Context<LanguageModelPicker>,
+) -> LanguageModelPicker {
     let delegate = LanguageModelPickerDelegate::new(
         get_active_model,
         on_model_changed,
@@ -559,6 +566,108 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         }
 
         Some(ModelSelectorFooter::new(OpenSettings.boxed_clone(), focus_handle).into_any_element())
+    }
+}
+
+pub struct LanguageModelSelector {
+    picker: Entity<LanguageModelPicker>,
+    menu_handle: PopoverMenuHandle<LanguageModelPicker>,
+    cycle_favorite_models_enabled: bool,
+}
+
+impl LanguageModelSelector {
+    pub fn new(picker: Entity<LanguageModelPicker>) -> Self {
+        let menu_handle = PopoverMenuHandle::default();
+
+        Self {
+            picker,
+            menu_handle,
+            cycle_favorite_models_enabled: true,
+        }
+    }
+
+    pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_handle.toggle(window, cx);
+    }
+
+    pub fn active_model(&self, cx: &App) -> Option<LanguageModel> {
+        self.picker.read(cx).delegate.active_model(cx)
+    }
+
+    pub fn cycle_favorite_models(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cycle_favorite_models_enabled {
+            self.picker.update(cx, |selector, cx| {
+                selector.delegate.cycle_favorite_models(window, cx);
+            });
+        }
+    }
+
+    pub fn cycle_favorite_models_enabled(mut self, enabled: bool) -> Self {
+        self.cycle_favorite_models_enabled = enabled;
+        self
+    }
+}
+
+impl Render for LanguageModelSelector {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let model = self.picker.read(cx).delegate.active_model(cx);
+        let model_name = model
+            .as_ref()
+            .map(|model| model.name().0)
+            .unwrap_or_else(|| SharedString::from("Select a Model"));
+
+        let provider_icon = model.as_ref().and_then(|model| {
+            LanguageModelRegistry::read_global(cx)
+                .provider(&model.provider_id())
+                .map(|provider| provider.icon())
+        });
+
+        let color = if self.menu_handle.is_deployed() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
+        let show_cycle_row = self.cycle_favorite_models_enabled
+            && self.picker.read(cx).delegate.favorites_count() > 1;
+        let tooltip = Tooltip::element({
+            move |_window, _cx| {
+                ModelSelectorTooltip::new()
+                    .show_cycle_row(show_cycle_row)
+                    .into_any_element()
+            }
+        });
+
+        PickerPopoverMenu::new(
+            self.picker.clone(),
+            Button::new("active-model", model_name)
+                .label_size(LabelSize::Small)
+                .color(color)
+                .when_some(provider_icon, |button, icon| {
+                    let icon = match icon {
+                        IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+                        IconOrSvg::Icon(name) => Icon::new(name),
+                    }
+                    .color(color)
+                    .size(IconSize::XSmall);
+
+                    button.start_icon(icon)
+                })
+                .end_icon(
+                    Icon::new(IconName::ChevronDown)
+                        .color(color)
+                        .size(IconSize::XSmall),
+                ),
+            tooltip,
+            Anchor::TopRight,
+            cx,
+        )
+        .with_handle(self.menu_handle.clone())
+        .offset(Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
+        .render(window, cx)
     }
 }
 
