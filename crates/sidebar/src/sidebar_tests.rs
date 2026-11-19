@@ -16,6 +16,7 @@ use agent_ui::{
 };
 use chrono::DateTime;
 use fs::{FakeFs, Fs};
+use git_ui_core::worktree_labels::WorkspaceMenuWorktreeLabel;
 use gpui::{
     AnyView, App, Bounds, Corners, Decorations, Hsla, Point, Rgba, ScaledPixels, TestAppContext,
     Tiling, UpdateGlobal, VisualTestContext, point,
