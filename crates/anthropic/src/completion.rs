@@ -286,6 +286,7 @@ pub fn into_anthropic(
     default_temperature: f32,
     max_output_tokens: u64,
     mode: AnthropicModelMode,
+    thinking_types: Option<&crate::ThinkingTypes>,
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
@@ -293,11 +294,32 @@ pub fn into_anthropic(
         model.as_str(),
         "claude-fable-5-2"
             | "claude-mythos-5-2"
+            | "claude-fable-5-1"
+            | "claude-mythos-5-1"
+            | "claude-fable-5"
+            | "claude-mythos-5"
             | "claude-opus-5-5"
+            | "claude-opus-5"
+            | "claude-opus-4-8"
+            | "claude-opus-4-7"
             | "claude-sonnet-5-5"
+            | "claude-sonnet-5"
             | "claude-haiku-5-5"
     );
-    let mode = if requires_adaptive_thinking {
+    let mode = if let Some(types) = thinking_types {
+        if types.adaptive.supported {
+            AnthropicModelMode::AdaptiveThinking
+        } else if types.enabled.supported {
+            match mode {
+                AnthropicModelMode::Thinking { .. } => mode,
+                _ => AnthropicModelMode::Thinking {
+                    budget_tokens: Some(4_096),
+                },
+            }
+        } else {
+            AnthropicModelMode::Default
+        }
+    } else if requires_adaptive_thinking {
         AnthropicModelMode::AdaptiveThinking
     } else {
         mode
@@ -451,10 +473,24 @@ pub fn into_anthropic(
             }),
             AnthropicModelMode::Default => None,
         }
+    } else if let Some(types) = thinking_types
+        && (types.disabled.is_some() || types.between_tools.is_some())
+    {
+        if types.disabled.as_ref().is_some_and(|mode| mode.supported) {
+            Some(Thinking::Disabled)
+        } else if types
+            .between_tools
+            .as_ref()
+            .is_some_and(|mode| mode.supported)
+        {
+            Some(Thinking::BetweenTools)
+        } else {
+            anyhow::bail!("model {model} does not support turning thinking off");
+        }
     } else if model == "claude-sonnet-5-5" {
         Some(Thinking::BetweenTools)
     } else if crate::requires_explicit_thinking_opt_out(&model) {
-        // On Claude Opus 5 and Haiku 5.5, omitting the `thinking` field no longer means
+        // On Claude Opus 5, Sonnet 5, and Haiku 5.5, omitting `thinking` no longer means
         // "off": the model runs adaptive thinking by default, so features
         // that suppress thinking (e.g. inline assist) must opt out
         // explicitly. `disabled` is only accepted at effort `high` or below;
@@ -468,7 +504,7 @@ pub fn into_anthropic(
 
     // These models reject non-default sampling controls even when thinking is off.
     // <https://platform.claude.com/docs/en/build-with-claude/thinking#sampling-parameters>
-    let temperature = if requires_adaptive_thinking {
+    let temperature = if requires_adaptive_thinking || model == "claude-mythos-preview" {
         None
     } else {
         request.temperature.or(Some(default_temperature))
@@ -990,6 +1026,7 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            None,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1085,6 +1122,7 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            None,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1104,6 +1142,7 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            None,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1162,6 +1201,7 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            None,
             AnthropicPromptCacheMode::Legacy,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1228,6 +1268,7 @@ mod tests {
             1.0,
             128_000,
             AnthropicModelMode::AdaptiveThinking,
+            None,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1242,6 +1283,185 @@ mod tests {
     }
 
     #[test]
+    fn test_advertised_thinking_types() {
+        for (types, thinking_allowed, expected) in [
+            (
+                serde_json::json!({"adaptive": {"supported": true}}),
+                true,
+                Some("adaptive"),
+            ),
+            (
+                serde_json::json!({"enabled": {"supported": true}}),
+                true,
+                Some("enabled"),
+            ),
+            (serde_json::json!({}), true, None),
+            (
+                serde_json::json!({"disabled": {"supported": true}}),
+                false,
+                Some("disabled"),
+            ),
+            (
+                serde_json::json!({
+                    "disabled": {"supported": true},
+                    "between_tools": {"supported": true}
+                }),
+                false,
+                Some("disabled"),
+            ),
+            (
+                serde_json::json!({
+                    "disabled": {"supported": false},
+                    "between_tools": {"supported": true}
+                }),
+                false,
+                Some("between_tools"),
+            ),
+            (
+                serde_json::json!({
+                    "disabled": {"supported": false},
+                    "between_tools": {"supported": false}
+                }),
+                false,
+                Some("error"),
+            ),
+        ] {
+            let types = serde_json::from_value(types).expect("valid thinking types");
+            for model in ["unknown-model", "claude-opus-5-5"] {
+                let request = LanguageModelRequest {
+                    thinking_allowed,
+                    thinking_effort: Some("max".into()),
+                    ..Default::default()
+                };
+                let result = into_anthropic(
+                    request,
+                    model.to_string(),
+                    1.0,
+                    64_000,
+                    AnthropicModelMode::Default,
+                    Some(&types),
+                    AnthropicPromptCacheMode::Automatic,
+                    &ANTHROPIC_PROVIDER_ID,
+                );
+                if expected == Some("error") {
+                    assert!(
+                        result
+                            .expect_err("thinking cannot be disabled")
+                            .to_string()
+                            .contains("does not support turning thinking off")
+                    );
+                    continue;
+                }
+                let request = result.expect("supported thinking mode");
+                let json = serde_json::to_value(&request).expect("valid request");
+                assert_eq!(json["thinking"]["type"].as_str(), expected);
+                if !thinking_allowed {
+                    assert!(request.output_config.is_none());
+                    assert!(json["thinking"]["block_binding"].is_null());
+                }
+                let count = serde_json::to_value(request.into_count_tokens_request())
+                    .expect("valid token count request");
+                assert_eq!(count["thinking"], json["thinking"]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_model_fallback_thinking_and_sampling_restrictions() {
+        for model in [
+            "claude-fable-5-2",
+            "claude-mythos-5-2",
+            "claude-fable-5-1",
+            "claude-mythos-5-1",
+            "claude-fable-5",
+            "claude-mythos-5",
+            "claude-opus-5-5",
+            "claude-opus-5",
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+            "claude-sonnet-5-5",
+            "claude-sonnet-5",
+            "claude-haiku-5-5",
+            "claude-mythos-preview",
+            "claude-opus-4-6",
+        ] {
+            for thinking_allowed in [false, true] {
+                let request = into_anthropic(
+                    LanguageModelRequest {
+                        thinking_allowed,
+                        temperature: Some(0.7),
+                        ..Default::default()
+                    },
+                    model.to_string(),
+                    1.0,
+                    16_000,
+                    AnthropicModelMode::Thinking {
+                        budget_tokens: Some(4_096),
+                    },
+                    None,
+                    AnthropicPromptCacheMode::Automatic,
+                    &ANTHROPIC_PROVIDER_ID,
+                )
+                .expect("fallback request");
+                assert_eq!(
+                    request.temperature,
+                    (model == "claude-opus-4-6").then_some(0.7),
+                    "{model}, thinking_allowed={thinking_allowed}"
+                );
+                if thinking_allowed {
+                    if matches!(model, "claude-mythos-preview" | "claude-opus-4-6") {
+                        assert!(matches!(request.thinking, Some(Thinking::Enabled { .. })));
+                    } else {
+                        assert!(
+                            matches!(request.thinking, Some(Thinking::Adaptive { .. })),
+                            "{model} rejects manual thinking"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_latest_models_preserve_system_updates() {
+        for model in ["claude-fable-5-2", "claude-mythos-5-2"] {
+            let request = into_anthropic(
+                LanguageModelRequest {
+                    messages: [Role::User, Role::System]
+                        .into_iter()
+                        .map(|role| LanguageModelRequestMessage {
+                            role,
+                            content: vec![MessageContent::Text("Update".into())],
+                            cache: false,
+                            reasoning_details: None,
+                        })
+                        .collect(),
+                    thinking_allowed: true,
+                    ..Default::default()
+                },
+                model.to_string(),
+                1.0,
+                16_000,
+                AnthropicModelMode::Default,
+                None,
+                AnthropicPromptCacheMode::Automatic,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .expect("request with system update");
+            assert!(request.system.is_none());
+            assert_eq!(
+                request
+                    .messages
+                    .iter()
+                    .map(|message| &message.role)
+                    .collect::<Vec<_>>(),
+                vec![&crate::Role::User, &crate::Role::System],
+                "{model}"
+            );
+        }
+    }
+
+    #[test]
     fn test_block_binding_sent_only_for_prefix_binding_models() {
         // (model, expects_block_binding): Claude Fable 5.1 rejects a replayed
         // thinking block with a 400 when the conversation prefix changed, so
@@ -1253,7 +1473,7 @@ mod tests {
             ("claude-opus-5-5", true),
             ("claude-fable-5-1", true),
             ("claude-fable-5", false),
-            ("claude-mythos-5-1", false),
+            ("claude-mythos-5-1", true),
             ("claude-opus-5", false),
         ] {
             let request = LanguageModelRequest {
@@ -1284,6 +1504,7 @@ mod tests {
                 1.0,
                 128_000,
                 AnthropicModelMode::AdaptiveThinking,
+                None,
                 AnthropicPromptCacheMode::Automatic,
                 &ANTHROPIC_PROVIDER_ID,
             )
@@ -1324,6 +1545,8 @@ mod tests {
         // outright, so those models must keep omitting the field.
         for (model, expects_explicit_opt_out) in [
             ("claude-opus-5", true),
+            ("claude-sonnet-5", true),
+            ("claude-haiku-5-5", true),
             ("claude-fable-5-2", false),
             ("claude-mythos-5-2", false),
             ("claude-opus-5-5", false),
@@ -1358,6 +1581,7 @@ mod tests {
                 1.0,
                 128_000,
                 AnthropicModelMode::AdaptiveThinking,
+                None,
                 AnthropicPromptCacheMode::Automatic,
                 &ANTHROPIC_PROVIDER_ID,
             )
@@ -1424,6 +1648,7 @@ mod tests {
             1.0,
             128_000,
             AnthropicModelMode::AdaptiveThinking,
+            None,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1488,6 +1713,7 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            None,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1541,6 +1767,7 @@ mod tests {
             AnthropicModelMode::Thinking {
                 budget_tokens: Some(10000),
             },
+            None,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1663,6 +1890,7 @@ mod tests {
             1.0,
             4096,
             AnthropicModelMode::Default,
+            None,
             AnthropicPromptCacheMode::Disabled,
             &ANTHROPIC_PROVIDER_ID,
         )

@@ -153,6 +153,7 @@ pub fn stream_completion(
                 } else {
                     AnthropicModelMode::Default
                 },
+                None,
                 AnthropicPromptCacheMode::Legacy,
                 &PROVIDER_ID,
             )?;
