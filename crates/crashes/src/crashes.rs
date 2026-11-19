@@ -26,6 +26,8 @@ pub use minidumper::Client;
 
 const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
 const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_CRASH_REPORTS: usize = 10;
+const MAX_CRASH_REPORT_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 
 /// Force a backtrace to be printed on panic.
 pub fn force_backtrace() {
@@ -715,7 +717,19 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
         .spawn({
             let shutdown = shutdown.clone();
             let has_connection = has_connection.clone();
+            let logs_dir = logs_dir.clone();
             move || {
+                // Reports are otherwise only removed once uploaded, which may never happen.
+                util::fs::remove_stale_file_groups(
+                    &logs_dir,
+                    MAX_CRASH_REPORTS,
+                    MAX_CRASH_REPORT_AGE,
+                    |file_name| {
+                        file_name
+                            .strip_suffix(".dmp")
+                            .or_else(|| file_name.strip_suffix(".json"))
+                    },
+                );
                 std::thread::sleep(CRASH_HANDLER_CONNECT_TIMEOUT);
                 if !has_connection.load(Ordering::SeqCst) {
                     shutdown.store(true, Ordering::SeqCst);

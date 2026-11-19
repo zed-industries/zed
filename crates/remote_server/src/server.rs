@@ -53,7 +53,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, LazyLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 #[cfg(unix)]
 use std::{
@@ -263,6 +263,8 @@ fn init_logging_proxy() {
 }
 
 const REMOTE_SERVER_LOG_MAX_BYTES: u64 = 1024 * 1024;
+const MAX_SERVER_LOGS: usize = 20;
+const MAX_SERVER_LOG_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 
 struct RotatingLogFile {
     path: PathBuf,
@@ -328,6 +330,37 @@ fn open_log_file(path: &Path) -> std::io::Result<File> {
 
 fn rotated_log_path(path: &Path) -> PathBuf {
     path.with_extension("1.log")
+}
+
+/// Inverts the log names built by [`ServerPaths::new`] and [`rotated_log_path`].
+fn server_log_identifier(file_name: &str) -> Option<&str> {
+    let log_name = file_name.strip_prefix("server-")?;
+    log_name
+        .strip_suffix(".1.log")
+        .or_else(|| log_name.strip_suffix(".log"))
+}
+
+/// Logs are per connection identifier, so their count grows without bound.
+fn cleanup_old_server_logs() {
+    let system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+    );
+    util::fs::remove_stale_file_groups(
+        logs_dir(),
+        MAX_SERVER_LOGS,
+        MAX_SERVER_LOG_AGE,
+        |file_name| {
+            let identifier = server_log_identifier(file_name)?;
+            let pid_file = paths::remote_server_state_dir()
+                .join(identifier)
+                .join("server.pid");
+            let is_running = std::fs::read_to_string(pid_file)
+                .ok()
+                .and_then(|contents| contents.parse::<u32>().ok())
+                .is_some_and(|pid| system.process(sysinfo::Pid::from_u32(pid)).is_some());
+            (!is_running).then_some(identifier)
+        },
+    );
 }
 
 fn rotate_log_file(path: &Path, rotated_path: &Path) -> std::io::Result<()> {
@@ -475,9 +508,14 @@ fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyPr
                     let mut json_path = child_path.clone();
                     json_path.set_extension("json");
                     if let Ok(json_content) = smol::fs::read_to_string(&json_path).await {
+                        // Earlier reports are already deleted, so don't fail the whole request.
+                        let Some(minidump_contents) = smol::fs::read(&child_path).await.log_err()
+                        else {
+                            continue;
+                        };
                         crashes.push(CrashReport {
                             metadata: json_content,
-                            minidump_contents: smol::fs::read(&child_path).await?,
+                            minidump_contents,
                         });
                         smol::fs::remove_file(&child_path).await.log_err();
                         smol::fs::remove_file(&json_path).await.log_err();
@@ -830,6 +868,7 @@ pub fn execute_run(
 
         cx.background_spawn(async move {
             cleanup_old_binaries_wsl();
+            cleanup_old_server_logs();
             cleanup_old_binaries()
         })
         .detach();
@@ -1623,6 +1662,21 @@ mod tests {
             rotated_log_path(Path::new("server-workspace-12.log")),
             PathBuf::from("server-workspace-12.1.log")
         );
+    }
+
+    #[test]
+    fn server_log_identifier_inverts_log_paths() {
+        let log_path = PathBuf::from("server-preview-workspace-12.log");
+        let rotated_path = rotated_log_path(&log_path);
+        for path in [&log_path, &rotated_path] {
+            let file_name = path.file_name().unwrap().to_str().unwrap();
+            assert_eq!(
+                server_log_identifier(file_name),
+                Some("preview-workspace-12")
+            );
+        }
+        assert_eq!(server_log_identifier("Zed.log"), None);
+        assert_eq!(server_log_identifier("server-workspace-12.json"), None);
     }
 
     #[test]

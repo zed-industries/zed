@@ -13,6 +13,7 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 system_specs.workspace = true
+util.workspace = true
 zstd.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
