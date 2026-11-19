@@ -33,7 +33,8 @@ jobs:
           target: aarch64-apple-darwin
         - arch: x86_64
           target: x86_64-apple-darwin
-    runs-on: macos-26
+    # The macOS 27 image (preview); macos-26 jobs kept being cancelled for lack of runners.
+    runs-on: xcode-27
     timeout-minutes: 360
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_P12_BASE64 }}
