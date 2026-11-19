@@ -1,8 +1,9 @@
 use crate::dispatcher::AndroidDispatcher;
 use crate::display::AndroidDisplay;
 use crate::events::{self, TouchIds};
-use crate::insets::SystemInsetsReader;
+use crate::insets;
 use crate::keyboard::AndroidKeyboardLayout;
+use crate::links;
 use crate::vsync::Vsync;
 use crate::window::{AndroidWindow, AndroidWindowInner};
 use android_activity::input::KeyCharacterMap;
@@ -16,6 +17,8 @@ use gpui::{
     PriorityQueueReceiver, RunnableVariant, Task, ThermalState, WindowAppearance, WindowParams,
 };
 use gpui_wgpu::GpuContext;
+use jni::objects::{JObject, JValue};
+use jni::{jni_sig, jni_str};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -47,12 +50,14 @@ pub struct AndroidPlatform {
     key_maps: RefCell<HashMap<i32, KeyCharacterMap>>,
     touch_ids: RefCell<TouchIds>,
     vsync: Vsync,
-    system_insets: SystemInsetsReader,
+    /// A URL the app was opened with that nothing has observed yet.
+    opened_url: Cell<Option<String>>,
 }
 
 #[derive(Default)]
 struct AndroidPlatformCallbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
+    app_lifecycle: Option<Box<dyn FnMut(gpui::AppLifecyclePhase)>>,
     quit: Option<Box<dyn FnMut() -> bool>>,
     reopen: Option<Box<dyn FnMut()>>,
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
@@ -68,6 +73,7 @@ impl AndroidPlatform {
             .get()
             .expect("gpui_android::init(app) must be called from android_main before building the platform")
             .clone();
+        insets::watch(&app);
 
         let (main_sender, main_receiver) = PriorityQueueReceiver::new();
         let dispatcher = Arc::new(AndroidDispatcher::new(main_sender, app.create_waker()));
@@ -95,7 +101,7 @@ impl AndroidPlatform {
             key_maps: RefCell::new(HashMap::new()),
             touch_ids: RefCell::new(TouchIds::default()),
             vsync: Vsync::new(app.create_waker()),
-            system_insets: SystemInsetsReader::new(app.clone()),
+            opened_url: Cell::new(None),
             app,
         }
     }
@@ -108,17 +114,6 @@ impl AndroidPlatform {
     }
 
     fn handle_main_event(&self, event: MainEvent<'_>) {
-        if matches!(
-            event,
-            MainEvent::InitWindow { .. }
-                | MainEvent::WindowResized { .. }
-                | MainEvent::ContentRectChanged { .. }
-                | MainEvent::InsetsChanged { .. }
-                | MainEvent::ConfigChanged { .. }
-                | MainEvent::GainedFocus
-        ) {
-            self.system_insets.refresh();
-        }
         match event {
             MainEvent::InitWindow { .. } => {
                 if let Some(window) = self.window() {
@@ -170,7 +165,44 @@ impl AndroidPlatform {
                 }
             }
             MainEvent::Destroy => self.quit_requested.set(true),
+            MainEvent::Start => self.notify_app_lifecycle(gpui::AppLifecyclePhase::Foreground),
+            MainEvent::Resume { .. } => {
+                self.notify_app_lifecycle(gpui::AppLifecyclePhase::Active);
+                // Both launching the app with a link and opening one while it
+                // runs are followed by a resume.
+                if let Some(url) = links::take_opened_url(&self.app) {
+                    self.opened_url.set(Some(url));
+                    self.deliver_opened_url();
+                }
+            }
+            MainEvent::Pause => self.notify_app_lifecycle(gpui::AppLifecyclePhase::Inactive),
+            MainEvent::Stop => self.notify_app_lifecycle(gpui::AppLifecyclePhase::Background),
             _ => {}
+        }
+    }
+
+    fn notify_app_lifecycle(&self, phase: gpui::AppLifecyclePhase) {
+        // Taken out for the call so the callback can register a replacement.
+        let callback = self.callbacks.borrow_mut().app_lifecycle.take();
+        if let Some(mut callback) = callback {
+            callback(phase);
+            self.callbacks
+                .borrow_mut()
+                .app_lifecycle
+                .get_or_insert(callback);
+        }
+    }
+
+    fn deliver_opened_url(&self) {
+        let callback = self.callbacks.borrow_mut().open_urls.take();
+        if let Some(mut callback) = callback {
+            if let Some(url) = self.opened_url.take() {
+                callback(vec![url]);
+            }
+            self.callbacks
+                .borrow_mut()
+                .open_urls
+                .get_or_insert(callback);
         }
     }
 
@@ -189,7 +221,7 @@ impl AndroidPlatform {
         let mut touch_ids = self.touch_ids.borrow_mut();
         loop {
             let more = iter.next(|event| {
-                events::handle_input_event(event, &window, &mut touch_ids, &mut key_maps, &self.app)
+                events::handle_input_event(event, &window, &mut touch_ids, &mut key_maps)
             });
             if !more {
                 break;
@@ -213,12 +245,13 @@ impl AndroidPlatform {
         let Some(window) = self.window() else {
             return;
         };
-        if let Some(system_insets) = self.system_insets.take() {
+        if let Some(system_insets) = insets::take_reported() {
             window.set_system_insets(system_insets);
         }
         if self.vsync.take_pending() {
             window.request_frame(false);
         }
+        window.reconcile_keyboard();
         window.vote_frame_rate(self.display.max_refresh_rate());
     }
 }
@@ -296,6 +329,10 @@ impl Platform for AndroidPlatform {
             // The activity is already being destroyed, which cannot be vetoed.
             quit();
         }
+        // android-activity cannot host another activity in a process whose
+        // `android_main` has returned, so a process left running here would
+        // show nothing when the app is next opened.
+        std::process::exit(0);
     }
 
     fn quit(&self) {
@@ -357,11 +394,71 @@ impl Platform for AndroidPlatform {
     }
 
     fn open_url(&self, url: &str) {
-        log::warn!("AndroidPlatform::open_url is not implemented (url: {url})");
+        // SAFETY: android-activity guarantees `vm_as_ptr` returns the
+        // process's valid `JavaVM` pointer for the lifetime of the app.
+        let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr().cast()) };
+        let activity_ptr = self.app.activity_as_ptr();
+        let url_is_web_page = url.starts_with("http://") || url.starts_with("https://");
+        let result = vm.attach_current_thread(|env| {
+            // SAFETY: `activity_as_ptr` is a global reference to the activity
+            // that lives as long as the app. `JObject` does not delete the
+            // reference on drop.
+            let activity = unsafe { JObject::from_raw(env, activity_ptr as jni::sys::jobject) };
+            let url = env.new_string(url)?;
+            let uri = env
+                .call_static_method(
+                    jni_str!("android/net/Uri"),
+                    jni_str!("parse"),
+                    jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+                    &[JValue::Object(&url)],
+                )?
+                .l()?;
+            let action = env.new_string("android.intent.action.VIEW")?;
+            let intent = env.new_object(
+                jni_str!("android/content/Intent"),
+                jni_sig!("(Ljava/lang/String;Landroid/net/Uri;)V"),
+                &[JValue::Object(&action), JValue::Object(&uri)],
+            )?;
+            // Browsers that support custom tabs show the page over this app
+            // rather than switching to their own task, as iOS does with its
+            // in-app browser. The extra's presence asks for that; it has no value.
+            if url_is_web_page {
+                let extras = env.new_object(jni_str!("android/os/Bundle"), jni_sig!("()V"), &[])?;
+                let session = env.new_string("android.support.customtabs.extra.SESSION")?;
+                env.call_method(
+                    &extras,
+                    jni_str!("putBinder"),
+                    jni_sig!("(Ljava/lang/String;Landroid/os/IBinder;)V"),
+                    &[JValue::Object(&session), JValue::Object(&JObject::null())],
+                )?;
+                env.call_method(
+                    &intent,
+                    jni_str!("putExtras"),
+                    jni_sig!("(Landroid/os/Bundle;)Landroid/content/Intent;"),
+                    &[JValue::Object(&extras)],
+                )?;
+            }
+            // Throws when no installed app handles the URL.
+            env.call_method(
+                &activity,
+                jni_str!("startActivity"),
+                jni_sig!("(Landroid/content/Intent;)V"),
+                &[JValue::Object(&intent)],
+            )?;
+            Ok::<_, jni::errors::Error>(())
+        });
+        if let Err(error) = result {
+            log::error!("failed to open {url}: {error}");
+        }
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
         self.callbacks.borrow_mut().open_urls = Some(callback);
+        self.deliver_opened_url();
+    }
+
+    fn on_app_lifecycle(&self, callback: Box<dyn FnMut(gpui::AppLifecyclePhase)>) {
+        self.callbacks.borrow_mut().app_lifecycle = Some(callback);
     }
 
     fn register_url_scheme(&self, _url: &str) -> Task<Result<()>> {

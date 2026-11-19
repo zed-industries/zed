@@ -7,8 +7,9 @@
 //! ```sh
 //! cargo ndk -t arm64-v8a build -p hello_android --manifest-path crates/gpui_android/examples/hello_android/Cargo.toml
 //! ```
-//! then run `script/android/package-apk.sh hello_android <path-to-libhello_android.so>`
-//! from the delta repo and `adb install` the result.
+//! then package the library into an APK whose activity is
+//! `dev.zed.gpui.GpuiActivity`, compiled from this crate's `java` directory,
+//! and `adb install` the result.
 
 use android_activity::AndroidApp;
 use gpui::{
@@ -74,6 +75,7 @@ impl Render for HelloAndroid {
 
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
+    gpui_platform::android_init_logging();
     gpui_platform::android_init(app);
     gpui_platform::application().run(|cx: &mut App| {
         cx.open_window(WindowOptions::default(), |_, cx| {

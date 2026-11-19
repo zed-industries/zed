@@ -1,9 +1,11 @@
-use android_activity::AndroidApp;
+use android_activity::{AndroidApp, AndroidAppWaker};
 use gpui::{DevicePixels, Edges};
-use jni::objects::{JObject, JValue};
-use jni::{jni_sig, jni_str};
+use jni::objects::JObject;
+use jni::sys::jint;
+use jni::{EnvUnowned, NativeMethod, jni_sig, jni_str};
 use parking_lot::Mutex;
-use std::sync::Arc;
+use std::ffi::c_void;
+use std::sync::OnceLock;
 
 /// The window's system insets in physical pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -14,118 +16,81 @@ pub(crate) struct SystemInsets {
     pub(crate) ime: Edges<DevicePixels>,
 }
 
-/// Samples [`SystemInsets`] from the activity's decor view.
-///
-/// Targeting SDK 35 forces edge-to-edge, where a `NativeActivity` is drawn
-/// under the system bars and is not told how large they are, so the insets
-/// are queried over JNI. View methods must run on the Java main thread;
-/// [`Self::refresh`] schedules the read there and [`Self::take`] collects it.
-pub(crate) struct SystemInsetsReader {
-    app: AndroidApp,
-    latest: Arc<Mutex<Option<SystemInsets>>>,
+/// Insets the activity has reported that the window has yet to take.
+static REPORTED: Mutex<Option<SystemInsets>> = Mutex::new(None);
+static MAIN_THREAD: OnceLock<AndroidAppWaker> = OnceLock::new();
+
+/// Returns the insets reported since the last call, if any.
+pub(crate) fn take_reported() -> Option<SystemInsets> {
+    REPORTED.lock().take()
 }
 
-impl SystemInsetsReader {
-    pub(crate) fn new(app: AndroidApp) -> Self {
-        Self {
-            app,
-            latest: Arc::default(),
+/// Asks the activity to report its window's insets, now and on every change.
+///
+/// Targeting SDK 35 forces edge-to-edge, where the window is drawn under the
+/// system bars, and Android sends a native activity no event when its insets
+/// change, the soft keyboard opening included. `GpuiActivity` listens on its
+/// decor view and reports through a native method registered here; a plain
+/// `NativeActivity` has neither, and reports no insets.
+pub(crate) fn watch(app: &AndroidApp) {
+    MAIN_THREAD.set(app.create_waker()).ok();
+    // SAFETY: android-activity guarantees `vm_as_ptr` returns the process's
+    // valid `JavaVM` pointer for the lifetime of the app.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity_ptr = app.activity_as_ptr();
+    let watching = vm.attach_current_thread(|env| {
+        // SAFETY: `activity_as_ptr` is a global reference to the activity
+        // that lives as long as the app. `JObject` does not delete the
+        // reference on drop.
+        let activity = unsafe { JObject::from_raw(env, activity_ptr as jni::sys::jobject) };
+        let activity_class = env.get_object_class(&activity)?;
+        // SAFETY: `on_insets_changed` is an instance method taking eight
+        // `int`s and returning nothing, as the signature says.
+        unsafe {
+            env.register_native_methods(
+                &activity_class,
+                &[NativeMethod::from_raw_parts(
+                    jni_str!("onInsetsChanged"),
+                    jni_str!("(IIIIIIII)V"),
+                    on_insets_changed as *mut c_void,
+                )],
+            )?;
         }
+        env.call_method(&activity, jni_str!("watchInsets"), jni_sig!("()V"), &[])?;
+        anyhow::Ok(())
+    });
+    if let Err(error) = watching {
+        log::error!("failed to watch window insets; is the activity a GpuiActivity? {error:#}");
     }
+}
 
-    /// Returns the insets read since the last call, if any.
-    pub(crate) fn take(&self) -> Option<SystemInsets> {
-        self.latest.lock().take()
-    }
-
-    pub(crate) fn refresh(&self) {
-        let app = self.app.clone();
-        let latest = Arc::clone(&self.latest);
-        self.app.run_on_java_main_thread(Box::new(move || {
-            // SAFETY: android-activity guarantees `vm_as_ptr` returns the
-            // process's valid `JavaVM` pointer for the lifetime of the app.
-            let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
-            let activity_ptr = app.activity_as_ptr();
-            let insets = vm.attach_current_thread(|env| {
-                // SAFETY: `activity_as_ptr` is a global reference to the
-                // activity that lives as long as the app. `JObject` does not
-                // delete the reference on drop.
-                let activity = unsafe { JObject::from_raw(env, activity_ptr as jni::sys::jobject) };
-                let window = env
-                    .call_method(
-                        &activity,
-                        jni_str!("getWindow"),
-                        jni_sig!("()Landroid/view/Window;"),
-                        &[],
-                    )?
-                    .l()?;
-                let decor_view = env
-                    .call_method(
-                        &window,
-                        jni_str!("getDecorView"),
-                        jni_sig!("()Landroid/view/View;"),
-                        &[],
-                    )?
-                    .l()?;
-                let root_insets = env
-                    .call_method(
-                        &decor_view,
-                        jni_str!("getRootWindowInsets"),
-                        jni_sig!("()Landroid/view/WindowInsets;"),
-                        &[],
-                    )?
-                    .l()?;
-                // Null while the decor view is not attached to a window.
-                if root_insets.is_null() {
-                    return anyhow::Ok(None);
-                }
-
-                let mut type_mask = |name| {
-                    anyhow::Ok(
-                        env.call_static_method(
-                            jni_str!("android/view/WindowInsets$Type"),
-                            name,
-                            jni_sig!("()I"),
-                            &[],
-                        )?
-                        .i()?,
-                    )
-                };
-                let safe_area_types =
-                    type_mask(jni_str!("systemBars"))? | type_mask(jni_str!("displayCutout"))?;
-                let ime_types = type_mask(jni_str!("ime"))?;
-
-                let mut edges = |types| {
-                    let insets = env
-                        .call_method(
-                            &root_insets,
-                            jni_str!("getInsets"),
-                            jni_sig!("(I)Landroid/graphics/Insets;"),
-                            &[JValue::Int(types)],
-                        )?
-                        .l()?;
-                    let mut edge = |name| {
-                        anyhow::Ok(DevicePixels(
-                            env.get_field(&insets, name, jni_sig!("I"))?.i()?,
-                        ))
-                    };
-                    anyhow::Ok(Edges {
-                        top: edge(jni_str!("top"))?,
-                        right: edge(jni_str!("right"))?,
-                        bottom: edge(jni_str!("bottom"))?,
-                        left: edge(jni_str!("left"))?,
-                    })
-                };
-                anyhow::Ok(Some(SystemInsets {
-                    safe_area: edges(safe_area_types)?,
-                    ime: edges(ime_types)?,
-                }))
-            });
-            match insets {
-                Ok(Some(insets)) => *latest.lock() = Some(insets),
-                Ok(None) => {}
-                Err(error) => log::error!("failed to read window insets: {error:#}"),
-            }
-        }));
+extern "system" fn on_insets_changed<'local>(
+    _env: EnvUnowned<'local>,
+    _activity: JObject<'local>,
+    safe_area_left: jint,
+    safe_area_top: jint,
+    safe_area_right: jint,
+    safe_area_bottom: jint,
+    ime_left: jint,
+    ime_top: jint,
+    ime_right: jint,
+    ime_bottom: jint,
+) {
+    *REPORTED.lock() = Some(SystemInsets {
+        safe_area: Edges {
+            top: DevicePixels(safe_area_top),
+            right: DevicePixels(safe_area_right),
+            bottom: DevicePixels(safe_area_bottom),
+            left: DevicePixels(safe_area_left),
+        },
+        ime: Edges {
+            top: DevicePixels(ime_top),
+            right: DevicePixels(ime_right),
+            bottom: DevicePixels(ime_bottom),
+            left: DevicePixels(ime_left),
+        },
+    });
+    if let Some(main_thread) = MAIN_THREAD.get() {
+        main_thread.wake();
     }
 }

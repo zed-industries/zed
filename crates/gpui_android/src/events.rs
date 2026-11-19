@@ -31,7 +31,6 @@ pub(crate) fn handle_input_event(
     window: &AndroidWindowInner,
     touch_ids: &mut TouchIds,
     key_maps: &mut HashMap<i32, KeyCharacterMap>,
-    app: &AndroidApp,
 ) -> InputStatus {
     match event {
         InputEvent::MotionEvent(motion_event) => {
@@ -40,13 +39,15 @@ pub(crate) fn handle_input_event(
                 |pointer: &Pointer<'_>| point(px(pointer.x() / scale), px(pointer.y() / scale));
             let dispatch = |id, phase, position| {
                 window.state.borrow_mut().mouse_position = position;
-                window.dispatch_input(PlatformInput::Touch(TouchEvent {
+                let event = TouchEvent {
                     id,
                     phase,
                     position,
                     predicted_position: None,
                     force: None,
-                }))
+                };
+                window.handle_keyboard_dismiss_touch(&event);
+                window.dispatch_input(PlatformInput::Touch(event));
             };
             let acting_pointer = motion_event.pointer_at_index(motion_event.pointer_index());
 
@@ -66,24 +67,7 @@ pub(crate) fn handle_input_event(
                     let Some(id) = touch_ids.active.remove(&acting_pointer.pointer_id()) else {
                         return InputStatus::Unhandled;
                     };
-                    let position = position(&acting_pointer);
-                    let result = dispatch(id, TouchPhase::Ended, position);
-                    // A recognized tap is dispatched synchronously inside the
-                    // call above. A consumed tap may have navigated to an
-                    // editor under this coordinate, which is not a request to
-                    // type; controls that intend typing request the keyboard.
-                    let targets_text_input = result.is_some_and(|result| !result.default_prevented)
-                        && window
-                            .with_input_handler(|handler| {
-                                handler.query_accepts_text_input()
-                                    && handler
-                                        .element_bounds()
-                                        .is_some_and(|bounds| bounds.contains(&position))
-                            })
-                            .unwrap_or(false);
-                    if targets_text_input {
-                        app.show_soft_input(true);
-                    }
+                    dispatch(id, TouchPhase::Ended, position(&acting_pointer));
                 }
                 MotionAction::Cancel => {
                     for pointer in motion_event.pointers() {
@@ -98,6 +82,14 @@ pub(crate) fn handle_input_event(
         }
         InputEvent::KeyEvent(key_event) => {
             let keycode = key_event.key_code();
+            // The soft keyboard takes Back for itself while it is open, so one
+            // that arrives here is the system's back action.
+            if matches!(keycode, Keycode::Back) {
+                if matches!(key_event.action(), KeyAction::Up) {
+                    window.handle_back();
+                }
+                return InputStatus::Handled;
+            }
             let Some(key) = keycode_to_key(keycode) else {
                 return InputStatus::Unhandled;
             };
@@ -122,7 +114,13 @@ pub(crate) fn handle_input_event(
                 return InputStatus::Handled;
             }
 
-            let key_char = key_char_for(key_event.device_id(), keycode, meta_state, key_maps, app);
+            let key_char = key_char_for(
+                key_event.device_id(),
+                keycode,
+                meta_state,
+                key_maps,
+                &window.app,
+            );
             let keystroke = Keystroke {
                 modifiers,
                 key: key.to_owned(),

@@ -10,6 +10,7 @@ mod display;
 mod events;
 mod insets;
 mod keyboard;
+mod links;
 mod platform;
 mod vsync;
 mod window;
@@ -18,10 +19,8 @@ pub use android_activity::AndroidApp;
 pub use platform::{AndroidPlatform, init};
 
 pub fn init_logging() {
-    // Debug for the sync stack, info elsewhere (wgpu and friends are noisy).
-    let filter = android_logger::FilterBuilder::new()
-        .parse("info,deltadb=debug,delta_remote=debug")
-        .build();
+    // wgpu and its dependencies are noisy below info.
+    let filter = android_logger::FilterBuilder::new().parse("info").build();
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Debug)

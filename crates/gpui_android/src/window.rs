@@ -4,14 +4,17 @@ use android_activity::AndroidApp;
 use android_activity::ndk::native_window::FrameRateCompatibility;
 use anyhow::Context as _;
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, Edges,
-    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    AnyWindowHandle, BackGestureEvent, BackGesturePhase, Bounds, Capslock, Decorations,
+    DevicePixels, DispatchEventResult, Edges, GpuSpecs, Modifiers, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, TextInputStateChange, TouchEvent,
+    TouchId, TouchPhase, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowControls, WindowDecorations, WindowInsets, WindowParams,
-    WindowVisibility, px,
+    WindowVisibility, point, px,
 };
 use gpui_wgpu::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use jni::objects::{JObject, JValue};
+use jni::{jni_sig, jni_str};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -77,6 +80,15 @@ pub(crate) struct AndroidWindowCallbacks {
     pub(crate) hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
 }
 
+/// How far a touch must drag downwards to dismiss the soft keyboard, as on iOS.
+const KEYBOARD_DISMISS_DISTANCE: Pixels = px(24.);
+
+#[derive(Clone, Copy)]
+struct KeyboardDismissTouch {
+    id: TouchId,
+    start_position: Point<Pixels>,
+}
+
 pub(crate) struct AndroidWindowState {
     pub(crate) renderer: WgpuRenderer,
     pub(crate) raw_window: RawWindow,
@@ -98,6 +110,13 @@ pub(crate) struct AndroidWindowInner {
     pub(crate) surface_configured: Cell<bool>,
     pub(crate) appearance: Cell<WindowAppearance>,
     system_insets: Cell<SystemInsets>,
+    /// The app wants the soft keyboard for its focused text input. The user
+    /// dismissing the keyboard withdraws this until the app asks again.
+    keyboard_desired: Cell<bool>,
+    keyboard_reconcile_pending: Cell<bool>,
+    /// The soft keyboard was last asked to show rather than hide.
+    keyboard_requested: Cell<bool>,
+    keyboard_dismiss_touch: Cell<Option<KeyboardDismissTouch>>,
     vsync: Vsync,
     last_frame_demand: Cell<Option<Instant>>,
     votes_max_frame_rate: Cell<bool>,
@@ -175,6 +194,10 @@ impl AndroidWindow {
             surface_configured: Cell::new(true),
             appearance: Cell::new(appearance),
             system_insets: Cell::default(),
+            keyboard_desired: Cell::new(false),
+            keyboard_reconcile_pending: Cell::new(false),
+            keyboard_requested: Cell::new(false),
+            keyboard_dismiss_touch: Cell::new(None),
             vsync,
             last_frame_demand: Cell::new(None),
             votes_max_frame_rate: Cell::new(false),
@@ -377,8 +400,17 @@ impl AndroidWindowInner {
     }
 
     pub(crate) fn set_system_insets(&self, system_insets: SystemInsets) {
-        if self.system_insets.replace(system_insets) == system_insets {
+        let previous = self.system_insets.replace(system_insets);
+        if previous == system_insets {
             return;
+        }
+        if previous.ime.bottom.0 > 0 && system_insets.ime.bottom.0 <= 0 {
+            self.keyboard_dismiss_touch.set(None);
+            // The keyboard closed without being asked to, so the user or the
+            // system dismissed it. A repaint must not bring it back.
+            if self.keyboard_requested.replace(false) {
+                self.keyboard_desired.set(false);
+            }
         }
         let insets = self.insets();
         let mut callbacks = self.callbacks.borrow_mut();
@@ -395,6 +427,132 @@ impl AndroidWindowInner {
             safe_area: logical(system_insets.safe_area),
             ime: logical(system_insets.ime),
             ..Default::default()
+        }
+    }
+
+    pub(crate) fn set_keyboard_desired(&self, desired: bool) {
+        self.keyboard_desired.set(desired);
+        self.keyboard_reconcile_pending.set(true);
+    }
+
+    /// Shows the soft keyboard when it is wanted and the focused text input
+    /// can take text at its selection, and hides it otherwise.
+    ///
+    /// Runs from the event loop, not from the calls that prompt it: those
+    /// arrive while GPUI is drawing, when the input handler cannot be queried.
+    pub(crate) fn reconcile_keyboard(&self) {
+        if !self.keyboard_reconcile_pending.replace(false) {
+            return;
+        }
+        let eligible = self.keyboard_desired.get()
+            && self
+                .with_input_handler(|handler| {
+                    if !handler.query_accepts_focused_text_input() {
+                        return false;
+                    }
+                    let Some(document) = handler
+                        .text_input_editable_range()
+                        .or_else(|| handler.text_length_utf16().map(|length| 0..length))
+                    else {
+                        return false;
+                    };
+                    handler.selected_text_range(false).is_some_and(|selection| {
+                        document.start <= selection.range.start
+                            && selection.range.start <= selection.range.end
+                            && selection.range.end <= document.end
+                    })
+                })
+                .unwrap_or(false);
+        if self.keyboard_requested.replace(eligible) == eligible {
+            return;
+        }
+        if eligible {
+            self.app.show_soft_input(true);
+        } else {
+            self.app.hide_soft_input(false);
+        }
+    }
+
+    /// Dismisses the soft keyboard when a touch drags downwards while it is open.
+    pub(crate) fn handle_keyboard_dismiss_touch(&self, event: &TouchEvent) {
+        if self.system_insets.get().ime.bottom.0 <= 0 {
+            self.keyboard_dismiss_touch.set(None);
+            return;
+        }
+
+        match event.phase {
+            TouchPhase::Started if self.keyboard_dismiss_touch.get().is_none() => {
+                self.keyboard_dismiss_touch.set(Some(KeyboardDismissTouch {
+                    id: event.id,
+                    start_position: event.position,
+                }));
+            }
+            TouchPhase::Moved => {
+                let Some(touch) = self
+                    .keyboard_dismiss_touch
+                    .get()
+                    .filter(|touch| touch.id == event.id)
+                else {
+                    return;
+                };
+                let delta = event.position - touch.start_position;
+                if delta.y >= KEYBOARD_DISMISS_DISTANCE && delta.y.abs() > delta.x.abs() * 1.25 {
+                    self.keyboard_dismiss_touch.set(None);
+                    self.set_keyboard_desired(false);
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                if self
+                    .keyboard_dismiss_touch
+                    .get()
+                    .is_some_and(|touch| touch.id == event.id)
+                {
+                    self.keyboard_dismiss_touch.set(None);
+                }
+            }
+            TouchPhase::Started => {}
+        }
+    }
+
+    /// Offers Android's back action to GPUI as a back gesture, and sends the
+    /// app to the background when no element claims it.
+    ///
+    /// Android reports no position for Back, so the gesture starts where the
+    /// iOS edge swipe would: at the middle of the leading edge. Letting the
+    /// system handle an unclaimed Back would destroy the activity.
+    pub(crate) fn handle_back(&self) {
+        let start_position = point(px(0.), self.state.borrow().bounds.size.height / 2.);
+        let back = |phase, progress| {
+            self.dispatch_input(PlatformInput::BackGesture(BackGestureEvent {
+                phase,
+                start_position,
+                progress,
+            }))
+        };
+        if back(BackGesturePhase::Started, 0.).is_some_and(|result| result.default_prevented) {
+            back(BackGesturePhase::Committed, 1.);
+            return;
+        }
+
+        // SAFETY: android-activity guarantees `vm_as_ptr` returns the
+        // process's valid `JavaVM` pointer for the lifetime of the app.
+        let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr().cast()) };
+        let activity_ptr = self.app.activity_as_ptr();
+        let moved = vm.attach_current_thread(|env| {
+            // SAFETY: `activity_as_ptr` is a global reference to the activity
+            // that lives as long as the app. `JObject` does not delete the
+            // reference on drop.
+            let activity = unsafe { JObject::from_raw(env, activity_ptr as jni::sys::jobject) };
+            env.call_method(
+                &activity,
+                jni_str!("moveTaskToBack"),
+                jni_sig!("(Z)Z"),
+                &[JValue::Bool(true)],
+            )?;
+            anyhow::Ok(())
+        });
+        if let Err(error) = moved {
+            log::error!("failed to move the app to the background: {error:#}");
         }
     }
 
@@ -477,9 +635,6 @@ impl PlatformWindow for AndroidWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        // Deliberately does not summon the soft keyboard: GPUI re-registers
-        // the handler every frame, so requesting it here re-opens a keyboard
-        // the user just dismissed. Taps on a text input summon it instead.
         self.inner.state.borrow_mut().input_handler = Some(input_handler);
     }
 
@@ -658,10 +813,20 @@ impl PlatformWindow for AndroidWindow {
     }
 
     fn show_soft_keyboard(&self) {
-        self.inner.app.show_soft_input(true);
+        self.inner.set_keyboard_desired(true);
     }
 
     fn hide_soft_keyboard(&self) {
-        self.inner.app.hide_soft_input(false);
+        self.inner.set_keyboard_desired(false);
+    }
+
+    fn text_input_state_changed(&self, change: TextInputStateChange) {
+        match change {
+            TextInputStateChange::FocusGained => self.inner.set_keyboard_desired(true),
+            TextInputStateChange::FocusLost => self.inner.set_keyboard_desired(false),
+            TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {
+                self.inner.keyboard_reconcile_pending.set(true);
+            }
+        }
     }
 }

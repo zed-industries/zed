@@ -58,12 +58,18 @@ pub fn web_init() {
     gpui_web::init_logging();
 }
 
-/// Initializes logging and stores the [`gpui_android::AndroidApp`] for the platform.
+/// Stores the [`gpui_android::AndroidApp`] for the platform.
 /// Call this at the start of `android_main`, before running the application.
 #[cfg(target_os = "android")]
 pub fn android_init(app: gpui_android::AndroidApp) {
-    gpui_android::init_logging();
     gpui_android::init(app);
+}
+
+/// Sends `log` records to logcat. Applications that install their own logger
+/// must not call this, since a process has only one.
+#[cfg(target_os = "android")]
+pub fn android_init_logging() {
+    gpui_android::init_logging();
 }
 
 /// Returns the default [`Platform`] for the current OS.
