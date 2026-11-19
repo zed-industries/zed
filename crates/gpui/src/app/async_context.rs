@@ -312,6 +312,7 @@ impl AsyncWindowContext {
 
     /// A convenience method for [`App::update_window`].
     #[inline(always)]
+    #[track_caller]
     pub fn update<R>(&mut self, update: impl FnOnce(&mut Window, &mut App) -> R) -> Result<R> {
         self.app
             .update_window(self.window, |_, window, cx| update(window, cx))
@@ -319,6 +320,7 @@ impl AsyncWindowContext {
 
     /// A convenience method for [`App::update_window`].
     #[inline(always)]
+    #[track_caller]
     pub fn update_root<R>(
         &mut self,
         update: impl FnOnce(AnyView, &mut Window, &mut App) -> R,

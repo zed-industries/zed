@@ -21,24 +21,17 @@ macro_rules! id_type {
             Deserialize,
             DeriveValueType,
         )]
-        #[allow(missing_docs)]
         #[serde(transparent)]
         pub struct $name(pub i32);
 
         impl $name {
-            #[allow(unused)]
-            #[allow(missing_docs)]
             pub const MAX: Self = Self(i32::MAX);
 
-            #[allow(unused)]
-            #[allow(missing_docs)]
             pub fn from_proto(value: u64) -> Self {
                 debug_assert!(value != 0);
                 Self(value as i32)
             }
 
-            #[allow(unused)]
-            #[allow(missing_docs)]
             pub fn to_proto(self) -> u64 {
                 self.0 as u64
             }
@@ -179,24 +172,6 @@ impl ChannelRole {
             Admin | Member => true,
             Guest | Talker => visibility == ChannelVisibility::Public,
             Banned => false,
-        }
-    }
-
-    /// True if the role allows access to all descendant channels
-    pub fn can_see_all_descendants(&self) -> bool {
-        use ChannelRole::*;
-        match self {
-            Admin | Member => true,
-            Guest | Talker | Banned => false,
-        }
-    }
-
-    /// True if the role only allows access to public descendant channels
-    pub fn can_only_see_public_descendants(&self) -> bool {
-        use ChannelRole::*;
-        match self {
-            Guest | Talker => true,
-            Admin | Member | Banned => false,
         }
     }
 

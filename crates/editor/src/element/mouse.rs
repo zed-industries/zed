@@ -266,7 +266,7 @@ impl EditorElement {
                     &position_map.snapshot,
                     hint_glyph,
                     Some(event.position),
-                    modifiers.secondary(),
+                    modifiers.secondary(cx),
                     modifiers.shift,
                     window,
                     cx,
@@ -506,21 +506,11 @@ impl EditorElement {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     delta = delta.coalesce(event.delta);
 
-                    if event.modifiers.secondary()
+                    if event.modifiers.secondary(cx)
                         && editor.read(cx).enable_mouse_wheel_zoom
                         && EditorSettings::get_global(cx).mouse_wheel_zoom
                     {
-                        let delta_y = match event.delta {
-                            ScrollDelta::Pixels(pixels) => pixels.y.into(),
-                            ScrollDelta::Lines(lines) => lines.y,
-                        };
-
-                        if delta_y > 0.0 {
-                            theme_settings::increase_buffer_font_size(cx);
-                        } else if delta_y < 0.0 {
-                            theme_settings::decrease_buffer_font_size(cx);
-                        }
-
+                        theme_settings::adjust_buffer_font_size_for_scroll(event.delta, cx);
                         cx.stop_propagation();
                     } else {
                         let scroll_sensitivity = {
@@ -775,7 +765,10 @@ impl EditorElement {
                 window,
                 cx,
             );
-        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.secondary()
+        } else if modifiers.shift
+            && !modifiers.control
+            && !modifiers.alt
+            && !modifiers.secondary(cx)
         {
             editor.select(
                 SelectPhase::Extend {

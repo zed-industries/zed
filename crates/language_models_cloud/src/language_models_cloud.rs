@@ -23,8 +23,9 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelCompletionStream, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID,
-    X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME, unavailable_error,
+    OPEN_AI_PROVIDER_NAME, PromptCompactionStrategy, ProviderErrorCategory, RateLimiter,
+    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    unavailable_error,
 };
 
 use schemars::JsonSchema;
@@ -208,6 +209,11 @@ pub struct PerformLlmCompletionResponse {
     pub includes_status_messages: bool,
 }
 
+enum StatusMessages {
+    Request,
+    Omit,
+}
+
 impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
     pub async fn perform_llm_completion(
         http_client: &HttpClientWithUrl,
@@ -218,7 +224,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
     ) -> Result<PerformLlmCompletionResponse, LanguageModelCompletionError> {
         Self::perform_llm_request(
             "/completions",
-            true,
+            StatusMessages::Request,
             http_client,
             token_provider,
             auth_context,
@@ -237,7 +243,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
     ) -> Result<PerformLlmCompletionResponse, LanguageModelCompletionError> {
         Self::perform_llm_request(
             "/completions/compact",
-            false,
+            StatusMessages::Request,
             http_client,
             token_provider,
             auth_context,
@@ -249,7 +255,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
 
     async fn perform_llm_request(
         path: &str,
-        request_status_messages: bool,
+        status_messages: StatusMessages,
         http_client: &HttpClientWithUrl,
         token_provider: &TP,
         auth_context: TP::AuthContext,
@@ -276,7 +282,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
                     })
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {token}"));
-                if request_status_messages {
+                if matches!(status_messages, StatusMessages::Request) {
                     request = request
                         .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
                         .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true");
@@ -288,7 +294,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
 
         let status = response.status();
         if status.is_success() {
-            let includes_status_messages = request_status_messages
+            let includes_status_messages = matches!(status_messages, StatusMessages::Request)
                 && response
                     .headers()
                     .get(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME)
@@ -523,6 +529,12 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
         supports_thinking: model.supports_thinking,
         supports_disabling_thinking: model.supports_disabling_thinking,
         supports_fast_mode: model.supports_fast_mode,
+        supports_ultrafast_mode: false,
+        supports_system_prompt_updates: match model.provider {
+            Anthropic => anthropic::supports_mid_conversation_system_messages(&model.id.0),
+            OpenAi => true,
+            Google | XAi => false,
+        },
         supports_server_side_compaction: model.supports_server_side_compaction,
         supports_explicit_compaction,
         supports_explicit_compaction_output_limit: model.provider == Anthropic
@@ -545,6 +557,11 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
             auto: true,
             none: true,
             any: model.provider != Anthropic || anthropic::supports_forced_tool_use(&model.id.0),
+        },
+        // Anthropic invalidates cached messages when `tool_choice` changes.
+        prompt_compaction_strategy: match model.provider {
+            OpenAi | XAi => PromptCompactionStrategy::PreserveRequestPrefix,
+            Anthropic | Google => PromptCompactionStrategy::RebuildPrompt,
         },
         supports_split_token_display: matches!(model.provider, OpenAi | XAi),
         max_output_tokens: Some(model.max_output_tokens as u64),
@@ -853,6 +870,20 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
                             .map_err(LanguageModelCompletionError::Other)?;
                         return Ok(CompactionResult { context, usage });
                     }
+                    CompletionEvent::Status(CompletionRequestStatus::StreamEnded) => break,
+                    CompletionEvent::Status(CompletionRequestStatus::Failed {
+                        code,
+                        message,
+                        retry_after,
+                        ..
+                    }) => {
+                        return Err(LanguageModelCompletionError::from_cloud_failure(
+                            provider_name,
+                            code,
+                            message,
+                            retry_after.map(Duration::from_secs_f64),
+                        ));
+                    }
                     CompletionEvent::Status(_) => {}
                 }
             }
@@ -949,7 +980,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             .run(async move {
                 let mut response = Self::perform_llm_request(
                     "/count_tokens",
-                    false,
+                    StatusMessages::Omit,
                     &http_client,
                     &*token_provider,
                     auth_context,
@@ -1162,6 +1193,18 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             cloud_llm_client::LanguageModelProvider::Google => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
+                let mut request = request;
+                // A thread keeps its effort across model switches, and Gemini rejects levels a
+                // model doesn't accept, including any level for thinking-budget models.
+                let effort_supported = request.thinking_effort.as_deref().is_some_and(|effort| {
+                    config
+                        .supported_effort_levels
+                        .iter()
+                        .any(|level| level.value.eq_ignore_ascii_case(effort))
+                });
+                if !effort_supported {
+                    request.thinking_effort = None;
+                }
                 let mode = if config.supports_thinking {
                     GoogleModelMode::Thinking {
                         budget_tokens: None,
@@ -1366,6 +1409,7 @@ pub fn response_lines<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::TryStreamExt as _;
     use http_client::FakeHttpClient;
     use http_client::http::{HeaderMap, StatusCode};
     use language_model::{
@@ -1381,12 +1425,20 @@ mod tests {
         for (finish_reason, expected_stop) in [
             ("STOP", StopReason::EndTurn),
             ("MAX_TOKENS", StopReason::MaxTokens),
-            ("SAFETY", StopReason::Refusal),
+            (
+                "SAFETY",
+                StopReason::Refusal(Some(language_model::RefusalDetails {
+                    reason: "SAFETY".into(),
+                    categories: Vec::new(),
+                    stage: Some(language_model::RefusalStage::Output),
+                })),
+            ),
         ] {
             let (provider, model) = cloud_google_test_model(vec![
                 json!({"event": {"candidates": [{
                     "content": {"role": "model", "parts": [{"text": "Hello"}]}
                 }]}}),
+                json!({"status": CompletionRequestStatus::KeepAlive}),
                 json!({"event": {
                     "candidates": [{
                         "content": {"role": "model", "parts": [{"text": " world"}]},
@@ -1429,12 +1481,15 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         for stream_ended in [false, true] {
-            let mut events = vec![json!({"event": {"candidates": [{
-                "content": {"role": "model", "parts": [{
-                    "functionCall": {"name": "list_directory", "args": {"path": "."}}
-                }]},
-                "finishReason": "STOP"
-            }]}})];
+            let mut events = vec![
+                json!({"event": {"candidates": [{
+                    "content": {"role": "model", "parts": [{
+                        "functionCall": {"name": "list_directory", "args": {"path": "."}}
+                    }]},
+                    "finishReason": "STOP"
+                }]}}),
+                json!({"status": CompletionRequestStatus::KeepAlive}),
+            ];
             if stream_ended {
                 events.push(json!({"status": "stream_ended"}));
             }
@@ -1504,118 +1559,222 @@ mod tests {
     async fn cloud_explicit_compaction_forwards_supported_request_fields(
         cx: &mut gpui::TestAppContext,
     ) {
-        let captured_request = Arc::new(Mutex::new(None));
-        let captured_request_for_handler = captured_request.clone();
-        let http_client = FakeHttpClient::create(move |request| {
-            let captured_request = captured_request_for_handler.clone();
-            async move {
-                let method = request.method().clone();
-                let uri = request.uri().to_string();
-                let authorization = request
-                    .headers()
-                    .get("Authorization")
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_string);
-                let requested_status_messages = request
-                    .headers()
-                    .contains_key(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME);
-                let requested_stream_end = request
-                    .headers()
-                    .contains_key(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME);
-                let mut body = request.into_body();
-                let mut body_text = String::new();
-                body.read_to_string(&mut body_text).await?;
-                *captured_request.lock().unwrap() = Some((
-                    method,
-                    uri,
-                    authorization,
-                    requested_status_messages,
-                    requested_stream_end,
-                    body_text,
-                ));
-
-                Ok(http_client::Response::builder()
-                    .status(200)
-                    .body(AsyncBody::from(format!(
-                        "{}\n",
-                        json!({
-                            "id": "resp_compact",
-                            "created_at": 1_700_000_000,
-                            "object": "response.compaction",
-                            "output": [{
-                                "type": "compaction",
-                                "id": "cmp_manual",
-                                "encrypted_content": "opaque-state"
-                            }],
-                            "usage": {
-                                "input_tokens": 100,
-                                "input_tokens_details": {"cached_tokens": 20},
-                                "output_tokens": 10,
-                                "output_tokens_details": {"reasoning_tokens": 5},
-                                "total_tokens": 110
-                            }
-                        })
-                    )))?)
-            }
-        });
         let language_model = language_model(&cloud_test_config());
         assert!(language_model.supports_explicit_compaction());
         assert!(!language_model.supports_explicit_compaction_output_limit());
+
+        for includes_status_messages in [false, true] {
+            let captured_request = Arc::new(Mutex::new(None));
+            let captured_request_for_handler = captured_request.clone();
+            let http_client = FakeHttpClient::create(move |request| {
+                let captured_request = captured_request_for_handler.clone();
+                async move {
+                    let method = request.method().clone();
+                    let uri = request.uri().to_string();
+                    let authorization = request
+                        .headers()
+                        .get("Authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string);
+                    let requested_status_messages = request
+                        .headers()
+                        .contains_key(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME);
+                    let requested_stream_end = request
+                        .headers()
+                        .contains_key(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME);
+                    let mut body = request.into_body();
+                    let mut body_text = String::new();
+                    body.read_to_string(&mut body_text).await?;
+                    *captured_request.lock().unwrap() = Some((
+                        method,
+                        uri,
+                        authorization,
+                        requested_status_messages,
+                        requested_stream_end,
+                        body_text,
+                    ));
+
+                    let result = json!({
+                        "id": "resp_compact",
+                        "created_at": 1_700_000_000,
+                        "object": "response.compaction",
+                        "output": [{
+                            "type": "compaction",
+                            "id": "cmp_manual",
+                            "encrypted_content": "opaque-state"
+                        }],
+                        "usage": {
+                            "input_tokens": 100,
+                            "input_tokens_details": {"cached_tokens": 20},
+                            "output_tokens": 10,
+                            "output_tokens_details": {"reasoning_tokens": 5},
+                            "total_tokens": 110
+                        }
+                    });
+                    let mut response = http_client::Response::builder().status(200);
+                    let body = if includes_status_messages {
+                        response =
+                            response.header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true");
+                        [
+                            json!({"status": "keep_alive"}),
+                            json!({"status": "future_transport_status"}),
+                            json!({"event": result}),
+                            json!({"status": "stream_ended"}),
+                        ]
+                        .into_iter()
+                        .map(|event| format!("{event}\n"))
+                        .collect::<String>()
+                    } else {
+                        format!("{result}\n")
+                    };
+                    Ok(response.body(AsyncBody::from(body))?)
+                }
+            });
+            let (provider, model) = cloud_test_model(http_client);
+            let request = compact_test_request();
+
+            let result = cx
+                .update(|cx| provider.compact(&model, request, cx))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                result.usage,
+                language_model::TokenUsage {
+                    input_tokens: 80,
+                    output_tokens: 10,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 20,
+                }
+            );
+            let language_model::CompactedContext::ProviderState(state) = result.context else {
+                panic!("expected provider compaction state");
+            };
+            assert_eq!(
+                open_ai::responses::provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID)
+                    .unwrap(),
+                Some(vec![json!({
+                    "type": "compaction",
+                    "id": "cmp_manual",
+                    "encrypted_content": "opaque-state"
+                })])
+            );
+            let (method, uri, authorization, requested_status_messages, requested_stream_end, body) =
+                captured_request.lock().unwrap().take().unwrap();
+            assert_eq!(method, Method::POST);
+            assert_eq!(uri, "http://test.example/completions/compact?");
+            assert_eq!(authorization.as_deref(), Some("Bearer test-token"));
+            assert!(requested_status_messages);
+            assert!(requested_stream_end);
+            let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
+            assert_eq!(body["thread_id"], "thread-123");
+            assert_eq!(body["provider"], "open_ai");
+            assert_eq!(body["model"], "gpt-5.4");
+            assert_eq!(
+                body["provider_request"],
+                json!({
+                    "model": "gpt-5.4",
+                    "input": [{
+                        "type": "message",
+                        "role": "user",
+                        "content": [{
+                            "type": "input_text",
+                            "text": "Retain this context."
+                        }]
+                    }],
+                    "prompt_cache_key": "thread-123",
+                    "service_tier": "priority"
+                })
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn cloud_explicit_compaction_preserves_streamed_failure(cx: &mut gpui::TestAppContext) {
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(Response::builder()
+                .status(200)
+                .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                .body(AsyncBody::from(format!(
+                    "{}\n{}\n",
+                    json!({"status": "keep_alive"}),
+                    json!({"status": {"failed": {
+                        "code": "upstream_http_429",
+                        "message": "Compaction rate limit exceeded.",
+                        "request_id": "00000000-0000-0000-0000-000000000000",
+                        "retry_after": 1.5
+                    }}}),
+                )))?)
+        });
         let (provider, model) = cloud_test_model(http_client);
-        let request = compact_test_request();
 
-        let result = cx
-            .update(|cx| provider.compact(&model, request, cx))
+        let error = cx
+            .update(|cx| provider.compact(&model, compact_test_request(), cx))
             .await
-            .unwrap();
+            .unwrap_err();
 
-        assert_eq!(
-            result.usage,
-            language_model::TokenUsage {
-                input_tokens: 80,
-                output_tokens: 10,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 20,
-            }
-        );
-        let language_model::CompactedContext::ProviderState(state) = result.context else {
-            panic!("expected provider compaction state");
+        let LanguageModelCompletionError::ProviderRejection {
+            provider,
+            status,
+            code,
+            message,
+            retry_after,
+            category,
+        } = error
+        else {
+            panic!("expected the streamed provider rejection, got {error:?}");
         };
-        assert_eq!(
-            open_ai::responses::provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
-            Some(vec![json!({
-                "type": "compaction",
-                "id": "cmp_manual",
-                "encrypted_content": "opaque-state"
-            })])
-        );
-        let (method, uri, authorization, requested_status_messages, requested_stream_end, body) =
-            captured_request.lock().unwrap().take().unwrap();
-        assert_eq!(method, Method::POST);
-        assert_eq!(uri, "http://test.example/completions/compact?");
-        assert_eq!(authorization.as_deref(), Some("Bearer test-token"));
-        assert!(!requested_status_messages);
-        assert!(!requested_stream_end);
-        let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
-        assert_eq!(body["thread_id"], "thread-123");
-        assert_eq!(body["provider"], "open_ai");
-        assert_eq!(body["model"], "gpt-5.4");
-        assert_eq!(
-            body["provider_request"],
-            json!({
-                "model": "gpt-5.4",
-                "input": [{
-                    "type": "message",
-                    "role": "user",
-                    "content": [{
-                        "type": "input_text",
-                        "text": "Retain this context."
-                    }]
-                }],
-                "prompt_cache_key": "thread-123",
-                "service_tier": "priority"
-            })
-        );
+        assert_eq!(provider, OPEN_AI_PROVIDER_NAME);
+        assert_eq!(status, Some(StatusCode::TOO_MANY_REQUESTS));
+        assert_eq!(code.as_deref(), Some("upstream_http_429"));
+        assert_eq!(message, "Compaction rate limit exceeded.");
+        assert_eq!(retry_after, Some(Duration::from_secs_f64(1.5)));
+        assert_eq!(category, ProviderErrorCategory::RateLimit);
+    }
+
+    #[gpui::test]
+    async fn cloud_explicit_compaction_rejects_stream_ending_without_result(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for stream_ended in [false, true] {
+            let http_client = FakeHttpClient::create(move |_| async move {
+                let mut body = format!("{}\n", json!({"status": "keep_alive"}));
+                if stream_ended {
+                    body.push_str(&format!("{}\n", json!({"status": "stream_ended"})));
+                }
+                let body = stream::iter([Ok::<_, std::io::Error>(body.into_bytes())])
+                    .chain(stream::poll_fn(move |_| {
+                        if stream_ended {
+                            Poll::Pending
+                        } else {
+                            Poll::Ready(None)
+                        }
+                    }))
+                    .into_async_read();
+                Ok(Response::builder()
+                    .status(200)
+                    .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                    .body(AsyncBody::from_reader(body))?)
+            });
+            let (provider, model) = cloud_test_model(http_client);
+
+            let error = cx
+                .update(|cx| provider.compact(&model, compact_test_request(), cx))
+                .now_or_never()
+                .expect(
+                    "compaction should stop at EOF or StreamEnded without waiting for more bytes",
+                )
+                .unwrap_err();
+
+            assert!(
+                matches!(
+                    &error,
+                    LanguageModelCompletionError::StreamEndedUnexpectedly { provider }
+                        if provider == &OPEN_AI_PROVIDER_NAME
+                ),
+                "expected a missing compaction result error, got {error:?}"
+            );
+        }
     }
 
     #[gpui::test]
@@ -2141,6 +2300,18 @@ mod tests {
     }
 
     #[test]
+    fn prompt_compaction_preserves_prefix_only_for_supported_upstreams() {
+        assert_eq!(
+            language_model(&cloud_test_config()).prompt_compaction_strategy,
+            PromptCompactionStrategy::PreserveRequestPrefix
+        );
+        assert_eq!(
+            language_model(&cloud_anthropic_test_config()).prompt_compaction_strategy,
+            PromptCompactionStrategy::RebuildPrompt
+        );
+    }
+
+    #[test]
     fn config_resolves_current_model_list_and_rejects_unlisted_models() {
         let listed = language_model(&cloud_test_config());
         let mut provider = test_provider(
@@ -2405,6 +2576,12 @@ mod tests {
         config.provider = cloud_llm_client::LanguageModelProvider::Google;
         config.id = cloud_llm_client::LanguageModelId("future-google-model".into());
         config.supports_thinking = true;
+        config.supported_effort_levels = vec![cloud_llm_client::SupportedEffortLevel {
+            name: Arc::from("Medium"),
+            value: Arc::from("medium"),
+            is_default: Some(true),
+            supports_disabling_thinking: None,
+        }];
         let (provider, model) = bind_test_model(
             FakeHttpClient::create(|mut request| async move {
                 let mut body = String::new();
@@ -2451,6 +2628,72 @@ mod tests {
             }
         }
         assert_eq!(summaries, ["Summary"]);
+    }
+
+    #[gpui::test]
+    async fn hosted_google_sends_only_effort_levels_the_model_lists(cx: &mut gpui::TestAppContext) {
+        for (listed_efforts, expected_thinking_config) in [
+            (
+                ["low", "medium", "high", "xhigh"].as_slice(),
+                json!({"thinkingLevel": "XHIGH", "includeThoughts": true}),
+            ),
+            (
+                ["low", "medium", "high"].as_slice(),
+                json!({"includeThoughts": true}),
+            ),
+        ] {
+            let thinking_config = Arc::new(Mutex::new(None));
+            let http_client = FakeHttpClient::create({
+                let thinking_config = thinking_config.clone();
+                move |mut request| {
+                    let thinking_config = thinking_config.clone();
+                    async move {
+                        let mut body = String::new();
+                        request.body_mut().read_to_string(&mut body).await?;
+                        let body: serde_json::Value = serde_json::from_str(&body)?;
+                        *thinking_config.lock().unwrap() = Some(
+                            body["provider_request"]["generationConfig"]["thinkingConfig"].clone(),
+                        );
+                        Ok(Response::builder()
+                            .status(200)
+                            .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                            .body(AsyncBody::from(
+                                json!({"status": "stream_ended"}).to_string(),
+                            ))?)
+                    }
+                }
+            });
+            let mut config = cloud_test_config();
+            config.provider = cloud_llm_client::LanguageModelProvider::Google;
+            config.id = cloud_llm_client::LanguageModelId("future-google-model".into());
+            config.supports_thinking = true;
+            config.supported_effort_levels = listed_efforts
+                .iter()
+                .map(|value| cloud_llm_client::SupportedEffortLevel {
+                    name: Arc::from(*value),
+                    value: Arc::from(*value),
+                    is_default: None,
+                    supports_disabling_thinking: None,
+                })
+                .collect();
+            let (provider, model) = bind_test_model(http_client, config);
+
+            let mut request = compact_test_request();
+            request.thinking_allowed = true;
+            request.thinking_effort = Some("xhigh".into());
+            cx.update(|cx| provider.stream_completion(&model, request, cx))
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+
+            assert_eq!(
+                thinking_config.lock().unwrap().take(),
+                Some(expected_thinking_config),
+                "listed efforts: {listed_efforts:?}"
+            );
+        }
     }
 
     fn cloud_google_test_model(

@@ -1,6 +1,6 @@
 use std::mem;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
@@ -76,11 +76,21 @@ fn supports_minimal_thinking(model_id: &str) -> bool {
     )
 }
 
+/// The most thinking a level-based model accepts. Only some models go past `HIGH`.
+fn highest_thinking_level(model_id: &str) -> ThinkingLevel {
+    match model_id {
+        "gemini-4-hydrogen" => ThinkingLevel::XHigh,
+        _ => ThinkingLevel::High,
+    }
+}
+
 /// The thinking level Zed selects for a level-based model until the user picks another.
 fn default_thinking_level(model_id: &str) -> ThinkingLevel {
     match model_id {
         "gemini-3.5-flash-lite" => ThinkingLevel::Minimal,
-        "gemini-3-flash-preview" | "gemini-3.1-pro-preview" => ThinkingLevel::High,
+        "gemini-3-flash-preview" | "gemini-3.1-pro-preview" | "gemini-4-hydrogen" => {
+            ThinkingLevel::High
+        }
         _ => ThinkingLevel::Medium,
     }
 }
@@ -198,7 +208,10 @@ pub async fn stream_generate_content(
     api_key: &str,
     mut request: GenerateContentRequest,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<GenerateContentResponse>>, LanguageModelCompletionError> {
+) -> Result<
+    BoxStream<'static, Result<GenerateContentResponse, LanguageModelCompletionError>>,
+    LanguageModelCompletionError,
+> {
     let api_key = api_key.trim();
     validate_generate_content_request(&request)?;
 
@@ -251,15 +264,21 @@ pub async fn stream_generate_content(
                             }
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(format!(
-                                    "Error parsing JSON: {error:?}\n{line:?}"
-                                )))),
+                                Err(error) => {
+                                    Some(Err(LanguageModelCompletionError::DeserializeResponse {
+                                        provider: GOOGLE_PROVIDER_NAME,
+                                        error,
+                                    }))
+                                }
                             }
                         } else {
                             None
                         }
                     }
-                    Err(error) => Some(Err(anyhow!(error))),
+                    Err(error) => Some(Err(LanguageModelCompletionError::ApiReadResponseError {
+                        provider: GOOGLE_PROVIDER_NAME,
+                        error,
+                    })),
                 }
             })
             .boxed())
@@ -295,8 +314,20 @@ fn completion_error_from_response(
         .as_ref()
         .map(|error| error.message.clone())
         .unwrap_or(body);
+    // Google uses HTTP 400 / INVALID_ARGUMENT even when the API key is invalid.
+    let invalid_api_key = status == StatusCode::BAD_REQUEST
+        && (parsed_error.as_ref().is_some_and(|error| {
+            error
+                .details
+                .iter()
+                .any(|detail| detail.reason.as_deref() == Some("API_KEY_INVALID"))
+        }) || message.starts_with("API key not valid."));
     let code = parsed_error.and_then(|error| error.status);
-    let category = ProviderErrorCategory::from_http_status(status, &message);
+    let category = if invalid_api_key {
+        ProviderErrorCategory::Authentication
+    } else {
+        ProviderErrorCategory::from_http_status(status, &message)
+    };
 
     LanguageModelCompletionError::from_provider_response(
         GOOGLE_PROVIDER_NAME,
@@ -317,11 +348,51 @@ struct GoogleErrorEnvelope {
 struct GoogleError {
     message: String,
     status: Option<String>,
+    #[serde(default)]
+    details: Vec<GoogleErrorDetail>,
+}
+
+#[derive(Deserialize)]
+struct GoogleErrorDetail {
+    reason: Option<String>,
 }
 
 #[cfg(test)]
 mod provider_error_tests {
     use super::*;
+
+    #[test]
+    fn invalid_api_keys_are_authentication_errors_not_invalid_requests() {
+        for (body, expected_category) in [
+            (
+                r#"{"error":{"code":400,"message":"Invalid credentials.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID","domain":"googleapis.com"}]}}"#,
+                ProviderErrorCategory::Authentication,
+            ),
+            (
+                r#"{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}"#,
+                ProviderErrorCategory::Authentication,
+            ),
+            (
+                r#"{"error":{"code":400,"message":"Invalid value at 'contents'.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.BadRequest","fieldViolations":[]}]}}"#,
+                ProviderErrorCategory::InvalidRequest,
+            ),
+        ] {
+            let error = completion_error_from_response(
+                StatusCode::BAD_REQUEST,
+                &HeaderMap::new(),
+                body.to_string(),
+            );
+            assert!(matches!(
+                error,
+                LanguageModelCompletionError::ProviderRejection {
+                    status: Some(StatusCode::BAD_REQUEST),
+                    code: Some(code),
+                    category,
+                    ..
+                } if code == "INVALID_ARGUMENT" && category == expected_category
+            ));
+        }
+    }
 
     #[test]
     fn google_rejections_preserve_wire_details_and_semantic_category() {
@@ -450,6 +521,8 @@ pub struct GenerateContentResponse {
 pub struct GenerateContentCandidate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
+    // Blocked candidates can omit content entirely.
+    #[serde(default)]
     pub content: Content,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
@@ -467,6 +540,15 @@ pub struct Content {
     #[serde(default)]
     pub parts: Vec<Part>,
     pub role: Role,
+}
+
+impl Default for Content {
+    fn default() -> Self {
+        Self {
+            parts: Vec::new(),
+            role: Role::Model,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -591,13 +673,14 @@ pub struct ThinkingConfig {
     pub include_thoughts: Option<bool>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ThinkingLevel {
     Minimal,
     Low,
     Medium,
     High,
+    XHigh,
 }
 
 impl ThinkingLevel {
@@ -607,6 +690,7 @@ impl ThinkingLevel {
             "low" => Some(Self::Low),
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
+            "xhigh" => Some(Self::XHigh),
             _ => None,
         }
     }
@@ -617,6 +701,7 @@ impl ThinkingLevel {
             Self::Low => "Low",
             Self::Medium => "Medium",
             Self::High => "High",
+            Self::XHigh => "Extra High",
         }
     }
 
@@ -626,6 +711,7 @@ impl ThinkingLevel {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::XHigh => "xhigh",
         }
     }
 }
@@ -707,8 +793,11 @@ pub enum HarmProbability {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SafetyRating {
-    pub category: HarmCategory,
+    /// Preserve provider categories beyond the configurable safety settings.
+    pub category: String,
     pub probability: HarmProbability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -858,9 +947,10 @@ impl Model {
                         ThinkingLevel::Low,
                         ThinkingLevel::Medium,
                         ThinkingLevel::High,
+                        ThinkingLevel::XHigh,
                     ]
                     .into_iter()
-                    .skip_while(|level| *level != lowest)
+                    .filter(|level| (lowest..=highest_thinking_level(id)).contains(level))
                     .collect(),
                     Some(default_thinking_level(id)),
                 ),
@@ -904,7 +994,75 @@ struct ListModelEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use completion::GoogleEventMapper;
+    use futures::{TryStreamExt, stream};
+    use http_client::{FakeHttpClient, Response};
+    use language_model_core::LanguageModelCompletionEvent;
     use serde_json::json;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn stream_body_failures_remain_retryable() {
+        for kind in [ErrorKind::TimedOut, ErrorKind::ConnectionReset] {
+            let error = completion_error(Some(kind));
+            assert!(error.is_transient());
+            assert!(matches!(
+                error,
+                LanguageModelCompletionError::ApiReadResponseError { provider, error }
+                    if provider == GOOGLE_PROVIDER_NAME && error.kind() == kind
+            ));
+        }
+    }
+
+    #[test]
+    fn malformed_stream_data_remains_non_retryable() {
+        let error = completion_error(None);
+        assert!(!error.is_transient());
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::DeserializeResponse { provider, .. }
+                if provider == GOOGLE_PROVIDER_NAME
+        ));
+    }
+
+    fn completion_error(read_error: Option<ErrorKind>) -> LanguageModelCompletionError {
+        futures::executor::block_on(async {
+            let client = FakeHttpClient::create(move |_| async move {
+                let chunks = vec![
+                    Ok(b"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Thinking\"}]}}]}\n\n".to_vec()),
+                    match read_error {
+                        Some(kind) => Err(Error::new(kind, "stream read failed")),
+                        None => Ok(b"data: not json\n\n".to_vec()),
+                    },
+                ];
+                Ok(Response::builder().body(AsyncBody::from_reader(
+                    stream::iter(chunks).into_async_read(),
+                ))?)
+            });
+            let request = serde_json::from_value(json!({
+                "model": "models/gemini-3.8-flash",
+                "contents": [{"role": "user", "parts": [{"text": "Think"}]}]
+            }))
+            .unwrap();
+            let responses = stream_generate_content(
+                client.as_ref(),
+                API_URL,
+                "test-key",
+                request,
+                &CustomHeaders::default(),
+            )
+            .await
+            .unwrap();
+            let mut events = GoogleEventMapper::new().map_stream(responses).boxed();
+            assert!(matches!(
+                events.next().await,
+                Some(Ok(LanguageModelCompletionEvent::Text(text))) if text == "Thinking"
+            ));
+            let error = events.next().await.unwrap().unwrap_err();
+            assert!(events.next().await.is_none());
+            error
+        })
+    }
 
     #[test]
     fn test_lowest_thinking_level_per_model() {
@@ -921,6 +1079,54 @@ mod tests {
             Some(ThinkingLevel::Low)
         );
         assert_eq!(lowest_thinking_level("gemini-2.5-flash"), None);
+    }
+
+    #[test]
+    fn test_from_listed_thinking_levels_per_model() {
+        let listed_entry = |id: &str| ListModelEntry {
+            name: format!("models/{id}"),
+            display_name: Some(id.to_string()),
+            input_token_limit: Some(1_048_576),
+            output_token_limit: Some(65_536),
+            supported_generation_methods: vec!["generateContent".to_string()],
+            thinking: true,
+        };
+
+        for (id, expected_levels, expected_default) in [
+            (
+                "gemini-4-hydrogen",
+                vec![
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                    ThinkingLevel::XHigh,
+                ],
+                ThinkingLevel::High,
+            ),
+            (
+                "gemini-4-argon",
+                vec![
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                ],
+                ThinkingLevel::Medium,
+            ),
+            (
+                "gemini-3.6-flash",
+                vec![
+                    ThinkingLevel::Minimal,
+                    ThinkingLevel::Low,
+                    ThinkingLevel::Medium,
+                    ThinkingLevel::High,
+                ],
+                ThinkingLevel::Medium,
+            ),
+        ] {
+            let model = Model::from_listed(listed_entry(id)).unwrap();
+            assert_eq!(model.supported_thinking_levels, expected_levels, "{id}");
+            assert_eq!(model.default_thinking_level, Some(expected_default), "{id}");
+        }
     }
 
     #[test]

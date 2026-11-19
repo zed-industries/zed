@@ -1,13 +1,64 @@
 //! Conversion from UIKit events to GPUI input events.
 
 use gpui::{
-    Modifiers, Pixels, Point, ScrollDelta, ScrollEvent, ScrollSource, TouchId, TouchPhase, px,
+    BackGestureEvent, BackGesturePhase, Modifiers, Pixels, Point, ScrollDelta, ScrollEvent,
+    ScrollSource, TouchId, TouchPhase, px,
 };
 use objc2_core_foundation::CGPoint;
 use objc2_ui_kit::{
-    UIGestureRecognizerState, UIKeyModifierFlags, UIPanGestureRecognizer, UITouch, UITouchPhase,
-    UIView,
+    UIGestureRecognizerState, UIKeyModifierFlags, UIPanGestureRecognizer, UIRectEdge,
+    UIScreenEdgePanGestureRecognizer, UITouch, UITouchPhase, UIView,
 };
+
+/// A release faster than this, in points per second toward going back, commits
+/// a back gesture regardless of how far it travelled.
+const BACK_COMMIT_VELOCITY: f64 = 300.;
+
+/// Converts a step of the screen-edge back gesture, whose `Started` phase was
+/// already delivered when the recognizer asked to begin.
+///
+/// Like `UINavigationController`, a release commits when the gesture is past
+/// halfway without flicking back, or when it flicks forward quickly. Returns
+/// `None` for states that carry no step.
+pub fn back_event(
+    recognizer: &UIScreenEdgePanGestureRecognizer,
+    view: &UIView,
+    start_position: Point<Pixels>,
+) -> Option<BackGestureEvent> {
+    // Gestures from the right edge move content leftward toward going back.
+    let direction = if recognizer.edges() == UIRectEdge::Right {
+        -1.
+    } else {
+        1.
+    };
+    let width = view.bounds().size.width.max(1.);
+    let travel = recognizer.translationInView(Some(view)).x * direction;
+    let progress = (travel / width).clamp(0., 1.);
+    let phase = match recognizer.state() {
+        UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed => {
+            BackGesturePhase::Progressed
+        }
+        UIGestureRecognizerState::Ended => {
+            let velocity = recognizer.velocityInView(Some(view)).x * direction;
+            if velocity > BACK_COMMIT_VELOCITY
+                || (progress > 0.5 && velocity > -BACK_COMMIT_VELOCITY)
+            {
+                BackGesturePhase::Committed
+            } else {
+                BackGesturePhase::Cancelled
+            }
+        }
+        UIGestureRecognizerState::Cancelled | UIGestureRecognizerState::Failed => {
+            BackGesturePhase::Cancelled
+        }
+        _ => return None,
+    };
+    Some(BackGestureEvent {
+        phase,
+        start_position,
+        progress: progress as f32,
+    })
+}
 
 pub fn touch_location_in_view(touch: &UITouch, view: &UIView) -> Point<Pixels> {
     let location = touch.locationInView(Some(view));

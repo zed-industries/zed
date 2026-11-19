@@ -1,5 +1,5 @@
 use acp_thread::{AcpThread, MessageKind};
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::Result;
 use collections::HashMap;
 use gpui::Context;
@@ -93,10 +93,18 @@ impl PendingSessionUpdates {
         let mut notifications = Vec::new();
         // Session IDs correlate concurrent creations. The wire carries no request ID
         // on these notifications, so provisional ID reuse by the agent remains ambiguous.
+        // The new session's subagents, and theirs, are announced before their own traffic,
+        // so walking in order also collects that traffic, in the order it arrived.
+        let mut sessions = vec![session_id.clone()];
         for update in std::mem::take(&mut self.updates) {
-            if &update.notification.session_id == session_id
-                && update.generation >= creation.generation
+            if update.generation >= creation.generation
+                && sessions.contains(&update.notification.session_id)
             {
+                if let InboundSessionUpdate::Subagent(subagent) = &update.notification.update
+                    && !sessions.contains(&subagent.session_id)
+                {
+                    sessions.push(subagent.session_id.clone());
+                }
                 notifications.push(update.notification);
             } else {
                 self.updates.push_back(update);
@@ -151,9 +159,12 @@ pub struct InboundSessionNotification {
 
 #[derive(Debug)]
 pub enum InboundSessionUpdate {
+    ReplayComplete,
     UserMessage(acp_v2::UserMessage),
     AgentMessage(acp_v2::AgentMessage),
     AgentThought(acp_v2::AgentThought),
+    SessionMessage(acp_v2::SessionMessage),
+    SessionMessageChunk(acp_v2::SessionMessageChunk),
     UserMessageChunk(acp_v2::ContentChunk),
     AgentMessageChunk(acp_v2::ContentChunk),
     AgentThoughtChunk(acp_v2::ContentChunk),
@@ -163,6 +174,11 @@ pub enum InboundSessionUpdate {
         plan: acp_v2::PlanItems,
         update_meta: Option<acp_v2::Meta>,
     },
+    PlanMarkdown {
+        plan: acp_v2::PlanMarkdown,
+        update_meta: Option<acp_v2::Meta>,
+    },
+    PlanRemoved(acp_v2::PlanRemoved),
     Terminal(DecodedTerminalUpdate),
     SessionInfo(acp_v2::SessionInfoUpdate),
     AvailableCommands(acp_v2::AvailableCommandsUpdate),
@@ -172,6 +188,9 @@ pub enum InboundSessionUpdate {
     Notice(acp_v2::Notice),
     Compaction(acp_v2::CompactionUpdate),
     CompactionSummary(acp_v2::CompactionSummaryChunk),
+    /// Creates or patches a subagent session, so the connection applies it rather than
+    /// the parent thread.
+    Subagent(acp_v2::SubagentUpdate),
 }
 
 impl From<DecodedTerminalNotification> for InboundSessionNotification {
@@ -189,6 +208,7 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
 
     fn try_from(mut notification: acp_v2::UpdateSessionNotification) -> Result<Self, Self::Error> {
         let update = match notification.update {
+            acp_v2::SessionUpdate::ReplayComplete(_) => InboundSessionUpdate::ReplayComplete,
             acp_v2::SessionUpdate::UserMessage(message) => {
                 InboundSessionUpdate::UserMessage(message)
             }
@@ -197,6 +217,12 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
             }
             acp_v2::SessionUpdate::AgentThought(thought) => {
                 InboundSessionUpdate::AgentThought(thought)
+            }
+            acp_v2::SessionUpdate::SessionMessage(message) => {
+                InboundSessionUpdate::SessionMessage(message)
+            }
+            acp_v2::SessionUpdate::SessionMessageChunk(chunk) => {
+                InboundSessionUpdate::SessionMessageChunk(chunk)
             }
             acp_v2::SessionUpdate::UserMessageChunk(chunk) => {
                 InboundSessionUpdate::UserMessageChunk(chunk)
@@ -213,19 +239,29 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
             acp_v2::SessionUpdate::ToolCallContentChunk(chunk) => {
                 InboundSessionUpdate::ToolCallContentChunk(chunk)
             }
-            acp_v2::SessionUpdate::PlanUpdate(mut update) => {
-                let plan = match update.plan {
-                    acp_v2::PlanUpdateContent::Items(plan) => plan,
-                    content => {
-                        update.plan = content;
-                        notification.update = acp_v2::SessionUpdate::PlanUpdate(update);
-                        return Err(notification);
-                    }
-                };
-                InboundSessionUpdate::PlanItems {
+            acp_v2::SessionUpdate::PlanUpdate(mut update) => match update.plan {
+                acp_v2::PlanUpdateContent::Items(plan) => InboundSessionUpdate::PlanItems {
                     plan,
                     update_meta: update.meta,
+                },
+                acp_v2::PlanUpdateContent::Markdown(plan) => InboundSessionUpdate::PlanMarkdown {
+                    plan,
+                    update_meta: update.meta,
+                },
+                // Zed can't render an unknown plan type, but it still replaces the plan with
+                // that ID.
+                acp_v2::PlanUpdateContent::Other(plan) => InboundSessionUpdate::PlanItems {
+                    plan: acp_v2::PlanItems::new(plan.plan_id, Vec::new()),
+                    update_meta: update.meta,
+                },
+                content => {
+                    update.plan = content;
+                    notification.update = acp_v2::SessionUpdate::PlanUpdate(update);
+                    return Err(notification);
                 }
+            },
+            acp_v2::SessionUpdate::PlanRemoved(removed) => {
+                InboundSessionUpdate::PlanRemoved(removed)
             }
             acp_v2::SessionUpdate::SessionInfoUpdate(update) => {
                 InboundSessionUpdate::SessionInfo(update)
@@ -245,6 +281,7 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
             acp_v2::SessionUpdate::CompactionSummaryChunk(chunk) => {
                 InboundSessionUpdate::CompactionSummary(chunk)
             }
+            acp_v2::SessionUpdate::SubagentUpdate(update) => InboundSessionUpdate::Subagent(update),
             update => {
                 notification.update = update;
                 return Err(notification);
@@ -271,11 +308,18 @@ impl InboundSessionNotification {
         );
         // Delivery metadata must not patch retained payload fields.
         match update {
+            InboundSessionUpdate::ReplayComplete => Ok(()),
             InboundSessionUpdate::UserMessage(message) => thread.upsert_user_message(message, cx),
             InboundSessionUpdate::AgentMessage(message) => {
                 thread.upsert_assistant_message(message, cx)
             }
             InboundSessionUpdate::AgentThought(thought) => thread.upsert_thought(thought, cx),
+            InboundSessionUpdate::SessionMessage(message) => {
+                thread.upsert_session_message(message, cx)
+            }
+            InboundSessionUpdate::SessionMessageChunk(chunk) => {
+                thread.append_session_message_chunk(chunk, cx)
+            }
             InboundSessionUpdate::UserMessageChunk(chunk) => {
                 thread.append_message_chunk(MessageKind::User, chunk, cx)
             }
@@ -293,6 +337,14 @@ impl InboundSessionNotification {
             }
             InboundSessionUpdate::PlanItems { plan, update_meta } => {
                 thread.upsert_plan_items(plan, update_meta, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::PlanMarkdown { plan, update_meta } => {
+                thread.upsert_plan_markdown(plan, update_meta, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::PlanRemoved(removed) => {
+                thread.remove_plan(removed.plan_id, cx);
                 Ok(())
             }
             InboundSessionUpdate::Terminal(update) => DecodedTerminalNotification {
@@ -331,6 +383,9 @@ impl InboundSessionNotification {
             InboundSessionUpdate::CompactionSummary(chunk) => {
                 thread.append_context_compaction_summary(chunk, cx);
                 Ok(())
+            }
+            InboundSessionUpdate::Subagent(_) => {
+                anyhow::bail!("Subagent updates must be applied by the ACP connection")
             }
         }
     }

@@ -6,7 +6,7 @@ use super::tool_permissions::resolve_creatable_global_skill_path;
 use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::Result;
 use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
@@ -248,13 +248,12 @@ impl EditSessionContext {
                 new_text,
                 ..
             } => {
-                event_stream.update_diff(cx.new(|cx| {
+                event_stream.update_diff(cx.new(|_| {
                     Diff::finalized(
                         input_path.to_string_lossy().into_owned(),
                         Some(old_text.to_string()),
                         new_text,
                         self.language_registry.clone(),
-                        cx,
                     )
                 }));
                 Ok(())
@@ -528,8 +527,11 @@ impl EditPipeline {
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                 let line = snapshot.offset_to_point(range.start).row;
+                // ACP numbers lines from 1.
                 event_stream.update_fields(|update| {
-                    update.locations(vec![acp::ToolCallLocation::new(abs_path).line(Some(line))])
+                    update.locations(vec![
+                        acp::ToolCallLocation::new(abs_path).line(Some(line + 1)),
+                    ])
                 });
 
                 let buffer_indent = snapshot.line_indent_for_row(line);

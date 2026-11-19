@@ -2,9 +2,9 @@ use std::process::ExitStatus;
 
 use anyhow::Result;
 use collections::HashSet;
-use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, TaskExt, WeakEntity};
+use gpui::{App, AppContext, AsyncWindowContext, Context, Entity, Task, TaskExt, WeakEntity};
 use language::Buffer;
-use project::{TaskSourceKind, WorktreeId};
+use project::{TaskSourceKind, WorktreeId, trusted_worktrees::TrustedWorktrees};
 use remote::ConnectionState;
 use task::{
     DebugScenario, ResolvedTask, SaveStrategy, SharedTaskContext, SpawnInTerminal, TaskContext,
@@ -26,6 +26,21 @@ pub enum ScheduledTaskResult {
 type TaskCompletionHandler = Box<dyn FnOnce(ScheduledTaskResult, &mut AsyncWindowContext)>;
 
 impl Workspace {
+    pub fn can_schedule_tasks(&self, cx: &App) -> bool {
+        match self.project.read(cx).remote_connection_state(cx) {
+            None | Some(ConnectionState::Connected) => true,
+            Some(
+                ConnectionState::Connecting
+                | ConnectionState::Disconnected
+                | ConnectionState::HeartbeatMissed
+                | ConnectionState::Reconnecting,
+            ) => {
+                log::warn!("Cannot schedule tasks when disconnected from a remote host");
+                false
+            }
+        }
+    }
+
     pub fn schedule_task(
         self: &mut Workspace,
         task_source_kind: TaskSourceKind,
@@ -35,17 +50,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match self.project.read(cx).remote_connection_state(cx) {
-            None | Some(ConnectionState::Connected) => {}
-            Some(
-                ConnectionState::Connecting
-                | ConnectionState::Disconnected
-                | ConnectionState::HeartbeatMissed
-                | ConnectionState::Reconnecting,
-            ) => {
-                log::warn!("Cannot schedule tasks when disconnected from a remote host");
-                return;
-            }
+        if !self.can_schedule_tasks(cx) {
+            return;
         }
 
         if let Some(spawn_in_terminal) =
@@ -235,6 +241,16 @@ impl Workspace {
     pub fn run_create_worktree_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let project = self.project().clone();
         let hooks = HashSet::from_iter([TaskHook::CreateWorktree]);
+        let worktree_store = project.read(cx).worktree_store();
+        let mut worktrees: Vec<_> = project.read(cx).worktrees(cx).collect();
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            worktrees.retain(|worktree| {
+                let worktree_id = worktree.read(cx).id();
+                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust(&worktree_store, worktree_id, cx)
+                })
+            });
+        }
 
         let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<TaskTemplate>)> = {
             let project = project.read(cx);
@@ -246,7 +262,7 @@ impl Workspace {
             let git_store = project.git_store().read(cx);
 
             let mut worktree_tasks = Vec::new();
-            for worktree in project.worktrees(cx) {
+            for worktree in worktrees {
                 let worktree = worktree.read(cx);
                 let worktree_id = worktree.id();
                 let worktree_abs_path = worktree.abs_path();

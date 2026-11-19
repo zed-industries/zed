@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{v1::schema as acp_v1, v2::schema as acp_v2};
 use anyhow::{Result, bail};
 
 pub fn from_v1(
@@ -59,6 +59,9 @@ fn option_from_v1(option: acp_v1::SessionConfigOption) -> Result<acp_v2::Session
                 }
                 acp_v1::SessionConfigOptionCategory::ModelConfig => {
                     acp_v2::SessionConfigOptionCategory::ModelConfig
+                }
+                acp_v1::SessionConfigOptionCategory::Speed => {
+                    acp_v2::SessionConfigOptionCategory::Speed
                 }
                 acp_v1::SessionConfigOptionCategory::ThoughtLevel => {
                     acp_v2::SessionConfigOptionCategory::ThoughtLevel
@@ -173,6 +176,31 @@ mod tests {
                 }
             ])
         );
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_categories_convert_to_v2() -> Result<()> {
+        for category in [
+            "mode",
+            "model",
+            "model_config",
+            "speed",
+            "thought_level",
+            "_custom",
+        ] {
+            let option: acp_v1::SessionConfigOption = serde_json::from_value(json!({
+                "id": "option", "name": "Option", "category": category,
+                "type": "boolean", "currentValue": true
+            }))?;
+            assert_eq!(
+                serde_json::to_value(from_v1(vec![option])?)?,
+                json!([{
+                    "configId": "option", "name": "Option", "category": category,
+                    "type": "boolean", "currentValue": true
+                }])
+            );
+        }
         Ok(())
     }
 

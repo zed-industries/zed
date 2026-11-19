@@ -387,12 +387,14 @@ impl RemoteBufferStore {
 }
 
 impl LocalBufferStore {
+    /// `old_file` is given when saving the buffer to a new path, holding the file the buffer had
+    /// before, if any.
     fn save_local_buffer(
         &self,
         buffer_handle: Entity<Buffer>,
         worktree: Entity<Worktree>,
         path: Arc<RelPath>,
-        mut has_changed_file: bool,
+        old_file: Option<Option<Arc<dyn language::File>>>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
@@ -404,12 +406,10 @@ impl LocalBufferStore {
         let version = buffer.version();
         let buffer_id = buffer.remote_id();
         let file = buffer.file().cloned();
-        if file
-            .as_ref()
-            .is_some_and(|file| file.disk_state() == DiskState::New)
-        {
-            has_changed_file = true;
-        }
+        let has_changed_file = old_file.is_some()
+            || file
+                .as_ref()
+                .is_some_and(|file| file.disk_state() == DiskState::New);
 
         let save = worktree.update(cx, |worktree, cx| {
             worktree.write_file(path, text, line_ending, encoding, has_bom, cx)
@@ -439,10 +439,17 @@ impl LocalBufferStore {
                         .log_err();
                 }
             })?;
+            if has_changed_file {
+                buffer_handle.update(cx, |buffer, cx| buffer.file_updated(new_file, cx));
+            }
+            // Report the new path before the save, so that observers like language servers know
+            // the document by its new path when they learn about the save.
+            if let Some(old_file) = old_file {
+                this.update(cx, |this, cx| {
+                    this.did_change_buffer_file_path(buffer_handle.clone(), old_file, cx)
+                })?;
+            }
             buffer_handle.update(cx, |buffer, cx| {
-                if has_changed_file {
-                    buffer.file_updated(new_file, cx);
-                }
                 buffer.did_save(version.clone(), mtime, cx);
             });
             Ok(())
@@ -660,7 +667,7 @@ impl LocalBufferStore {
             return Task::ready(Err(anyhow!("buffer doesn't have a file")));
         };
         let worktree = file.worktree.clone();
-        self.save_local_buffer(buffer, worktree, file.path.clone(), false, cx)
+        self.save_local_buffer(buffer, worktree, file.path.clone(), None, cx)
     }
 
     fn save_buffer_as(
@@ -676,7 +683,8 @@ impl LocalBufferStore {
         else {
             return Task::ready(Err(anyhow!("no such worktree")));
         };
-        self.save_local_buffer(buffer, worktree, path.path, true, cx)
+        let old_file = buffer.read(cx).file().cloned();
+        self.save_local_buffer(buffer, worktree, path.path, Some(old_file), cx)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -994,26 +1002,34 @@ impl BufferStore {
         path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let old_file = buffer.read(cx).file().cloned();
-        let task = match &self.state {
-            BufferStoreState::Local(this) => this.save_buffer_as(buffer.clone(), path, cx),
+        match &self.state {
+            BufferStoreState::Local(this) => this.save_buffer_as(buffer, path, cx),
             BufferStoreState::Remote(this) => {
-                this.save_remote_buffer(buffer.clone(), Some(path.to_proto()), cx)
-            }
-        };
-        cx.spawn(async move |this, cx| {
-            task.await?;
-            this.update(cx, |this, cx| {
-                old_file.clone().and_then(|file| {
-                    this.path_to_buffer_id.remove(&ProjectPath {
-                        worktree_id: file.worktree_id(cx),
-                        path: file.path().clone(),
+                let old_file = buffer.read(cx).file().cloned();
+                let task = this.save_remote_buffer(buffer.clone(), Some(path.to_proto()), cx);
+                cx.spawn(async move |this, cx| {
+                    task.await?;
+                    this.update(cx, |this, cx| {
+                        this.did_change_buffer_file_path(buffer, old_file, cx)
                     })
-                });
+                })
+            }
+        }
+    }
 
-                cx.emit(BufferStoreEvent::BufferChangedFilePath { buffer, old_file });
-            })
-        })
+    fn did_change_buffer_file_path(
+        &mut self,
+        buffer: Entity<Buffer>,
+        old_file: Option<Arc<dyn language::File>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(file) = &old_file {
+            self.path_to_buffer_id.remove(&ProjectPath {
+                worktree_id: file.worktree_id(cx),
+                path: file.path().clone(),
+            });
+        }
+        cx.emit(BufferStoreEvent::BufferChangedFilePath { buffer, old_file });
     }
 
     fn add_buffer(&mut self, buffer_entity: Entity<Buffer>, cx: &mut Context<Self>) -> Result<()> {

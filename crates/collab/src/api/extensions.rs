@@ -3,13 +3,13 @@ use crate::{AppState, Error, Result, db::NewExtensionVersion};
 use anyhow::Context as _;
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
-    Extension, Json, Router,
+    Extension, Router,
     extract::{Path, Query},
     http::StatusCode,
     response::Redirect,
     routing::get,
 };
-use cloud_api_types::{ExtensionApiManifest, GetExtensionsResponse};
+use cloud_api_types::ExtensionApiManifest;
 use collections::HashMap;
 use semver::Version as SemanticVersion;
 use serde::Deserialize;
@@ -19,8 +19,6 @@ use util::{ResultExt, maybe};
 
 pub fn router() -> Router {
     Router::new()
-        .route("/extensions/updates", get(get_extension_updates))
-        .route("/extensions/:extension_id", get(get_extension_versions))
         .route(
             "/extensions/:extension_id/download",
             get(download_latest_extension),
@@ -29,50 +27,6 @@ pub fn router() -> Router {
             "/extensions/:extension_id/:version/download",
             get(download_extension),
         )
-}
-
-#[derive(Debug, Deserialize)]
-struct GetExtensionUpdatesParams {
-    ids: String,
-    min_schema_version: i32,
-    max_schema_version: i32,
-    min_wasm_api_version: semver::Version,
-    max_wasm_api_version: semver::Version,
-}
-
-async fn get_extension_updates(
-    Extension(app): Extension<Arc<AppState>>,
-    Query(params): Query<GetExtensionUpdatesParams>,
-) -> Result<Json<GetExtensionsResponse>> {
-    let constraints = ExtensionVersionConstraints {
-        schema_versions: params.min_schema_version..=params.max_schema_version,
-        wasm_api_versions: params.min_wasm_api_version..=params.max_wasm_api_version,
-    };
-
-    let extension_ids = params.ids.split(',').map(|s| s.trim()).collect::<Vec<_>>();
-
-    let extensions = app
-        .db
-        .get_extensions_by_ids(&extension_ids, Some(&constraints))
-        .await?;
-
-    Ok(Json(GetExtensionsResponse { data: extensions }))
-}
-
-#[derive(Debug, Deserialize)]
-struct GetExtensionVersionsParams {
-    extension_id: String,
-}
-
-async fn get_extension_versions(
-    Extension(app): Extension<Arc<AppState>>,
-    Path(params): Path<GetExtensionVersionsParams>,
-) -> Result<Json<GetExtensionsResponse>> {
-    let extension_versions = app.db.get_extension_versions(&params.extension_id).await?;
-
-    Ok(Json(GetExtensionsResponse {
-        data: extension_versions,
-    }))
 }
 
 #[derive(Debug, Deserialize)]

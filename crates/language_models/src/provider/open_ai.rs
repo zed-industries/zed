@@ -11,7 +11,8 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoiceSupport, ModelRateLimiters, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    ProviderSettingsView, RateLimiter, env_var, stream_in_background, unavailable_error,
+    PromptCompactionStrategy, ProviderSettingsView, RateLimiter, env_var, stream_in_background,
+    unavailable_error,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -164,8 +165,16 @@ impl OpenAiLanguageModelProvider {
         request_limiter: &RateLimiter,
         request: open_ai::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<ResponseStreamEvent, LanguageModelCompletionError>,
+            >,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
         let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
@@ -201,8 +210,15 @@ impl OpenAiLanguageModelProvider {
         request_limiter: &RateLimiter,
         request: ResponseRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<ResponsesStreamEvent, open_ai::RequestError>,
+            >,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
         let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
@@ -682,6 +698,7 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
         | Model::SixSol
         | Model::SixLuna
         | Model::SixPointOneSol
+        | Model::SixPointOneTerra
         | Model::O3 => true,
         Model::Four => false,
         Model::Custom {
@@ -692,9 +709,11 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
         supports_tools: true,
         supports_images,
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
         supports_streaming_tools: true,
         supports_thinking: supports_selectable_thinking_effort(model),
         supports_fast_mode: model.supports_priority(),
+        supports_ultrafast_mode: false,
         supports_server_side_compaction: model.supports_compaction(),
         supports_explicit_compaction: model.supports_compaction(),
         supported_effort_levels: supported_thinking_effort_levels(model).into(),

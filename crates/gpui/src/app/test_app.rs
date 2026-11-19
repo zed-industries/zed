@@ -382,7 +382,8 @@ impl<V: 'static + Render> TestAppWindow<V> {
 
     /// Simulate a keystroke.
     pub fn simulate_keystroke(&mut self, keystroke: &str) {
-        let keystroke = Keystroke::parse(keystroke).unwrap();
+        let os = self.app.borrow().platform_info().os;
+        let keystroke = Keystroke::parse_with_os(keystroke, os).unwrap();
         {
             let mut app = self.app.borrow_mut();
             let any_handle: AnyWindowHandle = self.handle.into();

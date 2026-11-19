@@ -116,8 +116,8 @@ impl NeovimConnection {
 
     // Sends a keystroke to the neovim process.
     #[cfg(feature = "neovim")]
-    pub async fn send_keystroke(&mut self, keystroke_text: &str) {
-        let mut keystroke = Keystroke::parse(keystroke_text).unwrap();
+    pub async fn send_keystroke(&mut self, keystroke_text: &str, os: gpui::OperatingSystem) {
+        let mut keystroke = Keystroke::parse_with_os(keystroke_text, os).unwrap();
 
         if keystroke.key == "<" {
             keystroke.key = "lt".to_string()
@@ -154,7 +154,7 @@ impl NeovimConnection {
     }
 
     #[cfg(not(feature = "neovim"))]
-    pub async fn send_keystroke(&mut self, keystroke_text: &str) {
+    pub async fn send_keystroke(&mut self, keystroke_text: &str, _os: gpui::OperatingSystem) {
         if matches!(self.data.front(), Some(NeovimData::Get { .. })) {
             self.data.pop_front();
         }
