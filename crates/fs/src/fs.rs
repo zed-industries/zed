@@ -137,7 +137,11 @@ pub trait Fs: Send + Sync {
     /// exist, and waits for conflicting locks to be released first.
     ///
     /// The lock is honored by every process that locks the same file, and is released
-    /// when the returned [`FileLock`] is dropped or this process exits.
+    /// when the returned [`FileLock`] is dropped or this process exits. Dropping the
+    /// returned future stops waiting for the lock.
+    ///
+    /// The lock is on the file that is at `path` when this is called, even if that file
+    /// is removed or replaced while waiting.
     async fn lock_file(&self, path: &Path, kind: FileLockKind) -> Result<FileLock>;
 
     /// Like [`Fs::lock_file`], but returns `None` instead of waiting when a conflicting
@@ -603,6 +607,9 @@ impl FileHandle for std::fs::File {
 
 pub struct RealWatcher {}
 
+const FILE_LOCK_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(5);
+const FILE_LOCK_MAX_RETRY_DELAY: Duration = Duration::from_millis(250);
+
 impl RealFs {
     pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
@@ -622,6 +629,48 @@ impl RealFs {
             trash: Arc::new(Mutex::new(SlotMap::with_key())),
             is_case_sensitive: Default::default(),
         })
+    }
+
+    async fn open_lock_file(&self, path: &Path) -> Result<Arc<std::fs::File>> {
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move {
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(&path)
+                    .with_context(|| format!("opening {path:?}"))?;
+                Ok(Arc::new(file))
+            })
+            .await
+    }
+
+    /// Returns whether the lock was taken.
+    async fn try_lock_open_file(
+        &self,
+        file: &Arc<std::fs::File>,
+        path: &Path,
+        kind: FileLockKind,
+    ) -> Result<bool> {
+        let file = file.clone();
+        let result = self
+            .executor
+            .spawn(async move {
+                match kind {
+                    FileLockKind::Shared => file.try_lock_shared(),
+                    FileLockKind::Exclusive => file.try_lock(),
+                }
+            })
+            .await;
+        match result {
+            Ok(()) => Ok(true),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(false),
+            Err(std::fs::TryLockError::Error(error)) => {
+                Err(error).with_context(|| format!("locking {path:?}"))
+            }
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -968,38 +1017,24 @@ impl Fs for RealFs {
     }
 
     async fn lock_file(&self, path: &Path, kind: FileLockKind) -> Result<FileLock> {
-        let path = path.to_owned();
-        // Another process can hold a conflicting lock for a long time, so the wait
-        // must not occupy one of the executor's threads.
-        smol::unblock(move || {
-            let file = open_lock_file(&path)?;
-            match kind {
-                FileLockKind::Shared => file.lock_shared(),
-                FileLockKind::Exclusive => file.lock(),
+        let file = self.open_lock_file(path).await?;
+        // Waiting for the lock inside the operating system would occupy a thread until
+        // the lock is granted, even after the caller stopped waiting. Enough of those
+        // waits would leave no thread for the file operations of the lock's holder.
+        let mut retry_delay = FILE_LOCK_INITIAL_RETRY_DELAY;
+        loop {
+            if self.try_lock_open_file(&file, path, kind).await? {
+                return Ok(FileLock::new(file));
             }
-            .with_context(|| format!("locking {path:?}"))?;
-            Ok(FileLock::new(file))
-        })
-        .await
+            self.executor.timer(retry_delay).await;
+            retry_delay = (retry_delay * 2).min(FILE_LOCK_MAX_RETRY_DELAY);
+        }
     }
 
     async fn try_lock_file(&self, path: &Path, kind: FileLockKind) -> Result<Option<FileLock>> {
-        let path = path.to_owned();
-        smol::unblock(move || {
-            let file = open_lock_file(&path)?;
-            let result = match kind {
-                FileLockKind::Shared => file.try_lock_shared(),
-                FileLockKind::Exclusive => file.try_lock(),
-            };
-            match result {
-                Ok(()) => Ok(Some(FileLock::new(file))),
-                Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-                Err(std::fs::TryLockError::Error(error)) => {
-                    Err(error).with_context(|| format!("locking {path:?}"))
-                }
-            }
-        })
-        .await
+        let file = self.open_lock_file(path).await?;
+        let locked = self.try_lock_open_file(&file, path, kind).await?;
+        Ok(locked.then(|| FileLock::new(file)))
     }
 
     async fn trash(&self, path: &Path, _options: RemoveOptions) -> Result<TrashId> {
@@ -1822,48 +1857,60 @@ impl FakeFsState {
         callback(new_entry)
     }
 
-    /// Returns the inode of the locked file, or `None` if a conflicting lock is held.
-    fn try_lock_file(&mut self, path: &Path, kind: FileLockKind) -> Result<Option<u64>> {
-        let inode = match self.try_entry(path, true) {
-            Some((FakeFsEntry::File { inode, .. }, _)) => *inode,
-            Some(_) => anyhow::bail!("cannot lock {path:?}: not a file"),
-            None => {
-                let inode = self.get_and_increment_inode();
-                let mtime = self.get_and_increment_mtime();
-                self.write_path(path, |entry| match entry {
-                    btree_map::Entry::Vacant(entry) => {
-                        entry.insert(FakeFsEntry::File {
-                            inode,
-                            mtime,
-                            len: 0,
-                            content: Vec::new(),
-                            git_dir_path: None,
-                        });
-                        Ok(())
-                    }
-                    // A symlink whose target doesn't exist.
-                    btree_map::Entry::Occupied(_) => {
-                        anyhow::bail!("cannot lock {path:?}: not a file")
-                    }
-                })?;
-                self.emit_event([(path, Some(PathEventKind::Created))]);
-                inode
-            }
-        };
+    /// Returns the inode of the file that locking `path` locks, creating it if needed.
+    fn lock_file_inode(&mut self, path: &Path) -> Result<u64> {
+        if let Some((entry, _)) = self.try_entry(path, true) {
+            return match entry {
+                FakeFsEntry::File { inode, .. } => Ok(*inode),
+                _ => anyhow::bail!("cannot lock {path:?}: not a file"),
+            };
+        }
 
+        // Like opening one, locking a symlink whose target doesn't exist creates the target.
+        let mut file_path = normalize_path(path);
+        while let Some((FakeFsEntry::Symlink { target }, symlink_path)) =
+            self.try_entry(&file_path, false)
+        {
+            file_path = match symlink_path.parent() {
+                Some(parent) => parent.join(target),
+                None => target.clone(),
+            };
+        }
+
+        let inode = self.get_and_increment_inode();
+        let mtime = self.get_and_increment_mtime();
+        self.write_path(&file_path, |entry| match entry {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(FakeFsEntry::File {
+                    inode,
+                    mtime,
+                    len: 0,
+                    content: Vec::new(),
+                    git_dir_path: None,
+                });
+                Ok(())
+            }
+            btree_map::Entry::Occupied(_) => anyhow::bail!("cannot lock {path:?}: not a file"),
+        })?;
+        self.emit_event([(file_path, Some(PathEventKind::Created))]);
+        Ok(inode)
+    }
+
+    /// Returns whether the lock was taken.
+    fn try_lock_inode(&mut self, inode: u64, kind: FileLockKind) -> bool {
         let holders = self.file_locks.entry(inode).or_default();
         let conflicts = match kind {
             FileLockKind::Shared => holders.exclusive,
             FileLockKind::Exclusive => holders.exclusive || holders.shared > 0,
         };
         if conflicts {
-            return Ok(None);
+            return false;
         }
         match kind {
             FileLockKind::Shared => holders.shared += 1,
             FileLockKind::Exclusive => holders.exclusive = true,
         }
-        Ok(Some(inode))
+        true
     }
 
     fn release_file_lock(&mut self, inode: u64, kind: FileLockKind) {
@@ -3452,10 +3499,11 @@ impl Fs for FakeFs {
 
     async fn lock_file(&self, path: &Path, kind: FileLockKind) -> Result<FileLock> {
         self.simulate_random_delay().await;
+        let inode = self.state.lock().lock_file_inode(path)?;
         loop {
             let released = {
                 let mut state = self.state.lock();
-                if let Some(inode) = state.try_lock_file(path, kind)? {
+                if state.try_lock_inode(inode, kind) {
                     return Ok(self.held_file_lock(inode, kind));
                 }
                 let (released_sender, released_receiver) = futures::channel::oneshot::channel();
@@ -3469,8 +3517,12 @@ impl Fs for FakeFs {
 
     async fn try_lock_file(&self, path: &Path, kind: FileLockKind) -> Result<Option<FileLock>> {
         self.simulate_random_delay().await;
-        let inode = self.state.lock().try_lock_file(path, kind)?;
-        Ok(inode.map(|inode| self.held_file_lock(inode, kind)))
+        let (inode, locked) = {
+            let mut state = self.state.lock();
+            let inode = state.lock_file_inode(path)?;
+            (inode, state.try_lock_inode(inode, kind))
+        };
+        Ok(locked.then(|| self.held_file_lock(inode, kind)))
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>> {
@@ -3866,16 +3918,6 @@ fn read_recursive<'a>(
         Ok(())
     }
     .boxed()
-}
-
-fn open_lock_file(path: &Path) -> Result<std::fs::File> {
-    std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .with_context(|| format!("opening {path:?}"))
 }
 
 // todo(windows)
