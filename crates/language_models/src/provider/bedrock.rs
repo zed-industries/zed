@@ -1566,6 +1566,16 @@ fn is_openai_model(model: &ConverseModel) -> bool {
     model.base_model_id.starts_with("openai.")
 }
 
+fn reasoning_source(model: &ConverseModel) -> String {
+    if model.foundation_model_known {
+        return model.base_model_id.clone();
+    }
+    // Deliberately drop opaque history if discovery later identifies the foundation:
+    // a missed replay is preferable to sending a signed block to the wrong model.
+    use sha2::{Digest as _, Sha256};
+    format!("sha256:{:x}", Sha256::digest(model.request_id.as_bytes()))
+}
+
 fn supports_forced_tool_use(model: &ConverseModel) -> bool {
     anthropic_model_id(model).is_none_or(anthropic::supports_forced_tool_use)
 }
@@ -2527,7 +2537,7 @@ impl BedrockLanguageModelProvider {
         &self,
         config: &MantleModel,
         request_limiter: &RateLimiter,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
     {
@@ -2543,6 +2553,7 @@ impl BedrockLanguageModelProvider {
             .boxed();
         }
 
+        request.retain_reasoning_for_provider(None);
         let model_id = config.request_id().to_string();
         let max_output_tokens = Some(config.max_output_tokens());
 
@@ -2720,13 +2731,13 @@ pub fn into_bedrock(
             continue;
         }
 
-        let reasoning_source = message
+        let stored_source = message
             .reasoning_details
             .as_ref()
             .and_then(|details| details.get("bedrock_model"))
             .and_then(Value::as_str);
-        let replay_reasoning = match reasoning_source {
-            Some(source) => model.base_model_id == source,
+        let replay_reasoning = match stored_source {
+            Some(source) => reasoning_source(model) == source,
             None => {
                 !is_openai_model
                     && !anthropic_model_id(model)
@@ -3129,7 +3140,7 @@ pub fn map_to_language_model_completion_events(
         events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, anyhow::Error>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
         redacted_thinking_by_index: HashMap<i32, Vec<u8>>,
-        reasoning_model: String,
+        reasoning_model: Option<String>,
         emitted_tool_use: bool,
     }
 
@@ -3142,7 +3153,7 @@ pub fn map_to_language_model_completion_events(
         events,
         tool_uses_by_index: HashMap::default(),
         redacted_thinking_by_index: HashMap::default(),
-        reasoning_model: model.base_model_id,
+        reasoning_model: Some(reasoning_source(&model)),
         emitted_tool_use: false,
     };
 
@@ -3223,11 +3234,6 @@ pub fn map_to_language_model_completion_events(
                             }
                             None
                         }
-                        ConverseStreamOutput::MessageStart(_) => {
-                            Some(Ok(LanguageModelCompletionEvent::ReasoningDetails(
-                                serde_json::json!({ "bedrock_model": state.reasoning_model }),
-                            )))
-                        }
                         ConverseStreamOutput::ContentBlockStop(cb_stop) => state
                             .redacted_thinking_by_index
                             .remove(&cb_stop.content_block_index)
@@ -3298,17 +3304,29 @@ pub fn map_to_language_model_completion_events(
                         _ => None,
                     };
 
-                    Some((result, state))
+                    let source = match &result {
+                        Some(Ok(
+                            LanguageModelCompletionEvent::Thinking { signature: Some(_), .. }
+                            | LanguageModelCompletionEvent::RedactedThinking { .. },
+                        )) => state.reasoning_model.take(),
+                        _ => None,
+                    };
+                    let details = source.map(|source| {
+                        Ok(LanguageModelCompletionEvent::ReasoningDetails(
+                            serde_json::json!({"bedrock_model": source, "zed_reasoning_provider": PROVIDER_ID}),
+                        ))
+                    });
+                    Some(([details, result], state))
                 }
                 Err(err) => Some((
-                    Some(Err(LanguageModelCompletionError::Other(anyhow!(err)))),
+                    [None, Some(Err(LanguageModelCompletionError::Other(err)))],
                     state,
                 )),
             },
             None => None,
         }
     })
-    .filter_map(|result| async move { result })
+    .flat_map(|events| futures::stream::iter(events.into_iter().flatten()))
 }
 
 struct ConfigurationView {
@@ -4356,6 +4374,108 @@ mod tests {
     }
 
     #[test]
+    fn text_only_bedrock_turn_has_no_reasoning_metadata_on_provider_switch() -> Result<()> {
+        use bedrock::bedrock_client::types::{ContentBlockDeltaEvent, MessageStartEvent};
+        let model = converse_model_from_settings(
+            &settings_entry("private/chat", None),
+            None,
+            &CapabilityCatalog::default(),
+        );
+        let events = [
+            Ok(ConverseStreamOutput::MessageStart(
+                MessageStartEvent::builder()
+                    .role(bedrock::BedrockRole::Assistant)
+                    .build()?,
+            )),
+            Ok(ConverseStreamOutput::ContentBlockDelta(
+                ContentBlockDeltaEvent::builder()
+                    .content_block_index(0)
+                    .delta(ContentBlockDelta::Text("answer".into()))
+                    .build()?,
+            )),
+        ];
+        let mut message = LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: Vec::new(),
+            cache: false,
+            reasoning_details: None,
+        };
+        for event in futures::executor::block_on(
+            map_to_language_model_completion_events(Box::pin(futures::stream::iter(events)), model)
+                .collect::<Vec<_>>(),
+        ) {
+            match event? {
+                LanguageModelCompletionEvent::Text(text) => {
+                    message.content.push(MessageContent::Text(text))
+                }
+                LanguageModelCompletionEvent::ReasoningDetails(details) => {
+                    message.reasoning_details = Some(Arc::new(details))
+                }
+                other => anyhow::bail!("unexpected event: {other:?}"),
+            }
+        }
+        let stored = serde_json::to_string(&message)?;
+        assert!(!stored.contains("bedrock_model"));
+        let request = crate::provider::open_router::into_open_router(
+            LanguageModelRequest {
+                messages: vec![serde_json::from_str(&stored)?],
+                ..Default::default()
+            },
+            &open_router::Model {
+                name: "vendor/chat".into(),
+                ..Default::default()
+            },
+            None,
+        )?;
+        let wire = serde_json::to_value(request)?;
+        assert_eq!(wire["messages"][0]["content"], "answer");
+        assert!(wire["messages"][0].get("reasoning_details").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_routes_do_not_share_opaque_history_or_disclose_their_names() -> Result<()> {
+        let unknown = |id| {
+            converse_model_from_settings(
+                &settings_entry(id, None),
+                None,
+                &CapabilityCatalog::default(),
+            )
+        };
+        let first = unknown("team-a/chat");
+        let source = reasoning_source(&first);
+        assert!(!source.contains("team-a") && !source.contains("chat"));
+        let listed = converse_model("vendor.chat", None);
+        for (model, replay) in [
+            (first, true),
+            (unknown("team-b/chat"), false),
+            (listed, false),
+        ] {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::Assistant,
+                        content: vec![
+                            MessageContent::RedactedThinking("AP8=".into()),
+                            MessageContent::Text("answer".into()),
+                        ],
+                        cache: false,
+                        reasoning_details: Some(Arc::new(
+                            serde_json::json!({"bedrock_model": source}),
+                        )),
+                    }],
+                    ..Default::default()
+                },
+                &model,
+                None,
+                None,
+            )?;
+            assert_eq!(request.messages[0].content().iter().any(|content| matches!(content, BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::RedactedContent(bytes)) if bytes.as_ref() == [0, 255])), replay);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn openai_wire_conventions_and_reasoning_replay_survive_catalog_drift() -> Result<()> {
         use bedrock::bedrock_client::types::{
             ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStartEvent, MessageStopEvent,
@@ -4427,7 +4547,34 @@ mod tests {
                 _ => None,
             })
             .context("opaque reasoning")?;
-        let mut contents = Vec::new();
+        let mut switched = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::RedactedThinking(data.clone()),
+                    MessageContent::Text("answer".into()),
+                ],
+                reasoning_details: Some(details.clone()),
+                cache: false,
+            }],
+            ..Default::default()
+        };
+        switched.retain_reasoning_for_provider(Some(&LanguageModelProviderId::new("openrouter")));
+        assert_eq!(
+            switched.messages[0].content,
+            [MessageContent::Text("answer".into())]
+        );
+        let wire = crate::provider::open_router::into_open_router(
+            switched,
+            &open_router::Model {
+                name: "vendor/chat".into(),
+                ..Default::default()
+            },
+            None,
+        )?;
+        let wire = serde_json::to_value(wire)?;
+        assert!(wire["messages"][0].get("reasoning_details").is_none());
+        assert_eq!(wire["messages"][0]["content"], "answer");
         for model in [&with_effort, &without_effort] {
             let request = into_bedrock(
                 LanguageModelRequest {
@@ -4446,9 +4593,10 @@ mod tests {
                 None,
                 None,
             )?;
-            contents.push(request.messages);
+            assert!(
+                matches!(request.messages.first().and_then(|message| message.content().first()), Some(BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::RedactedContent(bytes))) if bytes.as_ref() == [0, 255])
+            );
         }
-        assert_eq!(contents.first(), contents.last());
         for (base, thinking, image_is_inline) in [
             ("openai.chat", None, false),
             ("xai.chat", Some(reasoning()), true),
@@ -7008,12 +7156,15 @@ mod tests {
 
     #[test]
     fn test_always_on_adaptive_model_replays_only_its_own_reasoning() -> Result<()> {
-        use bedrock::bedrock_client::types::MessageStartEvent;
+        use bedrock::bedrock_client::types::ContentBlockDeltaEvent;
 
         let model = converse_model("anthropic.claude-example", Some(adaptive_thinking(true)));
-        let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::MessageStart(
-            MessageStartEvent::builder()
-                .role(bedrock::BedrockRole::Assistant)
+        let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::ContentBlockDelta(
+            ContentBlockDeltaEvent::builder()
+                .content_block_index(0)
+                .delta(ContentBlockDelta::ReasoningContent(
+                    ReasoningContentBlockDelta::Signature("signature".into()),
+                ))
                 .build()?,
         ))]);
         let events = futures::executor::block_on(

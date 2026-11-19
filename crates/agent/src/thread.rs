@@ -3050,16 +3050,15 @@ impl Thread {
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
             // If a refusal fallback is active, use that model instead.
-            let (model, provider, request) = this.update(cx, |this, cx| {
+            let (model, request) = this.update(cx, |this, cx| {
                 let model = refusal_fallback_model
                     .clone()
                     .or_else(|| this.model().cloned())
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
-                let provider = LanguageModelRegistry::read_global(cx).provider_for_model(&model);
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
                 this.current_request_token_usage = TokenUsage::default();
-                anyhow::Ok((model, provider, request))
+                anyhow::Ok((model, request))
             })??;
 
             telemetry::event!(
@@ -3076,10 +3075,7 @@ impl Thread {
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
 
-            let events = match provider {
-                Ok(provider) => provider.stream_completion(&model, request, cx).await,
-                Err(error) => Err(error),
-            };
+            let events = stream_thread_completion(&model, request, cx).await;
             let (mut events, mut error) = match events {
                 Ok(events) => (events.fuse(), None),
                 Err(err) => (stream::empty().boxed().fuse(), Some(err)),
@@ -3429,8 +3425,6 @@ impl Thread {
             acp_thread::ContextCompactionStatus::InProgress,
         );
         let result: Result<ControlFlow<()>> = async {
-            let provider =
-                cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&model))?;
             let stream = futures::select_biased! {
                 _ = cancellation_rx.changed().fuse() => {
                     if *cancellation_rx.borrow() {
@@ -3439,7 +3433,7 @@ impl Thread {
                     }
                     return Ok(ControlFlow::Continue(()));
                 }
-                result = provider.stream_completion(&model, request, cx).fuse() => result,
+                result = stream_thread_completion(&model, request, cx).fuse() => result,
             };
             let mut stream = stream?;
 
@@ -4171,11 +4165,7 @@ impl Thread {
         let task = cx
             .spawn(async move |this, cx| {
                 let mut summary = String::new();
-                let provider = cx
-                    .update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&model))
-                    .log_err()?;
-                let mut messages = provider
-                    .stream_completion(&model, request, cx)
+                let mut messages = stream_thread_completion(&model, request, cx)
                     .await
                     .log_err()?;
                 while let Some(event) = messages.next().await {
@@ -5341,15 +5331,24 @@ pub fn build_thread_title_request(
     request
 }
 
+async fn stream_thread_completion(
+    model: &LanguageModel,
+    mut request: LanguageModelRequest,
+    cx: &AsyncApp,
+) -> Result<language_model::LanguageModelCompletionStream, LanguageModelCompletionError> {
+    request.retain_reasoning_for_provider(Some(&model.provider_id));
+    let provider =
+        cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(model))?;
+    provider.stream_completion(model, request, cx).await
+}
+
 pub async fn stream_thread_title(
     model: LanguageModel,
     request: LanguageModelRequest,
     cx: &AsyncApp,
 ) -> Result<String> {
     let mut title = String::new();
-    let provider =
-        cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&model))?;
-    let mut events = provider.stream_completion(&model, request, cx).await?;
+    let mut events = stream_thread_completion(&model, request, cx).await?;
     while let Some(event) = events.next().await {
         let LanguageModelCompletionEvent::Text(text) = event? else {
             continue;
@@ -7297,6 +7296,44 @@ mod tests {
     use serde_json::json;
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
+
+    #[gpui::test]
+    async fn stored_bedrock_turns_keep_only_portable_content_on_provider_switch(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, events, provider) = setup_thread_for_test(cx).await;
+        let (_cancel, cancellation) = watch::channel(false);
+        for reasoning in [false, true] {
+            let stored = thread.update(cx, |thread, cx| -> Result<String> {
+                thread.pending_message = None;
+                if reasoning {
+                    thread.handle_completion_event(LanguageModelCompletionEvent::ReasoningDetails(json!({"bedrock_model":"vendor.chat", "zed_reasoning_provider":"amazon-bedrock"})), &events, cancellation.clone(), cx)?;
+                    thread.handle_completion_event(LanguageModelCompletionEvent::RedactedThinking {data: "AP8=".into()}, &events, cancellation.clone(), cx)?;
+                }
+                thread.handle_completion_event(LanguageModelCompletionEvent::Text("answer".into()), &events, cancellation.clone(), cx)?;
+                Ok(serde_json::to_string(thread.pending_message())?)
+            }).expect("store assistant turn");
+            assert_eq!(stored.contains("bedrock_model"), reasoning);
+            let turn: AgentMessage = serde_json::from_str(&stored).expect("restore assistant turn");
+            let model = provider.model("another-model");
+            drop(
+                stream_thread_completion(
+                    &model,
+                    LanguageModelRequest {
+                        messages: turn.to_request(),
+                        ..Default::default()
+                    },
+                    &cx.to_async(),
+                )
+                .await
+                .expect("dispatch restored turn"),
+            );
+            let requests = provider.pending_completions_for(&model);
+            let message = &requests.last().expect("received request").messages[0];
+            assert_eq!(message.content, [MessageContent::Text("answer".into())]);
+            assert!(message.reasoning_details.is_none());
+        }
+    }
 
     #[gpui::test]
     async fn test_tool_call_events_preserve_opaque_id_storage(cx: &mut TestAppContext) {

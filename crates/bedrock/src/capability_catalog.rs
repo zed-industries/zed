@@ -73,9 +73,14 @@ fn split_profile_id(profile_id: &str) -> Option<(&str, &str)> {
 
 /// The model or profile id in `request_id`, which can also be an ARN.
 fn profile_id(request_id: &str) -> &str {
-    request_id
-        .rsplit_once('/')
-        .map_or(request_id, |(_, profile_id)| profile_id)
+    if request_id.starts_with("arn:")
+        && let Some((resource, id)) = request_id.split_once('/')
+        && (resource.ends_with(":inference-profile") || resource.ends_with(":foundation-model"))
+    {
+        id
+    } else {
+        request_id
+    }
 }
 
 /// The id of the foundation model that `request_id` names, where
@@ -687,12 +692,13 @@ mod tests {
 
         assert_eq!(catalog.model_for_request_id("vendor.other-1.5"), None);
         assert_eq!(base_model_id("vendor.other-1.5"), "vendor.other-1.5");
-        assert_eq!(
-            base_model_id(
-                "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123"
-            ),
-            "abc123"
-        );
+        for unknown in [
+            "team-a/vendor.bare",
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/vendor.bare",
+        ] {
+            assert_eq!(base_model_id(unknown), unknown);
+            assert!(catalog.model_for_request_id(unknown).is_none());
+        }
         Ok(())
     }
 

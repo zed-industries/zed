@@ -501,6 +501,35 @@ pub struct LanguageModelRequest {
 }
 
 impl LanguageModelRequest {
+    /// Drop provider-owned reasoning before handing thread history to a different
+    /// provider. The model-specific replay check belongs to the owning adapter.
+    pub fn retain_reasoning_for_provider(&mut self, destination: Option<&LanguageModelProviderId>) {
+        for message in &mut self.messages {
+            let Some(details) = &message.reasoning_details else {
+                continue;
+            };
+            let owner = details
+                .get("zed_reasoning_provider")
+                .and_then(serde_json::Value::as_str)
+                // Threads saved before provider ownership was recorded.
+                .or_else(|| {
+                    details
+                        .get("bedrock_model")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|_| "amazon-bedrock")
+                });
+            if owner.is_some() && owner != destination.map(|id| id.0.as_ref()) {
+                message.reasoning_details = None;
+                message.content.retain(|content| {
+                    !matches!(
+                        content,
+                        MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_)
+                    )
+                });
+            }
+        }
+    }
+
     /// Combines the request's output limit with the model's output limit.
     pub fn effective_max_output_tokens(&self, model_maximum: Option<u64>) -> Option<u64> {
         match (self.max_output_tokens, model_maximum) {
