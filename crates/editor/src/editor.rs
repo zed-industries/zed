@@ -526,7 +526,7 @@ impl EditorMode {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SoftWrap {
     /// Prefer not to wrap at all.
     ///
@@ -1298,7 +1298,7 @@ pub struct NavigationOverlayLabel {
     pub scale_factor: f32,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
