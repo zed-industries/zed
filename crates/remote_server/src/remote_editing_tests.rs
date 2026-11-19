@@ -6083,7 +6083,8 @@ async fn test_remote_external_agent_server(
             })
         })
         .await
-        .unwrap();
+        .unwrap()
+        .command;
     assert_eq!(
         command,
         AgentServerCommand {
