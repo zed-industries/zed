@@ -85,6 +85,9 @@ pub enum SearchQuery {
     Regex {
         regex: Regex,
         replacement: Option<String>,
+        /// `replacement` with escape sequences resolved and capture references delimited, ready
+        /// for `Captures::expand`. Only set for queries that are not `escaped`.
+        replacement_template: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
@@ -262,6 +265,7 @@ impl SearchQuery {
         Ok(Self::Regex {
             regex,
             replacement: None,
+            replacement_template: None,
             whole_word,
             case_sensitive,
             include_ignored,
@@ -362,19 +366,22 @@ impl SearchQuery {
     }
 
     pub fn with_replacement(mut self, new_replacement: String) -> Self {
-        match self {
-            Self::Text {
-                ref mut replacement,
-                ..
-            }
-            | Self::Regex {
-                ref mut replacement,
+        match &mut self {
+            Self::Text { replacement, .. } => *replacement = Some(new_replacement),
+            Self::Regex {
+                regex,
+                replacement,
+                replacement_template,
+                escaped,
                 ..
             } => {
+                // Prepared here rather than in `replacement_for`, which runs for every hit.
+                *replacement_template =
+                    (!*escaped).then(|| prepare_replacement_template(regex, &new_replacement));
                 *replacement = Some(new_replacement);
-                self
             }
         }
+        self
     }
 
     pub fn to_proto(&self) -> proto::SearchQuery {
@@ -448,22 +455,10 @@ impl SearchQuery {
 
             SearchQuery::Regex {
                 regex,
-                replacement: Some(replacement),
+                replacement_template: Some(replacement),
                 escaped: false,
                 ..
             } => {
-                static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
-                let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(
-                    replacement,
-                    |c: &Captures<str>| match c.get(0).unwrap().as_str() {
-                        r"\\" => "\\",
-                        r"\n" => "\n",
-                        r"\t" => "\t",
-                        x => unreachable!("Unexpected escape sequence: {}", x),
-                    },
-                );
-                let replacement = delimit_capture_references(regex, &replacement);
                 let captures = regex
                     .captures_from_pos(line, hit.start)
                     .ok()
@@ -476,12 +471,13 @@ impl SearchQuery {
                     return Some(regex.replace(line.get(hit)?, replacement));
                 };
                 let mut replaced = String::new();
-                captures.expand(&replacement, &mut replaced);
+                captures.expand(replacement, &mut replaced);
                 Some(Cow::Owned(replaced))
             }
 
             SearchQuery::Regex {
-                replacement: None, ..
+                replacement_template: None,
+                ..
             } => None,
         }
     }
@@ -694,6 +690,23 @@ impl SearchQuery {
     }
 }
 
+/// Resolves the escape sequences supported in replacements and delimits capture references, so
+/// that `Captures::expand` can use the result for every hit as is.
+fn prepare_replacement_template(regex: &Regex, replacement: &str) -> String {
+    static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
+    let replacement =
+        TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(replacement, |c: &Captures<str>| {
+            match c.get(0).unwrap().as_str() {
+                r"\\" => "\\",
+                r"\n" => "\n",
+                r"\t" => "\t",
+                x => unreachable!("Unexpected escape sequence: {}", x),
+            }
+        });
+    delimit_capture_references(regex, &replacement).into_owned()
+}
+
 /// `fancy_regex` reads an unbraced capture reference up to the first character that is neither a
 /// Unicode alphanumeric nor `_`, so `$1ème` refers to a group named `1ème` and expands to nothing.
 /// Unless such a group exists, end the reference before its first non-ASCII character by rewriting
@@ -721,8 +734,8 @@ fn delimit_capture_references<'a>(regex: &Regex, replacement: &'a str) -> Cow<'a
         if ascii_len == 0 || ascii_len == name_len {
             continue;
         }
-        // `Expander::check` looks the name up in the regex directly, whereas `Regex::capture_names`
-        // would allocate a list of every group.
+        // `Expander::check` looks up a single name, whereas `Regex::capture_names` lists every
+        // group. It allocates an error when the name is missing, so this must not run per hit.
         let reference = &replacement[name_start - 1..name_end];
         if Expander::default().check(reference, regex).is_ok() {
             continue;
@@ -937,6 +950,17 @@ mod tests {
         let line = "x2e";
         let hit = 1..line.len();
         assert_eq!(query.replacement_for(line, hit).as_deref(), Some("2ème"));
+    }
+
+    #[test]
+    fn test_with_replacement_prepares_the_replacement_again() {
+        let query = regex_query(r"(\d+)e", "$1ème");
+        assert_eq!(query.replacement(), Some("$1ème"));
+        assert_eq!(query.replacement_for("2e", 0..2).as_deref(), Some("2ème"));
+
+        let query = query.with_replacement(r"$1è\t".to_string());
+        assert_eq!(query.replacement(), Some(r"$1è\t"));
+        assert_eq!(query.replacement_for("2e", 0..2).as_deref(), Some("2è\t"));
     }
 
     #[test]
