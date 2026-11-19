@@ -33,6 +33,47 @@ use util::{
 };
 
 #[gpui::test]
+async fn test_empty_nested_git_directory_is_not_a_repository(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": { "HEAD": "ref: refs/heads/main\n" },
+            "file.txt": "root",
+            "nested": {
+                ".git": {},
+                "file.txt": "nested",
+            },
+        }),
+    )
+    .await;
+
+    for root in [path!("/root"), path!("/root/nested")] {
+        let worktree = Worktree::local(
+            Path::new(root),
+            true,
+            fs.clone(),
+            Default::default(),
+            true,
+            WorktreeId::from_proto(0),
+            &mut cx.to_async(),
+        )
+        .await
+        .expect("failed to open worktree");
+        worktree
+            .update(cx, |worktree, _| {
+                worktree.as_local().expect("local worktree").scan_complete()
+            })
+            .await;
+        let repositories = worktree.update(cx, |worktree, _| {
+            worktree.as_local().expect("local worktree").repositories()
+        });
+        assert_eq!(repositories, [Path::new(path!("/root")).into()]);
+    }
+}
+
+#[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
