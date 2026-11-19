@@ -7,6 +7,7 @@ use crate::{BedrockAdaptiveThinkingEffort, ConverseModel, ConverseThinking};
 use anyhow::{Context as _, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 
 pub const CAPABILITY_CATALOG_URL: &str = "https://models.dev/api.json";
 /// The catalog's key for the models that Bedrock serves.
@@ -41,10 +42,9 @@ const STREAMING_TOOL_USE_UNSUPPORTED: &[&str] = &[
 ];
 
 const ANTHROPIC_MODEL_ID_PREFIX: &str = "anthropic.";
-/// Claude models other than Claude 3 take cache points, which the catalog
-/// does not record.
-const CLAUDE_MODEL_ID_PREFIX: &str = "anthropic.claude";
-const CLAUDE_3_MODEL_ID_PREFIX: &str = "anthropic.claude-3";
+/// The catalog lists the same effort and budget options for models that accept
+/// adaptive thinking and for these models, which require budget thinking.
+const BUDGET_THINKING_ONLY: &[&str] = &["anthropic.claude-opus-4-5"];
 /// The vendors whose models take an effort through `reasoning.effort`.
 const REASONING_EFFORT_MODEL_ID_PREFIXES: &[&str] = &["openai.", "xai."];
 
@@ -131,12 +131,21 @@ struct Modalities {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 struct Limits {
-    context: u64,
+    context: NonZeroU64,
     #[serde(default)]
     output: Option<u64>,
 }
 
 impl ModelCapabilities {
+    fn parse(value: &serde_json::Value) -> Result<Self> {
+        let mut model = Self::deserialize(value)?;
+        // Some entries repeat the context window as the output limit.
+        model.limit.output = model.limit.output.filter(|&output| {
+            output > 0 && output < model.limit.context.get() && i32::try_from(output).is_ok()
+        });
+        Ok(model)
+    }
+
     fn reasoning_options(&self) -> &[ReasoningOption] {
         self.reasoning_options.as_deref().unwrap_or_default()
     }
@@ -145,6 +154,14 @@ impl ModelCapabilities {
         self.reasoning_options()
             .iter()
             .any(|option| option.kind == kind)
+    }
+
+    fn effort_values(&self) -> impl Iterator<Item = &str> {
+        self.reasoning_options()
+            .iter()
+            .filter(|option| option.kind == "effort")
+            .flat_map(|option| option.values.as_deref().unwrap_or_default())
+            .map(String::as_str)
     }
 
     /// The efforts the model can be asked for, with `default_effort` as the
@@ -157,11 +174,8 @@ impl ModelCapabilities {
         BedrockAdaptiveThinkingEffort,
     )> {
         let efforts = self
-            .reasoning_options()
-            .iter()
-            .filter(|option| option.kind == "effort")
-            .flat_map(|option| option.values.as_deref().unwrap_or_default())
-            .filter_map(|effort| BedrockAdaptiveThinkingEffort::from_value(effort))
+            .effort_values()
+            .filter_map(BedrockAdaptiveThinkingEffort::from_value)
             .collect::<Vec<_>>();
         let lowest_effort = *efforts.first()?;
         let default_effort = if efforts.contains(&default_effort) {
@@ -180,6 +194,13 @@ impl ModelCapabilities {
             return None;
         }
         if base_model_id.starts_with(ANTHROPIC_MODEL_ID_PREFIX) {
+            if BUDGET_THINKING_ONLY.iter().any(|id| {
+                base_model_id
+                    .strip_prefix(id)
+                    .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(['-', ':']))
+            }) {
+                return Some(ConverseThinking::budget(None));
+            }
             if let Some((efforts, default_effort)) =
                 self.efforts(BedrockAdaptiveThinkingEffort::High)
             {
@@ -198,6 +219,7 @@ impl ModelCapabilities {
             return Some(ConverseThinking::Reasoning {
                 efforts,
                 default_effort,
+                supports_none: self.effort_values().any(|value| value == "none"),
             });
         }
         None
@@ -214,6 +236,7 @@ impl ModelCapabilities {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CapabilityCatalog {
     models: BTreeMap<String, ModelCapabilities>,
+    first_profile_by_base: BTreeMap<String, String>,
 }
 
 impl CapabilityCatalog {
@@ -232,88 +255,68 @@ impl CapabilityCatalog {
             })?;
         let models = models
             .iter()
-            .filter_map(|(model_id, capabilities)| {
-                match ModelCapabilities::deserialize(capabilities) {
+            .filter_map(
+                |(model_id, capabilities)| match ModelCapabilities::parse(capabilities) {
                     Ok(capabilities) => Some((model_id.clone(), capabilities)),
                     Err(error) => {
                         log::warn!("Skipping Bedrock model {model_id} in the catalog: {error}");
                         None
                     }
-                }
-            })
-            .collect();
-        Ok(Self { models })
+                },
+            )
+            .collect::<BTreeMap<_, _>>();
+        anyhow::ensure!(
+            !models.is_empty(),
+            "the {CAPABILITY_CATALOG_PROVIDER} capability catalog contains no usable models"
+        );
+        let mut first_profile_by_base = BTreeMap::new();
+        for id in models.keys() {
+            if let Some((_, base)) = split_profile_id(id) {
+                first_profile_by_base
+                    .entry(base.to_string())
+                    .or_insert_with(|| id.clone());
+            }
+        }
+        Ok(Self {
+            models,
+            first_profile_by_base,
+        })
     }
 
     pub fn is_empty(&self) -> bool {
         self.models.is_empty()
     }
 
-    /// Describes the foundation model `base_model_id` from the first of
-    /// `request_ids`, or else the model id itself, that the catalog knows. A
-    /// model the catalog does not know gets no optional capability beyond
-    /// tool use.
-    pub fn describe<'a>(
-        &self,
-        base_model_id: &'a str,
-        request_ids: impl IntoIterator<Item = &'a str>,
-    ) -> ConverseModel {
-        let capabilities = request_ids
-            .into_iter()
-            .chain([base_model_id])
-            .find_map(|request_id| self.models.get(request_id));
-        let thinking = capabilities.and_then(|capabilities| capabilities.thinking(base_model_id));
-        let max_tokens = capabilities
-            .map(|capabilities| capabilities.limit.context)
-            .filter(|context_window| *context_window > 0)
-            .unwrap_or(DEFAULT_CONTEXT_WINDOW);
-        ConverseModel {
-            id: base_model_id.to_string(),
-            request_id: base_model_id.to_string(),
-            base_model_id: base_model_id.to_string(),
-            display_name: capabilities
-                .map_or(base_model_id, |capabilities| capabilities.name.as_str())
-                .to_string(),
-            max_tokens,
-            // The catalog gives some models their context window as the
-            // output limit, which Bedrock would reject.
-            max_output_tokens: capabilities
-                .and_then(|capabilities| capabilities.limit.output)
-                .filter(|max_output_tokens| *max_output_tokens < max_tokens),
-            default_temperature: None,
-            supports_temperature: capabilities.is_none_or(|capabilities| capabilities.temperature)
-                && !thinking
-                    .as_ref()
-                    .is_some_and(ConverseThinking::is_always_on),
-            supports_tool_use: capabilities.is_none_or(|capabilities| capabilities.tool_call)
-                && !has_prefix_in(base_model_id, STREAMING_TOOL_USE_UNSUPPORTED),
-            supports_images: capabilities.is_some_and(|capabilities| {
-                capabilities
-                    .modalities
-                    .input
-                    .iter()
-                    .any(|input| input == "image")
-            }),
-            supports_caching: base_model_id.starts_with(CLAUDE_MODEL_ID_PREFIX)
-                && !base_model_id.starts_with(CLAUDE_3_MODEL_ID_PREFIX),
-            thinking,
-        }
+    fn capabilities(&self, base_model_id: &str, request_id: &str) -> Option<&ModelCapabilities> {
+        self.models
+            .get(profile_id(request_id))
+            .or_else(|| self.models.get(base_model_id))
+            .or_else(|| {
+                self.models
+                    .get(self.first_profile_by_base.get(base_model_id)?)
+            })
+    }
+
+    /// Prefers the requested profile, then the foundation model, then the
+    /// lexicographically first profile of the same model.
+    pub fn describe(&self, base_model_id: &str, request_id: &str) -> ConverseModel {
+        ConverseModel::from_capabilities(
+            base_model_id,
+            request_id,
+            self.capabilities(base_model_id, request_id),
+        )
     }
 
     /// Describes the model that `request_id` invokes, where `request_id` is a
     /// foundation model id or the id or ARN of an inference profile, if the
     /// catalog knows it.
     pub fn model_for_request_id(&self, request_id: &str) -> Option<ConverseModel> {
-        let profile_id = profile_id(request_id);
         let base_model_id = base_model_id(request_id);
-        [profile_id, base_model_id]
-            .iter()
-            .any(|id| self.models.contains_key(*id))
-            .then(|| ConverseModel {
-                id: request_id.to_string(),
-                request_id: request_id.to_string(),
-                ..self.describe(base_model_id, [profile_id])
-            })
+        let capabilities = self.capabilities(base_model_id, request_id)?;
+        Some(ConverseModel {
+            id: request_id.to_string(),
+            ..ConverseModel::from_capabilities(base_model_id, request_id, Some(capabilities))
+        })
     }
 
     /// The models that the catalog says have an inference profile serving
@@ -346,12 +349,58 @@ impl CapabilityCatalog {
                 } else {
                     geographic.or(global)
                 }?;
-                Some(ConverseModel {
-                    request_id: profile_id.to_string(),
-                    ..self.describe(base_model_id, [*profile_id])
-                })
+                Some(self.describe(base_model_id, profile_id))
             })
             .collect()
+    }
+}
+
+impl ConverseModel {
+    fn from_capabilities(
+        base_model_id: &str,
+        request_id: &str,
+        capabilities: Option<&ModelCapabilities>,
+    ) -> Self {
+        let thinking = capabilities.and_then(|capabilities| capabilities.thinking(base_model_id));
+        Self {
+            id: base_model_id.to_string(),
+            request_id: request_id.to_string(),
+            base_model_id: base_model_id.to_string(),
+            display_name: capabilities
+                .map_or(base_model_id, |capabilities| &capabilities.name)
+                .to_string(),
+            max_tokens: capabilities.map_or(DEFAULT_CONTEXT_WINDOW, |capabilities| {
+                capabilities.limit.context.get()
+            }),
+            max_output_tokens: capabilities.and_then(|capabilities| capabilities.limit.output),
+            default_temperature: None,
+            supports_temperature: capabilities.is_some_and(|capabilities| capabilities.temperature)
+                && !thinking
+                    .as_ref()
+                    .is_some_and(ConverseThinking::is_always_on),
+            // Newly listed streaming text models can precede the public catalog. Without
+            // tools the agent cannot act; if the model rejects tools, Bedrock explains why.
+            supports_tool_use: capabilities.is_none_or(|capabilities| capabilities.tool_call)
+                && !has_prefix_in(base_model_id, STREAMING_TOOL_USE_UNSUPPORTED),
+            supports_images: capabilities.is_some_and(|capabilities| {
+                capabilities
+                    .modalities
+                    .input
+                    .iter()
+                    .any(|input| input == "image")
+            }),
+            // Claude 4 and later name the family before the version. The catalog omits cache points.
+            supports_caching: base_model_id
+                .strip_prefix("anthropic.claude-")
+                .and_then(|rest| rest.split_once('-'))
+                .is_some_and(|(family, version)| {
+                    !family.is_empty()
+                        && family != "instant"
+                        && family.bytes().all(|letter| letter.is_ascii_alphabetic())
+                        && !version.is_empty()
+                }),
+            thinking,
+        }
     }
 }
 
@@ -384,19 +433,40 @@ mod tests {
 
     #[test]
     fn describes_a_model_the_catalog_does_not_know_conservatively() {
-        let model = CapabilityCatalog::default().describe("vendor.chat", ["us.vendor.chat"]);
+        let catalog = CapabilityCatalog::default();
+        let model = catalog.describe("vendor.chat", "us.vendor.chat");
 
         assert_eq!(model.id, "vendor.chat");
         assert_eq!(model.display_name, "vendor.chat");
         assert_eq!(model.max_tokens, DEFAULT_CONTEXT_WINDOW);
         assert_eq!(model.max_output_tokens, None);
         assert_eq!(model.thinking, None);
-        assert!(model.supports_tool_use && model.supports_temperature);
+        assert!(model.supports_tool_use);
+        assert!(!model.supports_temperature);
         assert!(!model.supports_images && !model.supports_caching);
+        assert!(
+            !catalog
+                .describe("meta.llama-example", "us.meta.llama-example")
+                .supports_tool_use
+        );
     }
 
     #[test]
-    fn reads_limits_and_modalities_from_the_first_known_request_id() -> Result<()> {
+    fn cache_points_require_a_family_first_claude_id() {
+        let catalog = CapabilityCatalog::default();
+        for (id, expected) in [
+            ("anthropic.claude-example-9", true),
+            ("anthropic.claude-3-example", false),
+            ("anthropic.claude-v2-example", false),
+            ("anthropic.claude-instant-example", false),
+            ("vendor.claude-example-9", false),
+        ] {
+            assert_eq!(catalog.describe(id, id).supports_caching, expected, "{id}");
+        }
+    }
+
+    #[test]
+    fn reads_capabilities_from_the_exact_profile_then_the_bare_model() -> Result<()> {
         let catalog = catalog(json!({
             "global.vendor.chat": entry("Chat (Global)", json!({
                 "limit": {"context": 500_000, "output": 64_000},
@@ -407,26 +477,36 @@ mod tests {
             "vendor.chat": entry("Chat", json!({})),
         }))?;
 
-        let by_profile = catalog.describe("vendor.chat", ["us.vendor.chat", "global.vendor.chat"]);
+        let by_profile = catalog.describe("vendor.chat", "global.vendor.chat");
         assert_eq!(by_profile.display_name, "Chat (Global)");
         assert_eq!(by_profile.max_tokens, 500_000);
         assert_eq!(by_profile.max_output_tokens, Some(64_000));
         assert!(by_profile.supports_images);
         assert!(!by_profile.supports_temperature && !by_profile.supports_tool_use);
 
-        let by_model_id = catalog.describe("vendor.chat", ["eu.vendor.chat"]);
+        let by_model_id = catalog.describe("vendor.chat", "eu.vendor.chat");
         assert_eq!(by_model_id.display_name, "Chat");
         assert_eq!(by_model_id.max_output_tokens, Some(8_000));
         Ok(())
     }
 
     #[test]
-    fn ignores_an_output_limit_that_is_not_below_the_context_window() -> Result<()> {
-        let catalog = catalog(json!({
-            "vendor.chat": entry("Chat", json!({"limit": {"context": 100_000, "output": 100_000}})),
-        }))?;
-
-        assert_eq!(catalog.describe("vendor.chat", []).max_output_tokens, None);
+    fn ignores_invalid_output_limits_without_dropping_the_model() -> Result<()> {
+        for (context, output) in [
+            (100, 0),
+            (100, 100),
+            (100, 101),
+            (4_000_000_000u64, 3_000_000_000u64),
+        ] {
+            let catalog = catalog(json!({
+                "vendor.chat": entry("Chat", json!({"limit": {"context": context, "output": output}})),
+            }))?;
+            let model = catalog
+                .model_for_request_id("vendor.chat")
+                .context("readable context window")?;
+            assert_eq!(model.max_tokens, context);
+            assert_eq!(model.max_output_tokens, None);
+        }
         Ok(())
     }
 
@@ -434,15 +514,22 @@ mod tests {
     fn skips_an_entry_it_cannot_read() -> Result<()> {
         let catalog = catalog(json!({
             "vendor.broken": {"name": "No limits"},
+            "vendor.zero": entry("Zero", json!({"limit": {"context": 0}})),
             "vendor.chat": entry("Chat", json!({})),
         }))?;
 
-        assert_eq!(
-            catalog.describe("vendor.broken", []).display_name,
-            "vendor.broken"
-        );
-        assert_eq!(catalog.describe("vendor.chat", []).display_name, "Chat");
+        assert!(catalog.model_for_request_id("vendor.broken").is_none());
+        assert!(catalog.model_for_request_id("vendor.zero").is_none());
+        assert!(catalog.model_for_request_id("vendor.chat").is_some());
         Ok(())
+    }
+
+    #[test]
+    fn rejects_catalogs_with_no_usable_bedrock_models() {
+        for models in [json!({}), json!({"vendor.broken": {"name": "No limits"}})] {
+            let error = catalog(models).expect_err("no usable model");
+            assert!(error.to_string().contains("no usable models"));
+        }
     }
 
     #[test]
@@ -464,7 +551,7 @@ mod tests {
             "openai.effort": entry("", reasoning(json!([efforts]))),
             "vendor.effort": entry("", reasoning(json!([efforts]))),
         }))?;
-        let thinking = |model_id| catalog.describe(model_id, []).thinking;
+        let thinking = |model_id| catalog.describe(model_id, model_id).thinking;
 
         assert_eq!(
             thinking("anthropic.always"),
@@ -494,21 +581,21 @@ mod tests {
             Some(ConverseThinking::Reasoning {
                 efforts: vec![Low, High, XHigh],
                 default_effort: Low,
+                supports_none: true,
             })
         );
         assert_eq!(thinking("vendor.effort"), None);
 
         assert!(
             !catalog
-                .describe("anthropic.always", [])
+                .describe("anthropic.always", "anthropic.always")
                 .supports_temperature
         );
         assert!(
             catalog
-                .describe("anthropic.optional", [])
+                .describe("anthropic.optional", "anthropic.optional")
                 .supports_temperature
         );
-        assert!(!catalog.describe("openai.effort", []).supports_temperature);
         Ok(())
     }
 
@@ -521,10 +608,11 @@ mod tests {
         }))?;
 
         assert_eq!(
-            catalog.describe("openai.effort", []).thinking,
+            catalog.describe("openai.effort", "openai.effort").thinking,
             Some(ConverseThinking::Reasoning {
                 efforts: vec![Low, Medium, High],
                 default_effort: Medium,
+                supports_none: false,
             })
         );
         Ok(())

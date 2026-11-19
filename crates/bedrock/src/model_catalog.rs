@@ -96,19 +96,14 @@ impl ListedModel {
 
     fn converse_model(
         &self,
-        allow_global: bool,
+        request_id: &str,
         capability_catalog: &CapabilityCatalog,
     ) -> ConverseModel {
-        let request_id = self.request_id(allow_global);
-        let request_ids = [request_id]
-            .into_iter()
-            .chain(self.routes.iter().map(String::as_str));
         ConverseModel {
             id: self.id.clone(),
-            request_id: request_id.to_string(),
             display_name: self.display_name.clone(),
             supports_images: self.supports_images,
-            ..capability_catalog.describe(&self.base_model_id, request_ids)
+            ..capability_catalog.describe(&self.base_model_id, request_id)
         }
     }
 }
@@ -188,9 +183,9 @@ impl ModelCatalog {
         allow_global: bool,
         capability_catalog: &'a CapabilityCatalog,
     ) -> impl Iterator<Item = ConverseModel> + 'a {
-        self.models
-            .iter()
-            .map(move |model| model.converse_model(allow_global, capability_catalog))
+        self.models.iter().map(move |model| {
+            model.converse_model(model.request_id(allow_global), capability_catalog)
+        })
     }
 
     /// The model that `request_id` resolves to, where `request_id` is a
@@ -205,8 +200,7 @@ impl ModelCatalog {
             .find(|model| model.id == request_id || model.routes.iter().any(|id| id == request_id))
             .map(|model| ConverseModel {
                 id: request_id.to_string(),
-                request_id: request_id.to_string(),
-                ..model.converse_model(false, capability_catalog)
+                ..model.converse_model(request_id, capability_catalog)
             })
     }
 }
@@ -502,6 +496,51 @@ mod tests {
                 .model_for_request_id("vendor.other", &capability_catalog)
                 .is_none()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_exact_and_sibling_limits_without_changing_the_requested_profile() -> Result<()> {
+        let application_arn = format!("{PROFILE_ARN_PREFIX}application-inference-profile/example");
+        let catalog = ModelCatalog::new(
+            &[
+                profile("us.vendor.chat", "vendor.chat", 1)?,
+                profile("global.vendor.chat", "vendor.chat", 1)?,
+                profile_of_type(
+                    InferenceProfileType::Application,
+                    "example",
+                    application_arn.clone(),
+                    "vendor.chat",
+                    1,
+                )?,
+            ],
+            &[foundation_model("vendor.chat", &[])?],
+        );
+        let capabilities = CapabilityCatalog::parse(
+            r#"{"amazon-bedrock":{"models":{
+            "us.vendor.chat":{"name":"US","limit":{"context":300}},
+            "global.vendor.chat":{"name":"Global","limit":{"context":500}}
+        }}}"#,
+        )?;
+        let global_arn = format!("{PROFILE_ARN_PREFIX}inference-profile/global.vendor.chat");
+        for (request_id, context) in [
+            ("global.vendor.chat", 500),
+            (&global_arn, 500),
+            ("us.vendor.chat", 300),
+            (&application_arn, 500),
+        ] {
+            let model = catalog
+                .model_for_request_id(request_id, &capabilities)
+                .context("listed profile")?;
+            assert_eq!(model.request_id, request_id);
+            assert_eq!(model.max_tokens, context, "{request_id}");
+        }
+        let application = catalog
+            .models(false, &capabilities)
+            .find(|model| model.id == application_arn)
+            .context("listed application")?;
+        assert_eq!(application.request_id, application_arn);
+        assert_eq!(application.max_tokens, 500);
         Ok(())
     }
 

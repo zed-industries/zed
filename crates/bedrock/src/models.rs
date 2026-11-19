@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -58,10 +57,11 @@ pub enum ConverseThinking {
         default_effort: BedrockAdaptiveThinkingEffort,
         always_on: bool,
     },
-    /// Reasoning steered through `reasoning.effort`, which Zed never turns off.
+    /// Reasoning steered through `reasoning.effort`.
     Reasoning {
         efforts: Vec<BedrockAdaptiveThinkingEffort>,
         default_effort: BedrockAdaptiveThinkingEffort,
+        supports_none: bool,
     },
 }
 
@@ -98,7 +98,7 @@ impl ConverseThinking {
         match self {
             Self::Budget { .. } => false,
             Self::Adaptive { always_on, .. } => *always_on,
-            Self::Reasoning { .. } => true,
+            Self::Reasoning { supports_none, .. } => !supports_none,
         }
     }
 
@@ -134,7 +134,7 @@ pub struct ConverseModel {
     pub display_name: String,
     pub max_tokens: u64,
     /// The output limit, when known. Without one, requests leave the limit to
-    /// Bedrock, which then applies the model's maximum.
+    /// Bedrock, which applies its own default.
     pub max_output_tokens: Option<u64>,
     pub default_temperature: Option<f32>,
     /// Whether the model accepts a `temperature` at all.
@@ -147,7 +147,7 @@ pub struct ConverseModel {
 
 /// The wire protocol used to talk to a [`MantleModel`] on the `bedrock-mantle` endpoint.
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum MantleProtocol {
     /// The OpenAI Chat Completions API (`/chat/completions`).
     #[default]

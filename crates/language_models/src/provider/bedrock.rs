@@ -921,10 +921,11 @@ fn converse_model_from_settings(
             None => Some(4_096),
         }),
         default_temperature: model.default_temperature,
-        supports_temperature: known.is_none_or(|known| known.supports_temperature)
-            && !thinking
-                .as_ref()
-                .is_some_and(ConverseThinking::is_always_on),
+        supports_temperature: known.map_or(model.default_temperature.is_some(), |known| {
+            known.supports_temperature
+        }) && !thinking
+            .as_ref()
+            .is_some_and(ConverseThinking::is_always_on),
         supports_tool_use: model
             .supports_tools
             .or_else(|| known.map(|known| known.supports_tool_use))
@@ -1302,7 +1303,6 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
         supports_tools: model.supports_tool_use,
         supports_images: model.supports_images,
         supports_thinking: model.thinking.is_some(),
-        // These models always reason, so only offer effort levels.
         supports_disabling_thinking: !always_reasons(model),
         refusal_fallback_model_id: anthropic_model_id(model)
             .is_some_and(|model_id| model_id.starts_with(anthropic::FABLE_MODEL_ID_PREFIX))
@@ -2699,12 +2699,7 @@ pub fn into_bedrock(
         }
     }
 
-    let selected_effort = |default_effort| {
-        // Models that always reason keep reasoning enabled, so suppressed requests use the
-        // default effort, matching the Anthropic and OpenAI providers.
-        // <https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra>
-        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html>
-        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
+    let selected_effort = |efforts: &[BedrockAdaptiveThinkingEffort], default_effort| {
         if !request.thinking_allowed {
             return default_effort;
         }
@@ -2712,21 +2707,25 @@ pub fn into_bedrock(
             .thinking_effort
             .as_deref()
             .and_then(BedrockAdaptiveThinkingEffort::from_value)
+            .filter(|effort| efforts.contains(effort))
             .unwrap_or(default_effort)
     };
     let anthropic_model_id = anthropic_model_id(model);
     let thinking = match &model.thinking {
-        Some(ConverseThinking::Reasoning { default_effort, .. }) => {
-            Some(bedrock::Thinking::Reasoning {
-                effort: selected_effort(*default_effort),
-            })
-        }
+        Some(ConverseThinking::Reasoning {
+            efforts,
+            default_effort,
+            supports_none,
+        }) => Some(bedrock::Thinking::Reasoning {
+            effort: (request.thinking_allowed || !supports_none)
+                .then(|| selected_effort(efforts, *default_effort)),
+        }),
         Some(ConverseThinking::Adaptive {
             default_effort,
             always_on,
-            ..
+            efforts,
         }) if request.thinking_allowed || *always_on => Some(bedrock::Thinking::Adaptive {
-            effort: selected_effort(*default_effort),
+            effort: selected_effort(efforts, *default_effort),
             binding_controls_beta: anthropic_model_id
                 .filter(|model_id| anthropic::binds_thinking_blocks_to_prefix(model_id))
                 .map(|_| anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string()),
@@ -3451,6 +3450,7 @@ mod tests {
                 BedrockAdaptiveThinkingEffort::High,
             ],
             default_effort: BedrockAdaptiveThinkingEffort::Medium,
+            supports_none: false,
         }
     }
 
@@ -3780,8 +3780,13 @@ mod tests {
             let catalog_json = catalog_json.clone();
             move |request| {
                 let is_catalog_request = request.uri() == CAPABILITY_CATALOG_URL;
-                *request_count.lock() += 1;
-                let catalog_json = catalog_json.clone();
+                let mut count = request_count.lock();
+                *count += 1;
+                let catalog_json = if *count == 1 {
+                    catalog_json.clone()
+                } else {
+                    capability_catalog_json(serde_json::json!({}))
+                };
                 async move {
                     let (status, body) = if is_catalog_request {
                         (200, catalog_json)
@@ -3829,14 +3834,29 @@ mod tests {
         cx.executor()
             .advance_clock(model_catalog_cache::REFRESH_INTERVAL);
         cx.run_until_parked();
+        assert_eq!(*request_count.lock(), 2);
+        provider.state.read_with(cx, |state, _| {
+            assert!(
+                state
+                    .last_capability_catalog_error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("no usable models"))
+            );
+            assert!(
+                state
+                    .capability_catalog
+                    .model_for_request_id("us.vendor.chat")
+                    .is_some()
+            );
+        });
         assert_eq!(
-            *request_count.lock(),
-            2,
-            "the catalog is fetched again every hour"
+            fs.load(Path::new(TEST_CACHE_PATH))
+                .await
+                .expect("last good catalog"),
+            cached
         );
 
-        // A second provider starts from the copy on disk, and keeps it when
-        // the catalog cannot be fetched.
+        // A second provider starts from the last good copy on disk.
         let failing_http_client = http_client::FakeHttpClient::with_404_response();
         let cached_provider =
             cx.update(|cx| new_test_provider_with_fs(failing_http_client, fs.clone(), cx));
@@ -3994,6 +4014,16 @@ mod tests {
         assert!(!unstated.supports_tool_use && !unstated.supports_images);
         assert!(!unstated.supports_caching);
 
+        let without_temperature = converse_model_from_settings(
+            &AvailableModel {
+                default_temperature: None,
+                ..settings_entry("vendor.chat", None)
+            },
+            None,
+            &capability_catalog,
+        );
+        assert!(!without_temperature.supports_temperature);
+
         let stated = converse_model_from_settings(
             &AvailableModel {
                 supports_tools: Some(true),
@@ -4019,11 +4049,12 @@ mod tests {
             })),
         }));
         let model = converse_model_from_settings(
-            &settings_entry("us.vendor.chat", None),
+            &settings_entry("vendor.chat", None),
             None,
             &capability_catalog,
         );
 
+        assert_eq!(model.request_id, "vendor.chat");
         assert_eq!(model.display_name, "Chat (US)");
         assert_eq!(
             model.max_tokens, 1_000_000,
@@ -4414,6 +4445,122 @@ mod tests {
         }
         let optional = converse_model("anthropic.claude-example", Some(adaptive_thinking(false)));
         assert!(converse_language_model(&optional).supports_disabling_thinking);
+        Ok(())
+    }
+
+    #[test]
+    fn catalog_thinking_controls_reach_the_converse_wire_from_settings() -> Result<()> {
+        use serde_json::json;
+
+        let options = json!({"reasoning": true, "reasoning_options": [
+            {"type":"budget_tokens"}, {"type":"toggle"}, {"type":"effort", "values":["none", "low", "high"]}
+        ]});
+        let catalog = capability_catalog(json!({
+            "us.openai.example": capability_entry("Optional", options.clone()),
+            "us.anthropic.example": capability_entry("Adaptive", options.clone()),
+            "us.anthropic.claude-opus-4-5-example": capability_entry("Budget", options),
+            "us.xai.example": capability_entry("Always", always_reasoning_members()),
+        }));
+        for (id, thinking_allowed, effort, expected) in [
+            (
+                "openai.example",
+                false,
+                "high",
+                json!({"reasoning":{"effort":"none"}}),
+            ),
+            (
+                "openai.example",
+                true,
+                "max",
+                json!({"reasoning":{"effort":"low"}}),
+            ),
+            (
+                "openai.example",
+                true,
+                "high",
+                json!({"reasoning":{"effort":"high"}}),
+            ),
+            (
+                "xai.example",
+                false,
+                "high",
+                json!({"reasoning":{"effort":"low"}}),
+            ),
+            (
+                "anthropic.example",
+                true,
+                "max",
+                json!({"thinking":{"type":"adaptive", "display":"summarized"}, "output_config":{"effort":"high"}}),
+            ),
+            (
+                "anthropic.claude-opus-4-5-example",
+                true,
+                "low",
+                json!({"thinking":{"type":"enabled","budget_tokens":4096}}),
+            ),
+        ] {
+            let model = converse_model_from_settings(&settings_entry(id, None), None, &catalog);
+            let language_model = converse_language_model(&model);
+            assert_eq!(
+                language_model.supports_disabling_thinking,
+                id != "xai.example",
+                "{id}"
+            );
+            assert!(
+                language_model
+                    .supported_effort_levels
+                    .iter()
+                    .all(|level| level.value.as_ref() != "none")
+            );
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![user_message("Hello")],
+                    thinking_allowed,
+                    thinking_effort: Some(effort.into()),
+                    ..Default::default()
+                },
+                &model,
+                None,
+                None,
+            )?;
+            let http_client = http_client::FakeHttpClient::create(move |mut request| {
+                let expected = expected.clone();
+                async move {
+                    let mut body = Vec::new();
+                    request.body_mut().read_to_end(&mut body).await?;
+                    let body = serde_json::from_slice::<Value>(&body)?;
+                    assert_eq!(
+                        body.get("additionalModelRequestFields"),
+                        Some(&expected),
+                        "{id}, thinking_allowed={thinking_allowed}"
+                    );
+                    Ok(http_client::Response::builder().body(AsyncBody::empty())?)
+                }
+            });
+            let client = BedrockClient::from_conf(
+                bedrock::bedrock_client::Config::builder()
+                    .behavior_version_latest()
+                    .region(Region::new("us-east-1"))
+                    .credentials_provider(Credentials::new(
+                        "test-key",
+                        "test-secret",
+                        None,
+                        None,
+                        "test",
+                    ))
+                    .http_client(AwsHttpClient::new(http_client))
+                    .identity_cache(bedrock::bedrock_client::config::IdentityCache::no_cache())
+                    .timeout_config(TimeoutConfig::disabled())
+                    .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
+                    .retry_config(bedrock::bedrock_client::config::retry::RetryConfig::disabled())
+                    .build(),
+            );
+            drop(futures::executor::block_on(bedrock::stream_completion(
+                client,
+                request,
+                CustomHeaders::default(),
+            ))?);
+        }
         Ok(())
     }
 
