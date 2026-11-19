@@ -6946,6 +6946,32 @@ pub fn path_suffix(path: &Path, detail: usize) -> String {
     components.join("/")
 }
 
+/// The error shown to an agent when a path it asked for exists on disk, but
+/// agent file tools cannot access it because it is outside the project
+/// workspace or excluded from the worktree scan.
+///
+/// The message names the path it resolved to and the project roots and says
+/// how to grant access, so the model can relay the remedy instead of
+/// guessing at paths.
+pub fn path_outside_workspace_message(
+    requested_path: &str,
+    resolved_path: &Path,
+    project_roots: &[PathBuf],
+) -> String {
+    let roots = project_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "\"{requested_path}\" resolves to {}, which is outside the project workspace (or \
+         excluded from the worktree scan), so agent tools cannot access it. Project roots: \
+         {roots}. To grant access, open the folder in Zed via \"Add Folder to Project\" or \
+         move the file inside the project.",
+        resolved_path.display(),
+    )
+}
+
 pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,

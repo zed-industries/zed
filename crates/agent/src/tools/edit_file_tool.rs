@@ -616,6 +616,51 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_outside_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.txt": "x" }))
+            .await;
+        fs.insert_tree(path!("/outside"), json!({ "settings.json": "{}" }))
+            .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "/outside/settings.json".into(),
+                        edits: vec![Edit {
+                            old_text: "a".into(),
+                            new_text: "b".into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Error {
+            error, input_path, ..
+        } = result.unwrap_err()
+        else {
+            panic!("expected error");
+        };
+        assert!(
+            error.contains("outside the project workspace"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("Add Folder to Project"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(input_path, None);
+    }
+
+    #[gpui::test]
     async fn test_streaming_edit_global_skill_file(cx: &mut TestAppContext) {
         init_test(cx);
 

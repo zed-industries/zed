@@ -746,6 +746,63 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_read_scan_excluded_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".secretdir": {
+                    "config": "secret configuration"
+                }
+            }),
+        )
+        .await;
+        cx.update(|cx| {
+            use gpui::UpdateGlobal as _;
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(SplicingVec::from(vec!["**/.secretdir".to_string()]));
+                });
+            });
+        });
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, _) = ToolCallEventStream::test();
+
+        // A file that exists on disk but is excluded from the worktree scan
+        // gets an error that says so, instead of the bare "not found".
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "/root/.secretdir/config".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(ToolInput::resolved(input), event_stream, cx)
+            })
+            .await;
+        let error = error_text(result.unwrap_err()).replace('\\', "/");
+        assert!(
+            error.contains(&format!(
+                "\"/root/.secretdir/config\" resolves to {}, which is outside the project \
+                 workspace (or excluded from the worktree scan), so agent tools cannot \
+                 access it. Project roots: {}.",
+                path!("/root/.secretdir/config").replace('\\', "/"),
+                path!("/root").replace('\\', "/"),
+            )),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("Add Folder to Project"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[gpui::test]
     async fn test_read_small_file(cx: &mut TestAppContext) {
         init_test(cx);
 

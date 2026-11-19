@@ -36,7 +36,7 @@ use language::{
 use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
-use project::{AgentLocation, Project};
+use project::{AgentLocation, Project, path_outside_workspace_message};
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
 use settings::{Settings, SettingsStore};
@@ -8198,14 +8198,45 @@ impl AcpThread {
         let action_log = self.action_log.clone();
         let should_update_agent_location = self.parent_session_id.is_none();
         cx.spawn(async move |this, cx| {
-            let load = project.update(cx, |project, cx| {
-                let path = project
-                    .project_path_for_absolute_path(&path, cx)
-                    .ok_or_else(|| {
-                        acp_v1::Error::resource_not_found(Some(path.display().to_string()))
-                    })?;
-                Ok::<_, acp_v1::Error>(project.open_buffer(path, cx))
-            })?;
+            // `project_path_for_absolute_path` fails both for paths outside the
+            // workspace and for genuinely missing ones. Probe the disk when it
+            // fails so an outside-workspace path gets an error that explains
+            // the boundary and how to grant access, instead of a bare
+            // "not found".
+            let load = match project.update(cx, |project, cx| {
+                match project.project_path_for_absolute_path(&path, cx) {
+                    Some(path) => Ok::<_, acp_v1::Error>(project.open_buffer(path, cx)),
+                    None => Err(acp_v1::Error::resource_not_found(Some(
+                        path.display().to_string(),
+                    ))),
+                }
+            }) {
+                Ok(task) => task,
+                Err(error) => {
+                    let fs = project.read_with(cx, |project, _| project.fs().clone());
+                    let path_exists = fs
+                        .metadata(&path)
+                        .await
+                        .is_ok_and(|metadata| metadata.is_some());
+                    if path_exists {
+                        let project_roots = project.read_with(cx, |project, cx| {
+                            project
+                                .visible_worktrees(cx)
+                                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                                .collect::<Vec<_>>()
+                        });
+                        return Err(acp_v1::Error::new(
+                            acp_v1::ErrorCode::ResourceNotFound.into(),
+                            path_outside_workspace_message(
+                                &path.display().to_string(),
+                                &path,
+                                &project_roots,
+                            ),
+                        ));
+                    }
+                    return Err(error);
+                }
+            };
 
             let buffer = load.await?;
 
@@ -16214,6 +16245,79 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(err.code, acp_v1::ErrorCode::ResourceNotFound);
+    }
+
+    #[gpui::test]
+    async fn test_reading_existing_file_outside_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({})).await;
+        fs.insert_tree(path!("/outside"), json!({ "settings.json": "{}" }))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/tmp"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        // A file that exists on disk but outside the session's project roots
+        // keeps the resource-not-found code, but its message explains the
+        // workspace boundary and how to grant access instead of colliding
+        // with the genuinely-missing case.
+        let err = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(
+                    path!("/outside/settings.json").into(),
+                    None,
+                    None,
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code, acp_v1::ErrorCode::ResourceNotFound);
+        let actual = err.to_string();
+        assert!(
+            actual.contains("outside the project workspace"),
+            "unexpected error: {actual}"
+        );
+        assert!(
+            actual.contains("settings.json"),
+            "unexpected error: {actual}"
+        );
+        assert!(
+            actual.contains("Project roots"),
+            "unexpected error: {actual}"
+        );
+        assert!(
+            actual.contains("Add Folder to Project"),
+            "unexpected error: {actual}"
+        );
+
+        // A file that does not exist anywhere keeps the bare not-found error.
+        let err = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/outside/missing.json").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code, acp_v1::ErrorCode::ResourceNotFound);
+        assert!(!err.to_string().contains("outside the project workspace"));
     }
 
     #[gpui::test]

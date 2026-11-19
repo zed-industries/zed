@@ -11,7 +11,7 @@ use fs::Fs;
 use gpui::{App, Entity, Task, WeakEntity};
 use project::{Project, ProjectPath};
 use settings::Settings;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use util::paths::component_matches_ignore_ascii_case;
 
@@ -292,19 +292,74 @@ pub async fn unresolved_project_path_message(
         return resolution_error.to_string();
     };
 
-    let roots = worktree_roots
-        .iter()
-        .map(|root| root.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    project::path_outside_workspace_message(input_path, &existing_path, worktree_roots)
+}
 
-    format!(
-        "\"{input_path}\" resolves to {}, which is outside the project workspace (or \
-         excluded from the worktree scan), so agent tools cannot access it. Project \
-         roots: {roots}. To grant access, open the folder in Zed via \
-         \"Add Folder to Project\" or move the file inside the project.",
-        existing_path.display(),
-    )
+/// A path-resolution failure from a project-scoped tool that can either be
+/// reported as-is or, when the requested path exists on disk, upgraded into an
+/// actionable "outside the project workspace" message via
+/// [`Self::into_message`].
+///
+/// Tool bodies resolve project paths inside synchronous `App` closures, which
+/// cannot consult the filesystem; this type carries the failure out of the
+/// closure so the upgrade can happen in the surrounding async context.
+pub enum PathResolveError {
+    /// An error whose wording is final and must be reported unchanged.
+    Message(String),
+    /// The requested path could not be resolved in the project. When the path
+    /// exists on disk, `message` is replaced by the workspace-boundary
+    /// explanation; otherwise `message` is reported as-is.
+    NotInProject { input_path: String, message: String },
+}
+
+impl PathResolveError {
+    /// The message to report without consulting the filesystem.
+    pub fn plain_message(&self) -> &str {
+        match self {
+            Self::Message(message) | Self::NotInProject { message, .. } => message,
+        }
+    }
+
+    /// The message to report to the model, consulting the filesystem to
+    /// explain the workspace boundary when the requested path exists on disk.
+    pub async fn into_message(self, fs: &dyn Fs, worktree_roots: &[PathBuf]) -> String {
+        match self {
+            Self::Message(message) => message,
+            Self::NotInProject {
+                input_path,
+                message,
+            } => {
+                unresolved_project_path_message(&input_path, fs, worktree_roots, &anyhow!(message))
+                    .await
+            }
+        }
+    }
+}
+
+/// Returns `path` with a leading `~` component replaced by the user's home
+/// directory. Absolute paths are returned unchanged and other relative paths
+/// yield `None`, so callers can fall back to worktree-relative interpretations.
+fn expand_home_prefix(path: &Path) -> Option<PathBuf> {
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+
+    let mut components = path.components();
+    let first_component = components.next()?;
+    if !matches!(first_component, Component::Normal(component) if component == "~") {
+        return None;
+    }
+
+    let mut expanded = paths::home_dir().clone();
+    for component in components {
+        match component {
+            Component::Normal(component) => expanded.push(component),
+            Component::CurDir => {}
+            Component::ParentDir => expanded.push(".."),
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    Some(expanded)
 }
 
 /// Returns the first on-disk path that `input_path` could refer to, if any.
