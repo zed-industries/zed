@@ -353,6 +353,7 @@ Add models served through `bedrock-mantle` with `mantle_available_models`:
 
 ### Upgrade from earlier versions {#bedrock-upgrade}
 
+- **Authentication:** A model in settings can appear before sign-in. Requests from an unauthenticated provider now fail, including in an existing thread. To use the AWS default credential chain, set `authentication_method` to `"default"`.
 - **Saved short IDs:** A saved selection such as `{"provider": "amazon-bedrock", "model": "claude-sonnet-4-5"}` continues to select `anthropic.claude-sonnet-4-5-20250929-v1:0` when that model is offered. Before and after the upgrade, the saved short ID stays `claude-sonnet-4-5`. Requests now use a discovered inference profile.
 - **Former built-in Mantle models:** Before the upgrade, a saved `gpt-5.5` selection used Mantle. After the upgrade, the same selection resolves to `openai.gpt-5.5` over Converse when it is listed. This path needs Converse invocation permissions, not only Mantle permissions. To keep using Mantle, add a `mantle_available_models` entry and select its full `name`, such as `openai.gpt-5.5`.
 - **Models without inference profiles:** Before the upgrade, a built-in selection such as `qwen3-32b` could refer to an on-demand model. If `qwen.qwen3-32b-v1:0` has no inference profile in your listing, it is no longer offered automatically. After the upgrade, add that full ID to `available_models` and select it:

@@ -340,6 +340,8 @@ pub struct State {
     /// Whether credentials came from environment variables (only relevant for static credentials)
     credentials_from_env: bool,
     credentials_provider: Arc<dyn CredentialsProvider>,
+    credential_store_task: Option<Task<()>>,
+    credential_delete_error: Option<String>,
     /// AWS credentials that expire, such as those from SSO, STS or a credential
     /// process, reused until shortly before they expire. Credentials without an
     /// expiry are resolved for every request instead, because the AWS SDK never
@@ -436,7 +438,10 @@ impl State {
             return;
         }
         let auth_changed = self.settings.authentication_method != settings.authentication_method
-            || self.settings.profile_name != settings.profile_name;
+            || (matches!(
+                settings.authentication_method,
+                Some(BedrockAuthMethod::NamedProfile | BedrockAuthMethod::SingleSignOn)
+            ) && self.settings.profile_name != settings.profile_name);
         let region_changed = self.get_region() != bedrock_region(&settings);
         let endpoint_changed = self.settings.endpoint != settings.endpoint;
         self.settings = settings;
@@ -454,9 +459,7 @@ impl State {
                 self.authenticate(cx).detach_and_log_err(cx);
             }
         } else if region_changed || endpoint_changed {
-            // A Region change also invalidates cached credentials and pending
-            // authentication reads, even when the auth method is unchanged.
-            self.set_auth(self.auth.clone());
+            self.expiring_credentials = None;
             self.listing = ModelListing::default();
             self.restart_fetch_models_task(cx);
         }
@@ -677,13 +680,48 @@ impl State {
         })
     }
 
+    // Reserve the position synchronously, even if the caller drops its result
+    // or the executor polls a later save first.
+    fn queue_credential_operation<E>(
+        &mut self,
+        cx: &mut Context<Self>,
+        operation: impl AsyncFnOnce(gpui::WeakEntity<Self>, &mut AsyncApp) -> Result<(), E> + 'static,
+    ) -> Task<Result<(), E>>
+    where
+        E: From<anyhow::Error> + 'static,
+    {
+        let previous = self.credential_store_task.take();
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        self.credential_store_task = Some(cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            drop(sender.send(operation(this, cx).await));
+        }));
+        cx.spawn(async move |_, _| {
+            receiver
+                .await
+                .context("Bedrock credential operation cancelled")?
+        })
+    }
+
     fn reset_auth(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.change_auth(None, false, cx);
         let credentials_provider = self.credentials_provider.clone();
-        cx.spawn(async move |_, cx| {
-            credentials_provider
+        self.credential_delete_error = None;
+        self.queue_credential_operation(cx, async move |this, cx| {
+            let result = credentials_provider
                 .delete_credentials(AMAZON_AWS_URL, cx)
-                .await
+                .await;
+            if let Err(error) = &result {
+                this.update(cx, |state, cx| {
+                    state.credential_delete_error = Some(format!(
+                        "Could not delete stored Bedrock credentials: {error:#}"
+                    ));
+                    cx.notify();
+                })?;
+            }
+            result
         })
     }
 
@@ -696,7 +734,7 @@ impl State {
         let credentials_provider = self.credentials_provider.clone();
         self.auth_generation += 1;
         let generation = self.auth_generation;
-        cx.spawn(async move |this, cx| {
+        self.queue_credential_operation(cx, async move |this, cx| {
             credentials_provider
                 .write_credentials(
                     AMAZON_AWS_URL,
@@ -706,6 +744,7 @@ impl State {
                 )
                 .await?;
             this.update(cx, |this, cx| {
+                this.credential_delete_error = None;
                 this.sync_settings(cx);
                 if this.auth_generation == generation {
                     this.change_auth(auth, false, cx);
@@ -737,12 +776,12 @@ impl State {
 
     /// Load static credentials from environment variables or keychain.
     fn load_static_credentials(
-        &self,
+        &mut self,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = self.credentials_provider.clone();
         let generation = self.auth_generation;
-        cx.spawn(async move |this, cx| {
+        self.queue_credential_operation(cx, async move |this, cx| {
             // Try environment variables first
             let (auth, from_env) = if let Some(bearer_token) = &ZED_BEDROCK_BEARER_TOKEN_VAR.value {
                 if !bearer_token.is_empty() {
@@ -926,6 +965,8 @@ impl BedrockLanguageModelProvider {
             settings: AllLanguageModelSettings::get_global(cx).bedrock.clone(),
             credentials_from_env: false,
             credentials_provider,
+            credential_store_task: None,
+            credential_delete_error: None,
             expiring_credentials: None,
             auth_generation: 0,
             http_client: http_client.clone(),
@@ -1303,7 +1344,7 @@ impl BedrockLanguageModelProvider {
         &self,
         cx: &AsyncApp,
         environment_variable: impl Fn(&str) -> Option<String>,
-        resolve: impl FnOnce(Option<BedrockAuth>, String) -> ResolveFuture,
+        resolve: impl FnOnce(BedrockAuth, String) -> ResolveFuture,
     ) -> Task<Result<BedrockRequestAuth>>
     where
         ResolveFuture: Future<Output = Result<BedrockRequestAuth>> + Send + 'static,
@@ -1349,7 +1390,7 @@ fn resolve_cached_request_auth<ResolveFuture>(
     state: &Entity<State>,
     cx: &AsyncApp,
     environment_variable: impl Fn(&str) -> Option<String>,
-    resolve: impl FnOnce(Option<BedrockAuth>, String) -> ResolveFuture,
+    resolve: impl FnOnce(BedrockAuth, String) -> ResolveFuture,
 ) -> Task<Result<BedrockRequestAuth>>
 where
     ResolveFuture: Future<Output = Result<BedrockRequestAuth>> + Send + 'static,
@@ -1373,7 +1414,10 @@ where
                 .map(|cached| cached.credentials.clone());
             (auth, region, state.auth_generation, cached_credentials)
         });
-    if !matches!(auth, Some(BedrockAuth::ApiKey { .. }))
+    let Some(auth) = auth else {
+        return Task::ready(Err(anyhow!("Amazon Bedrock is not authenticated")));
+    };
+    if !matches!(auth, BedrockAuth::ApiKey { .. })
         && let Some(api_key) = environment_bearer_token(environment_variable)
     {
         return Task::ready(Ok(BedrockRequestAuth::ApiKey { api_key }));
@@ -1398,9 +1442,9 @@ where
         {
             let credentials = credentials.clone();
             state.update(cx, |state, _| {
-                if state.auth_generation == auth_generation {
+                if state.auth_generation == auth_generation && state.get_region() == region {
                     state.expiring_credentials = Some(ExpiringCredentials {
-                        auth,
+                        auth: Some(auth),
                         region,
                         credentials,
                     });
@@ -1790,16 +1834,16 @@ fn aws_profile_name(auth: &Option<BedrockAuth>) -> Option<String> {
 /// credentials to sign the request with SigV4.
 async fn resolve_request_auth(
     http_client: AwsHttpClient,
-    auth: Option<BedrockAuth>,
+    auth: BedrockAuth,
     region: String,
 ) -> Result<BedrockRequestAuth> {
     let profile_name = match auth {
-        Some(BedrockAuth::ApiKey { api_key }) => return Ok(BedrockRequestAuth::ApiKey { api_key }),
-        Some(BedrockAuth::IamCredentials {
+        BedrockAuth::ApiKey { api_key } => return Ok(BedrockRequestAuth::ApiKey { api_key }),
+        BedrockAuth::IamCredentials {
             access_key_id,
             secret_access_key,
             session_token,
-        }) => {
+        } => {
             return Ok(BedrockRequestAuth::SigV4 {
                 credentials: Credentials::new(
                     access_key_id,
@@ -1810,7 +1854,10 @@ async fn resolve_request_auth(
                 ),
             });
         }
-        _ => aws_profile_name(&auth),
+        BedrockAuth::Automatic => None,
+        BedrockAuth::NamedProfile { profile_name } | BedrockAuth::SingleSignOn { profile_name } => {
+            Some(profile_name).filter(|name| !name.is_empty())
+        }
     };
 
     let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
@@ -3384,22 +3431,18 @@ impl ConfigurationView {
             Some(bearer_token)
         };
 
-        let state = self.state.clone();
-        cx.spawn(async move |_, cx| {
-            state
-                .update(cx, |state, cx| {
-                    let credentials = BedrockCredentials {
-                        access_key_id,
-                        secret_access_key,
-                        session_token,
-                        bearer_token,
-                    };
+        self.state
+            .update(cx, |state, cx| {
+                let credentials = BedrockCredentials {
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                    bearer_token,
+                };
 
-                    state.set_static_credentials(credentials, cx)
-                })
-                .await
-        })
-        .detach_and_log_err(cx);
+                state.set_static_credentials(credentials, cx)
+            })
+            .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3412,8 +3455,8 @@ impl ConfigurationView {
         self.bearer_token_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
-        let state = self.state.clone();
-        cx.spawn(async move |_, cx| state.update(cx, |state, cx| state.reset_auth(cx)).await)
+        self.state
+            .update(cx, |state, cx| state.reset_auth(cx))
             .detach_and_log_err(cx);
     }
 
@@ -3555,6 +3598,9 @@ impl Render for ConfigurationView {
                     ),
             )
             .child(credentials_control)
+            .when_some(state.credential_delete_error.clone(), |this, message| {
+                this.child(Label::new(message).color(Color::Error))
+            })
             .when_some(listing_message, |this, (message, warning)| {
                 this.child(
                     Label::new(message)
@@ -5333,6 +5379,158 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn signed_out_settings_models_do_not_resolve_credentials_or_send_requests(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({
+                    "available_models": [{"name":"vendor.chat", "max_tokens":10000}],
+                    "mantle_available_models": [{"name":"vendor.mantle", "max_tokens":10000, "protocol":"chat_completions"}]
+                }),
+            )?;
+            let provider = cx.update(|cx| {
+                new_test_provider(
+                    http_client::FakeHttpClient::create(|_| async {
+                        panic!("signed-out request reached HTTP")
+                    }),
+                    cx,
+                )
+            });
+            provider
+                .state
+                .update(cx, |state, _| state.set_auth(api_key_auth()));
+            let retained = cx.update(|cx| provider.provided_models(cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.reset_auth(cx))
+                .await?;
+            assert_eq!(retained.len(), 2);
+            for model in retained {
+                let error = provider
+                    .stream_completion(
+                        &model,
+                        LanguageModelRequest {
+                            messages: vec![user_message("hello")],
+                            ..Default::default()
+                        },
+                        &cx.to_async(),
+                    )
+                    .await
+                    .err()
+                    .context("signed out")?;
+                assert!(error.to_string().contains("not authenticated"), "{error}");
+            }
+            let result = provider
+                .resolve_request_auth_with(
+                    &cx.to_async(),
+                    |_| panic!("read environment"),
+                    |_, _| async { panic!("loaded AWS credentials") },
+                )
+                .await;
+            assert!(result.is_err());
+            anyhow::Ok(())
+        };
+        scenario.await.expect("signed-out settings models");
+    }
+
+    #[gpui::test]
+    async fn credential_operations_follow_submission_order(cx: &mut gpui::TestAppContext) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url":"https://gateway.test"}),
+            )?;
+            let store =
+                Arc::new(credentials_provider::test_support::FakeCredentialsProvider::default());
+            let provider = cx.update(|cx| {
+                BedrockLanguageModelProvider::new_with_cache(
+                    http_client::FakeHttpClient::with_404_response(),
+                    store.clone(),
+                    fs::FakeFs::new(cx.background_executor().clone()),
+                    TEST_CACHE_PATH.into(),
+                    cx,
+                )
+            });
+            let credential = |key: &str| BedrockCredentials {
+                bearer_token: Some(key.into()),
+                ..Default::default()
+            };
+            let blocked = store.defer_next_mutation();
+            let first = provider.state.update(cx, |state, cx| {
+                state.set_static_credentials(credential("first"), cx)
+            });
+            cx.run_until_parked();
+            let second = provider.state.update(cx, |state, cx| {
+                state.set_static_credentials(credential("second"), cx)
+            });
+            cx.run_until_parked();
+            assert!(store.state.lock().keys.is_empty());
+            blocked
+                .send(())
+                .map_err(|_| anyhow!("first save dropped"))?;
+            second.await?;
+            first.await?;
+            assert_eq!(
+                store.state.lock().keys.get(AMAZON_AWS_URL),
+                Some(&serde_json::to_vec(&credential("second"))?)
+            );
+            let blocked = store.defer_next_mutation();
+            let delete = provider.state.update(cx, |state, cx| state.reset_auth(cx));
+            cx.run_until_parked();
+            let read = cx.update(|cx| provider.authenticate(cx));
+            cx.run_until_parked();
+            store.assert_reads(&[]);
+            blocked.send(()).map_err(|_| anyhow!("delete dropped"))?;
+            delete.await?;
+            assert!(matches!(
+                read.await,
+                Err(AuthenticateError::CredentialsNotFound)
+            ));
+            assert!(!cx.update(|cx| provider.is_authenticated(cx)));
+            store.assert_reads(&[AMAZON_AWS_URL]);
+
+            store.state.lock().keys.insert(
+                AMAZON_AWS_URL.into(),
+                serde_json::to_vec(&credential("next"))?,
+            );
+            let blocked = store.defer_read(AMAZON_AWS_URL);
+            let read = cx.update(|cx| provider.authenticate(cx));
+            cx.run_until_parked();
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url":"https://next.test", "region":"eu-west-1"}),
+            )?;
+            cx.run_until_parked();
+            blocked.send(()).map_err(|_| anyhow!("read dropped"))?;
+            read.await?;
+            provider.state.read_with(cx, |state, _| {
+                assert_eq!(state.auth, credential("next").into_auth());
+                assert!(matches!(state.listing, ModelListing::Gateway));
+            });
+            let failed_delete = store.defer_next_mutation();
+            let delete = provider.state.update(cx, |state, cx| state.reset_auth(cx));
+            drop(failed_delete);
+            let error = delete.await.expect_err("fake deletion failed");
+            provider.state.read_with(cx, |state, _| {
+                assert!(
+                    state
+                        .credential_delete_error
+                        .as_deref()
+                        .is_some_and(|message| message.contains(&error.to_string()))
+                );
+                assert!(!state.is_authenticated());
+            });
+            anyhow::Ok(())
+        }
+        .await;
+        scenario.expect("ordered credential operations");
+    }
+
+    #[gpui::test]
     async fn pending_credential_reads_cannot_overwrite_new_auth_or_a_reset(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -5389,11 +5587,12 @@ mod tests {
                         .lock()
                         .keys
                         .insert(AMAZON_AWS_URL.into(), encoded("new")?);
-                    cx.update(|cx| provider.authenticate(cx)).await?;
+                    let next = cx.update(|cx| provider.authenticate(cx));
                     release
                         .send(())
                         .map_err(|_| anyhow!("credential receiver dropped"))?;
                     pending.await?;
+                    next.await?;
                     provider.state.read_with(cx, |state, _| {
                     assert!(matches!(&state.auth, Some(BedrockAuth::ApiKey { api_key }) if api_key == "new"));
                 });
