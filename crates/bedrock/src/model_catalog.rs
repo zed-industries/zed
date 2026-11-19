@@ -102,7 +102,17 @@ impl ListedModel {
         capability_catalog: &CapabilityCatalog,
     ) -> ConverseModel {
         ConverseModel {
-            id: self.id.clone(),
+            id: if self.id == self.base_model_id {
+                crate::stable_model_id(&self.base_model_id).to_string()
+            } else {
+                self.id.clone()
+            },
+            foundation_model_known: true,
+            route: if self.id == self.base_model_id {
+                crate::ConverseModelRoute::Automatic
+            } else {
+                crate::ConverseModelRoute::Pinned
+            },
             display_name: self.display_name.clone(),
             supports_images: self.supports_images,
             ..capability_catalog.describe(&self.base_model_id, request_id)

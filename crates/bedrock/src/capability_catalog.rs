@@ -381,9 +381,11 @@ impl ConverseModel {
     ) -> Self {
         let thinking = capabilities.and_then(|capabilities| capabilities.thinking(base_model_id));
         Self {
-            id: base_model_id.to_string(),
+            id: crate::stable_model_id(base_model_id).to_string(),
             request_id: request_id.to_string(),
             base_model_id: base_model_id.to_string(),
+            foundation_model_known: capabilities.is_some(),
+            route: crate::ConverseModelRoute::Automatic,
             display_name: capabilities
                 .map_or(base_model_id, |capabilities| &capabilities.name)
                 .to_string(),
