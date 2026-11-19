@@ -4880,7 +4880,8 @@ impl Thread {
     /// on behalf of the user stopping the thread. As with `stop_agent` and
     /// `stop_command`, nothing they produce is delivered back, so no turn
     /// starts. Instead, each one leaves a message after the history saying the
-    /// user stopped it, which the model reads before the user's next message.
+    /// user stopped it, which the model reads before the user's next message
+    /// and which is shown in the thread right away.
     /// The task resolves once the subagents have stopped.
     pub fn stop_background_work(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let mut notices = Vec::new();
@@ -4919,12 +4920,19 @@ impl Thread {
         if notices.is_empty() {
             return Task::ready(());
         }
-        for text in notices {
-            self.messages.push(Arc::new(Message::User(UserMessage {
+        let notices = notices
+            .into_iter()
+            .map(|text| UserMessage {
                 id: ClientUserMessageId::new(),
                 content: Arc::from([UserMessageContent::Text(text)]),
-            })));
-        }
+            })
+            .collect::<Vec<_>>();
+        self.messages.extend(
+            notices
+                .iter()
+                .map(|notice| Arc::new(Message::User(notice.clone()))),
+        );
+        cx.emit(BackgroundNoticesAdded(notices));
         cx.notify();
 
         cx.spawn(async move |_, cx| {
@@ -5792,6 +5800,14 @@ impl EventEmitter<TokenUsageUpdated> for Thread {}
 pub(crate) struct CancellationRequested;
 
 impl EventEmitter<CancellationRequested> for Thread {}
+
+/// Messages added after the history, outside of any turn, to tell the model
+/// about background work the user stopped. A turn's own messages reach the
+/// session through its event stream; these have none, so the session is told
+/// with this event, to show them as a replayed thread would.
+pub(crate) struct BackgroundNoticesAdded(pub Vec<UserMessage>);
+
+impl EventEmitter<BackgroundNoticesAdded> for Thread {}
 
 pub struct TitleUpdated;
 

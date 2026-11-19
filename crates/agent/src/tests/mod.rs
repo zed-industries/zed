@@ -7044,6 +7044,21 @@ async fn test_stopping_background_work_stops_a_subagent_on_the_idle_parent(
             .any(|request| is_parent_request(request)),
         "stopping the subagent should not start a turn on the parent"
     );
+
+    // The notice is shown in the thread right away, as it is once the thread
+    // is reopened, rather than only reaching the model.
+    let shown = acp_thread.read_with(cx, |thread, _| {
+        let message = thread
+            .entries()
+            .last()
+            .and_then(|entry| entry.user_message())
+            .expect("the notice should be the thread's last entry");
+        match message.content.source_blocks().first() {
+            Some(acp_v2::ContentBlock::Text(text)) => text.text.clone(),
+            _ => panic!("the notice should be shown as text"),
+        }
+    });
+    assert_eq!(shown, notice);
 }
 
 #[gpui::test]
