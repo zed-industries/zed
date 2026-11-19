@@ -37,12 +37,13 @@ fn init_trust_global(
 #[gpui::test]
 async fn test_differently_cased_db_trusted_parent_path(cx: &mut TestAppContext) {
     use fs::RealFs;
+    use std::path::Path;
     use util::{paths::SanitizedPath, test::TempTree};
 
     init_test(cx);
     cx.executor().allow_parking();
 
-    let dir = TempTree::new(json!({ "Dev": { "project": {} } }));
+    let dir = TempTree::new(json!({ "Dev": { "one": {}, "two": {} } }));
     let root = SanitizedPath::new(dir.path()).as_path().to_path_buf();
     cx.update(|cx| {
         init(
@@ -50,22 +51,32 @@ async fn test_differently_cased_db_trusted_parent_path(cx: &mut TestAppContext) 
             cx,
         )
     });
-    let project_path = root.join("Dev").join("project");
-    let untracked_project = Project::test(
-        RealFs::new(None, cx.executor()),
-        [project_path.as_path()],
-        cx,
-    )
-    .await;
-    let project = Project::test_with_worktree_trust(
-        RealFs::new(None, cx.executor()),
-        [project_path.as_path()],
-        cx,
-    )
-    .await;
+    let one = root.join("Dev").join("one");
+    let two = root.join("Dev").join("two");
+    let untracked_project =
+        Project::test(RealFs::new(None, cx.executor()), [one.as_path()], cx).await;
+    // Both tracked stores are registered before either opens a child of the trusted parent.
+    let no_paths: [&Path; 0] = [];
+    let project_a =
+        Project::test_with_worktree_trust(RealFs::new(None, cx.executor()), no_paths, cx).await;
+    let project_b =
+        Project::test_with_worktree_trust(RealFs::new(None, cx.executor()), no_paths, cx).await;
+    for (project, path) in [(&project_a, &one), (&project_b, &two)] {
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path, true, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+    }
 
     let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
-    for (project, trusted) in [(project, true), (untracked_project, false)] {
+    for (project, trusted) in [
+        (project_a, true),
+        (project_b, true),
+        (untracked_project, false),
+    ] {
         let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
         let worktree_id = worktree_store.read_with(cx, |store, cx| {
             store.worktrees().next().unwrap().read(cx).id()
@@ -74,8 +85,8 @@ async fn test_differently_cased_db_trusted_parent_path(cx: &mut TestAppContext) 
             assert_eq!(
                 store.can_trust(&worktree_store, worktree_id, cx),
                 trusted,
-                "a differently cased trusted parent should trust its subdirectory \
-                 only in worktree stores tracked for trust"
+                "a differently cased trusted parent should trust its subdirectories \
+                 in every worktree store tracked for trust, and only there"
             );
         });
     }

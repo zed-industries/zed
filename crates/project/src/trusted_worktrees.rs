@@ -457,29 +457,42 @@ impl TrustedWorktreesStore {
         worktree_abs_path: &Path,
         cx: &mut Context<Self>,
     ) -> Task<()> {
+        let worktree_store = worktree_store.downgrade();
         let is_local_store = self
             .worktree_stores
-            .get(&worktree_store.downgrade())
+            .get(&worktree_store)
             .is_some_and(|store_data| store_data.host.is_none());
-        let local_paths = self.db_trusted_paths.get(&None).into_iter().flatten();
+        let store_has_grant = self
+            .trusted_paths
+            .get(&worktree_store)
+            .into_iter()
+            .flatten()
+            .any(|trusted_path| match trusted_path {
+                PathTrust::AbsPath(path) => worktree_abs_path.starts_with(path),
+                PathTrust::Worktree(_) => false,
+            });
         if !cfg!(windows)
             || !is_local_store
+            || store_has_grant
             || ProjectSettings::get_global(cx).session.trust_all_worktrees
-            || local_paths
-                .clone()
-                .any(|path| worktree_abs_path.starts_with(path))
         {
             return Task::ready(());
         }
-        let mismatched_paths = local_paths
-            .filter(|path| starts_with_ignoring_ascii_case(worktree_abs_path, path))
+        let mismatched_paths = self
+            .db_trusted_paths
+            .get(&None)
+            .into_iter()
+            .flatten()
+            .filter(|path| {
+                !worktree_abs_path.starts_with(path)
+                    && starts_with_ignoring_ascii_case(worktree_abs_path, path)
+            })
             .cloned()
             .collect::<Vec<_>>();
         if mismatched_paths.is_empty() {
             return Task::ready(());
         }
 
-        let worktree_store = worktree_store.downgrade();
         cx.spawn(async move |this, cx| {
             let respelled_paths = cx
                 .background_spawn(async move {
