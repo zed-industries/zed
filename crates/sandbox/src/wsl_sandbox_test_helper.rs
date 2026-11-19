@@ -508,6 +508,8 @@ mod imp {
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: Vec::new(),
                     protected_file_names: Vec::new(),
+                    paths_disallowing_reads: Vec::new(),
+                    paths_allowing_reads: Vec::new(),
                 }
             } else {
                 SandboxFsPolicy::Restricted {
@@ -519,12 +521,15 @@ mod imp {
                         .collect(),
                     protected_paths: Vec::new(),
                     protected_file_names: Vec::new(),
+                    paths_disallowing_reads: Vec::new(),
+                    paths_allowing_reads: Vec::new(),
                 }
             },
             network: match permissions.network {
                 NetworkAccess::None => SandboxNetPolicy::Blocked,
                 NetworkAccess::All => SandboxNetPolicy::Unrestricted,
             },
+            allowed_unix_sockets: Vec::new(),
         };
         let command = CommandAndArgs {
             program: program.to_string(),
