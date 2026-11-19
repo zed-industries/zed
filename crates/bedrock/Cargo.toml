@@ -18,6 +18,7 @@ schemars = ["dep:schemars"]
 
 [dependencies]
 anyhow.workspace = true
+aws-sdk-bedrock.workspace = true
 aws-sdk-bedrockruntime.workspace = true
 aws-smithy-types.workspace = true
 futures.workspace = true

@@ -1587,6 +1587,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-bedrock"
+version = "1.169.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1126a137a270444a616d780a2f917fdbae93f4675a27262fb2ae3e8729d94600"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "fastrand 2.3.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-bedrockruntime"
 version = "1.156.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2131,6 +2154,7 @@ name = "bedrock"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-sdk-bedrock",
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
  "futures 0.3.34",

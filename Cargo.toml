@@ -578,6 +578,10 @@ aws-config = { version = "1.13.3", default-features = false, features = [
 aws-credential-types = { version = "1.3.1", features = [
     "hardcoded-credentials",
 ] }
+aws-sdk-bedrock = { version = "1.169.0", default-features = false, features = [
+    "behavior-version-latest",
+    "rt-tokio",
+] }
 aws-sdk-bedrockruntime = { version = "1.156.0", default-features = false, features = [
     "behavior-version-latest",
     "rt-tokio",
