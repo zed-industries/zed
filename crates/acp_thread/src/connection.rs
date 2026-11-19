@@ -764,10 +764,6 @@ impl AgentModelList {
             AgentModelList::Grouped(groups) => groups.is_empty(),
         }
     }
-
-    pub fn is_flat(&self) -> bool {
-        matches!(self, AgentModelList::Flat(_))
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1035,7 +1031,6 @@ mod test_support {
         supports_close_session: bool,
         announces_subagents: bool,
         close_sessions_on_release: bool,
-        supports_session_additional_directories: bool,
         supports_set_title: bool,
         supports_truncate: bool,
         agent_id: AgentId,
@@ -1086,7 +1081,6 @@ mod test_support {
                 supports_close_session: false,
                 announces_subagents: false,
                 close_sessions_on_release: true,
-                supports_session_additional_directories: false,
                 supports_set_title: true,
                 supports_truncate: true,
                 agent_id: AgentId::new("stub"),
@@ -1252,14 +1246,6 @@ mod test_support {
             self
         }
 
-        pub fn with_supports_session_additional_directories(
-            mut self,
-            supports_session_additional_directories: bool,
-        ) -> Self {
-            self.supports_session_additional_directories = supports_session_additional_directories;
-            self
-        }
-
         pub fn with_supports_set_title(mut self, supports_set_title: bool) -> Self {
             self.supports_set_title = supports_set_title;
             self
@@ -1411,10 +1397,6 @@ mod test_support {
                 Some(response) => cx.spawn(async move |_| response.await?),
                 None => Task::ready(Ok(())),
             }
-        }
-
-        fn supports_session_additional_directories(&self) -> bool {
-            self.supports_session_additional_directories
         }
 
         fn load_session(

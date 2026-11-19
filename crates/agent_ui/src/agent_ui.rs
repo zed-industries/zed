@@ -89,7 +89,6 @@ pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
 };
-use zed_actions;
 pub use zed_actions::agent::CycleFavoriteModels;
 pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 

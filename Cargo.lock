@@ -9582,7 +9582,6 @@ dependencies = [
  "language_model_core",
  "log",
  "parking_lot",
- "serde_json",
  "thiserror 2.0.21",
 ]
 

@@ -3316,33 +3316,6 @@ impl AgentPanel {
         thread_id
     }
 
-    pub fn activate_retained_thread(
-        &mut self,
-        id: ThreadId,
-        focus: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let conversation_view = if let Some(view) = self.remove_retained_thread(&id) {
-            self.try_make_empty_draft_ephemeral(view.clone(), cx);
-            view
-        } else if let Some(draft) = &self.draft_thread {
-            if draft.read(cx).thread_id == id {
-                draft.clone()
-            } else {
-                return;
-            }
-        } else {
-            return;
-        };
-        self.set_base_view(
-            BaseView::AgentThread { conversation_view },
-            focus,
-            window,
-            cx,
-        );
-    }
-
     pub fn active_thread_id(&self, cx: &App) -> Option<ThreadId> {
         match &self.base_view {
             BaseView::AgentThread { conversation_view } => {
@@ -3950,7 +3923,7 @@ impl AgentPanel {
 
         cx.spawn_in(window, async move |this, cx| {
             thread_store
-                .update(&mut cx.clone(), |store, cx| {
+                .update(cx, |store, cx| {
                     store.save_thread(session_id.clone(), db_thread, Default::default(), cx)
                 })
                 .await?;
