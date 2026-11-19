@@ -2135,7 +2135,13 @@ pub fn into_bedrock(
         Some(ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeOpus5_5)
     );
     let is_gpt_6_astra = reasoning_model == Some(ConverseModel::Gpt6Astra);
-    if always_adaptive && request.tool_choice == Some(LanguageModelToolChoice::Any) {
+    let base_model_id = model
+        .rsplit_once("anthropic.")
+        .map(|(_, id)| id)
+        .unwrap_or(&model);
+    if (!anthropic::supports_forced_tool_use(base_model_id) || always_adaptive)
+        && request.tool_choice == Some(LanguageModelToolChoice::Any)
+    {
         anyhow::bail!("{model} does not support forced tool use");
     }
 
@@ -2499,15 +2505,27 @@ pub fn into_bedrock(
             Some(bedrock::Thinking::Enabled { budget_tokens })
         }
         _ if !request.thinking_allowed
-            && model.ends_with(ConverseModel::ClaudeOpus5.request_id()) =>
+            && model.ends_with(ConverseModel::ClaudeSonnet5_5.request_id()) =>
         {
-            // Opus 5 defaults to adaptive thinking, so turning it off requires `disabled`.
+            // Sonnet 5.5 thinks by default but rejects `disabled`, so
+            // suppressing thinking must send its lowest setting instead.
+            Some(bedrock::Thinking::BetweenTools)
+        }
+        _ if !request.thinking_allowed
+            && (model.ends_with(ConverseModel::ClaudeOpus5.request_id())
+                || model.ends_with(ConverseModel::ClaudeHaiku5_5.request_id())) =>
+        {
+            // Opus 5 and Haiku 5.5 default to adaptive thinking, so turning it off requires `disabled`.
             // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
             Some(bedrock::Thinking::Disabled)
         }
         _ => None,
     };
-    let temperature = if always_adaptive || is_gpt_6_astra {
+    let omits_temperature = always_adaptive
+        || is_gpt_6_astra
+        || model.ends_with(ConverseModel::ClaudeSonnet5_5.request_id())
+        || model.ends_with(ConverseModel::ClaudeHaiku5_5.request_id());
+    let temperature = if omits_temperature {
         None
     } else {
         request.temperature.or(default_temperature)
@@ -4072,6 +4090,10 @@ mod tests {
         for (model, expects_temperature) in [
             ("global.anthropic.claude-opus-5-5", false),
             ("us.anthropic.claude-opus-5-5", false),
+            ("global.anthropic.claude-sonnet-5-5", false),
+            ("us.anthropic.claude-sonnet-5-5", false),
+            ("global.anthropic.claude-haiku-5-5", false),
+            ("us.anthropic.claude-haiku-5-5", false),
             ("us.anthropic.claude-opus-5", true),
             ("us.anthropic.claude-sonnet-5", true),
         ] {
@@ -4113,6 +4135,91 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_sonnet_5_5_and_haiku_5_5_tool_choice_and_thinking() -> Result<()> {
+        let sonnet_5_5 = ConverseModel::ClaudeSonnet5_5;
+        let haiku_5_5 = ConverseModel::ClaudeHaiku5_5;
+
+        // Tool choice support
+        assert!(!converse_language_model(&sonnet_5_5).tool_choice_support.any);
+        assert!(converse_language_model(&haiku_5_5).tool_choice_support.any);
+
+        let forced_sonnet = into_bedrock(
+            LanguageModelRequest {
+                tool_choice: Some(LanguageModelToolChoice::Any),
+                ..Default::default()
+            },
+            sonnet_5_5.cross_region_inference_id("us-east-1", false)?,
+            sonnet_5_5.default_temperature(),
+            sonnet_5_5.max_output_tokens(),
+            sonnet_5_5.thinking_mode(),
+            sonnet_5_5.supports_caching(),
+            sonnet_5_5.supports_tool_use(),
+            None,
+            None,
+        );
+        assert!(forced_sonnet.is_err());
+
+        let forced_haiku = into_bedrock(
+            LanguageModelRequest {
+                tool_choice: Some(LanguageModelToolChoice::Any),
+                ..Default::default()
+            },
+            haiku_5_5.cross_region_inference_id("us-east-1", false)?,
+            haiku_5_5.default_temperature(),
+            haiku_5_5.max_output_tokens(),
+            haiku_5_5.thinking_mode(),
+            haiku_5_5.supports_caching(),
+            haiku_5_5.supports_tool_use(),
+            None,
+            None,
+        );
+        assert!(forced_haiku.is_ok());
+
+        // When thinking is disallowed:
+        // Sonnet 5.5 sends between_tools
+        let disallowed_sonnet = into_bedrock(
+            LanguageModelRequest {
+                thinking_allowed: false,
+                ..Default::default()
+            },
+            sonnet_5_5.cross_region_inference_id("us-east-1", false)?,
+            sonnet_5_5.default_temperature(),
+            sonnet_5_5.max_output_tokens(),
+            sonnet_5_5.thinking_mode(),
+            sonnet_5_5.supports_caching(),
+            sonnet_5_5.supports_tool_use(),
+            None,
+            None,
+        )?;
+        assert!(matches!(
+            disallowed_sonnet.thinking,
+            Some(bedrock::Thinking::BetweenTools)
+        ));
+
+        // Haiku 5.5 sends disabled
+        let disallowed_haiku = into_bedrock(
+            LanguageModelRequest {
+                thinking_allowed: false,
+                ..Default::default()
+            },
+            haiku_5_5.cross_region_inference_id("us-east-1", false)?,
+            haiku_5_5.default_temperature(),
+            haiku_5_5.max_output_tokens(),
+            haiku_5_5.thinking_mode(),
+            haiku_5_5.supports_caching(),
+            haiku_5_5.supports_tool_use(),
+            None,
+            None,
+        )?;
+        assert!(matches!(
+            disallowed_haiku.thinking,
+            Some(bedrock::Thinking::Disabled)
+        ));
+
+        Ok(())
     }
 
     #[test]
