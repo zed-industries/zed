@@ -569,24 +569,24 @@ async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.33"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
-aws-config = { version = "1.8.10", default-features = false, features = [
+aws-config = { version = "1.13.3", default-features = false, features = [
     "behavior-version-latest",
     "credentials-process",
     "rt-tokio",
     "sso",
 ] }
-aws-credential-types = { version = "1.2.8", features = [
+aws-credential-types = { version = "1.3.1", features = [
     "hardcoded-credentials",
 ] }
-aws-sdk-bedrockruntime = { version = "1.112.0", default-features = false, features = [
+aws-sdk-bedrockruntime = { version = "1.156.0", default-features = false, features = [
     "behavior-version-latest",
     "rt-tokio",
 ] }
 aws-sdk-kinesis = { version = "1.51", default-features = false }
 aws-sdk-s3 = { version = "1.15", default-features = false }
-aws-sigv4 = { version = "1.4.0", features = ["http1"] }
-aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
-aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
+aws-sigv4 = { version = "1.6.6", features = ["http1"] }
+aws-smithy-runtime-api = { version = "1.22.0", features = ["http-1x", "client"] }
+aws-smithy-types = { version = "1.9.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
 betlang = "0.1.1"
