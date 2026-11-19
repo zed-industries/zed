@@ -2,6 +2,7 @@
   "$schema": "zed://schemas/settings",
   "experimental.permissions": {
     "default": "allowed",
+    "management": "automatic",
     "resources": [],
   },
   // The name of the Zed theme to use for the UI.

@@ -13356,10 +13356,9 @@ mod tests {
                 }
             }
             async fn obtain(_: &(), _: &()) -> Result<ResourceAcquisition<Self>> {
-                Ok(ResourceAcquisition::Ready {
-                    resource: Self,
-                    action: None,
-                })
+                Ok(ResourceAcquisition::RequiresAction(Box::new(|| {
+                    async { Ok(Self) }.boxed_local()
+                })))
             }
         }
         impl ManagedResourceCommand<Self> for TestResource {
@@ -13385,26 +13384,25 @@ mod tests {
             cx.set_global(settings);
         });
         cx.add_empty_window();
-        let store = cx.update(|cx| AppState::create_managed_resources(fs, cx));
         for (settings, answers, expected) in [
             (r#"{}"#, vec![], Ok(true)),
             (
-                r#"{"experimental.permissions":{"default":"prompt"}}"#,
+                r#"{"experimental.permissions":{"management":"ask"}}"#,
                 vec!["Deny"],
                 Err(false),
             ),
             (
-                r#"{"experimental.permissions":{"default":"prompt"}}"#,
+                r#"{"experimental.permissions":{"management":"ask","default":"prompt"}}"#,
                 vec!["Allow", "Deny"],
                 Err(true),
             ),
             (
-                r#"{"experimental.permissions":{"default":"prompt"}}"#,
+                r#"{"experimental.permissions":{"management":"ask","default":"prompt"}}"#,
                 vec!["Allow", "Allow"],
                 Ok(true),
             ),
             (
-                r#"{"experimental.permissions":{"default":"allowed","resources":[{"resource":"npm","obtain":"prompt"}]}}"#,
+                r#"{"experimental.permissions":{"default":"allowed","resources":[{"resource":"npm","management":"ask"}]}}"#,
                 vec!["Allow"],
                 Ok(true),
             ),
@@ -13421,6 +13419,11 @@ mod tests {
             (
                 r#"{"experimental.permissions":{"default":"denied"}}"#,
                 vec![],
+                Err(true),
+            ),
+            (
+                r#"{"experimental.permissions":{"management":"never"}}"#,
+                vec![],
                 Err(false),
             ),
         ] {
@@ -13430,6 +13433,7 @@ mod tests {
                     .expect("valid settings");
             });
             cx.run_until_parked();
+            let store = cx.update(|cx| AppState::create_managed_resources(fs.clone(), cx));
             let mut task = store.update(cx, |store, cx| {
                 store.execute_command::<TestResource>(
                     (),

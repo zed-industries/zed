@@ -38,12 +38,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
-/// Permissions for acquisition and execution of managed resources.
+/// Policies for managing binaries and executing commands.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(default)]
 pub struct ResourcePermissionsContent {
-    /// Permission for actions without an explicit override. Applies to acquisition and execution.
+    /// Permission for commands without an explicit override.
     pub default: Option<ResourcePermission>,
+    /// Policy for management attempts, including network checks, downloads and updates.
+    pub management: Option<ResourceManagement>,
     /// Ordered resource rules. The first matching entry wins.
     pub resources: Vec<ResourcePermissionContent>,
 }
@@ -51,7 +53,7 @@ pub struct ResourcePermissionsContent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ResourcePermissionContent {
     pub resource: ResourceSpecifier,
-    pub obtain: Option<ResourcePermission>,
+    pub management: Option<ResourceManagement>,
     #[serde(flatten)]
     pub settings: BTreeMap<String, serde_json::Value>,
 }
@@ -96,7 +98,7 @@ impl ResourcePermissionsContent {
             .find(|entry| entry.resource.matches(id))
     }
 
-    pub fn set_obtain_permission(
+    pub fn set_management_permission(
         &mut self,
         id: ResourceId,
         permission: Option<ResourcePermission>,
@@ -117,15 +119,15 @@ impl ResourcePermissionsContent {
             } else {
                 ResourcePermissionContent {
                     resource: specifier,
-                    obtain: None,
+                    management: None,
                     settings: BTreeMap::new(),
                 }
             };
-            entry.obtain = permission;
+            entry.management = permission.map(Into::into);
             self.resources.insert(insertion_position, entry);
         } else if let Some(position) = position {
             let entry = &mut self.resources[position];
-            entry.obtain = None;
+            entry.management = None;
             if entry.settings.is_empty() {
                 self.resources.remove(position);
             }
@@ -145,6 +147,37 @@ pub enum ResourcePermission {
     Allowed,
     Denied,
     Prompt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceManagement {
+    /// Zed may check for, install, and update its managed binaries.
+    Automatic,
+    /// Ask before each management attempt, including network checks.
+    Ask,
+    /// Only use existing binaries; never check for downloads or updates.
+    Never,
+}
+
+impl From<ResourceManagement> for ResourcePermission {
+    fn from(policy: ResourceManagement) -> Self {
+        match policy {
+            ResourceManagement::Automatic => Self::Allowed,
+            ResourceManagement::Ask => Self::Prompt,
+            ResourceManagement::Never => Self::Denied,
+        }
+    }
+}
+
+impl From<ResourcePermission> for ResourceManagement {
+    fn from(permission: ResourcePermission) -> Self {
+        match permission {
+            ResourcePermission::Allowed => Self::Automatic,
+            ResourcePermission::Prompt => Self::Ask,
+            ResourcePermission::Denied => Self::Never,
+        }
+    }
 }
 
 /// A non-negative size in pixels.

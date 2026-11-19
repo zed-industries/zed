@@ -6488,8 +6488,43 @@ async fn managed_resource_approvals_reach_the_client(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) {
-    use managed_resources::{ExecutionBillRoot, ResourceAccessError, ResourceExecutionBill};
-    use node_runtime::{InstallNpmPackages, NodeBinaryOptions, Npm, NpmContext};
+    use managed_resources::{
+        ExecutionBillRoot, ManagedResource, ManagedResourceCommand, NpmResourceId,
+        ResourceAccessError, ResourceAcquisition, ResourceExecutionBill, ResourceId,
+        ResourcePermission,
+    };
+
+    struct ManagementProbe;
+    impl ManagedResource for ManagementProbe {
+        type Key = String;
+        type Context = ();
+        type Command = Self;
+        type CommandKind = ();
+        fn id(key: &String) -> ResourceId {
+            ResourceId::Npm {
+                payload: NpmResourceId { name: key.clone() },
+            }
+        }
+        async fn obtain(_: &String, _: &()) -> anyhow::Result<ResourceAcquisition<Self>> {
+            Ok(ResourceAcquisition::RequiresAction(Box::new(|| {
+                async { anyhow::bail!("management attempt reached") }.boxed_local()
+            })))
+        }
+    }
+    impl ManagedResourceCommand<Self> for ManagementProbe {
+        type Output = ();
+        type PermissionSettings = ();
+        fn command_kind(&self) {}
+        fn permission(&self, _: &()) -> Option<ResourcePermission> {
+            None
+        }
+        fn permission_description(&self, _: &Self) -> String {
+            "unused".into()
+        }
+        async fn run(self, _: &Self) {
+            panic!("management did not return a resource")
+        }
+    }
 
     let fs = FakeFs::new(server_cx.executor());
     let (project, headless) = init_test(&fs, cx, server_cx).await;
@@ -6501,22 +6536,22 @@ async fn managed_resource_approvals_reach_the_client(
     for (settings, answer, denied) in [
         (r#"{}"#, None, false),
         (
-            r#"{"experimental.permissions":{"default":"prompt"}}"#,
+            r#"{"experimental.permissions":{"management":"ask"}}"#,
             Some("Deny"),
             true,
         ),
         (
-            r#"{"experimental.permissions":{"default":"prompt"}}"#,
+            r#"{"experimental.permissions":{"management":"ask"}}"#,
             Some("Allow"),
             false,
         ),
         (
-            r#"{"experimental.permissions":{"default":"allowed","resources":[{"resource":"npm","obtain":"prompt"}]}}"#,
+            r#"{"experimental.permissions":{"default":"allowed","resources":[{"resource":"npm","management":"ask"}]}}"#,
             Some("Deny"),
             true,
         ),
         (
-            r#"{"experimental.permissions":{"default":"denied"}}"#,
+            r#"{"experimental.permissions":{"management":"never"}}"#,
             None,
             true,
         ),
@@ -6528,26 +6563,16 @@ async fn managed_resource_approvals_reach_the_client(
         });
         server_cx.run_until_parked();
         let mut task = store.update(server_cx, |store, cx| {
-            store.execute_command::<Npm>(
+            store.execute_command::<ManagementProbe>(
                 "remote-runtime".into(),
-                Rc::new(NpmContext {
-                    http: Arc::new(BlockedHttpClient),
-                    options: NodeBinaryOptions {
-                        allow_path_lookup: false,
-                        allow_binary_download: false,
-                        use_paths: None,
-                    },
-                }),
+                Rc::new(()),
                 ResourceExecutionBill {
                     root: ExecutionBillRoot::Extension {
                         id: "remote-extension".into(),
                     },
                     reasoning: vec!["Install dependencies".into()],
                 },
-                InstallNpmPackages {
-                    directory: PathBuf::from(path!("/unused")),
-                    packages: vec![],
-                },
+                ManagementProbe,
                 cx,
             )
         });
@@ -6561,6 +6586,7 @@ async fn managed_resource_approvals_reach_the_client(
             assert!(title.contains("remote host"));
             assert!(detail.contains("remote-runtime"));
             assert!(detail.contains("remote-extension"));
+            assert!(detail.contains("network checks"));
             cx.simulate_prompt_answer(answer);
         }
         let result = task.await;
@@ -6569,7 +6595,7 @@ async fn managed_resource_approvals_reach_the_client(
         } else {
             assert!(
                 matches!(result, Err(ResourceAccessError::Obtain(_))),
-                "approval must reach acquisition, which has no runtime available"
+                "approval must reach the deferred management attempt"
             );
         }
         assert!(!cx.has_pending_prompt());
