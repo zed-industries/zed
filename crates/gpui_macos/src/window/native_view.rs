@@ -678,7 +678,25 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
         let requested = lock.native_views.containing(responder);
         let focused = lock.native_views.focused;
         let clicked = lock.native_views.clicked;
+        let focused_view = focused
+            .and_then(|id| lock.native_views.shown(id))
+            .map(|attached| attached.view.clone());
+        let is_gpui_view = responder == lock.native_view.as_ptr();
         drop(lock);
+
+        // AppKit offers the GPUI view first responder on every press inside it. While
+        // GPUI's focus stays on a native view, taking it and handing it straight back
+        // would make the native view lose and regain keyboard input, so it is refused.
+        // A press that moves GPUI's focus clears `focused` first, and is accepted.
+        if is_gpui_view && let Some(focused_view) = focused_view {
+            let current: *mut AnyObject = msg_send![this, firstResponder];
+            let is_view: bool =
+                !current.is_null() && msg_send![current, isKindOfClass: class!(NSView)];
+            let inside: bool = is_view && msg_send![current, isDescendantOf: &*focused_view];
+            if inside {
+                return Bool::NO;
+            }
+        }
 
         // Web views ask for first responder on their own, such as when a page script
         // focuses its window. Only GPUI's focus, a click, or VoiceOver's cursor may move it.
@@ -699,13 +717,15 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
 
         match requested {
             Some(requested) if focused != Some(requested) => {
-                let mut lock = window_state.lock();
-                lock.native_views.focused = Some(requested);
-                if let Some(mut callback) = lock.native_views.focused_callback.take() {
-                    drop(lock);
+                let callback = window_state.lock().native_views.focused_callback.take();
+                if let Some(mut callback) = callback {
                     callback(requested);
                     window_state.lock().native_views.focused_callback = Some(callback);
                 }
+                // GPUI records the view as focused when it follows. If it could not,
+                // such as while the window's focus is disabled, this takes first
+                // responder back so the two never disagree.
+                reconcile_first_responder(&window_state);
             }
             // Anything else that moved first responder away from the view GPUI has
             // focused is undone, such as AppKit handing it to the window itself, or
@@ -732,9 +752,21 @@ unsafe fn key_down_for_native_view(
         if event_type != NSEventType::KeyDown {
             return None;
         }
-        let lock = window_state.try_lock()?;
+        let mut lock = window_state.try_lock()?;
         if lock.native_views.views.is_empty() {
             return None;
+        }
+        // AppKit can move first responder without asking the window, such as when
+        // the responder leaves the view hierarchy. The press belongs to the view
+        // GPUI has focused, so first responder is returned to it before routing.
+        if lock
+            .native_views
+            .focused
+            .is_some_and(|id| lock.native_views.shown(id).is_some())
+        {
+            drop(lock);
+            reconcile_first_responder(window_state);
+            lock = window_state.try_lock()?;
         }
         let first_responder: *mut AnyObject = msg_send![window, firstResponder];
         lock.native_views.containing(first_responder)?;

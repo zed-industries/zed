@@ -28,7 +28,9 @@ pub struct NativeViewId(u64);
 ///
 /// Mouse input over the uncovered part of the view goes to the view, and to
 /// nothing behind it. The window's own content is still told of a mouse press
-/// there, as a press outside every element.
+/// there, as a press outside every element. An element behind the view hears
+/// no mouse moves while the pointer is over it, so follow a drag that can cross
+/// the view with `on_drag_move`, or with an element in front of the view.
 ///
 /// The view takes keyboard input directly from the platform while its
 /// [`FocusHandle`] is focused, which a click on the view does, as can an

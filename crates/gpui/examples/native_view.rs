@@ -323,16 +323,6 @@ mod example {
                         cx.notify();
                     }
                 }))
-                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                    if this.resizing_sidebar {
-                        this.sidebar_width = event.position.x.clamp(px(120.), px(600.));
-                        cx.notify();
-                    }
-                }))
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, _| this.resizing_sidebar = false),
-                )
                 .child(
                     div()
                         .flex_none()
@@ -420,7 +410,10 @@ mod example {
                         .cursor_col_resize()
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|this, _, _, _| this.resizing_sidebar = true),
+                            cx.listener(|this, _, _, cx| {
+                                this.resizing_sidebar = true;
+                                cx.notify();
+                            }),
                         ),
                 )
                 .child(
@@ -434,6 +427,28 @@ mod example {
                 )
                 .when(self.focus_before_palette.is_some(), |this| {
                     this.child(self.render_palette(cx))
+                })
+                // The web view blocks the mouse from everything behind it, so the
+                // drag is followed by an element in front of it.
+                .when(self.resizing_sidebar, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .occlude()
+                            .cursor_col_resize()
+                            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                                this.sidebar_width = event.position.x.clamp(px(120.), px(600.));
+                                cx.notify();
+                            }))
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.resizing_sidebar = false;
+                                    cx.notify();
+                                }),
+                            ),
+                    )
                 })
         }
     }
