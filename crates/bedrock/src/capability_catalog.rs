@@ -760,4 +760,23 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn offers_a_govcloud_region_its_own_geography() -> Result<()> {
+        let catalog = catalog(json!({
+            "us.vendor.chat": entry("Chat (US)", json!({})),
+            "us-gov.vendor.chat": entry("Chat (GovCloud)", json!({})),
+        }))?;
+        let request_ids = |region| {
+            catalog
+                .models_for_region(region, false)
+                .into_iter()
+                .map(|model| model.request_id)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(request_ids("us-gov-west-1"), ["us-gov.vendor.chat"]);
+        assert_eq!(request_ids("us-west-2"), ["us.vendor.chat"]);
+        Ok(())
+    }
 }
