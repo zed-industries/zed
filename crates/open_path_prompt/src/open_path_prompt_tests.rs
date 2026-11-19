@@ -968,3 +968,31 @@ async fn test_open_path_prompt_relative_to(cx: &mut TestAppContext) {
         vec![expected_separator, "subdir", "file_in_root"]
     );
 }
+
+#[gpui::test]
+async fn test_open_path_prompt_relative_to_file_root(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/repro"),
+            json!({
+                "a.txt": "Content",
+                "b.txt": "Content",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/repro/a.txt").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    for creating_path in [false, true] {
+        let relative_to = workspace.read_with(cx, |workspace, cx| {
+            OpenPathPrompt::relative_to(workspace, creating_path, cx)
+        });
+        assert_eq!(relative_to, std::path::PathBuf::from(path!("/repro")));
+    }
+}
