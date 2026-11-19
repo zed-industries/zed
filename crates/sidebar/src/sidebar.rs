@@ -657,6 +657,7 @@ fn regroup_unused_legacy_delta_project_groups(
 ) {
     let thread_store = ThreadMetadataStore::global(cx);
     let terminal_store = TerminalThreadMetadataStore::global(cx);
+    // Before both stores load, every legacy header looks unused and would be replaced.
     if !thread_store.read(cx).is_loaded() || !terminal_store.read(cx).is_loaded() {
         return;
     }
@@ -793,6 +794,7 @@ fn root_paths_tooltip(root_paths: impl IntoIterator<Item = impl AsRef<Path>>) ->
         .into()
 }
 
+// Enter runs an entry's handler while the menu is being updated, so dismissing it directly would panic.
 fn defer_menu_dismissal(menu: &WeakEntity<ContextMenu>, window: &mut Window, cx: &mut App) {
     let menu = menu.clone();
     window.defer(cx, move |_, cx| {
@@ -2937,6 +2939,8 @@ impl Sidebar {
         .into_any_element()
     }
 
+    // Warms `worktree_default_branches` for every open workspace, so the submenu can read the result synchronously when it opens.
+    // The cache is keyed by Git identity, not by project group: the Delta checkouts of one group are separate clones with their own refs.
     fn prefetch_worktree_default_branches(&mut self, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;

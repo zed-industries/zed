@@ -127,6 +127,7 @@ pub trait Sidebar: Focusable + Render + EventEmitter<SidebarEvent> + Sized {
     fn is_threads_list_view_active(&self) -> bool {
         true
     }
+    /// Whether the sidebar still lists, under the old group, saved threads or terminals that do not move with the re-keyed workspace.
     fn retains_project_group(
         &self,
         _old_worktree_paths: &WorktreePaths,

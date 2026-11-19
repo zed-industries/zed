@@ -69,6 +69,7 @@ pub(crate) fn list_thread_metadata_from_connection(
 ) -> anyhow::Result<Vec<ThreadMetadata>> {
     match connection.select::<ThreadMetadata>(ThreadMetadataDb::LIST_QUERY) {
         Ok(mut list_thread_metadata) => list_thread_metadata(),
+        // Thread import reads the database of another release channel, whose migrations may not have added `delta_clones` yet.
         Err(_) => connection
             .select::<ThreadMetadata>(ThreadMetadataDb::LIST_QUERY_WITHOUT_DELTA_CLONES)?(
         ),

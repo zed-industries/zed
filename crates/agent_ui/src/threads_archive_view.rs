@@ -1769,6 +1769,7 @@ async fn load_project_picker_workspaces(
         .filter(|workspace| is_open(workspace) && !is_current(workspace))
         .map(|workspace| workspace.workspace_id)
         .collect();
+    // The current workspace's group stays under "Recent Projects", as on `main`, so a newer member of it can still be chosen.
     let this_window_group_keys = workspaces
         .iter()
         .filter(|workspace| is_open(workspace) && !is_current(workspace))

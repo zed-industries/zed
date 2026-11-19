@@ -11124,6 +11124,7 @@ pub fn delta_checkout_short_name(
         });
     let name = [
         namespace,
+        // Delta appends `-2`, `-3`, … to a mount path that is taken, so that suffix tells two checkouts of one namespace apart.
         clone_name
             .filter(|clone_name| !is_in_namespace_folder || is_numbered_mount_name(clone_name)),
         linked_name.as_deref(),

@@ -587,6 +587,8 @@ impl WorktreePickerDelegate {
     }
 
     fn other_open_workspaces(&self, window: &Window, cx: &App) -> Vec<OpenWorkspace> {
+        // `Picker::new` runs the first `update_matches`, possibly inside an update of the active workspace.
+        // Before the Git list loads, a sibling that a Git row opens would also get its own row.
         if !self.worktrees_loaded {
             return Vec::new();
         }
@@ -658,6 +660,7 @@ impl WorktreePickerDelegate {
         let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() else {
             return;
         };
+        // A workspace joins or leaves the group through `WorktreePathsChanged`, for which `MultiWorkspace` emits no event.
         let projects = multi_workspace
             .read(cx)
             .workspaces()
@@ -3127,7 +3130,7 @@ mod tests {
             selected_picker_row(&worktree_picker, &mut cx),
             Some("create: named".to_string())
         );
-        set_picker_query(&worktree_picker, "tre", &mut cx);
+        set_picker_query(&worktree_picker, "tr", &mut cx);
         assert_eq!(
             selected_picker_row(&worktree_picker, &mut cx),
             Some(format!("git: {}", source_path.display()))

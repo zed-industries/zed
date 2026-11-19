@@ -2260,6 +2260,7 @@ impl GitRepository for RealGitRepository {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     let mut worktrees =
                         parse_worktrees_from_str(&stdout, main_worktree_path.as_deref());
+                    // When the common directory is not `<checkout>/.git`, `git worktree list` prints the Git directory itself as the main worktree.
                     if main_worktree_path.is_none()
                         && let Some(index) = main_worktree_index(&stdout, &worktrees)
                     {

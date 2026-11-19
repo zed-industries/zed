@@ -4703,6 +4703,8 @@ impl BackgroundScanner {
             .await;
         }
 
+        // With a deferred watch the initial scan ran with `NullWatcher`, so the Delta source inputs were not watched.
+        // Watch them now and read them again, as they may have changed in between.
         if self.defer_watch {
             self.refresh_source_common_dirs().await;
         }
