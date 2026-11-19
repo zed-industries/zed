@@ -17168,12 +17168,13 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
             unicode_text,
             "text working-tree-encoding=UTF-16",
         ),
+        // Git checks history out before textconv, which would add `\r` with `core.autocrlf`.
         case(
             "latin_working_tree_textconv.py",
             encoding_rs::WINDOWS_1252,
             false,
             windows_1252_text,
-            "text working-tree-encoding=WINDOWS-1252 diff=windows_1252",
+            "text eol=lf working-tree-encoding=WINDOWS-1252 diff=windows_1252",
         ),
         // Windows-1252 can't represent the emoji, so the buffer is blamed as UTF-8.
         Case {
