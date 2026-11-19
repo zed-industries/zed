@@ -949,6 +949,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_builtin_type_highlighting() {
+        let source = Rope::from(
+            "class B { add(): this { return this; } }\nfunction log(): void { void 0; }",
+        );
+        let theme =
+            SyntaxTheme::new_test([("keyword", Hsla::red()), ("type.builtin", Hsla::blue())]);
+
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            language.set_theme(&theme);
+            let grammar = language.grammar().expect("grammar should be loaded");
+            let builtin_highlight = grammar
+                .highlight_id_for_name("type.builtin")
+                .expect("type.builtin highlight should be defined");
+            let keyword_highlight = grammar
+                .highlight_id_for_name("keyword")
+                .expect("keyword highlight should be defined");
+
+            let highlights = language.highlight_text(&source, 0..source.len());
+            for expected in [
+                (17..21, builtin_highlight),
+                (57..61, builtin_highlight),
+                (64..68, keyword_highlight),
+            ] {
+                assert!(
+                    highlights.contains(&expected),
+                    "{}: expected {expected:?} in {highlights:?}",
+                    language.name()
+                );
+            }
+        }
+    }
+
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
         for language in [
