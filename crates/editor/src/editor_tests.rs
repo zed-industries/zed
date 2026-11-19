@@ -24220,6 +24220,82 @@ async fn test_completion_with_explicit_replace_range(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_does_not_duplicate_autoclosed_pair_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            ..CompletionSettingsContent::default()
+        });
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    let language_registry = cx.language_registry();
+    let language = rust_lang();
+    let completion_list = Arc::new(Mutex::new(None::<lsp::CompletionList>));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        language.name(),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let completion_list = completion_list.clone();
+                move |server| {
+                    let completion_list = completion_list.clone();
+                    server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+                        let completion_list = completion_list
+                            .lock()
+                            .clone()
+                            .expect("completion list should be set before requesting completions");
+                        async move { Ok(Some(lsp::CompletionResponse::List(completion_list))) }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    language_registry.add(language.clone());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    let _language_server = fake_servers
+        .next()
+        .await
+        .expect("language server should start");
+    cx.executor().run_until_parked();
+
+    // Simulate a language server (e.g. clangd with its `#include`
+    // completions) returning a completion that ends with the same delimiter
+    // Zed autoclosed right after the cursor.
+    *completion_list.lock() = Some(lsp::CompletionList {
+        items: vec![lsp::CompletionItem {
+            label: "abc".to_string(),
+            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
+                new_text: "abc\"".to_string(),
+            })),
+            ..lsp::CompletionItem::default()
+        }],
+        ..lsp::CompletionList::default()
+    });
+
+    cx.set_state(r#"let s = ˇ"#);
+    cx.simulate_keystroke("\"");
+    cx.assert_editor_state(r#"let s = "ˇ""#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions, window, cx);
+    });
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, window, cx| {
+        editor.confirm_completion(&ConfirmCompletion::default(), window, cx)
+    })
+    .expect("completion should be accepted")
+    .await
+    .expect("completion should succeed");
+    cx.assert_editor_state(r#"let s = "abc"ˇ"#);
+}
+
+#[gpui::test]
 async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(

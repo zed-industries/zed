@@ -895,11 +895,48 @@ impl Editor {
         let CompletionEdit {
             new_text,
             snippet,
-            replace_range,
+            mut replace_range,
         } = process_completion_for_edit(&completion, intent, &buffer_handle, &initial_position, cx);
 
         let buffer = buffer_handle.read(cx).snapshot();
         let newest_selection = self.selections.newest_anchor();
+
+        // Some language servers return completions that themselves end with the
+        // closing delimiter of the bracket pair the cursor is in (clangd, for
+        // instance, returns `#include` completions ending with `"` or `>`).
+        // If that delimiter was autoclosed right after the range the
+        // completion is about to replace, consume the autoclosed delimiter
+        // instead of inserting a duplicate of it (e.g. `#include "foo.h""`).
+        let mut consumed_region_ix = None;
+        for (ix, region) in self.autoclose_regions.iter().enumerate() {
+            if region.selection_id != newest_selection.id
+                || !new_text.ends_with(region.pair.end.as_str())
+            {
+                continue;
+            }
+            let Some((region_start, region_snapshot)) =
+                multibuffer_snapshot.anchor_to_buffer_anchor(region.range.start)
+            else {
+                continue;
+            };
+            if region_start.buffer_id != replace_range.end.buffer_id {
+                continue;
+            }
+            // Compare offsets instead of anchors: the two anchors may differ
+            // in bias (`anchor_before` vs `anchor_after`) at the same position.
+            let region_start_offset = region_start.to_offset(region_snapshot);
+            if replace_range.end.to_offset(&buffer) != region_start_offset {
+                continue;
+            }
+            let region_end =
+                region_start_offset + region.pair.end.chars().map(char::len_utf8).sum::<usize>();
+            replace_range.end = region_snapshot.anchor_after(region_end);
+            consumed_region_ix = Some(ix);
+            break;
+        }
+        if let Some(ix) = consumed_region_ix {
+            self.autoclose_regions.remove(ix);
+        }
 
         let Some(replace_range_multibuffer) =
             multibuffer_snapshot.buffer_anchor_range_to_anchor_range(replace_range.clone())
