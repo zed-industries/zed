@@ -1365,6 +1365,36 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
+
+    /// Adds a platform view beneath the window's rendered content, hidden
+    /// until a drawn scene contains a [`PaintNativeView`](crate::PaintNativeView)
+    /// for it. Dropping the returned value removes the view from the window.
+    /// Returns `None` when the platform cannot composite native views.
+    ///
+    /// # Safety
+    ///
+    /// `view` must point to a live view of the kind this platform embeds,
+    /// which is not in another view hierarchy.
+    unsafe fn attach_native_view(
+        &self,
+        _id: crate::NativeViewId,
+        _view: std::ptr::NonNull<std::ffi::c_void>,
+    ) -> Option<Box<dyn std::any::Any>> {
+        None
+    }
+    /// Gives keyboard input to the native view, or back to the window's own
+    /// content for `None`.
+    fn set_focused_native_view(&self, _id: Option<crate::NativeViewId>) {}
+    /// Registers the callback that decides whether a mouse event at a
+    /// position belongs to a native view instead of the window's content.
+    fn on_hit_test_native_view(
+        &self,
+        _callback: Box<dyn FnMut(Point<Pixels>) -> Option<crate::NativeViewId>>,
+    ) {
+    }
+    /// Registers the callback invoked when the user moves keyboard input to
+    /// a native view through the platform, such as by clicking in it.
+    fn on_native_view_focused(&self, _callback: Box<dyn FnMut(crate::NativeViewId)>) {}
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);

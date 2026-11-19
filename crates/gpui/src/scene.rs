@@ -5,8 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Path,
-    PathTiles, Pixels, Point, Radians, ScaledPixels, Size, TimedTransformation,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, HitboxId, Hsla,
+    NativeViewId, Path, PathTiles, Pixels, Point, Radians, ScaledPixels, Size, TimedTransformation,
     bounds_tree::BoundsTree,
 };
 use smallvec::SmallVec;
@@ -60,6 +60,7 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    pub native_views: Vec<PaintNativeView>,
     animations: Vec<SpriteAnimation>,
 }
 
@@ -78,6 +79,7 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.native_views.clear();
         self.animations.clear();
     }
 
@@ -133,7 +135,7 @@ impl Scene {
             primitives: SmallVec::new(),
             bounds: Bounds::default(),
             max_kind: PrimitiveKind::Shadow,
-            max_shared_kind: PrimitiveKind::Surface,
+            max_shared_kind: PrimitiveKind::NativeView,
         });
         self.paint_operations.push(PaintOperation::StartLayer);
     }
@@ -221,6 +223,10 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface);
             }
+            Primitive::NativeView(native_view) => self.native_views.push(PaintNativeView {
+                order,
+                ..native_view
+            }),
         }
     }
 
@@ -261,6 +267,8 @@ impl Scene {
             (sprite.order, sprite.tile.texture_id.index)
         });
         self.surfaces.sort_by_key(|surface| surface.order);
+        self.native_views
+            .sort_by_key(|native_view| native_view.order);
 
         // Sorting moved the sprites, so animations learn where theirs ended up.
         if !self.animations.is_empty() {
@@ -297,6 +305,8 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            native_views_start: 0,
+            native_views_iter: self.native_views.iter().peekable(),
         }
     }
 }
@@ -370,6 +380,7 @@ pub(crate) enum PrimitiveKind {
     SubpixelSprite,
     PolychromeSprite,
     Surface,
+    NativeView,
 }
 
 impl PrimitiveKind {
@@ -406,6 +417,7 @@ pub enum Primitive {
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    NativeView(PaintNativeView),
 }
 
 #[expect(missing_docs)]
@@ -420,6 +432,7 @@ impl Primitive {
             Primitive::SubpixelSprite(_) => PrimitiveKind::SubpixelSprite,
             Primitive::PolychromeSprite(_) => PrimitiveKind::PolychromeSprite,
             Primitive::Surface(_) => PrimitiveKind::Surface,
+            Primitive::NativeView(_) => PrimitiveKind::NativeView,
         }
     }
 
@@ -433,6 +446,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            Primitive::NativeView(native_view) => &native_view.bounds,
         }
     }
 
@@ -460,6 +474,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::NativeView(native_view) => &native_view.content_mask,
         }
     }
 }
@@ -488,6 +503,8 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    native_views_start: usize,
+    native_views_iter: Peekable<slice::Iter<'a, PaintNativeView>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -523,6 +540,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.surfaces_iter.peek().map(|s| s.order),
                 PrimitiveKind::Surface,
+            ),
+            (
+                self.native_views_iter.peek().map(|v| v.order),
+                PrimitiveKind::NativeView,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -669,6 +690,22 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            PrimitiveKind::NativeView => {
+                let native_views_start = self.native_views_start;
+                let mut native_views_end = native_views_start + 1;
+                self.native_views_iter.next();
+                while self
+                    .native_views_iter
+                    .next_if(|native_view| (native_view.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    native_views_end += 1;
+                }
+                self.native_views_start = native_views_end;
+                Some(PrimitiveBatch::NativeViews(
+                    native_views_start..native_views_end,
+                ))
+            }
         }
     }
 }
@@ -701,6 +738,7 @@ pub enum PrimitiveBatch {
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+    NativeViews(Range<usize>),
 }
 
 impl PrimitiveBatch {
@@ -733,6 +771,7 @@ impl PrimitiveBatch {
                 )
             }
             Self::Surfaces(range) => format!("surfaces ({})", range.len()),
+            Self::NativeViews(range) => format!("native views ({})", range.len()),
         }
     }
 }
@@ -1054,6 +1093,34 @@ pub struct PaintSurface {
 impl From<PaintSurface> for Primitive {
     fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
+    }
+}
+
+/// Where a platform view shows through the scene.
+///
+/// The view sits beneath the window's rendered content, so the renderer
+/// erases everything painted earlier within these bounds, and everything
+/// painted later covers the view. The view is therefore treated as opaque.
+#[derive(Clone, Copy, Debug)]
+pub struct PaintNativeView {
+    /// The view's position among the scene's other primitives.
+    pub order: DrawOrder,
+    /// The view these bounds belong to.
+    pub id: NativeViewId,
+    /// The hitbox that decides whether a mouse position reaches the view.
+    pub hitbox_id: HitboxId,
+    /// Where the view is laid out, before clipping.
+    pub bounds: Bounds<ScaledPixels>,
+    /// The clip applied to the view.
+    pub content_mask: ContentMask<ScaledPixels>,
+    /// The color to show where the view has not caught up with these bounds,
+    /// or a transparent color for none.
+    pub background: Hsla,
+}
+
+impl From<PaintNativeView> for Primitive {
+    fn from(native_view: PaintNativeView) -> Self {
+        Primitive::NativeView(native_view)
     }
 }
 

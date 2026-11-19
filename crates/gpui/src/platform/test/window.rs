@@ -1,10 +1,10 @@
 use crate::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, DispatchEventResult, DisplayId, GpuSpecs,
-    HeadlessAtlas, Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions,
-    Scene, Size, TestDisplay, TestPlatform, TextInputConfiguration, TextInputStateChange,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets,
-    WindowParams, WindowVisibility,
+    HeadlessAtlas, NativeViewId, Pixels, Platform, PlatformAtlas, PlatformDisplay,
+    PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptButton, RequestFrameOptions, Scene, Size, TestDisplay, TestPlatform,
+    TextInputConfiguration, TextInputStateChange, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowInsets, WindowParams, WindowVisibility,
 };
 use gpui_util::ResultExt as _;
 #[cfg(any(test, feature = "test-support"))]
@@ -32,6 +32,10 @@ pub(crate) struct TestWindowState {
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
+    attached_native_views: Rc<Cell<usize>>,
+    focused_native_view: Option<NativeViewId>,
+    hit_test_native_view_callback: Option<Box<dyn FnMut(Point<Pixels>) -> Option<NativeViewId>>>,
+    native_view_focused_callback: Option<Box<dyn FnMut(NativeViewId)>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     visibility: WindowVisibility,
@@ -123,6 +127,10 @@ impl TestWindow {
             moved_callback: None,
             display_changed_callback: None,
             appearance_change_callback: None,
+            attached_native_views: Rc::new(Cell::new(0)),
+            focused_native_view: None,
+            hit_test_native_view_callback: None,
+            native_view_focused_callback: None,
             request_frame_callback: None,
             frame_wake_count: Rc::new(Cell::new(0)),
             frame_scheduled: false,
@@ -256,6 +264,36 @@ impl TestWindow {
             lock.bounds.size
         };
         self.simulate_resize(size);
+    }
+
+    /// How many native views are attached to the window.
+    pub fn attached_native_view_count(&self) -> usize {
+        self.0.lock().attached_native_views.get()
+    }
+
+    /// The native view the window last gave keyboard input to.
+    pub fn focused_native_view(&self) -> Option<NativeViewId> {
+        self.0.lock().focused_native_view
+    }
+
+    /// Asks the window which native view a mouse event at `position` reaches.
+    pub fn hit_test_native_view(&self, position: Point<Pixels>) -> Option<NativeViewId> {
+        let mut callback = self.0.lock().hit_test_native_view_callback.take()?;
+        let id = callback(position);
+        self.0.lock().hit_test_native_view_callback = Some(callback);
+        id
+    }
+
+    /// Acts as if the user moved keyboard input to a native view through the platform.
+    pub fn simulate_native_view_focused(&self, id: NativeViewId) {
+        let mut lock = self.0.lock();
+        lock.focused_native_view = Some(id);
+        let Some(mut callback) = lock.native_view_focused_callback.take() else {
+            return;
+        };
+        drop(lock);
+        callback(id);
+        self.0.lock().native_view_focused_callback = Some(callback);
     }
 
     pub(crate) fn simulate_active_status_change(&self, active: bool) {
@@ -575,6 +613,41 @@ impl PlatformWindow for TestWindow {
 
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
         self.0.lock().hit_test_window_control_callback = Some(callback);
+    }
+
+    /// Counts the view as attached without ever reading `_view`, so tests may
+    /// pass a dangling pointer.
+    unsafe fn attach_native_view(
+        &self,
+        _id: NativeViewId,
+        _view: std::ptr::NonNull<std::ffi::c_void>,
+    ) -> Option<Box<dyn std::any::Any>> {
+        struct Attachment(Rc<Cell<usize>>);
+
+        impl Drop for Attachment {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() - 1);
+            }
+        }
+
+        let attached_native_views = self.0.lock().attached_native_views.clone();
+        attached_native_views.set(attached_native_views.get() + 1);
+        Some(Box::new(Attachment(attached_native_views)))
+    }
+
+    fn set_focused_native_view(&self, id: Option<NativeViewId>) {
+        self.0.lock().focused_native_view = id;
+    }
+
+    fn on_hit_test_native_view(
+        &self,
+        callback: Box<dyn FnMut(Point<Pixels>) -> Option<NativeViewId>>,
+    ) {
+        self.0.lock().hit_test_native_view_callback = Some(callback);
+    }
+
+    fn on_native_view_focused(&self, callback: Box<dyn FnMut(NativeViewId)>) {
+        self.0.lock().native_view_focused_callback = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
