@@ -1,8 +1,9 @@
 use crate::{Action, KeyDownEvent, PlatformInput};
 use crate::{
-    App, Bounds, Element, ElementId, FocusHandle, FocusId, Focusable, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InspectorElementId, InteractiveElement, IntoElement, LayoutId,
-    PaintNativeView, ParentElement, Pixels, Point, Stateful, Style, Styled, Window, WindowId, div,
+    AnyWindowHandle, App, Bounds, Element, ElementId, FocusHandle, FocusId, Focusable,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, InteractiveElement,
+    IntoElement, LayoutId, PaintNativeView, ParentElement, Pixels, Point, Style, Styled, Window,
+    div,
 };
 use anyhow::{Context as _, Result};
 use collections::HashSet;
@@ -30,13 +31,15 @@ pub struct NativeViewId(u64);
 /// there, as a press outside every element.
 ///
 /// The view takes keyboard input directly from the platform while its
-/// [`FocusHandle`] is focused. A key the view doesn't use is then dispatched
+/// [`FocusHandle`] is focused, which a click on the view does, as can an
+/// assistive technology such as VoiceOver moving its cursor into the view. A key the view doesn't use is then dispatched
 /// from the view's element like any other key press, so key bindings apply
 /// to what the view leaves. Bindings for actions passed to
 /// [`reserve_action`](Self::reserve_action) apply before the view sees the key.
 ///
 /// The view stays attached to the window it was created in, hidden when it
-/// isn't painted, until the last clone of this handle is dropped. It shows
+/// isn't painted, until the last clone of this handle is dropped. Painted more
+/// than once in a frame, it shows only where it was painted first. It shows
 /// nothing as an element of any other window, so showing the same platform
 /// view in another window takes dropping this handle and creating one there.
 #[derive(Clone)]
@@ -44,7 +47,7 @@ pub struct NativeView(Rc<NativeViewState>);
 
 pub(crate) struct NativeViewState {
     id: NativeViewId,
-    window_id: WindowId,
+    window: AnyWindowHandle,
     focus_handle: FocusHandle,
     background: Cell<Hsla>,
     reserved_actions: RefCell<HashSet<TypeId>>,
@@ -63,6 +66,12 @@ impl NativeView {
     /// `view` must point to a live view of the kind the window's platform
     /// embeds, which is an `NSView` on macOS, and that view must not be in
     /// another view hierarchy.
+    ///
+    /// GPUI retains the view and puts it inside a view of its own, until the
+    /// last clone of the returned handle is dropped. Until then GPUI decides the
+    /// view's frame, whether it is hidden, and its order among the window's other
+    /// views, so the caller must leave those alone and must not move the view to
+    /// another superview.
     pub unsafe fn new(view: NonNull<c_void>, window: &mut Window, cx: &mut App) -> Result<Self> {
         let id = NativeViewId(window.next_native_view_id);
         // SAFETY: The caller upholds the platform's requirements for `view`.
@@ -71,7 +80,7 @@ impl NativeView {
         window.next_native_view_id += 1;
         let state = Rc::new(NativeViewState {
             id,
-            window_id: window.handle.window_id(),
+            window: window.handle,
             focus_handle: cx.focus_handle(),
             background: Cell::new(Hsla::transparent_black()),
             reserved_actions: RefCell::default(),
@@ -87,11 +96,19 @@ impl NativeView {
     ///
     /// The platform moves the view through its own compositor, so for a frame
     /// or two after its element moves or resizes, part of the element can be
-    /// uncovered. A color close to the view's own background hides that. It
-    /// takes effect the next time the element is painted, and a window showing
-    /// several native views uses the color of the one painted last.
-    pub fn set_background(&self, color: impl Into<Hsla>) {
-        self.0.background.set(color.into());
+    /// uncovered. A color close to the view's own background hides that. A
+    /// window showing several native views uses the color of the one painted
+    /// last.
+    pub fn set_background(&self, color: impl Into<Hsla>, cx: &mut App) {
+        let color = color.into();
+        if self.0.background.replace(color) == color {
+            return;
+        }
+        // The color is part of what the element paints.
+        let window = self.0.window;
+        cx.defer(move |cx| {
+            window.update(cx, |_, window, _| window.refresh()).ok();
+        });
     }
 
     /// Makes key bindings for `A` apply before the view sees the key.
@@ -113,11 +130,10 @@ impl Focusable for NativeView {
 }
 
 impl IntoElement for NativeView {
-    type Element = Stateful<crate::Div>;
+    type Element = crate::Div;
 
     fn into_element(self) -> Self::Element {
         div()
-            .id(("native-view", self.0.id.0))
             .track_focus(&self.0.focus_handle)
             .size_full()
             .child(NativeViewElement(self))
@@ -161,7 +177,7 @@ impl Element for NativeViewElement {
         window: &mut Window,
         _cx: &mut App,
     ) -> Option<Hitbox> {
-        (self.0.0.window_id == window.handle.window_id())
+        (self.0.0.window == window.handle)
             .then(|| window.insert_hitbox(bounds, HitboxBehavior::BlockMouse))
     }
 
@@ -300,8 +316,8 @@ mod tests {
     use super::*;
     use crate::{
         Context, FocusHandle, InputHandler, KeyBinding, Keystroke, Modifiers, MouseButton, Render,
-        TestAppContext, UTF16Selection, VisualTestContext, WindowHandle, canvas, point, prelude::*,
-        px, rgb,
+        ScaledPixels, TestAppContext, UTF16Selection, VisualTestContext, WindowHandle, canvas,
+        point, prelude::*, px, rgb,
     };
     use std::ops::Range;
 
@@ -440,6 +456,57 @@ mod tests {
     }
 
     #[gpui::test]
+    fn changing_the_background_repaints_the_native_view(cx: &mut TestAppContext) {
+        let window = open_window(cx);
+        cx.run_until_parked();
+
+        window
+            .update(cx, |view, _, cx| {
+                view.native_view.set_background(rgb(0x00ff00), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, _| {
+                let backgrounds = window
+                    .rendered_frame
+                    .scene
+                    .native_views
+                    .iter()
+                    .map(|native_view| native_view.background)
+                    .collect::<Vec<_>>();
+                assert_eq!(backgrounds, [Hsla::from(rgb(0x00ff00))]);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn native_view_painted_twice_shows_where_it_was_painted_first(cx: &mut TestAppContext) {
+        let window = open_window(cx);
+        window
+            .update(cx, |view, _, cx| {
+                view.paints_native_view_twice = true;
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, _| {
+                let bounds = window
+                    .rendered_frame
+                    .scene
+                    .native_views
+                    .iter()
+                    .map(|native_view| native_view.bounds.origin.x)
+                    .collect::<Vec<_>>();
+                assert_eq!(bounds, [ScaledPixels::from(0.)]);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     fn native_view_is_drawn_in_paint_order(cx: &mut TestAppContext) {
         let window = open_window(cx);
         cx.run_until_parked();
@@ -490,6 +557,7 @@ mod tests {
             other_focus: cx.focus_handle(),
             actions: Vec::new(),
             presses: Vec::new(),
+            paints_native_view_twice: false,
             unmark_count: Rc::default(),
         });
         cx.run_until_parked();
@@ -532,6 +600,7 @@ mod tests {
         other_focus: FocusHandle,
         actions: Vec<&'static str>,
         presses: Vec<&'static str>,
+        paints_native_view_twice: bool,
         /// How many times the input handler of the "cover" element was told to
         /// end its composition.
         unmark_count: Rc<Cell<usize>>,
@@ -556,6 +625,16 @@ mod tests {
                         )
                         .child(self.native_view.clone()),
                 )
+                .when(self.paints_native_view_twice, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left(px(200.))
+                            .size(px(100.))
+                            .child(self.native_view.clone()),
+                    )
+                })
                 .child(
                     div()
                         .id("cover")
@@ -660,6 +739,7 @@ mod tests {
             other_focus: cx.focus_handle(),
             actions: Vec::new(),
             presses: Vec::new(),
+            paints_native_view_twice: false,
             unmark_count: Rc::default(),
         })
     }

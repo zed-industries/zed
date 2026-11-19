@@ -269,6 +269,13 @@ impl Scene {
         self.surfaces.sort_by_key(|surface| surface.order);
         self.native_views
             .sort_by_key(|native_view| native_view.order);
+        // A platform view can only be in one place, which is where it was painted first.
+        let mut shown = Vec::new();
+        self.native_views.retain(|native_view| {
+            let is_first = !shown.contains(&native_view.id);
+            shown.push(native_view.id);
+            is_first
+        });
 
         // Sorting moved the sprites, so animations learn where theirs ended up.
         if !self.animations.is_empty() {

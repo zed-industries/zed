@@ -159,7 +159,7 @@ impl Drop for Attachment {
         let Some(window_state) = self.window_state.upgrade() else {
             return;
         };
-        let (attached, native_window, gpui_view) = {
+        let (attached, native_window, gpui_view, restores_background) = {
             let mut lock = window_state.lock();
             let Some(index) = lock
                 .native_views
@@ -172,10 +172,15 @@ impl Drop for Attachment {
             if lock.native_views.focused == Some(self.id) {
                 lock.native_views.focused = None;
             }
+            let attached = lock.native_views.views.remove(index);
+            // No scene sets the background again once the last view is gone.
+            let restores_background =
+                lock.native_views.views.is_empty() && lock.native_views.background.take().is_some();
             (
-                lock.native_views.views.remove(index),
+                attached,
                 lock.native_window,
                 lock.native_view.as_ptr(),
+                restores_background,
             )
         };
         // SAFETY: The window and both views are live, and attachments are dropped on
@@ -185,6 +190,9 @@ impl Drop for Attachment {
             give_up_first_responder(native_window, gpui_view, &attached.view);
             attached.container.removeFromSuperview();
             attached.view.removeFromSuperview();
+            if restores_background {
+                let _: () = msg_send![native_window, setBackgroundColor: &*background_color(None)];
+            }
         }
     }
 }
@@ -256,12 +264,19 @@ pub(super) fn update_background(state: &mut MacWindowState, scene: &Scene) {
         return;
     }
     state.native_views.background = background;
-    let Rgba { r, g, b, .. } = background.unwrap_or_default();
-    let color = NSColor::colorWithSRGBRed_green_blue_alpha(r as f64, g as f64, b as f64, 1.);
     // SAFETY: The window is live for as long as its state.
     unsafe {
-        let _: () = msg_send![state.native_window, setBackgroundColor: &*color];
+        let _: () = msg_send![
+            state.native_window,
+            setBackgroundColor: &*background_color(background)
+        ];
     }
+}
+
+/// The background of an opaque window, which is black unless a native view asks for a color.
+fn background_color(color: Option<Rgba>) -> Retained<NSColor> {
+    let Rgba { r, g, b, .. } = color.unwrap_or_default();
+    NSColor::colorWithSRGBRed_green_blue_alpha(r as f64, g as f64, b as f64, 1.)
 }
 
 /// What a scene changes about the window's attached views.

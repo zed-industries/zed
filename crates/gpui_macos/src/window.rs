@@ -1472,7 +1472,6 @@ impl Drop for MacWindow {
             FrameSource::Metal(metal_frames) => metal_frames.replace(None),
             FrameSource::DisplayLink(frame_source) => drop(frame_source.take()),
         }
-
         unsafe {
             let _: () = msg_send![this.native_window, setDelegate: ptr::null_mut::<AnyObject>()];
         }

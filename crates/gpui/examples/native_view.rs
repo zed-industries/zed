@@ -196,8 +196,7 @@ mod example {
                         continue;
                     };
                     let updated = this.update(cx, |this, cx| {
-                        this.web_view.set_background(color);
-                        cx.notify();
+                        this.web_view.set_background(color, cx);
                     });
                     if updated.is_err() {
                         break;
