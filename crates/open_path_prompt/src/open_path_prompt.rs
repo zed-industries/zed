@@ -236,23 +236,7 @@ impl OpenPathDelegate {
     }
 
     fn resolve_path(&self, path: &str) -> String {
-        if path.starts_with("./") || path.starts_with(".\\") {
-            let stripped = &path[2..];
-            let resolved = self.relative_to.join(stripped);
-            resolved.to_string_lossy().into_owned()
-        } else if path.starts_with("../") || path.starts_with("..\\") {
-            let stripped = &path[3..];
-            let parent = self.relative_to.parent().unwrap_or(&self.relative_to);
-            let resolved = parent.join(stripped);
-            resolved.to_string_lossy().into_owned()
-        } else if path == "." {
-            self.relative_to.to_string_lossy().into_owned()
-        } else if path == ".." {
-            let parent = self.relative_to.parent().unwrap_or(&self.relative_to);
-            parent.to_string_lossy().into_owned()
-        } else {
-            path.to_string()
-        }
+        resolve_relative_path(path, &self.relative_to, self.path_style)
     }
 
     fn current_dir(&self) -> &'static str {
@@ -311,6 +295,7 @@ impl OpenPathPrompt {
     /// Directory that `./` and `../` queries resolve against: the active file's directory
     /// when opening, otherwise the first project root, falling back to the process cwd.
     fn relative_to(workspace: &Workspace, creating_path: bool, cx: &App) -> PathBuf {
+        let path_style = workspace.project().read(cx).path_style(cx);
         let project_root = workspace
             .visible_worktrees(cx)
             .next()
@@ -325,7 +310,7 @@ impl OpenPathPrompt {
                     .read(cx)
                     .absolute_path(&project_path, cx)
             })
-            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+            .and_then(|path| path_style.parent(&path).map(Path::to_path_buf));
         active_file_directory
             .or(project_root)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
@@ -1094,6 +1079,29 @@ fn path_candidates(
         .collect()
 }
 
+/// Resolves `./`, `../`, `.` and `..` queries against `relative_to`, using `path_style`
+/// so that remote paths are interpreted according to the remote OS rather than the local one.
+fn resolve_relative_path(path: &str, relative_to: &Path, path_style: PathStyle) -> String {
+    let parent = || path_style.parent(relative_to).unwrap_or(relative_to);
+    if path.starts_with("./") || path.starts_with(".\\") {
+        path_style
+            .join(relative_to, &path[2..])
+            .to_string_lossy()
+            .into_owned()
+    } else if path.starts_with("../") || path.starts_with("..\\") {
+        path_style
+            .join(parent(), &path[3..])
+            .to_string_lossy()
+            .into_owned()
+    } else if path == "." {
+        relative_to.to_string_lossy().into_owned()
+    } else if path == ".." {
+        parent().to_string_lossy().into_owned()
+    } else {
+        path.to_string()
+    }
+}
+
 fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) {
     match path_style {
         PathStyle::Unix => {
@@ -1128,9 +1136,69 @@ fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) 
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use util::paths::PathStyle;
 
-    use super::get_dir_and_suffix;
+    use super::{get_dir_and_suffix, resolve_relative_path};
+
+    #[test]
+    fn test_resolve_relative_path_with_windows_style() {
+        let relative_to = Path::new("C:\\root\\subdir");
+        let style = PathStyle::Windows;
+
+        assert_eq!(
+            resolve_relative_path("./", relative_to, style),
+            "C:\\root\\subdir\\"
+        );
+        assert_eq!(
+            resolve_relative_path(".\\foo", relative_to, style),
+            "C:\\root\\subdir\\foo"
+        );
+        assert_eq!(
+            resolve_relative_path("../", relative_to, style),
+            "C:\\root\\"
+        );
+        assert_eq!(
+            resolve_relative_path("..\\foo", relative_to, style),
+            "C:\\root\\foo"
+        );
+        assert_eq!(
+            resolve_relative_path(".", relative_to, style),
+            "C:\\root\\subdir"
+        );
+        assert_eq!(resolve_relative_path("..", relative_to, style), "C:\\root");
+        assert_eq!(
+            resolve_relative_path("C:\\other", relative_to, style),
+            "C:\\other"
+        );
+    }
+
+    #[test]
+    fn test_resolve_relative_path_with_unix_style() {
+        let relative_to = Path::new("/root/subdir");
+        let style = PathStyle::Unix;
+
+        assert_eq!(
+            resolve_relative_path("./", relative_to, style),
+            "/root/subdir/"
+        );
+        assert_eq!(
+            resolve_relative_path("./foo", relative_to, style),
+            "/root/subdir/foo"
+        );
+        assert_eq!(resolve_relative_path("../", relative_to, style), "/root/");
+        assert_eq!(
+            resolve_relative_path("../foo", relative_to, style),
+            "/root/foo"
+        );
+        assert_eq!(
+            resolve_relative_path(".", relative_to, style),
+            "/root/subdir"
+        );
+        assert_eq!(resolve_relative_path("..", relative_to, style), "/root");
+        assert_eq!(resolve_relative_path("..", Path::new("/"), style), "/");
+    }
 
     #[test]
     fn test_get_dir_and_suffix_with_windows_style_relative_prefix() {
