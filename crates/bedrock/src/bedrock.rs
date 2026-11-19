@@ -1,6 +1,8 @@
+mod model_catalog;
 mod models;
 
 use anyhow::{Result, anyhow};
+pub use aws_sdk_bedrock as bedrock_control_plane_client;
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::{
@@ -30,6 +32,7 @@ use serde_json::{Number, Value};
 use std::collections::HashMap;
 use thiserror::Error;
 
+pub use crate::model_catalog::*;
 pub use crate::models::*;
 
 pub async fn stream_completion(
@@ -56,7 +59,7 @@ pub async fn stream_completion(
     }
 
     let inference_config = InferenceConfiguration::builder()
-        .max_tokens(request.max_tokens as i32)
+        .set_max_tokens(request.max_tokens.map(|max_tokens| max_tokens as i32))
         .set_temperature(request.temperature)
         .set_top_p(request.top_p)
         .build();
@@ -285,7 +288,8 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
 #[derive(Debug)]
 pub struct Request {
     pub model: String,
-    pub max_tokens: u64,
+    /// The output limit. Bedrock applies the model's maximum when this is unset.
+    pub max_tokens: Option<u64>,
     pub messages: Vec<BedrockMessage>,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,

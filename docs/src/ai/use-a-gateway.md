@@ -127,10 +127,25 @@ Use Amazon Bedrock when you want model access through AWS.
 
 Bedrock supports models that support streaming tool use. See [Amazon Bedrock's Tool Use documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html).
 
-Your AWS credentials need these permissions:
+Your AWS credentials need these permissions to send requests:
 
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
+
+And these to list the models you can use:
+
+- `bedrock:ListInferenceProfiles`
+- `bedrock:ListFoundationModels`
+
+### Bedrock Models {#bedrock-models}
+
+Zed asks Bedrock which models you can use. After you authenticate, the model picker shows every text model that has an [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) in your Region, including the application inference profiles in your account. A model that AWS adds to your Region appears without a Zed update.
+
+Models without an inference profile are not listed. Add them as [custom Bedrock models](#bedrock-custom-models).
+
+Bedrock does not report token limits or reasoning support. Zed applies the values of the model's family, and a default context window of 128,000 tokens for a family it does not know. To use other values, add a [custom Bedrock model](#bedrock-custom-models) with the model's inference profile ID as `name`. It appears in the model picker as its own entry.
+
+If your credentials lack the two `List` permissions, Zed shows the error in the Amazon Bedrock settings and offers only your custom models. Zed also does not list models when you set a [custom endpoint](#bedrock-custom-endpoints).
 
 Bedrock supports Zed-prefixed AWS environment variables so Zed does not override or consume your normal AWS credentials:
 
@@ -179,9 +194,9 @@ The API key itself is stored in the system keychain, not in `settings.json`.
 
 ### Bedrock Cross-Region Inference {#bedrock-cross-region-inference}
 
-Zed uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for Bedrock on a best-effort basis.
+Zed sends requests through [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) profiles, using the profiles that Bedrock lists for your Region.
 
-By default, Zed uses regional inference profiles. To opt into global profiles, add `allow_global`:
+By default, Zed uses a geographic inference profile. When your Region offers more than one for a model, Zed uses the one with the fewest destination Regions. To prefer global profiles, add `allow_global`:
 
 ```json [settings]
 {
@@ -196,7 +211,7 @@ By default, Zed uses regional inference profiles. To opt into global profiles, a
 }
 ```
 
-Only some models support global inference profiles. See the AWS Bedrock supported models documentation for the current list.
+Only some models have a global inference profile. A model with only one kind of profile uses that profile whatever `allow_global` says.
 
 ### Bedrock Guardrails {#bedrock-guardrails}
 
@@ -215,7 +230,7 @@ Some AWS environments require a guardrail on every Bedrock API call. Add `guardr
 
 ### Custom Bedrock Models {#bedrock-custom-models}
 
-Add models that are not yet built into Zed with `available_models`. Use the Bedrock model ID as `name`, including a region prefix when you want a specific inference profile:
+Add models that Zed does not list, or use your own values for a listed model, with `available_models`. Use the Bedrock model ID as `name`, including a region prefix when you want a specific inference profile:
 
 ```json [settings]
 {
@@ -252,6 +267,8 @@ Add models that are not yet built into Zed with `available_models`. Use the Bedr
 
 `name` is sent to Bedrock as the model ID. Use the full ID, including a geo prefix or ARN when the model requires one (for example `us.anthropic.claude-sonnet-4-7` or `us.xai.grok-4.6`). Set `supports_tools` and `supports_images` for models that support those features. Set `thinking` to `true` to enable thinking, or to an object with `"adaptive": true`, optional `"has_xhigh": true`, and optional `budget_tokens`. Leave `default_temperature` unset for models that reject the temperature field, such as xAI and MoonshotAI models.
 
+When `name` is the ID or ARN of an inference profile that Bedrock listed, the entry takes the tool, image, caching and thinking support that you leave out from the listed model, and sets no output limit unless you set `max_output_tokens`. A listed model that always reasons keeps its own thinking behavior whatever `thinking` says.
+
 ### Bedrock Custom Endpoints {#bedrock-custom-endpoints}
 
 To send Bedrock Converse requests to a proxy or gateway instead of AWS, set `endpoint_url`:
@@ -268,7 +285,9 @@ To send Bedrock Converse requests to a proxy or gateway instead of AWS, set `end
 }
 ```
 
-[Mantle models](#bedrock-mantle-models), including the built-in GPT-5.6, GPT-5.5, GPT-5.4, and Grok 4.3 models and any models in `mantle_available_models`, are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
+Zed does not list models when `endpoint_url` is set, so add the models your gateway serves as [custom Bedrock models](#bedrock-custom-models).
+
+[Mantle models](#bedrock-mantle-models), which are the models in `mantle_available_models`, are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
 
 If your gateway serves one of those models over the Converse API, add it as a [custom Bedrock model](#bedrock-custom-models) so Zed calls it through `endpoint_url`. Use the model ID your gateway expects as `name`:
 
@@ -292,17 +311,17 @@ If your gateway serves one of those models over the Converse API, add it as a [c
 }
 ```
 
-Don't use an ID that a Mantle model already uses as `name`, whether it's built in (such as `gpt-5.6-luna`) or listed in `mantle_available_models`. A Mantle model with the same ID replaces the custom model, so requests go to AWS instead of your gateway.
+Don't use an ID that a model in `mantle_available_models` already uses as `name`. A Mantle model with the same ID replaces the custom model, so requests go to AWS instead of your gateway.
 
 ### Bedrock Mantle Models {#bedrock-mantle-models}
 
-Some models, such as the GPT-5.6 family (Sol, Terra, and Luna), GPT-5.5, GPT-5.4, and Grok 4.3, aren't available through Bedrock's Converse API and are only reachable through `bedrock-mantle`, AWS's OpenAI-compatible inference endpoint. Zed routes these models through `bedrock-mantle` automatically; they appear alongside the rest of the Bedrock models in the model picker once you're authenticated, with no extra configuration required.
+`bedrock-mantle` is AWS's OpenAI-compatible inference endpoint. Zed does not list its models. To use a model that is only reachable through `bedrock-mantle`, add it with `mantle_available_models`.
 
 Mantle models require IAM permissions for the `bedrock-mantle` endpoint (for example via the `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever permissions your existing Bedrock credentials already have, and `bedrock-mantle` is only available in [some AWS Regions](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html#regions). Zed surfaces an error naming the current Region and the supported ones if you try to use a Mantle model outside of them.
 
 #### Custom Bedrock Mantle Models {#bedrock-mantle-custom-models}
 
-You can add custom models served through `bedrock-mantle` with `mantle_available_models`:
+Add models served through `bedrock-mantle` with `mantle_available_models`:
 
 ```json [settings]
 {
