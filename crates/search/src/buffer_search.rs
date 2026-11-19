@@ -1558,7 +1558,7 @@ impl BufferSearchBar {
                             false,
                             None,
                         ) {
-                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Ok(query) => query,
                             Err(e) => {
                                 self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);
@@ -1577,7 +1577,7 @@ impl BufferSearchBar {
                             false,
                             None,
                         ) {
-                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Ok(query) => query,
                             Err(e) => {
                                 self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);
@@ -4326,6 +4326,36 @@ mod tests {
             expected_text: "2ème étage, 3ème étage\n".to_string(),
         })
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_search_does_not_attach_the_replacement(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("2e étage\n", window, cx)
+        });
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("$1ème", window, cx);
+            });
+        });
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search(r"(\d+)e\b", Some(SearchOptions::REGEX), true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            let active_search = search_bar.active_search.as_ref().unwrap();
+            assert_eq!(active_search.replacement(), None);
+            search_bar.replace_all(&ReplaceAll, window, cx);
+        });
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "2ème étage\n"
+        );
     }
 
     #[gpui::test]
