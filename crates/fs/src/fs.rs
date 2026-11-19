@@ -2879,7 +2879,17 @@ impl FakeFs {
             }
         };
 
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        // Like inotify, watches on the removed directory and its descendants die with it.
+        let mut events = Vec::new();
+        state.watches.registered_paths.retain(|registered_path| {
+            let removed = registered_path.starts_with(&path);
+            if removed && *registered_path != path {
+                events.push((registered_path.clone(), Some(PathEventKind::Removed)));
+            }
+            !removed
+        });
+        events.push((path, Some(PathEventKind::Removed)));
+        state.emit_event(events);
         Ok(removed)
     }
 
