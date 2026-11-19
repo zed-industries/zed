@@ -47,14 +47,14 @@ use crate::{
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
-    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate, delta_checkout_short_name,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
     worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
-pub use worktree_store::WorktreePaths;
+pub use worktree_store::{DeltaClone, WorktreePaths};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -6894,6 +6894,10 @@ impl Project {
 
     pub fn worktree_paths(&self, cx: &App) -> WorktreePaths {
         self.worktree_store.read(cx).paths(cx)
+    }
+
+    pub fn git_worktree_paths(&self, cx: &App) -> WorktreePaths {
+        self.worktree_store.read(cx).git_paths(cx)
     }
 
     pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
