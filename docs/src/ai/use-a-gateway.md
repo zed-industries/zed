@@ -133,7 +133,7 @@ After you authenticate, Zed calls Bedrock's `ListInferenceProfiles` and `ListFou
 
 Zed keeps models whose foundation-model listing reports text input, text-only output, and streaming support. It excludes IDs starting with `twelvelabs.pegasus`, which Zed does not serve through Converse. Inactive profiles and profiles whose foundation model is missing from that filtered list are skipped.
 
-Models without an inference profile are not listed. Add them as [custom Bedrock models](#bedrock-custom-models).
+Models without an inference profile are not listed. Zed routes Bedrock requests through inference profiles, so choose a model that has one where you can. A [custom Bedrock model](#bedrock-custom-models) can name a model without a profile, but Zed does not discover it or choose a route for it, and you keep its entry up to date yourself.
 
 The listing APIs used by Zed do not report token limits, tool use, or reasoning controls. Zed reads these from the public [models.dev](https://models.dev) catalog after authentication. It fetches the catalog without your credentials, stores the Bedrock section in a local cache, and refreshes it hourly and when you manually refresh models. A fresh cache can supply the first copy without a network fetch.
 
@@ -359,32 +359,7 @@ Add models served through `bedrock-mantle` with `mantle_available_models`:
 - **Reasoning history:** Bedrock Converse replays tagged reasoning only when its source matches the selected model. If discovery identifies the foundation model behind a previously unknown route, Zed skips reasoning tagged before discovery and keeps the answer text.
 - **Saved short IDs:** A saved selection such as `{"provider": "amazon-bedrock", "model": "claude-sonnet-4-5"}` continues to select `anthropic.claude-sonnet-4-5-20250929-v1:0` when that model is offered. Before and after the upgrade, the saved short ID stays `claude-sonnet-4-5`. Requests now use a discovered inference profile.
 - **Former built-in Mantle models:** Before the upgrade, a saved `gpt-5.5` selection used Mantle. After the upgrade, the same selection resolves to `openai.gpt-5.5` over Converse when it is listed. This path needs Converse invocation permissions, not only Mantle permissions. To keep using Mantle, add a `mantle_available_models` entry and select its full `name`, such as `openai.gpt-5.5`.
-- **Models without inference profiles:** Before the upgrade, a built-in selection such as `qwen3-32b` could refer to an on-demand model. If `qwen.qwen3-32b-v1:0` has no inference profile in your listing, it is no longer offered automatically. After the upgrade, add that full ID to `available_models` and select it:
-
-```json [settings]
-{
-  "language_models": {
-    "bedrock": {
-      "available_models": [
-        {
-          "name": "qwen.qwen3-32b-v1:0",
-          "max_tokens": 128000,
-          "max_output_tokens": 8192,
-          "supports_tools": true
-        }
-      ]
-    }
-  },
-  "agent": {
-    "default_model": {
-      "provider": "amazon-bedrock",
-      "model": "qwen.qwen3-32b-v1:0"
-    }
-  }
-}
-```
-
-Choose limits and capabilities appropriate for the model you invoke. This example does not verify your account's access.
+- **Models without inference profiles:** Before the upgrade, a built-in selection such as `qwen3-32b` could refer to an on-demand model. If `qwen.qwen3-32b-v1:0` has no inference profile in your listing, Zed no longer offers it. After the upgrade, select a listed model instead. If you must keep the on-demand model, add its full ID as a [custom Bedrock model](#bedrock-custom-models) and select that ID. Zed does not discover or route such an entry, so this is not the recommended setup.
 
 ### Bedrock Permissions {#bedrock-permissions}
 
