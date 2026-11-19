@@ -1,7 +1,6 @@
 mod worktree_settings_tests;
 
 use anyhow::Result;
-use encoding_rs;
 use fs::{FakeFs, Fs, PathEventKind, RealFs, RemoveOptions};
 use git::{DOT_GIT, GITIGNORE, REPO_EXCLUDE};
 use gpui::{
