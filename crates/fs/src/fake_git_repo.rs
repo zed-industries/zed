@@ -16,6 +16,7 @@ use git::{
         CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
         GitRepository, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit, Remote,
         RepoPath, ResetMode, SearchCommitArgs, Worktree, commit_hash_search_query,
+        original_repo_path_from_common_dir,
     },
     stash::GitStash,
     status::{
@@ -726,15 +727,17 @@ impl GitRepository for FakeGitRepository {
         let fs = self.fs.clone();
         let common_dir_path = self.common_dir_path.clone();
         let executor = self.executor.clone();
+        let main_worktree_path =
+            original_repo_path_from_common_dir(&self.common_dir_path).or_else(|| {
+                (self.repository_dir_path == self.common_dir_path)
+                    .then(|| self.dot_git_path.parent().map(PathBuf::from))
+                    .flatten()
+            });
 
         async move {
             executor.simulate_random_delay().await;
 
             let (main_worktree, refs) = fs.with_git_state(&common_dir_path, false, |state| {
-                let work_dir = common_dir_path
-                    .parent()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| common_dir_path.clone());
                 let head_sha = state
                     .refs
                     .get("HEAD")
@@ -745,17 +748,17 @@ impl GitRepository for FakeGitRepository {
                     .as_ref()
                     .map(|name| format!("refs/heads/{name}"))
                     .unwrap_or_else(|| "refs/heads/main".to_string());
-                let main_wt = Worktree {
-                    path: work_dir,
+                let main_worktree = main_worktree_path.map(|path| Worktree {
+                    path,
                     ref_name: Some(branch_ref.into()),
                     sha: head_sha.into(),
                     is_main: true,
                     is_bare: false,
-                };
-                (main_wt, state.refs.clone())
+                });
+                (main_worktree, state.refs.clone())
             })?;
 
-            let mut all = vec![main_worktree];
+            let mut all = main_worktree.into_iter().collect::<Vec<_>>();
 
             let worktrees_dir = common_dir_path.join("worktrees");
             if let Ok(mut entries) = fs.read_dir(&worktrees_dir).await {
