@@ -906,7 +906,7 @@ async fn assert_file_lock_semantics(root: &Path, fs: Arc<dyn Fs>, executor: &Bac
         "dropping a lock releases it, and a wait that was cancelled doesn't take it"
     );
 
-    // Windows can't always remove a file that is open, or create a dangling symlink.
+    // Windows can't always remove or truncate a file that is open, or create symlinks.
     if !fs.is_fake() && cfg!(not(unix)) {
         return;
     }
@@ -965,6 +965,54 @@ async fn assert_file_lock_semantics(root: &Path, fs: Arc<dyn Fs>, executor: &Bac
             .unwrap()
             .is_none(),
         "a lock taken through a symlink is on its target"
+    );
+
+    let links_dir = root.join("links");
+    let elsewhere_dir = root.join("elsewhere");
+    fs.create_dir(&links_dir).await.unwrap();
+    fs.create_dir(&elsewhere_dir.join("subdir")).await.unwrap();
+    fs.create_symlink(
+        &links_dir.join("dirlink"),
+        PathBuf::from("../elsewhere/subdir"),
+    )
+    .await
+    .unwrap();
+    fs.create_symlink(
+        &links_dir.join("file.lock"),
+        PathBuf::from("dirlink/../target.lock"),
+    )
+    .await
+    .unwrap();
+    let _through_links = fs
+        .lock_file(&links_dir.join("file.lock"), FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    assert!(
+        fs.is_file(&elsewhere_dir.join("target.lock")).await,
+        "a `..` in a symlink's target applies to the directory the symlinks before it lead to"
+    );
+    assert!(!fs.is_file(&links_dir.join("target.lock")).await);
+
+    let truncated_path = root.join("truncated.lock");
+    let _held = fs
+        .lock_file(&truncated_path, FileLockKind::Shared)
+        .await
+        .unwrap();
+    fs.create_file(
+        &truncated_path,
+        CreateOptions {
+            overwrite: true,
+            ignore_if_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        fs.try_lock_file(&truncated_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_none(),
+        "truncating a file doesn't release the locks on it"
     );
 }
 

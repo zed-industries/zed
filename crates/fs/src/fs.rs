@@ -1867,7 +1867,7 @@ impl FakeFsState {
         }
 
         // Like opening one, locking a symlink whose target doesn't exist creates the target.
-        let mut file_path = normalize_path(path);
+        let mut file_path = path.to_path_buf();
         while let Some((FakeFsEntry::Symlink { target }, symlink_path)) =
             self.try_entry(&file_path, false)
         {
@@ -1876,6 +1876,16 @@ impl FakeFsState {
                 None => target.clone(),
             };
         }
+        // A `..` applies to the directory that the symlinks before it lead to, so the
+        // directory is resolved through them rather than by normalizing the path.
+        let file_name = file_path
+            .file_name()
+            .with_context(|| format!("cannot lock {path:?}: not a file"))?;
+        let directory = file_path
+            .parent()
+            .and_then(|parent| self.canonicalize(parent, true))
+            .with_context(|| format!("cannot lock {path:?}: its directory doesn't exist"))?;
+        let file_path = directory.join(file_name);
 
         let inode = self.get_and_increment_inode();
         let mtime = self.get_and_increment_mtime();
@@ -3258,7 +3268,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let inode = state.get_and_increment_inode();
         let mtime = state.get_and_increment_mtime();
-        let file = FakeFsEntry::File {
+        let mut file = FakeFsEntry::File {
             inode,
             mtime,
             len: 0,
@@ -3271,6 +3281,17 @@ impl Fs for FakeFs {
                 btree_map::Entry::Occupied(mut e) => {
                     if options.overwrite {
                         kind = Some(PathEventKind::Changed);
+                        // Truncating a file keeps its inode, and with it the locks on it.
+                        if let (
+                            FakeFsEntry::File { inode, .. },
+                            FakeFsEntry::File {
+                                inode: existing_inode,
+                                ..
+                            },
+                        ) = (&mut file, e.get())
+                        {
+                            *inode = *existing_inode;
+                        }
                         *e.get_mut() = file;
                     } else if !options.ignore_if_exists {
                         anyhow::bail!("path already exists: {path:?}");
