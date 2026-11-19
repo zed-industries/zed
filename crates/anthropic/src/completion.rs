@@ -192,9 +192,7 @@ fn to_anthropic_content(
             text: thinking,
             signature,
         } => {
-            if let Some(signature) = signature
-                && !thinking.is_empty()
-            {
+            if let Some(signature) = signature {
                 Ok(Some(RequestContent::Thinking {
                     thinking,
                     signature,
@@ -1602,6 +1600,27 @@ mod tests {
             RequestContent::Thinking { thinking, signature, .. }
                 if thinking == "Completed thinking" && signature == "valid-signature"
         ));
+    }
+
+    #[test]
+    fn test_signed_thinking_with_omitted_text_survives_serialization() {
+        let result = request_with_assistant_content(vec![MessageContent::Thinking {
+            text: String::new(),
+            signature: Some("valid-signature".to_string()),
+        }]);
+
+        let messages = serde_json::to_value(&result.messages).expect("serialize request messages");
+        assert_eq!(
+            messages.get(1),
+            Some(&serde_json::json!({
+                "role": "assistant",
+                "content": [{
+                    "type": "thinking",
+                    "thinking": "",
+                    "signature": "valid-signature",
+                }],
+            }))
+        );
     }
 
     #[test]
