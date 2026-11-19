@@ -979,7 +979,10 @@ mod tests {
                 .highlight_id_for_name("keyword")
                 .expect("keyword highlight should be defined");
 
-            let highlights = language.highlight_text(&source, 0..source.len());
+            let highlights = language
+                .highlight_text(&source, 0..source.len())
+                .collect::<Vec<_>>();
+
             for expected in [
                 (17..21, builtin_highlight),
                 (57..61, builtin_highlight),
