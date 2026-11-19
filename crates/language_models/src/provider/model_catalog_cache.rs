@@ -71,6 +71,15 @@ pub(crate) async fn load_cached(
     path: &Path,
     executor: &BackgroundExecutor,
 ) -> Result<Option<(String, bool)>> {
+    load_cached_with(fs, path, executor, Ok).await
+}
+
+pub(crate) async fn load_cached_with<T: Send + 'static>(
+    fs: Arc<dyn Fs>,
+    path: &Path,
+    executor: &BackgroundExecutor,
+    decode: impl FnOnce(String) -> Result<T> + Send + 'static,
+) -> Result<Option<(T, bool)>> {
     let Some(metadata) = fs.metadata(path).await? else {
         return Ok(None);
     };
@@ -89,14 +98,15 @@ pub(crate) async fn load_cached(
                 catalog.len() as u64 <= RESPONSE_LIMIT_BYTES,
                 "cached model catalog exceeds the {RESPONSE_LIMIT_BYTES}-byte limit"
             );
-            String::from_utf8(catalog)
+            let text = String::from_utf8(catalog)
                 .map_err(|_| {
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "stream did not contain valid UTF-8",
                     )
                 })
-                .with_context(|| format!("Failed to read file {}", path.display()))
+                .with_context(|| format!("Failed to read file {}", path.display()))?;
+            decode(text)
         })
         .await?;
     let is_fresh = SystemTime::now()

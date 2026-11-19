@@ -127,7 +127,7 @@ Use Amazon Bedrock when you want model access through AWS.
 
 Open **Settings → AI → LLM Providers** with {#action agent::OpenSettings} and find the Amazon Bedrock row to configure authentication and see the source of your model list.
 
-### Bedrock models {#bedrock-models}
+### Bedrock Models {#bedrock-models}
 
 After you authenticate, Zed calls Bedrock's `ListInferenceProfiles` and `ListFoundationModels` in your Region. The picker includes models with active [inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html), including application inference profiles in your account. Listing a model does not prove that your account has permission to invoke it.
 
@@ -141,7 +141,7 @@ A listed model that the catalog does not know gets a 128,000-token context windo
 
 While the first AWS listing is in progress, Zed offers only models from your settings. If listing fails without an earlier account list, including when your credentials lack listing permissions, Zed offers the catalog's profiles for your Region instead. This public list excludes deprecated entries and entries without text output. It contains no application profiles and can include a model or route that your account or Region cannot invoke. Such a request fails with Bedrock's error.
 
-Zed uses the same public list when you set a nonempty [custom endpoint](#bedrock-custom-endpoints): it lists from AWS, not from your gateway, and skips AWS listing in this case. If a refresh fails, Zed keeps the earlier account list for the same configuration. If only application-profile listing fails, Zed shows the successful system-profile list without application profiles. If no usable public copy is loaded or it has no profiles for your Region, only settings models remain. A failed public-catalog refresh also keeps the last good copy. The Amazon Bedrock settings view states which case applies.
+Zed uses the same public list when you set a nonempty [custom endpoint](#bedrock-custom-endpoints) and while retrying a failed account listing that had no earlier results. A gateway does not receive listing requests. If a refresh fails, Zed keeps the earlier account list for the same configuration. If only one profile type fails to list, Zed shows the successful results and keeps any earlier profiles of the other type. The settings view warns when those profiles may be out of date. A failed public-catalog refresh keeps the last good copy. If the public catalog has no usable profiles for your Region and there is no account list, only settings models remain.
 
 Settings changes apply without restarting Zed. Changing the authentication method, profile, resolved Region, or endpoint starts discovery again (or skips it for a gateway). Changing `allow_global` chooses a route from the current list without listing again. Custom models, headers, and guardrails also apply without another listing.
 
@@ -155,7 +155,7 @@ For static credentials, Zed reads these prefixed environment variables from its 
 
 Set the profile with `profile` and the gateway with `endpoint_url` in settings. `ZED_AWS_REGION` takes precedence over `region`. Without either, Zed uses `us-east-1`. Restart Zed after changing these environment variables.
 
-### Bedrock authentication {#bedrock-authentication}
+### Bedrock Authentication {#bedrock-authentication}
 
 You can authenticate with a named profile, static credentials, or a Bedrock API key.
 
@@ -190,7 +190,7 @@ For a Bedrock API key, choose API key authentication:
 
 The API key itself is stored in the system keychain, not in `settings.json`.
 
-### Bedrock cross-Region inference {#bedrock-cross-region-inference}
+### Bedrock Cross-Region Inference {#bedrock-cross-region-inference}
 
 Zed sends requests through [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) profiles, using the profiles that Bedrock lists for your Region.
 
@@ -211,7 +211,7 @@ By default, Zed uses a geographic inference profile. When your Region offers mor
 
 `allow_global` is a preference, not a prohibition. If a listed model has only a global profile, Zed uses it even with `allow_global: false`. If it has only a geographic profile, Zed uses that even with `allow_global: true`. In public-catalog fallback, Zed also uses a global profile when the catalog has no geographic profile matching your Region, even with `allow_global: false`. An application profile keeps its ARN, and a custom entry keeps its exact `name`. Neither follows this preference.
 
-### Bedrock guardrails {#bedrock-guardrails}
+### Bedrock Guardrails {#bedrock-guardrails}
 
 Add `guardrail_identifier` to apply a guardrail to Converse inference requests. This does not apply to listing calls or custom Mantle models:
 
@@ -226,7 +226,7 @@ Add `guardrail_identifier` to apply a guardrail to Converse inference requests. 
 }
 ```
 
-### Custom Bedrock models {#bedrock-custom-models}
+### Custom Bedrock Models {#bedrock-custom-models}
 
 Add models that Zed does not list, or use your own values for a listed model, with `available_models`. Use the Bedrock model ID as `name`, including a region prefix when you want a specific inference profile:
 
@@ -263,17 +263,19 @@ Add models that Zed does not list, or use your own values for a listed model, wi
 
 `name` is sent to Bedrock exactly as written. Use a full model ID, profile ID, or application-profile ARN that your account can invoke. The first example uses a placeholder ARN. Replace it and its capabilities with your own profile's values. The second requests Anthropic budget thinking with 5,000 thinking tokens and an 8,192-token output cap when thinking is enabled.
 
-Zed first looks for `name` in the AWS list, then in the public catalog. For catalog capabilities, it prefers the exact requested profile, then the foundation model, then the lexicographically first catalog profile for that foundation model. A known entry inherits the display name, output limit, tools, images, caching, and thinking controls you omit. You must supply `max_tokens`. `default_temperature` is not inherited. A known model's temperature support still controls whether temperature is sent. A model that always reasons keeps that behavior regardless of `thinking`.
+Zed first looks for `name` in the AWS list, then in the public catalog. For catalog capabilities, it prefers the exact requested profile, then the foundation model, then the lexicographically first catalog profile for that foundation model. A known entry inherits the display name, output limit, tools, images, caching, and thinking controls you omit. You must supply `max_tokens`. `default_temperature` is not inherited. A known model's temperature support still controls whether temperature is sent.
+
+For a known model, `thinking: true` enables its own thinking controls. Use `false` to disable optional thinking. A model that always reasons keeps doing so. `budget_tokens` applies only to budget thinking. An adaptive configuration cannot add an effort the model does not offer or change a budget model such as Opus 4.5 into an adaptive one.
 
 An unknown custom entry defaults to a 4,096-token output limit, no tools, images, caching, or thinking, and no temperature unless you supply `default_temperature`. Set capabilities to match the model. Set `thinking: true` for Anthropic budget thinking with the default 4,096-token budget, or use `{"adaptive": false, "budget_tokens": 5000}` for a different budget. `{"adaptive": true}` selects Anthropic adaptive thinking. `has_xhigh` adds that effort, while `budget_tokens` is ignored in adaptive mode. These settings are not generic reasoning controls for other vendors.
 
-Custom entries are pinned routes. Pinned entries and application profiles receive no automatic refusal fallback to another model. Automatic routing can offer a refusal fallback only when Zed also offers the fallback model.
+Custom entries are pinned routes. Pinned entries and application profiles receive no automatic refusal fallback to another model. Automatic routing can offer a refusal fallback only when Zed also chooses the route for the fallback model.
 
-When an output cap is no greater than a thinking budget, Zed reduces that budget to half the cap. If the resulting budget is below 1,024 tokens, Zed omits budget thinking. Zed also omits temperature while sending Anthropic thinking controls.
+The output cap must be positive. When it is no greater than a thinking budget, Zed reduces that budget to half the cap to leave room for the answer. If the resulting budget is below 1,024 tokens, Zed omits budget thinking for that request. Zed also omits temperature while sending Anthropic thinking controls.
 
-You cannot continue a thread containing tool calls or images on a Converse model that lacks the respective capability. The request fails in Zed with a message asking you to choose another model or start a new thread. This includes images in tool results.
+If the conversation history would send tool calls or images to a Converse model that lacks the respective capability, the request fails in Zed with a message asking you to choose another model or start a new thread. This includes images in tool results.
 
-### Bedrock custom endpoints {#bedrock-custom-endpoints}
+### Bedrock Custom Endpoints {#bedrock-custom-endpoints}
 
 To send Bedrock Converse requests to a proxy or gateway instead of AWS, set `endpoint_url`:
 
@@ -317,7 +319,7 @@ If your gateway serves one of those models over the Converse API, add it as a [c
 
 Don't use an ID that a model in `mantle_available_models` already uses as `name`. A Mantle model with the same ID replaces the custom model, so requests go to AWS instead of your gateway.
 
-### Bedrock Mantle models {#bedrock-mantle-models}
+### Bedrock Mantle Models {#bedrock-mantle-models}
 
 `bedrock-mantle` is AWS's OpenAI-compatible inference endpoint. Zed does not list its models. To use a model that is only reachable through `bedrock-mantle`, add it with `mantle_available_models`.
 
@@ -325,7 +327,7 @@ Zed has no built-in Mantle models. Only your `mantle_available_models` entries u
 
 Custom Mantle models need authorization for the `bedrock-mantle` endpoint, separate from Converse permissions. Zed restricts these requests to its configured supported Region list. If your Region is outside that list, Zed returns an error naming it and the configured supported Regions before sending a request. See the [Bedrock Mantle documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html#regions) for service availability.
 
-#### Custom Bedrock Mantle models {#bedrock-mantle-custom-models}
+#### Custom Bedrock Mantle Models {#bedrock-mantle-custom-models}
 
 Add models served through `bedrock-mantle` with `mantle_available_models`:
 
@@ -351,7 +353,7 @@ Add models served through `bedrock-mantle` with `mantle_available_models`:
 
 `protocol` selects which OpenAI-compatible API the model is called through, and must be either `chat_completions` or `responses`. Set `supports_thinking` to `true` for custom Mantle models that accept OpenAI reasoning effort parameters. Zed then exposes `low`, `medium`, `high`, and `xhigh` in the thinking effort picker, while disabling thinking sends `none`.
 
-### Upgrade from earlier versions {#bedrock-upgrade}
+### Upgrade From Earlier Versions {#bedrock-upgrade}
 
 - **Authentication:** A model in settings can appear before sign-in. Requests from an unauthenticated provider now fail, including in an existing thread. To use the AWS default credential chain, set `authentication_method` to `"default"`.
 - **Reasoning history:** When you switch providers, Zed drops signed or encrypted Bedrock reasoning from the request and keeps the answer text. For a custom route, Zed may also drop earlier reasoning after discovery first identifies the underlying model.
@@ -384,11 +386,11 @@ Add models served through `bedrock-mantle` with `mantle_available_models`:
 
 Choose limits and capabilities appropriate for the model you invoke. This example does not verify your account's access.
 
-### Bedrock permissions {#bedrock-permissions}
+### Bedrock Permissions {#bedrock-permissions}
 
 Converse requests need `bedrock:InvokeModelWithResponseStream` for streaming and `bedrock:InvokeModel` for invocation authorization. If your credentials cannot invoke the selected model or profile, the request fails with Bedrock's error. A model appearing in the picker does not grant these permissions.
 
-Discovery needs `bedrock:ListInferenceProfiles` to list system and application profiles, and `bedrock:ListFoundationModels` to obtain model names and modalities. If either required listing call fails without an earlier account list, Zed uses the public-catalog fallback described above. If only the application-profile call fails, Zed keeps the system-profile list without application profiles. Requests do not require listing permissions when you configure a custom model or use the public fallback.
+Discovery needs `bedrock:ListInferenceProfiles` to list system and application profiles, and `bedrock:ListFoundationModels` to obtain model names and modalities. If the foundation call or both profile calls fail without an earlier account list, Zed uses the public-catalog fallback described above. If only one profile call fails, the other call still supplies its profiles. Requests do not require listing permissions when you configure a custom model or use the public fallback.
 
 ## OpenAI-Compatible Gateways {#openai-compatible}
 

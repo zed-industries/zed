@@ -233,6 +233,9 @@ pub struct ConverseModel {
     pub supports_images: bool,
     pub supports_caching: bool,
     pub thinking: Option<ConverseThinking>,
+    /// A settings entry may disable optional thinking while retaining the
+    /// model's wire mode so the request can send its explicit off value.
+    pub thinking_disabled: bool,
 }
 
 /// The wire protocol used to talk to a [`MantleModel`] on the `bedrock-mantle` endpoint.

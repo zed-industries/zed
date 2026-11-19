@@ -144,6 +144,11 @@ pub async fn stream_completion(
 }
 
 fn wire_max_tokens(value: u64) -> Result<i32, BedrockError> {
+    if value == 0 {
+        return Err(BedrockError::Validation(
+            "max_tokens 0 must be positive".into(),
+        ));
+    }
     i32::try_from(value).map_err(|_| {
         BedrockError::Validation(format!(
             "max_tokens {value} exceeds the Converse limit of {}",
@@ -418,6 +423,13 @@ mod tests {
 
     #[test]
     fn output_limit_must_fit_the_sdk_field() -> Result<()> {
+        assert!(
+            wire_max_tokens(0)
+                .expect_err("zero output limit")
+                .to_string()
+                .contains("max_tokens 0")
+        );
+        assert_eq!(wire_max_tokens(1)?, 1);
         let largest = i32::MAX as u64;
         assert_eq!(wire_max_tokens(largest)?, i32::MAX);
         let oversized = largest + 1;

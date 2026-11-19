@@ -422,9 +422,14 @@ impl ConverseModel {
                     !family.is_empty()
                         && family != "instant"
                         && family.bytes().all(|letter| letter.is_ascii_alphabetic())
-                        && !version.is_empty()
+                        && version
+                            .split(['-', ':'])
+                            .next()
+                            .and_then(|major| major.parse::<u32>().ok())
+                            .is_some_and(|major| major >= 4)
                 }),
             thinking,
+            thinking_disabled: false,
         }
     }
 }
@@ -481,6 +486,9 @@ mod tests {
         let catalog = CapabilityCatalog::default();
         for (id, expected) in [
             ("anthropic.claude-example-9", true),
+            ("anthropic.claude-example-4-v1:0", true),
+            ("anthropic.claude-example-preview", false),
+            ("anthropic.claude-example-2", false),
             ("anthropic.claude-3-example", false),
             ("anthropic.claude-v2-example", false),
             ("anthropic.claude-instant-example", false),
