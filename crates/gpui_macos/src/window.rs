@@ -106,6 +106,7 @@ unsafe fn build_classes() {
         VIEW_CLASS = {
             let mut decl = ClassBuilder::new(c"GPUIView", class!(NSView)).unwrap();
             decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+            crate::quick_look::register(&mut decl);
             decl.add_method(sel!(dealloc), dealloc_view as extern "C" fn(_, Sel));
 
             decl.add_method(
@@ -2008,6 +2009,26 @@ impl PlatformWindow for MacWindow {
         // Changing the document path state resets the traffic light position,
         // so we have to move it again.
         self.0.lock().move_traffic_light();
+    }
+
+    fn preview_file(&self, path: &std::path::Path) {
+        if !path.is_absolute() {
+            return;
+        }
+        let Some(url) = NSURL::from_file_path(path) else {
+            return;
+        };
+        let this = self.0.lock();
+        let view = this.native_view;
+        let closed = this.closed.clone();
+        this.foreground_executor
+            .spawn(async move {
+                if_window_not_closed(closed, || {
+                    // SAFETY: the live window owns this GPUIView, and AppKit is on the main thread.
+                    unsafe { crate::quick_look::show(view.as_ref(), &url) }
+                });
+            })
+            .detach();
     }
 
     fn show_character_palette(&self) {

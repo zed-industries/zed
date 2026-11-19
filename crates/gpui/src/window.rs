@@ -3431,6 +3431,11 @@ impl Window {
         self.platform_window.set_document_path(path);
     }
 
+    /// Shows the system preview for a local file on platforms that support it.
+    pub fn preview_file(&self, path: &std::path::Path) {
+        self.platform_window.preview_file(path);
+    }
+
     /// Determine the display on which the window is visible.
     pub fn display(&self, cx: &App) -> Option<Rc<dyn PlatformDisplay>> {
         cx.platform
