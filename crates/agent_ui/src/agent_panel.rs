@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, line_range_suffix};
+use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, line_range_suffix, revision_location};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::v2::schema as acp_v2;
 use agent_servers::AgentServer;
@@ -843,12 +843,22 @@ fn format_selection_for_terminal(
             let mut parts: Vec<String> = Vec::new();
             for (buffer, range) in ranges {
                 let buffer = buffer.read(cx);
-                let Some(project_path) = buffer.project_path(cx) else {
-                    continue;
-                };
                 let snapshot = buffer.snapshot();
                 let point_range = range.to_point(&snapshot);
                 let line_range = point_range.start.row..=point_range.end.row;
+                if let Some(file) = buffer.file()
+                    && let Some(revision) = file.revision()
+                {
+                    parts.push(revision_location(
+                        revision,
+                        file.path().as_unix_str(),
+                        &line_range,
+                    ));
+                    continue;
+                }
+                let Some(project_path) = buffer.project_path(cx) else {
+                    continue;
+                };
                 let path = mention_path_for_terminal(
                     project,
                     &project_path,
@@ -9788,6 +9798,34 @@ mod tests {
             assert!(thread.thread.read(cx).entries().is_empty());
         });
         assert_eq!(cx.update(|window, cx| window.focused(cx)), focused);
+    }
+
+    #[gpui::test]
+    async fn test_format_revision_selection_for_terminal(cx: &mut TestAppContext) {
+        use crate::test_support::historic_buffer;
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let buffer = cx.new(|cx| historic_buffer::build("line one\nline two\nline three\n", cx));
+        cx.read(|cx| {
+            assert!(buffer.read(cx).project_path(cx).is_none());
+            let snapshot = buffer.read(cx).snapshot();
+            let range = snapshot.anchor_before(9)..snapshot.anchor_after(28);
+            assert_eq!(
+                format_selection_for_terminal(
+                    &AgentContextSelection::Editor(vec![(buffer.clone(), range)]),
+                    &project,
+                    None,
+                    cx,
+                ),
+                format!(
+                    "{}:{}:2-3 ",
+                    historic_buffer::REVISION,
+                    historic_buffer::PATH
+                ),
+            );
+        });
     }
 
     #[gpui::test]

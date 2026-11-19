@@ -14725,7 +14725,8 @@ pub(crate) fn open_link(
                     cx,
                 );
             }
-            MentionUri::Selection { abs_path: None, .. } => {}
+            MentionUri::Selection { abs_path: None, .. } | MentionUri::RevisionSelection { .. } => {
+            }
             MentionUri::Thread { id, name } => {
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {

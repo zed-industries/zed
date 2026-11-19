@@ -100,6 +100,7 @@ dependencies = [
  "feature_flags",
  "file_icons",
  "futures 0.3.34",
+ "git",
  "gpui",
  "http_proxy",
  "image",

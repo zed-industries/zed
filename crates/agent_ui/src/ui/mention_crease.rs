@@ -211,6 +211,7 @@ fn open_mention_uri(
         }
         MentionUri::PastedImage { .. }
         | MentionUri::Selection { abs_path: None, .. }
+        | MentionUri::RevisionSelection { .. }
         | MentionUri::Diagnostics { .. }
         | MentionUri::TerminalSelection { .. }
         | MentionUri::GitDiff { .. }

@@ -701,6 +701,7 @@ fn open_buffer_blame_at_revision(
 
                 let file = Arc::new(GitBlob {
                     path: path.clone(),
+                    revision: revision.to_string(),
                     worktree_id,
                     is_deleted: false,
                     is_binary: false,
