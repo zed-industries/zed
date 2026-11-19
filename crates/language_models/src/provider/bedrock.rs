@@ -23,9 +23,8 @@ use bedrock::{
     BedrockMessage, BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock,
     BedrockTool, BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema,
     BedrockToolResultBlock, BedrockToolResultContentBlock, BedrockToolResultStatus,
-    BedrockToolSpec, BedrockToolUseBlock, CAPABILITY_CATALOG_PROVIDER, CAPABILITY_CATALOG_URL,
-    CapabilityCatalog, ConverseModel, ConverseThinking, MantleModel, MantleProtocol, ModelCatalog,
-    value_to_aws_document,
+    BedrockToolSpec, BedrockToolUseBlock, CAPABILITY_CATALOG_URL, CapabilityCatalog, ConverseModel,
+    ConverseThinking, MantleModel, MantleProtocol, ModelCatalog, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap, IndexMap};
 use credentials_provider::CredentialsProvider;
@@ -336,8 +335,9 @@ fn sign_mantle_request_sigv4_at(
 pub struct State {
     /// The resolved authentication method. Settings take priority over UX credentials.
     auth: Option<BedrockAuth>,
-    /// Raw settings from settings.json
-    settings: Option<AmazonBedrockSettings>,
+    /// Updated atomically with auth and listing invalidation, before requests
+    /// take their routing and header snapshot.
+    settings: AmazonBedrockSettings,
     /// Whether credentials came from environment variables (only relevant for static credentials)
     credentials_from_env: bool,
     credentials_provider: Arc<dyn CredentialsProvider>,
@@ -352,11 +352,9 @@ pub struct State {
     http_client: AwsHttpClient,
     plain_http_client: Arc<dyn HttpClient>,
     fs: Arc<dyn Fs>,
-    /// The models Bedrock listed for the current auth and Region, once the
-    /// first fetch has completed.
-    model_catalog: Option<ModelCatalog>,
+    listing: ModelListing,
+    listing_generation: u64,
     fetch_models_task: Option<Task<()>>,
-    last_fetch_models_error: Option<String>,
     /// What the public capability catalog says about Bedrock's models. It is
     /// empty until the catalog has loaded.
     capability_catalog: CapabilityCatalog,
@@ -370,6 +368,43 @@ struct ExpiringCredentials {
     auth: Option<BedrockAuth>,
     region: String,
     credentials: Credentials,
+}
+
+#[derive(Default)]
+enum ModelListing {
+    #[default]
+    Unauthenticated,
+    Loading {
+        previous: Option<ModelCatalog>,
+    },
+    Listed(ModelCatalog),
+    Failed {
+        previous: Option<ModelCatalog>,
+        error: String,
+    },
+    Gateway,
+}
+
+impl ModelListing {
+    fn catalog(&self) -> Option<&ModelCatalog> {
+        match self {
+            Self::Listed(catalog) => Some(catalog),
+            Self::Loading { previous } | Self::Failed { previous, .. } => previous.as_ref(),
+            Self::Unauthenticated | Self::Gateway => None,
+        }
+    }
+
+    fn into_catalog(self) -> Option<ModelCatalog> {
+        match self {
+            Self::Listed(catalog) => Some(catalog),
+            Self::Loading { previous } | Self::Failed { previous, .. } => previous,
+            Self::Unauthenticated | Self::Gateway => None,
+        }
+    }
+
+    fn uses_public_catalog(&self) -> bool {
+        matches!(self, Self::Gateway | Self::Failed { previous: None, .. })
+    }
 }
 
 /// How long before expiry cached AWS credentials are replaced, so a request
@@ -396,6 +431,53 @@ fn environment_bearer_token(
 }
 
 impl State {
+    fn sync_settings(&mut self, cx: &mut Context<Self>) {
+        let settings = AllLanguageModelSettings::get_global(cx).bedrock.clone();
+        if self.settings == settings {
+            return;
+        }
+        let auth_changed = self.settings.authentication_method != settings.authentication_method
+            || self.settings.profile_name != settings.profile_name;
+        let region_changed = self.get_region() != bedrock_region(&settings);
+        let endpoint_changed = self.settings.endpoint != settings.endpoint;
+        self.settings = settings;
+        if auth_changed {
+            let auth = self.settings_auth().or_else(|| match &self.auth {
+                Some(BedrockAuth::IamCredentials { .. } | BedrockAuth::ApiKey { .. }) => {
+                    self.auth.clone()
+                }
+                _ => None,
+            });
+            let from_env = auth == self.auth && self.credentials_from_env;
+            let was_authenticated = self.is_authenticated();
+            self.change_auth(auth, from_env, cx);
+            if was_authenticated && !self.is_authenticated() {
+                self.authenticate(cx).detach_and_log_err(cx);
+            }
+        } else if region_changed || endpoint_changed {
+            // A Region change also invalidates cached credentials and pending
+            // authentication reads, even when the auth method is unchanged.
+            self.set_auth(self.auth.clone());
+            self.listing = ModelListing::default();
+            self.restart_fetch_models_task(cx);
+        }
+        cx.notify();
+    }
+
+    fn settings_auth(&self) -> Option<BedrockAuth> {
+        let profile_name = self
+            .settings
+            .profile_name
+            .clone()
+            .unwrap_or_else(|| "default".into());
+        match self.settings.authentication_method.as_ref()? {
+            BedrockAuthMethod::Automatic => Some(BedrockAuth::Automatic),
+            BedrockAuthMethod::NamedProfile => Some(BedrockAuth::NamedProfile { profile_name }),
+            BedrockAuthMethod::SingleSignOn => Some(BedrockAuth::SingleSignOn { profile_name }),
+            BedrockAuthMethod::ApiKey => None,
+        }
+    }
+
     /// Sets the auth method and drops credentials resolved for the old one.
     fn set_auth(&mut self, auth: Option<BedrockAuth>) {
         self.auth = auth;
@@ -412,40 +494,51 @@ impl State {
     ) {
         self.set_auth(auth);
         self.credentials_from_env = credentials_from_env;
-        self.model_catalog = None;
+        self.listing = ModelListing::default();
         self.restart_fetch_models_task(cx);
         cx.notify();
     }
 
-    fn fetch_models(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn fetch_models(&self, cx: &mut Context<Self>) -> Task<Result<ModelCatalog>> {
         let http_client = self.http_client.clone();
         let profile_name = aws_profile_name(&self.auth);
         let region = self.get_region();
+        let generation = self.listing_generation;
+        let deadline = cx
+            .background_executor()
+            .timer(LIST_MODELS_TIMEOUT)
+            .boxed()
+            .shared();
         cx.spawn(async move |this, cx| {
-            let request_auth = {
-                let state = this
-                    .upgrade()
-                    .context("Bedrock provider state was dropped")?;
-                let http_client = http_client.clone();
-                resolve_cached_request_auth(
-                    &state,
-                    cx,
-                    |name| std::env::var(name).ok(),
-                    move |auth, region| resolve_request_auth(http_client, auth, region),
-                )
-            }
-            .await?;
-            let model_catalog = Tokio::spawn_result(cx, async move {
-                let client =
-                    build_control_plane_client(http_client, request_auth, profile_name, region)
-                        .await;
-                bedrock::list_models(&client).await
-            })
-            .await?;
-            this.update(cx, |this, cx| {
-                this.model_catalog = Some(model_catalog);
-                cx.notify();
-            })
+            this.update(cx, |state, cx| {
+                state.sync_settings(cx);
+                anyhow::ensure!(state.listing_generation == generation, "Bedrock model listing configuration changed");
+                Ok::<_, anyhow::Error>(())
+            })??;
+            let setup = async {
+                let request_auth = {
+                    let state = this.upgrade().context("Bedrock provider state was dropped")?;
+                    let http_client = http_client.clone();
+                    resolve_cached_request_auth(
+                        &state,
+                        cx,
+                        |name| std::env::var(name).ok(),
+                        move |auth, region| resolve_request_auth(http_client, auth, region),
+                    )
+                }
+                .await?;
+                Tokio::spawn_result(cx, async move {
+                    Ok(build_control_plane_client(http_client, request_auth, profile_name, region).await)
+                })
+                .await
+            };
+            let client = futures::select_biased! {
+                result = setup.fuse() => result?,
+                _ = deadline.clone().fuse() => anyhow::bail!("model listing exceeded the {LIST_MODELS_TIMEOUT:?} deadline"),
+            };
+            Tokio::spawn_result(cx, async move {
+                bedrock::list_models(&client, deadline).await
+            }).await
         })
     }
 
@@ -454,38 +547,52 @@ impl State {
     /// credentials for it need not be valid for AWS.
     fn uses_custom_endpoint(&self) -> bool {
         self.settings
-            .as_ref()
-            .and_then(|settings| settings.endpoint.as_deref())
+            .endpoint
+            .as_deref()
             .is_some_and(|endpoint| !endpoint.is_empty())
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        self.fetch_models_task = None;
+        self.listing_generation += 1;
         if !self.is_authenticated() {
-            self.fetch_models_task = None;
-            self.last_fetch_models_error = None;
+            self.listing = ModelListing::Unauthenticated;
             self.refresh_capability_catalog_task = None;
             self.last_capability_catalog_error = None;
             return;
         }
         if self.refresh_capability_catalog_task.is_none() {
-            self.refresh_capability_catalog_task = Some(self.refresh_capability_catalog(cx));
+            self.refresh_capability_catalog_task = Some(self.refresh_capability_catalog(false, cx));
         }
         if self.uses_custom_endpoint() {
-            self.fetch_models_task = None;
-            self.last_fetch_models_error = None;
+            self.listing = ModelListing::Gateway;
             return;
         }
 
+        let previous = std::mem::take(&mut self.listing).into_catalog();
+        self.listing = ModelListing::Loading { previous };
+        let generation = self.listing_generation;
         let fetch_task = self.fetch_models(cx);
         let task = cx.spawn(async move |this, cx| {
             let result = fetch_task.await;
             this.update(cx, |this, cx| {
-                this.last_fetch_models_error =
-                    result.as_ref().err().map(|error| format!("{error:#}"));
+                this.sync_settings(cx);
+                if this.listing_generation != generation {
+                    return;
+                }
+                this.listing = match result {
+                    Ok(catalog) => ModelListing::Listed(catalog),
+                    Err(error) => {
+                        log::warn!("Failed to list Bedrock models: {error:#}");
+                        ModelListing::Failed {
+                            previous: std::mem::take(&mut this.listing).into_catalog(),
+                            error: format!("{error:#}"),
+                        }
+                    }
+                };
                 cx.notify();
             })
-            .ok();
-            result.log_err();
+            .log_err();
         });
         self.fetch_models_task.replace(task);
     }
@@ -493,19 +600,33 @@ impl State {
     /// Loads the capability catalog from disk, fetches it when that copy is
     /// missing or old, and then fetches it again every hour. The catalog is
     /// public, so the task does not depend on which credentials are in use.
-    fn refresh_capability_catalog(&self, cx: &mut Context<Self>) -> Task<()> {
+    fn refresh_capability_catalog(&self, fetch_now: bool, cx: &mut Context<Self>) -> Task<()> {
         let http_client = self.plain_http_client.clone();
         let fs = self.fs.clone();
         let cache_path = self.capability_catalog_cache_path.clone();
         let executor = cx.background_executor().clone();
+        let load_cache = self.capability_catalog.is_empty() && !fetch_now;
         cx.spawn(async move |this, cx| {
-            let cached_catalog = load_cached_capability_catalog(fs.as_ref(), &cache_path)
-                .await
-                .log_err()
-                .flatten();
+            let cached_catalog = if load_cache {
+                executor
+                    .spawn({
+                        let fs = fs.clone();
+                        let cache_path = cache_path.clone();
+                        let executor = executor.clone();
+                        async move {
+                            load_cached_capability_catalog(fs, &cache_path, &executor)
+                                .await
+                        }
+                    })
+                    .await
+                    .log_err()
+                    .flatten()
+            } else {
+                None
+            };
             let mut is_fresh = false;
             if let Some((capability_catalog, cached_is_fresh)) = cached_catalog {
-                is_fresh = cached_is_fresh;
+                is_fresh = cached_is_fresh && !fetch_now;
                 let applied = this.update(cx, |this, cx| {
                     this.capability_catalog = capability_catalog;
                     cx.notify();
@@ -517,13 +638,23 @@ impl State {
 
             loop {
                 if !is_fresh {
-                    let capability_catalog = fetch_capability_catalog(
-                        http_client.clone(),
-                        executor.clone(),
-                        fs.as_ref(),
-                        cache_path.clone(),
-                    )
-                    .await;
+                    let capability_catalog = executor
+                        .spawn({
+                            let http_client = http_client.clone();
+                            let executor = executor.clone();
+                            let fs = fs.clone();
+                            let cache_path = cache_path.clone();
+                            async move {
+                                fetch_capability_catalog(
+                                    http_client,
+                                    executor,
+                                    fs.as_ref(),
+                                    cache_path,
+                                )
+                                .await
+                            }
+                        })
+                        .await;
                     let applied = this.update(cx, |this, cx| {
                         match capability_catalog {
                             Ok(capability_catalog) => {
@@ -547,14 +678,13 @@ impl State {
         })
     }
 
-    fn reset_auth(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn reset_auth(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.change_auth(None, false, cx);
         let credentials_provider = self.credentials_provider.clone();
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_, cx| {
             credentials_provider
                 .delete_credentials(AMAZON_AWS_URL, cx)
                 .await
-                .log_err();
-            this.update(cx, |this, cx| this.change_auth(None, false, cx))
         })
     }
 
@@ -565,6 +695,8 @@ impl State {
     ) -> Task<Result<()>> {
         let auth = credentials.clone().into_auth();
         let credentials_provider = self.credentials_provider.clone();
+        self.auth_generation += 1;
+        let generation = self.auth_generation;
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(
@@ -574,7 +706,12 @@ impl State {
                     cx,
                 )
                 .await?;
-            this.update(cx, |this, cx| this.change_auth(auth, false, cx))
+            this.update(cx, |this, cx| {
+                this.sync_settings(cx);
+                if this.auth_generation == generation {
+                    this.change_auth(auth, false, cx);
+                }
+            })
         })
     }
 
@@ -583,35 +720,16 @@ impl State {
     }
 
     /// Resolve authentication. Settings take priority over UX-provided credentials.
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        self.sync_settings(cx);
         if self.is_authenticated() {
             return Task::ready(Ok(()));
         }
 
-        // Step 1: Check if settings specify an auth method (enterprise control)
-        if let Some(settings) = &self.settings {
-            if let Some(method) = &settings.authentication_method {
-                let profile_name = settings
-                    .profile_name
-                    .clone()
-                    .unwrap_or_else(|| "default".to_string());
-
-                let auth = match method {
-                    BedrockAuthMethod::Automatic => BedrockAuth::Automatic,
-                    BedrockAuthMethod::NamedProfile => BedrockAuth::NamedProfile { profile_name },
-                    BedrockAuthMethod::SingleSignOn => BedrockAuth::SingleSignOn { profile_name },
-                    BedrockAuthMethod::ApiKey => {
-                        // ApiKey method means "use static credentials from keychain/env"
-                        // Fall through to load them below
-                        return self.load_static_credentials(cx);
-                    }
-                };
-
-                return cx.spawn(async move |this, cx| {
-                    this.update(cx, |this, cx| this.change_auth(Some(auth), false, cx))?;
-                    Ok(())
-                });
-            }
+        self.auth_generation += 1;
+        if let Some(auth) = self.settings_auth() {
+            self.change_auth(Some(auth), false, cx);
+            return Task::ready(Ok(()));
         }
 
         // Step 2: No settings auth method - try to load static credentials
@@ -624,6 +742,7 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = self.credentials_provider.clone();
+        let generation = self.auth_generation;
         cx.spawn(async move |this, cx| {
             // Try environment variables first
             let (auth, from_env) = if let Some(bearer_token) = &ZED_BEDROCK_BEARER_TOKEN_VAR.value {
@@ -665,15 +784,28 @@ impl State {
 
             // If we got auth from env vars, use it
             if let Some(auth) = auth {
-                this.update(cx, |this, cx| this.change_auth(Some(auth), from_env, cx))?;
+                this.update(cx, |this, cx| {
+                    this.sync_settings(cx);
+                    if this.auth_generation == generation {
+                        this.change_auth(Some(auth), from_env, cx);
+                    }
+                })?;
                 return Ok(());
             }
 
             // Try keychain
-            let (_, credentials_bytes) =
+            let credentials =
                 language_model::read_credentials(credentials_provider.as_ref(), AMAZON_AWS_URL, cx)
-                    .await?
-                    .ok_or(AuthenticateError::CredentialsNotFound)?;
+                    .await;
+            let is_current = this.update(cx, |this, cx| {
+                this.sync_settings(cx);
+                this.auth_generation == generation
+            })?;
+            if !is_current {
+                return Ok(());
+            }
+            let (_, credentials_bytes) =
+                credentials?.ok_or(AuthenticateError::CredentialsNotFound)?;
 
             let credentials_str = String::from_utf8(credentials_bytes)
                 .with_context(|| format!("invalid {PROVIDER_NAME} credentials"))?;
@@ -685,7 +817,12 @@ impl State {
                 .into_auth()
                 .ok_or(AuthenticateError::CredentialsNotFound)?;
 
-            this.update(cx, |this, cx| this.change_auth(Some(auth), false, cx))?;
+            this.update(cx, |this, cx| {
+                this.sync_settings(cx);
+                if this.auth_generation == generation {
+                    this.change_auth(Some(auth), false, cx);
+                }
+            })?;
 
             Ok(())
         })
@@ -693,31 +830,59 @@ impl State {
 
     /// Get the resolved region. Checks env var, then settings, then defaults to us-east-1.
     fn get_region(&self) -> String {
-        // Priority: env var > settings > default
-        if let Some(region) = ZED_BEDROCK_REGION_VAR.value.as_deref() {
-            if !region.is_empty() {
-                return region.to_string();
-            }
-        }
-
-        self.settings
-            .as_ref()
-            .and_then(|s| s.region.clone())
-            .unwrap_or_else(|| "us-east-1".to_string())
+        bedrock_region(&self.settings)
     }
 
     fn get_allow_global(&self) -> bool {
-        self.settings
-            .as_ref()
-            .and_then(|s| s.allow_global)
-            .unwrap_or(false)
+        self.settings.allow_global.unwrap_or(false)
     }
 
     fn get_guardrail_config(&self) -> (Option<String>, Option<String>) {
-        self.settings.as_ref().map_or((None, None), |s| {
-            (s.guardrail_identifier.clone(), s.guardrail_version.clone())
-        })
+        (
+            self.settings.guardrail_identifier.clone(),
+            self.settings.guardrail_version.clone(),
+        )
     }
+
+    fn listing_message(&self) -> Option<(String, bool)> {
+        let public_consequence = || {
+            if self
+                .capability_catalog
+                .models_for_region(&self.get_region(), self.get_allow_global())
+                .is_empty()
+            {
+                if self.capability_catalog.is_empty() {
+                    "Zed offers only the models in your settings because the models.dev catalog has not loaded."
+                } else {
+                    "Zed offers only the models in your settings because models.dev names no models for your Region."
+                }
+            } else {
+                "Zed offers the models that models.dev names for your Region instead."
+            }
+        };
+        match &self.listing {
+            ModelListing::Unauthenticated => None,
+            ModelListing::Loading { previous: None } => Some(("Zed offers only the models in your settings while it lists the models in your account.".into(), false)),
+            ModelListing::Loading { previous: Some(_) } => Some(("Zed keeps the earlier account list while it refreshes the models.".into(), false)),
+            ModelListing::Listed(catalog) => Some(match catalog.application_profile_error() {
+                Some(error) => (format!("Zed offers the listed models without application profiles. {error}"), true),
+                None => ("Zed offers the models listed in your account and the models in your settings.".into(), false),
+            }),
+            ModelListing::Failed { previous: Some(_), error } => Some((format!("Zed keeps the earlier account list, which may be out of date. {error}"), true)),
+            ModelListing::Failed { previous: None, error } => Some((format!("{} {error}", public_consequence()), true)),
+            ModelListing::Gateway => Some((format!("{} A custom endpoint is configured, so Zed does not list models in your AWS account.", public_consequence()), false)),
+        }
+    }
+}
+
+fn bedrock_region(settings: &AmazonBedrockSettings) -> String {
+    ZED_BEDROCK_REGION_VAR
+        .value
+        .as_deref()
+        .filter(|region| !region.is_empty())
+        .map(str::to_string)
+        .or_else(|| settings.region.clone())
+        .unwrap_or_else(|| "us-east-1".to_string())
 }
 
 pub struct BedrockLanguageModelProvider {
@@ -759,7 +924,7 @@ impl BedrockLanguageModelProvider {
         let http_client = AwsHttpClient::new(plain_http_client.clone());
         let state = cx.new(|cx| State {
             auth: None,
-            settings: Some(AllLanguageModelSettings::get_global(cx).bedrock.clone()),
+            settings: AllLanguageModelSettings::get_global(cx).bedrock.clone(),
             credentials_from_env: false,
             credentials_provider,
             expiring_credentials: None,
@@ -767,15 +932,15 @@ impl BedrockLanguageModelProvider {
             http_client: http_client.clone(),
             plain_http_client: plain_http_client.clone(),
             fs,
-            model_catalog: None,
+            listing: ModelListing::default(),
+            listing_generation: 0,
             fetch_models_task: None,
-            last_fetch_models_error: None,
             capability_catalog: CapabilityCatalog::default(),
             capability_catalog_cache_path,
             refresh_capability_catalog_task: None,
             last_capability_catalog_error: None,
-            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                cx.notify();
+            _subscription: cx.observe_global::<SettingsStore>(|state: &mut State, cx| {
+                state.sync_settings(cx);
             }),
         });
 
@@ -792,9 +957,9 @@ impl BedrockLanguageModelProvider {
     /// the Mantle models from settings. A Mantle model replaces a Converse
     /// model with the same id, so each id is offered and served exactly once.
     fn bedrock_models(&self, cx: &App) -> IndexMap<String, BedrockModelConfig> {
-        let bedrock_settings = &AllLanguageModelSettings::get_global(cx).bedrock;
         let state = self.state.read(cx);
-        let model_catalog = state.model_catalog.as_ref();
+        let bedrock_settings = &state.settings;
+        let model_catalog = state.listing.catalog();
         let capability_catalog = &state.capability_catalog;
         let allow_global = state.get_allow_global();
         let mut models = BTreeMap::default();
@@ -808,7 +973,7 @@ impl BedrockLanguageModelProvider {
             // Without Bedrock's own listing, which the credentials in use may
             // not be allowed to ask for, offer the models that the capability
             // catalog names for the Region.
-            None if state.is_authenticated() => {
+            None if state.listing.uses_public_catalog() => {
                 for model in capability_catalog.models_for_region(&state.get_region(), allow_global)
                 {
                     models.insert(model.id.clone(), model);
@@ -961,6 +1126,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<LanguageModel> {
+        if matches!(
+            self.state.read(cx).listing,
+            ModelListing::Loading { previous: None }
+        ) {
+            return None;
+        }
         self.newest_model(DEFAULT_MODEL_ID_PREFIX, cx)
     }
 
@@ -984,8 +1155,16 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn refresh_models(&self, cx: &mut App) {
-        self.state
-            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+        self.state.update(cx, |state, cx| {
+            state.sync_settings(cx);
+            state.refresh_capability_catalog_task = None;
+            if state.is_authenticated() {
+                state.refresh_capability_catalog_task =
+                    Some(state.refresh_capability_catalog(true, cx));
+            }
+            state.restart_fetch_models_task(cx);
+            cx.notify();
+        });
     }
 
     fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
@@ -1010,7 +1189,10 @@ impl LanguageModelClient for BedrockLanguageModelProvider {
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
     {
-        let config = match cx.update(|cx| self.config(model, cx)) {
+        let config = match cx.update(|cx| {
+            self.state.update(cx, |state, cx| state.sync_settings(cx));
+            self.config(model, cx)
+        }) {
             Ok(config) => config,
             Err(error) => return async move { Err(error) }.boxed(),
         };
@@ -1070,15 +1252,12 @@ impl BedrockLanguageModelProvider {
         let http_client = self.http_client.clone();
         let auth_task = self.resolve_request_auth(cx);
         let (profile_name, endpoint, region, extra_headers) =
-            self.state.read_with(cx, |state, cx| {
+            self.state.read_with(cx, |state, _cx| {
                 (
                     aws_profile_name(&state.auth),
-                    state.settings.as_ref().and_then(|s| s.endpoint.clone()),
+                    state.settings.endpoint.clone(),
                     state.get_region(),
-                    AllLanguageModelSettings::get_global(cx)
-                        .bedrock
-                        .custom_headers
-                        .clone(),
+                    state.settings.custom_headers.clone(),
                 )
             });
 
@@ -1105,6 +1284,7 @@ fn resolve_cached_request_auth<ResolveFuture>(
 where
     ResolveFuture: Future<Output = Result<BedrockRequestAuth>> + Send + 'static,
 {
+    cx.update(|cx| state.update(cx, |state, cx| state.sync_settings(cx)));
     let (auth, region, auth_generation, cached_credentials) =
         cx.read_entity(state, |state, _cx| {
             let (auth, region) = (state.auth.clone(), state.get_region());
@@ -1164,10 +1344,12 @@ where
 /// The capability catalog stored at `path`, and whether it is recent enough
 /// to use without fetching it again.
 async fn load_cached_capability_catalog(
-    fs: &dyn Fs,
+    fs: Arc<dyn Fs>,
     path: &Path,
+    executor: &BackgroundExecutor,
 ) -> Result<Option<(CapabilityCatalog, bool)>> {
-    let Some((catalog, is_fresh)) = model_catalog_cache::load_cached(fs, path).await? else {
+    let Some((catalog, is_fresh)) = model_catalog_cache::load_cached(fs, path, executor).await?
+    else {
         return Ok(None);
     };
     Ok(Some((CapabilityCatalog::parse(&catalog)?, is_fresh)))
@@ -1182,12 +1364,8 @@ async fn fetch_capability_catalog(
     cache_path: PathBuf,
 ) -> Result<CapabilityCatalog> {
     let catalog = model_catalog_cache::fetch(http_client, executor, CAPABILITY_CATALOG_URL).await?;
-    let capability_catalog = CapabilityCatalog::parse(&catalog)?;
-    let mut catalog = serde_json::from_str::<serde_json::Map<String, Value>>(&catalog)?;
-    catalog.retain(|provider, _| provider == CAPABILITY_CATALOG_PROVIDER);
-    if let Err(error) =
-        model_catalog_cache::store_cached(fs, cache_path, serde_json::to_string(&catalog)?).await
-    {
+    let (capability_catalog, catalog) = CapabilityCatalog::parse_with_cache(&catalog)?;
+    if let Err(error) = model_catalog_cache::store_cached(fs, cache_path, catalog).await {
         log::warn!("Failed to cache Bedrock model capabilities: {error:#}");
     }
     Ok(capability_catalog)
@@ -1233,11 +1411,7 @@ async fn build_control_plane_client(
     region: String,
 ) -> BedrockControlPlaneClient {
     let config = sdk_config_loader(http_client, request_auth, profile_name, region)
-        .timeout_config(
-            TimeoutConfig::builder()
-                .operation_timeout(LIST_MODELS_TIMEOUT)
-                .build(),
-        )
+        .timeout_config(TimeoutConfig::disabled())
         .load()
         .await;
     BedrockControlPlaneClient::new(&config)
@@ -2119,17 +2293,13 @@ impl BedrockLanguageModelProvider {
     {
         let http_client = self.plain_http_client.clone();
         let model = config.clone();
+        let auth_task = self.resolve_request_auth(cx);
         let region = cx.read_entity(&self.state, |state, _cx| state.get_region());
         let url = format!("{}/{}", mantle_endpoint_url(&region), endpoint);
-        let extra_headers = cx.read_entity(&self.state, |_, cx| {
-            AllLanguageModelSettings::get_global(cx)
-                .bedrock
-                .custom_headers
-                .clone()
+        let extra_headers = cx.read_entity(&self.state, |state, _cx| {
+            state.settings.custom_headers.clone()
         });
         let provider_name = PROVIDER_NAME.0.to_string();
-        let auth_task = self.resolve_request_auth(cx);
-
         let future = request_limiter.stream(async move {
             let auth = auth_task
                 .await
@@ -3145,13 +3315,9 @@ impl Render for ConfigurationView {
         let state = self.state.read(cx);
         let env_var_set = state.credentials_from_env;
         let auth = state.auth.clone();
-        let fetch_models_error = state.last_fetch_models_error.clone();
+        let listing_message = state.listing_message();
         let capability_catalog_error = state.last_capability_catalog_error.clone();
-        let offers_catalog_models = !state.capability_catalog.is_empty();
-        let settings_auth_method = state
-            .settings
-            .as_ref()
-            .and_then(|s| s.authentication_method.clone());
+        let settings_auth_method = state.settings.authentication_method.clone();
 
         if self.load_credentials_task.is_some() {
             return div().child(Label::new("Loading credentials...")).into_any();
@@ -3268,18 +3434,11 @@ impl Render for ConfigurationView {
                     ),
             )
             .child(credentials_control)
-            .when_some(fetch_models_error, |this, error| {
-                let consequence = if offers_catalog_models {
-                    "Zed offers the models that models.dev names for your Region instead."
-                } else {
-                    "Zed offers only the models in your settings."
-                };
+            .when_some(listing_message, |this, (message, warning)| {
                 this.child(
-                    Label::new(format!(
-                        "Could not list the models in your account. {consequence} {error}"
-                    ))
+                    Label::new(message)
                     .size(LabelSize::Small)
-                    .color(Color::Warning),
+                    .color(if warning { Color::Warning } else { Color::Muted }),
                 )
             })
             .when_some(capability_catalog_error, |this, error| {
@@ -3575,6 +3734,1030 @@ mod tests {
         })
     }
 
+    fn init_provider_test(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            gpui_tokio::init(cx);
+        });
+    }
+
+    fn set_bedrock_settings(cx: &mut gpui::TestAppContext, settings: Value) -> Result<()> {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.set_user_settings(
+                    &serde_json::json!({"language_models": {"bedrock": settings}}).to_string(),
+                    cx,
+                )
+            })
+        })
+        .result()
+        .map(|_| ())
+    }
+
+    fn listing_response(request: &HttpRequest<AsyncBody>, model_ids: &[&str]) -> Value {
+        if request.uri().path() == "/foundation-models" {
+            serde_json::json!({"modelSummaries": model_ids.iter().map(|id| serde_json::json!({
+                "modelId": id,
+                "modelArn": format!("arn:aws:bedrock:us-east-1::foundation-model/{id}"),
+                "modelName": format!("Name of {id}"),
+                "inputModalities": ["TEXT"], "outputModalities": ["TEXT"],
+                "responseStreamingSupported": true,
+            })).collect::<Vec<_>>()})
+        } else if request
+            .uri()
+            .query()
+            .is_some_and(|query| query.contains("SYSTEM_DEFINED"))
+        {
+            serde_json::json!({"inferenceProfileSummaries": model_ids.iter().map(|id| serde_json::json!({
+                "inferenceProfileId": format!("us.{id}"),
+                "inferenceProfileArn": format!("arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.{id}"),
+                "inferenceProfileName": id,
+                "status": "ACTIVE", "type": "SYSTEM_DEFINED",
+                "models": [{"modelArn": format!("arn:aws:bedrock:us-east-1::foundation-model/{id}")}],
+            })).collect::<Vec<_>>()})
+        } else {
+            serde_json::json!({"inferenceProfileSummaries": []})
+        }
+    }
+
+    fn json_response(status: u16, body: Value) -> Result<http_client::Response<AsyncBody>> {
+        Ok(http_client::Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(AsyncBody::from(body.to_string()))?)
+    }
+
+    async fn finish_listing(
+        provider: &BedrockLanguageModelProvider,
+        cx: &mut gpui::TestAppContext,
+    ) -> Result<()> {
+        let task = provider
+            .state
+            .update(cx, |state, _| state.fetch_models_task.take())
+            .context("listing task")?;
+        task.await;
+        Ok(())
+    }
+
+    fn offered_ids(
+        provider: &BedrockLanguageModelProvider,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<String> {
+        cx.update(|cx| provider.provided_models(cx))
+            .into_iter()
+            .map(|model| model.id.0.to_string())
+            .collect()
+    }
+
+    async fn send_test_completion(
+        provider: &BedrockLanguageModelProvider,
+        cx: &mut gpui::TestAppContext,
+    ) -> Result<()> {
+        let model = cx
+            .update(|cx| provider.provided_models(cx))
+            .into_iter()
+            .find(|model| model.id.0.as_ref() == "vendor.manual")
+            .context("manual test model")?;
+        let error = provider
+            .stream_completion(
+                &model,
+                LanguageModelRequest {
+                    messages: vec![user_message("test prompt")],
+                    ..Default::default()
+                },
+                &cx.to_async(),
+            )
+            .await
+            .err()
+            .context("controlled inference error")?;
+        anyhow::ensure!(
+            error.to_string().contains("test completion ended"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[gpui::test]
+    async fn region_changes_cancel_pending_listing_and_keep_request_settings_together(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            let settings = |region: &str, header: &str| {
+                serde_json::json!({
+                    "region": region, "custom_headers": {"x-test-route": header},
+                    "available_models": [{"name": "vendor.manual", "max_tokens": 10000}],
+                    "guardrail_identifier": header, "guardrail_version": "1",
+                })
+            };
+            set_bedrock_settings(cx, settings("us-east-1", "old"))?;
+            let (release, old_response) = futures::channel::oneshot::channel::<()>();
+            let old_response = old_response
+                .map(|result| result.expect("release old listing"))
+                .boxed()
+                .shared();
+            let (entered, mut pending) = futures::channel::mpsc::unbounded();
+            let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+            let client = http_client::FakeHttpClient::create({
+                let old_response = old_response.clone();
+                let requests = requests.clone();
+                move |mut request| {
+                    let old_response = old_response.clone();
+                    let entered = entered.clone();
+                    let requests = requests.clone();
+                    async move {
+                        if request.uri() == CAPABILITY_CATALOG_URL {
+                            return json_response(404, serde_json::json!({}));
+                        }
+                        let mut body = String::new();
+                        request.body_mut().read_to_string(&mut body).await?;
+                        requests.lock().push((
+                            request.uri().to_string(),
+                            request.headers().clone(),
+                            body,
+                        ));
+                        if request.uri().path().ends_with("converse-stream") {
+                            return json_response(
+                                400,
+                                serde_json::json!({"__type": "ValidationException", "message": "test completion ended"}),
+                            );
+                        }
+                        let old_region =
+                            request.uri().host() == Some("bedrock.us-east-1.amazonaws.com");
+                        if old_region && request.uri().path() == "/foundation-models" {
+                            entered.unbounded_send(()).context("old listing entered")?;
+                            old_response.await;
+                        }
+                        json_response(
+                            200,
+                            listing_response(
+                                &request,
+                                &[if old_region {
+                                    "vendor.old"
+                                } else {
+                                    "vendor.current"
+                                }],
+                            ),
+                        )
+                    }
+                }
+            });
+            let provider = cx.update(|cx| new_test_provider(client, cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            pending.next().await.context("pending old listing")?;
+            set_bedrock_settings(cx, settings("eu-west-1", "current"))?;
+            cx.run_until_parked();
+            finish_listing(&provider, cx).await?;
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.current", "vendor.manual"]
+            );
+            assert!(requests.lock().iter().any(|(uri, _, _)| {
+                uri.starts_with("https://bedrock.eu-west-1.amazonaws.com/foundation-models")
+            }));
+            send_test_completion(&provider, cx).await?;
+            {
+                let requests = requests.lock();
+                let (uri, headers, body) = requests
+                    .iter()
+                    .find(|(uri, _, _)| uri.contains("converse-stream"))
+                    .context("inference request")?;
+                assert!(uri.starts_with("https://bedrock-runtime.eu-west-1.amazonaws.com/"));
+                assert_eq!(
+                    headers.get("x-test-route").context("custom header")?,
+                    "current"
+                );
+                let body: Value = serde_json::from_str(body)?;
+                assert_eq!(body["guardrailConfig"]["guardrailIdentifier"], "current");
+            }
+            let before = requests.lock().len();
+            let mut passive = settings("eu-west-1", "passive");
+            passive["allow_global"] = true.into();
+            passive["available_models"][0]["max_tokens"] = 12000.into();
+            set_bedrock_settings(cx, passive)?;
+            cx.run_until_parked();
+            assert_eq!(
+                requests.lock().len(),
+                before,
+                "headers, guardrails, models and allow_global do not list again"
+            );
+            set_bedrock_settings(cx, settings("eu-west-1", "immediate"))?;
+            send_test_completion(&provider, cx).await?;
+            {
+                let requests = requests.lock();
+                let (_, headers, body) = requests.last().context("immediate settings request")?;
+                assert_eq!(
+                    headers.get("x-test-route").context("immediate header")?,
+                    "immediate"
+                );
+                assert_eq!(
+                    serde_json::from_str::<Value>(body)?["guardrailConfig"]["guardrailIdentifier"],
+                    "immediate"
+                );
+                assert_eq!(
+                    requests.len(),
+                    before + 1,
+                    "only the requested inference call is sent"
+                );
+            }
+            release
+                .send(())
+                .map_err(|_| anyhow!("old response receiver dropped"))?;
+            cx.run_until_parked();
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.current", "vendor.manual"]
+            );
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("Region settings scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn endpoint_changes_enter_and_leave_gateway_mode_without_applying_old_lists(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            let settings = |endpoint: Option<&str>, header: &str| {
+                serde_json::json!({
+                    "endpoint_url": endpoint, "custom_headers": {"x-test-route": header},
+                    "available_models": [{"name": "vendor.manual", "max_tokens": 10000}],
+                })
+            };
+            set_bedrock_settings(cx, settings(None, "direct"))?;
+            let (release, old_response) = futures::channel::oneshot::channel::<()>();
+            let old_response = old_response
+                .map(|result| result.expect("release old listing"))
+                .boxed()
+                .shared();
+            let old_listing = Arc::new(parking_lot::Mutex::new(true));
+            let (entered, mut pending) = futures::channel::mpsc::unbounded();
+            let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+            let client = http_client::FakeHttpClient::create({
+                let old_response = old_response.clone();
+                let old_listing = old_listing.clone();
+                let requests = requests.clone();
+                move |request| {
+                    let old_response = old_response.clone();
+                    let entered = entered.clone();
+                    let old = *old_listing.lock();
+                    let requests = requests.clone();
+                    async move {
+                        if request.uri() == CAPABILITY_CATALOG_URL {
+                            return json_response(404, serde_json::json!({}));
+                        }
+                        requests
+                            .lock()
+                            .push((request.uri().to_string(), request.headers().clone()));
+                        if request.uri().path().ends_with("converse-stream") {
+                            return json_response(
+                                400,
+                                serde_json::json!({"__type": "ValidationException", "message": "test completion ended"}),
+                            );
+                        }
+                        if old && request.uri().path() == "/foundation-models" {
+                            entered.unbounded_send(()).context("old listing entered")?;
+                            old_response.await;
+                        }
+                        json_response(
+                            200,
+                            listing_response(
+                                &request,
+                                &[if old { "vendor.old" } else { "vendor.current" }],
+                            ),
+                        )
+                    }
+                }
+            });
+            let provider = cx.update(|cx| new_test_provider(client, cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            pending.next().await.context("pending old listing")?;
+            set_bedrock_settings(
+                cx,
+                settings(Some("https://gateway-a.example.com/bedrock"), "gateway-a"),
+            )?;
+            cx.run_until_parked();
+            provider.state.read_with(cx, |state, _| {
+                assert!(matches!(state.listing, ModelListing::Gateway));
+                assert!(state.fetch_models_task.is_none());
+            });
+            let count_before_gateways = requests.lock().len();
+            for (endpoint, header) in [
+                ("https://gateway-a.example.com/bedrock", "gateway-a"),
+                ("https://gateway-b.example.com/bedrock", "gateway-b"),
+            ] {
+                set_bedrock_settings(cx, settings(Some(endpoint), header))?;
+                send_test_completion(&provider, cx).await?;
+                let requests = requests.lock();
+                let (uri, headers) = requests.last().context("gateway request")?;
+                assert!(uri.starts_with(endpoint));
+                assert_eq!(
+                    headers.get("x-test-route").context("gateway header")?,
+                    header
+                );
+            }
+            assert_eq!(
+                requests.lock().len(),
+                count_before_gateways + 2,
+                "gateway edits send no listing calls"
+            );
+            *old_listing.lock() = false;
+            set_bedrock_settings(cx, settings(None, "direct-again"))?;
+            cx.run_until_parked();
+            finish_listing(&provider, cx).await?;
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.current", "vendor.manual"]
+            );
+            send_test_completion(&provider, cx).await?;
+            {
+                let requests = requests.lock();
+                let (uri, headers) = requests.last().context("direct request")?;
+                assert!(uri.starts_with("https://bedrock-runtime.us-east-1.amazonaws.com/"));
+                assert_eq!(
+                    headers.get("x-test-route").context("direct header")?,
+                    "direct-again"
+                );
+            }
+            release
+                .send(())
+                .map_err(|_| anyhow!("old response receiver dropped"))?;
+            cx.run_until_parked();
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.current", "vendor.manual"]
+            );
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("endpoint settings scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn optional_application_failure_keeps_a_paginated_list_and_failed_refresh_keeps_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            let fail_foundation = Arc::new(parking_lot::Mutex::new(false));
+            let pages = Arc::new(parking_lot::Mutex::new(Vec::new()));
+            let http_client = http_client::FakeHttpClient::create({
+                let fail_foundation = fail_foundation.clone();
+                let pages = pages.clone();
+                move |request| {
+                    let fail = *fail_foundation.lock();
+                    pages.lock().push(request.uri().to_string());
+                    async move {
+                        if request.uri() == CAPABILITY_CATALOG_URL {
+                            return json_response(404, serde_json::json!({}));
+                        }
+                        if request
+                            .uri()
+                            .query()
+                            .is_some_and(|query| query.contains("APPLICATION"))
+                        {
+                            return json_response(
+                                403,
+                                serde_json::json!({"__type": "AccessDeniedException", "message": "application listing test error"}),
+                            );
+                        }
+                        if request.uri().path() == "/foundation-models" && fail {
+                            return json_response(
+                                403,
+                                serde_json::json!({"__type": "AccessDeniedException", "message": "foundation listing test error"}),
+                            );
+                        }
+                        let body = if request.uri().path() == "/foundation-models" {
+                            listing_response(&request, &["vendor.first", "vendor.second"])
+                        } else if request
+                            .uri()
+                            .query()
+                            .is_some_and(|query| query.contains("nextToken"))
+                        {
+                            listing_response(&request, &["vendor.second"])
+                        } else {
+                            let mut body = listing_response(&request, &["vendor.first"]);
+                            body["nextToken"] = "page-two".into();
+                            body
+                        };
+                        json_response(200, body)
+                    }
+                }
+            });
+            let provider = cx.update(|cx| new_test_provider(http_client, cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            finish_listing(&provider, cx).await?;
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.first", "vendor.second"]
+            );
+            provider.state.read_with(cx, |state, _| {
+                let ModelListing::Listed(catalog) = &state.listing else {
+                    panic!("expected listed models")
+                };
+                let error = catalog
+                    .application_profile_error()
+                    .expect("optional failure");
+                assert!(
+                    error.contains("ListInferenceProfiles (APPLICATION)")
+                        && error.contains("application listing test error")
+                );
+                let (message, warning) = state.listing_message().expect("listing message");
+                assert!(warning && message.contains("without application profiles"));
+            });
+            assert!(
+                pages
+                    .lock()
+                    .iter()
+                    .any(|uri| uri.contains("nextToken=page-two"))
+            );
+            *fail_foundation.lock() = true;
+            cx.update(|cx| provider.refresh_models(cx));
+            finish_listing(&provider, cx).await?;
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.first", "vendor.second"]
+            );
+            provider.state.read_with(cx, |state, _| {
+                let ModelListing::Failed {
+                    previous: Some(_),
+                    error,
+                } = &state.listing
+                else {
+                    panic!("expected retained list")
+                };
+                assert!(
+                    error.contains("ListFoundationModels")
+                        && error.contains("foundation listing test error")
+                );
+                let (message, warning) = state.listing_message().expect("stale message");
+                assert!(
+                    warning
+                        && message.contains("may be out of date")
+                        && !message.contains("models.dev")
+                );
+            });
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("partial and stale listing scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn required_listing_failure_uses_public_models_only_after_the_failure(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            let client = http_client::FakeHttpClient::create(|request| async move {
+                if request.uri() == CAPABILITY_CATALOG_URL {
+                    return json_response(404, serde_json::json!({}));
+                }
+                if request.uri().path() == "/foundation-models" {
+                    json_response(
+                        403,
+                        serde_json::json!({"__type": "AccessDeniedException", "message": "required listing test error"}),
+                    )
+                } else {
+                    json_response(200, listing_response(&request, &[]))
+                }
+            });
+            let provider = cx.update(|cx| new_test_provider(client, cx));
+            provider.state.update(cx, |state, cx| {
+                state.capability_catalog = capability_catalog(serde_json::json!({
+                    "us.vendor.public": capability_entry("Public", serde_json::json!({})),
+                }));
+                state.change_auth(api_key_auth(), false, cx);
+            });
+            assert!(offered_ids(&provider, cx).is_empty());
+            finish_listing(&provider, cx).await?;
+            assert_eq!(offered_ids(&provider, cx), ["vendor.public"]);
+            provider.state.read_with(cx, |state, _| {
+                let ModelListing::Failed {
+                    previous: None,
+                    error,
+                } = &state.listing
+                else {
+                    panic!("expected first failure")
+                };
+                assert!(
+                    error.contains("ListFoundationModels")
+                        && error.contains("required listing test error")
+                );
+                let (message, warning) = state.listing_message().expect("public list message");
+                assert!(warning && message.contains("models.dev names for your Region instead"));
+            });
+            set_bedrock_settings(cx, serde_json::json!({"region": "eu-west-1"}))?;
+            cx.run_until_parked();
+            finish_listing(&provider, cx).await?;
+            assert!(offered_ids(&provider, cx).is_empty());
+            provider.state.read_with(cx, |state, _| {
+                assert!(
+                    state
+                        .listing_message()
+                        .expect("settings only message")
+                        .0
+                        .contains("names no models for your Region")
+                );
+            });
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("required listing failure scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn first_listing_does_not_install_a_provisional_registry_fallback(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"available_models": [{"name": "vendor.manual", "max_tokens": 10000}]}),
+            )?;
+            let (release, response) = futures::channel::oneshot::channel::<()>();
+            let response = response
+                .map(|result| result.expect("test releases listing"))
+                .boxed()
+                .shared();
+            let (started, mut requests) = futures::channel::mpsc::unbounded();
+            let client = http_client::FakeHttpClient::create(move |request| {
+                let response = response.clone();
+                let started = started.clone();
+                async move {
+                    if request.uri() == CAPABILITY_CATALOG_URL {
+                        return json_response(404, serde_json::json!({}));
+                    }
+                    started.unbounded_send(()).context("notify listing start")?;
+                    response.await;
+                    json_response(
+                        200,
+                        listing_response(&request, &["anthropic.claude-sonnet-42"]),
+                    )
+                }
+            });
+            let provider = Arc::new(cx.update(|cx| new_test_provider(client, cx)));
+            let registry = cx.new(|cx| {
+                let mut registry = language_model::LanguageModelRegistry::default();
+                registry.register_provider(provider.clone(), cx);
+                registry.set_should_use_fallback(true);
+                registry
+            });
+            provider.state.update(cx, |state, cx| {
+            state.capability_catalog = capability_catalog(serde_json::json!({
+                "us.anthropic.claude-sonnet-99": capability_entry("Provisional", serde_json::json!({})),
+            }));
+            state.change_auth(api_key_auth(), false, cx);
+        });
+            requests.next().await.context("listing started")?;
+            assert_eq!(offered_ids(&provider, cx), ["vendor.manual"]);
+            assert!(cx.update(|cx| provider.default_model(cx)).is_none());
+            registry.update(cx, |registry, cx| {
+                registry.refresh_fallback_model(cx);
+                assert!(registry.default_model().is_none());
+            });
+            release
+                .send(())
+                .map_err(|_| anyhow!("listing receiver dropped"))?;
+            finish_listing(&provider, cx).await?;
+            registry.update(cx, |registry, cx| {
+                registry.refresh_fallback_model(cx);
+                assert_eq!(
+                    registry.default_model().map(|model| model.id.0.to_string()),
+                    Some("anthropic.claude-sonnet-42".into())
+                );
+            });
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("registry fallback scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn listing_deadline_covers_all_pages_and_optional_profile_timeouts(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            for optional_timeout in [false, true] {
+                let (release_first_page, first_page) = futures::channel::oneshot::channel::<()>();
+                let first_page = first_page
+                    .map(|result| result.expect("release first page"))
+                    .boxed()
+                    .shared();
+                let (entered, mut requests) = futures::channel::mpsc::unbounded();
+                let client = http_client::FakeHttpClient::create(move |request| {
+                    let first_page = first_page.clone();
+                    let entered = entered.clone();
+                    async move {
+                        if request.uri() == CAPABILITY_CATALOG_URL {
+                            return json_response(404, serde_json::json!({}));
+                        }
+                        let application = request
+                            .uri()
+                            .query()
+                            .is_some_and(|query| query.contains("APPLICATION"));
+                        let system = request
+                            .uri()
+                            .query()
+                            .is_some_and(|query| query.contains("SYSTEM_DEFINED"));
+                        if optional_timeout && application {
+                            entered
+                                .unbounded_send("application")
+                                .context("application started")?;
+                            return futures::future::pending().await;
+                        }
+                        if !optional_timeout && system {
+                            if request
+                                .uri()
+                                .query()
+                                .is_some_and(|query| query.contains("nextToken"))
+                            {
+                                entered
+                                    .unbounded_send("second")
+                                    .context("second page started")?;
+                                return futures::future::pending().await;
+                            }
+                            entered
+                                .unbounded_send("first")
+                                .context("first page started")?;
+                            first_page.await;
+                            let mut body = listing_response(&request, &["vendor.chat"]);
+                            body["nextToken"] = "page-two".into();
+                            return json_response(200, body);
+                        }
+                        json_response(200, listing_response(&request, &["vendor.chat"]))
+                    }
+                });
+                let client = Tokio::spawn_result(&cx.to_async(), async move {
+                    Ok(build_control_plane_client(
+                        AwsHttpClient::new(client),
+                        BedrockRequestAuth::ApiKey {
+                            api_key: "test-key".into(),
+                        },
+                        None,
+                        "us-east-1".into(),
+                    )
+                    .await)
+                })
+                .await?;
+                // The fake transport needs no Tokio I/O. Keep the paginator
+                // and deadline on the executor that the test clock drives.
+                let deadline = cx.background_executor.timer(LIST_MODELS_TIMEOUT);
+                let runtime = cx.update(|cx| Tokio::handle(cx));
+                let listing = cx.background_executor.spawn(async move {
+                    let mut listing = Box::pin(bedrock::list_models(&client, deadline));
+                    futures::future::poll_fn(move |task_context| {
+                        // Smithy's identity cache creates a Tokio timeout even
+                        // for the static token, which resolves in this poll.
+                        let _entered = runtime.enter();
+                        listing.as_mut().poll(task_context)
+                    })
+                    .await
+                });
+                let first = requests.next().await.context("listing started")?;
+                if optional_timeout {
+                    assert_eq!(first, "application");
+                    cx.run_until_parked();
+                    cx.executor().advance_clock(LIST_MODELS_TIMEOUT);
+                    let catalog = listing.await?;
+                    assert_eq!(
+                        catalog
+                            .models(false, &CapabilityCatalog::default())
+                            .map(|model| model.id)
+                            .collect::<Vec<_>>(),
+                        ["vendor.chat"]
+                    );
+                    assert!(
+                        catalog
+                            .application_profile_error()
+                            .context("optional timeout")?
+                            .contains("listing deadline")
+                    );
+                    // This sender is unused in this scenario; its receiver is never polled.
+                    drop(release_first_page);
+                } else {
+                    assert_eq!(first, "first");
+                    cx.executor().advance_clock(Duration::from_secs(20));
+                    release_first_page
+                        .send(())
+                        .map_err(|_| anyhow!("first page receiver dropped"))?;
+                    assert_eq!(
+                        requests.next().await.context("second page started")?,
+                        "second"
+                    );
+                    cx.executor().advance_clock(Duration::from_secs(10));
+                    let error = listing
+                        .await
+                        .expect_err("required page should time out")
+                        .to_string();
+                    assert!(
+                        error.contains("ListInferenceProfiles (system-defined)")
+                            && error.contains("listing deadline")
+                    );
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("listing deadline scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn pending_credential_reads_cannot_overwrite_new_auth_or_a_reset(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url": "https://gateway.example.com"}),
+            )?;
+            for reset in [false, true] {
+                let credentials = Arc::new(
+                    credentials_provider::test_support::FakeCredentialsProvider::default(),
+                );
+                let encoded = |key: &str| {
+                    serde_json::to_vec(&BedrockCredentials {
+                        bearer_token: Some(key.into()),
+                        ..Default::default()
+                    })
+                };
+                credentials
+                    .state
+                    .lock()
+                    .keys
+                    .insert(AMAZON_AWS_URL.into(), encoded("old")?);
+                let release = credentials.defer_read(AMAZON_AWS_URL);
+                let provider = cx.update(|cx| {
+                    BedrockLanguageModelProvider::new_with_cache(
+                        http_client::FakeHttpClient::with_404_response(),
+                        credentials.clone(),
+                        fs::FakeFs::new(cx.background_executor().clone()),
+                        PathBuf::from(TEST_CACHE_PATH),
+                        cx,
+                    )
+                });
+                let pending = cx.update(|cx| provider.authenticate(cx));
+                cx.run_until_parked();
+                credentials.assert_reads(&[AMAZON_AWS_URL]);
+                if reset {
+                    let release_delete = credentials.defer_next_mutation();
+                    let deletion = provider.state.update(cx, |state, cx| state.reset_auth(cx));
+                    cx.run_until_parked();
+                    release
+                        .send(())
+                        .map_err(|_| anyhow!("credential receiver dropped"))?;
+                    pending.await?;
+                    assert!(!cx.update(|cx| provider.is_authenticated(cx)));
+                    release_delete
+                        .send(())
+                        .map_err(|_| anyhow!("delete receiver dropped"))?;
+                    deletion.await?;
+                } else {
+                    credentials
+                        .state
+                        .lock()
+                        .keys
+                        .insert(AMAZON_AWS_URL.into(), encoded("new")?);
+                    cx.update(|cx| provider.authenticate(cx)).await?;
+                    release
+                        .send(())
+                        .map_err(|_| anyhow!("credential receiver dropped"))?;
+                    pending.await?;
+                    provider.state.read_with(cx, |state, _| {
+                    assert!(matches!(&state.auth, Some(BedrockAuth::ApiKey { api_key }) if api_key == "new"));
+                });
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("credential read scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn live_authentication_settings_replace_auth_and_invalidate_cached_credentials(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url": "https://gateway.example.com"}),
+            )?;
+            let provider = cx.update(|cx| {
+                new_test_provider(http_client::FakeHttpClient::with_404_response(), cx)
+            });
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            for (method, profile, expected) in [
+                (
+                    "named_profile",
+                    "one",
+                    BedrockAuth::NamedProfile {
+                        profile_name: "one".into(),
+                    },
+                ),
+                (
+                    "named_profile",
+                    "two",
+                    BedrockAuth::NamedProfile {
+                        profile_name: "two".into(),
+                    },
+                ),
+                (
+                    "sso",
+                    "three",
+                    BedrockAuth::SingleSignOn {
+                        profile_name: "three".into(),
+                    },
+                ),
+                ("default", "four", BedrockAuth::Automatic),
+            ] {
+                provider.state.update(cx, |state, _| {
+                    state.expiring_credentials = Some(ExpiringCredentials {
+                        auth: state.auth.clone(),
+                        region: state.get_region(),
+                        credentials: Credentials::new(
+                            "cached",
+                            "secret",
+                            None,
+                            Some(SystemTime::now() + Duration::from_secs(3600)),
+                            "test",
+                        ),
+                    });
+                });
+                set_bedrock_settings(
+                    cx,
+                    serde_json::json!({
+                        "endpoint_url": "https://gateway.example.com", "authentication_method": method, "profile": profile,
+                    }),
+                )?;
+                cx.run_until_parked();
+                provider.state.read_with(cx, |state, _| {
+                    assert_eq!(state.auth.as_ref(), Some(&expected));
+                    assert!(state.expiring_credentials.is_none());
+                    assert!(matches!(state.listing, ModelListing::Gateway));
+                });
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("authentication settings scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn manual_catalog_refresh_recovers_immediately_and_keeps_one_loop(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url": "https://gateway.example.com"}),
+            )?;
+            let count = Arc::new(parking_lot::Mutex::new(0));
+            let client = http_client::FakeHttpClient::create({
+                let count = count.clone();
+                move |request| {
+                    assert_eq!(request.uri(), CAPABILITY_CATALOG_URL);
+                    let status = {
+                        let mut count = count.lock();
+                        *count += 1;
+                        if *count == 1 { 404 } else { 200 }
+                    };
+                    async move {
+                        json_response(
+                            status,
+                            serde_json::json!({"amazon-bedrock": {"models": {
+                                "us.vendor.chat": capability_entry("Chat", serde_json::json!({})),
+                            }}}),
+                        )
+                    }
+                }
+            });
+            let provider = cx.update(|cx| new_test_provider(client, cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            cx.run_until_parked();
+            assert_eq!(*count.lock(), 1);
+            assert!(offered_ids(&provider, cx).is_empty());
+            cx.update(|cx| {
+                provider.refresh_models(cx);
+                provider.refresh_models(cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(*count.lock(), 2);
+            assert_eq!(offered_ids(&provider, cx), ["vendor.chat"]);
+            cx.executor()
+                .advance_clock(model_catalog_cache::REFRESH_INTERVAL);
+            cx.run_until_parked();
+            assert_eq!(*count.lock(), 3, "one hourly refresh loop");
+            provider
+                .state
+                .update(cx, |state, cx| state.reset_auth(cx))
+                .await?;
+            cx.executor()
+                .advance_clock(model_catalog_cache::REFRESH_INTERVAL * 2);
+            cx.run_until_parked();
+            assert_eq!(
+                *count.lock(),
+                3,
+                "signed out providers do not refresh catalogs"
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await
+        .expect("manual refresh scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn signing_out_cancels_pending_listing_and_catalog_fetch(cx: &mut gpui::TestAppContext) {
+        async {
+            init_provider_test(cx);
+            let (release, response) = futures::channel::oneshot::channel::<()>();
+            let response = response
+                .map(|result| result.expect("release responses"))
+                .boxed()
+                .shared();
+            let (entered, mut requests) = futures::channel::mpsc::unbounded();
+            let count = Arc::new(parking_lot::Mutex::new(0));
+            let client = http_client::FakeHttpClient::create({
+                let response = response.clone();
+                let count = count.clone();
+                move |request| {
+                    let response = response.clone();
+                    let entered = entered.clone();
+                    *count.lock() += 1;
+                    async move {
+                        entered.unbounded_send(()).context("request entered")?;
+                        response.await;
+                        let body = if request.uri() == CAPABILITY_CATALOG_URL {
+                            serde_json::json!({"amazon-bedrock": {"models": {
+                                "us.vendor.chat": capability_entry("Chat", serde_json::json!({})),
+                            }}})
+                        } else {
+                            listing_response(&request, &["vendor.chat"])
+                        };
+                        json_response(200, body)
+                    }
+                }
+            });
+            let fs = fs::FakeFs::new(cx.background_executor.clone());
+            let provider = cx.update(|cx| new_test_provider_with_fs(client, fs.clone(), cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            for _ in 0..4 {
+                requests.next().await.context("pending request")?;
+            }
+            provider
+                .state
+                .update(cx, |state, cx| state.reset_auth(cx))
+                .await?;
+            release
+                .send(())
+                .map_err(|_| anyhow!("response receiver dropped"))?;
+            cx.executor()
+                .advance_clock(model_catalog_cache::REFRESH_INTERVAL * 2);
+            cx.run_until_parked();
+            assert_eq!(*count.lock(), 4);
+            assert!(offered_ids(&provider, cx).is_empty());
+            provider.state.read_with(cx, |state, _| {
+                assert!(matches!(state.listing, ModelListing::Unauthenticated));
+                assert!(state.fetch_models_task.is_none());
+                assert!(state.refresh_capability_catalog_task.is_none());
+                assert!(state.capability_catalog.is_empty());
+            });
+            assert!(fs.metadata(Path::new(TEST_CACHE_PATH)).await?.is_none());
+            Ok::<_, anyhow::Error>(())
+        }
+        .await
+        .expect("sign-out cancellation scenario should complete");
+    }
+
     #[gpui::test]
     fn listed_models_are_offered_and_refined_by_settings(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
@@ -3634,7 +4817,7 @@ mod tests {
             ],
         );
         provider.state.update(cx, |state, cx| {
-            state.model_catalog = Some(model_catalog);
+            state.listing = ModelListing::Listed(model_catalog);
             state.capability_catalog = capability_catalog(serde_json::json!({
                 "global.anthropic.claude-sonnet-9":
                     capability_entry("Sonnet 9 (Global)", always_reasoning_members()),
@@ -3727,9 +4910,13 @@ mod tests {
             "nothing is offered before authentication"
         );
 
-        provider
-            .state
-            .update(cx, |state, _| state.set_auth(api_key_auth()));
+        provider.state.update(cx, |state, _| {
+            state.set_auth(api_key_auth());
+            state.listing = ModelListing::Failed {
+                previous: None,
+                error: "test listing failed".into(),
+            };
+        });
         assert_eq!(
             offered(cx),
             [("vendor.chat".to_string(), "us.vendor.chat".to_string())],
@@ -3737,7 +4924,7 @@ mod tests {
         );
 
         provider.state.update(cx, |state, _| {
-            state.model_catalog = Some(ModelCatalog::new(
+            state.listing = ModelListing::Listed(ModelCatalog::new(
                 &[listed_inference_profile(
                     "us.vendor.listed",
                     "vendor.listed",
@@ -3857,7 +5044,19 @@ mod tests {
         );
 
         // A second provider starts from the last good copy on disk.
-        let failing_http_client = http_client::FakeHttpClient::with_404_response();
+        fs.set_next_mtime(SystemTime::now() - Duration::from_secs(10 * 60));
+        fs.atomic_write(PathBuf::from(TEST_CACHE_PATH), cached)
+            .await
+            .expect("make cache stale");
+        let failed_requests = Arc::new(parking_lot::Mutex::new(0));
+        let failing_http_client = http_client::FakeHttpClient::create({
+            let failed_requests = failed_requests.clone();
+            move |request| {
+                assert_eq!(request.uri(), CAPABILITY_CATALOG_URL);
+                *failed_requests.lock() += 1;
+                async { json_response(404, serde_json::json!({})) }
+            }
+        });
         let cached_provider =
             cx.update(|cx| new_test_provider_with_fs(failing_http_client, fs.clone(), cx));
         cached_provider
@@ -3865,36 +5064,14 @@ mod tests {
             .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
         cx.run_until_parked();
         assert!(has_catalog(&cached_provider, cx));
-    }
-
-    #[gpui::test]
-    async fn failed_model_listing_is_recorded(cx: &mut gpui::TestAppContext) {
-        let provider = test_provider(cx);
-
-        provider.state.update(cx, |state, cx| {
-            state.change_auth(
-                Some(BedrockAuth::ApiKey {
-                    api_key: "test-key".into(),
-                }),
-                false,
-                cx,
-            )
-        });
-        let fetch_models_task = provider
-            .state
-            .update(cx, |state, _| state.fetch_models_task.take())
-            .expect("changing auth should start listing models");
-        fetch_models_task.await;
-
-        provider.state.read_with(cx, |state, _| {
-            assert!(state.model_catalog.is_none());
-            let error = state
-                .last_fetch_models_error
-                .as_deref()
-                .expect("a failed model listing should be recorded, not silently dropped");
+        assert_eq!(*failed_requests.lock(), 1);
+        assert_eq!(offered_ids(&cached_provider, cx), ["vendor.chat"]);
+        cached_provider.state.read_with(cx, |state, _| {
             assert!(
-                error.contains("ListInferenceProfiles") || error.contains("ListFoundationModels"),
-                "the error should name the listing call that failed: {error}"
+                state
+                    .last_capability_catalog_error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("404"))
             );
         });
     }
@@ -3934,7 +5111,7 @@ mod tests {
 
         provider.state.read_with(cx, |state, _| {
             assert!(state.fetch_models_task.is_none());
-            assert!(state.last_fetch_models_error.is_none());
+            assert!(matches!(state.listing, ModelListing::Gateway));
         });
     }
 

@@ -150,7 +150,7 @@ impl State {
         let cache_path = self.cache_path.clone();
         let executor = cx.background_executor().clone();
         self.fetch_models_task = Some(cx.spawn(async move |this, cx| {
-            let cached_catalog = load_cached_catalog(fs.as_ref(), &cache_path).await;
+            let cached_catalog = load_cached_catalog(fs.clone(), &cache_path, &executor).await;
             if let Ok(Some((catalog, _))) = &cached_catalog {
                 let results = catalog_results(Ok(catalog));
                 this.update(cx, |this, cx| {
@@ -246,8 +246,13 @@ fn catalog_results(
     })
 }
 
-async fn load_cached_catalog(fs: &dyn Fs, path: &Path) -> Result<Option<(String, bool)>> {
-    let Some((catalog, is_fresh)) = model_catalog_cache::load_cached(fs, path).await? else {
+async fn load_cached_catalog(
+    fs: Arc<dyn Fs>,
+    path: &Path,
+    executor: &BackgroundExecutor,
+) -> Result<Option<(String, bool)>> {
+    let Some((catalog, is_fresh)) = model_catalog_cache::load_cached(fs, path, executor).await?
+    else {
         return Ok(None);
     };
     for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
@@ -1099,10 +1104,11 @@ mod tests {
             .await
             .unwrap();
 
-        let (catalog, is_fresh) = load_cached_catalog(fs.as_ref(), &cache_path)
-            .await
-            .unwrap()
-            .unwrap();
+        let (catalog, is_fresh) =
+            load_cached_catalog(fs.clone(), &cache_path, &cx.background_executor)
+                .await
+                .unwrap()
+                .unwrap();
 
         assert!(is_fresh);
         assert_eq!(catalog, test_catalog());
@@ -1116,7 +1122,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(load_cached_catalog(fs.as_ref(), &cache_path).await.is_err());
+        assert!(
+            load_cached_catalog(fs.clone(), &cache_path, &cx.background_executor)
+                .await
+                .is_err()
+        );
         assert_eq!(fs.load(&cache_path).await.unwrap(), "not json");
     }
 

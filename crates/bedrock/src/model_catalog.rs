@@ -14,6 +14,7 @@ use aws_sdk_bedrock::types::{
     FoundationModelSummary, InferenceProfileStatus, InferenceProfileSummary, InferenceProfileType,
     ModelModality,
 };
+use futures::FutureExt;
 use std::collections::BTreeMap;
 
 const GLOBAL_PROFILE_ID_PREFIX: &str = "global.";
@@ -45,6 +46,7 @@ fn foundation_model_id(profile: &InferenceProfileSummary) -> Option<&str> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelCatalog {
     models: Vec<ListedModel>,
+    application_profile_error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -172,7 +174,14 @@ impl ModelCatalog {
 
         let mut models = system_defined.into_values().collect::<Vec<_>>();
         models.extend(application);
-        Self { models }
+        Self {
+            models,
+            application_profile_error: None,
+        }
+    }
+
+    pub fn application_profile_error(&self) -> Option<&str> {
+        self.application_profile_error.as_deref()
     }
 
     /// Every model in the catalog, described by `capability_catalog`. A model
@@ -225,6 +234,7 @@ async fn list_inference_profiles(
     client: &Client,
     profile_type: InferenceProfileType,
 ) -> Result<Vec<InferenceProfileSummary>> {
+    let operation = format!("ListInferenceProfiles ({profile_type})");
     client
         .list_inference_profiles()
         .type_equals(profile_type)
@@ -233,31 +243,63 @@ async fn list_inference_profiles(
         .send()
         .collect::<Result<Vec<_>, _>>()
         .await
-        .map_err(|error| list_error("ListInferenceProfiles", error))
+        .map_err(|error| list_error("ListInferenceProfiles", error).context(operation))
 }
 
 /// Lists the models that `client` can reach through an inference profile in
 /// its Region.
-pub async fn list_models(client: &Client) -> Result<ModelCatalog> {
+pub async fn list_models(
+    client: &Client,
+    deadline: impl Future<Output = ()> + Send,
+) -> Result<ModelCatalog> {
+    let deadline = deadline.boxed().shared();
+    let with_deadline =
+        async |operation: &str, future: futures::future::BoxFuture<'_, Result<_>>| {
+            futures::select_biased! {
+                result = future.fuse() => result,
+                _ = deadline.clone().fuse() => Err(anyhow!("{operation} exceeded the model listing deadline")),
+            }
+        };
     let foundation_models = async {
         client
             .list_foundation_models()
             .send()
             .await
+            .map(|response| response.model_summaries.unwrap_or_default())
             .map_err(|error| list_error("ListFoundationModels", error))
     };
     // An unfiltered listing is not documented to include the profiles
     // created in the account, so each kind is requested by name.
-    let (mut inference_profiles, application_inference_profiles, foundation_models) = futures::try_join!(
-        list_inference_profiles(client, InferenceProfileType::SystemDefined),
-        list_inference_profiles(client, InferenceProfileType::Application),
-        foundation_models,
-    )?;
-    inference_profiles.extend(application_inference_profiles);
-    Ok(ModelCatalog::new(
-        &inference_profiles,
-        foundation_models.model_summaries(),
-    ))
+    let required = async {
+        let system = with_deadline(
+            "ListInferenceProfiles (system-defined)",
+            list_inference_profiles(client, InferenceProfileType::SystemDefined).boxed(),
+        );
+        let foundation = async {
+            futures::select_biased! {
+                result = foundation_models.fuse() => result,
+                _ = deadline.clone().fuse() => Err(anyhow!("ListFoundationModels exceeded the model listing deadline")),
+            }
+        };
+        futures::try_join!(system, foundation)
+    };
+    let application = with_deadline(
+        "ListInferenceProfiles (application)",
+        list_inference_profiles(client, InferenceProfileType::Application).boxed(),
+    );
+    let ((mut profiles, foundation_models), application) = futures::try_join!(required, async {
+        Ok::<_, anyhow::Error>(application.await)
+    })?;
+    let application_profile_error = match application {
+        Ok(application) => {
+            profiles.extend(application);
+            None
+        }
+        Err(error) => Some(format!("{error:#}")),
+    };
+    let mut catalog = ModelCatalog::new(&profiles, &foundation_models);
+    catalog.application_profile_error = application_profile_error;
+    Ok(catalog)
 }
 
 #[cfg(test)]

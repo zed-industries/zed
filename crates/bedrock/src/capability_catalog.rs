@@ -5,7 +5,7 @@
 
 use crate::{BedrockAdaptiveThinkingEffort, ConverseModel, ConverseThinking};
 use anyhow::{Context as _, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 
@@ -239,21 +239,39 @@ pub struct CapabilityCatalog {
     first_profile_by_base: BTreeMap<String, String>,
 }
 
+#[derive(Deserialize, Serialize)]
+struct CatalogEnvelope {
+    #[serde(rename = "amazon-bedrock")]
+    bedrock: ProviderCapabilities,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ProviderCapabilities {
+    models: BTreeMap<String, serde_json::Value>,
+}
+
 impl CapabilityCatalog {
     /// Parses the catalog, or a part of it that holds the Bedrock provider.
     /// An entry that cannot be read is skipped, so that one malformed model
     /// does not hide the others.
     pub fn parse(catalog: &str) -> Result<Self> {
-        let catalog = serde_json::from_str::<serde_json::Value>(catalog)
+        let catalog = serde_json::from_str::<CatalogEnvelope>(catalog)
             .context("parsing the model capability catalog")?;
-        let models = catalog
-            .get(CAPABILITY_CATALOG_PROVIDER)
-            .and_then(|provider| provider.get("models"))
-            .and_then(serde_json::Value::as_object)
-            .with_context(|| {
-                format!("the model capability catalog has no {CAPABILITY_CATALOG_PROVIDER} models")
-            })?;
-        let models = models
+        Self::from_provider(&catalog.bedrock)
+    }
+
+    /// Decodes only the Bedrock section, validates it, and serializes that same
+    /// section for the disk cache without decoding the response again.
+    pub fn parse_with_cache(catalog: &str) -> Result<(Self, String)> {
+        let catalog = serde_json::from_str::<CatalogEnvelope>(catalog)
+            .context("parsing the model capability catalog")?;
+        let capabilities = Self::from_provider(&catalog.bedrock)?;
+        Ok((capabilities, serde_json::to_string(&catalog)?))
+    }
+
+    fn from_provider(provider: &ProviderCapabilities) -> Result<Self> {
+        let models = provider
+            .models
             .iter()
             .filter_map(
                 |(model_id, capabilities)| match ModelCapabilities::parse(capabilities) {
@@ -536,6 +554,26 @@ mod tests {
     fn requires_the_bedrock_provider() {
         assert!(CapabilityCatalog::parse(r#"{"another-provider": {"models": {}}}"#).is_err());
         assert!(CapabilityCatalog::parse("not json").is_err());
+    }
+
+    #[test]
+    fn cache_is_derived_from_the_single_decoded_bedrock_section() -> Result<()> {
+        let response = json!({
+            "unrelated": {"models": {"vendor.unrelated": {"name": "Other"}}, "large": [1, 2, 3]},
+            "amazon-bedrock": {"models": {
+                "us.vendor.chat": entry("Chat", json!({})),
+                "vendor.broken": {"name": "No limits"},
+            }},
+        })
+        .to_string();
+        let (catalog, cache) = CapabilityCatalog::parse_with_cache(&response)?;
+        assert!(catalog.model_for_request_id("us.vendor.chat").is_some());
+        assert!(!cache.contains("unrelated"));
+        assert_eq!(catalog, CapabilityCatalog::parse(&cache)?);
+        assert!(
+            CapabilityCatalog::parse_with_cache(r#"{"amazon-bedrock":{"models":{}}}"#).is_err()
+        );
+        Ok(())
     }
 
     #[test]
