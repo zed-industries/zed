@@ -2796,7 +2796,13 @@ extern "C" fn reset_cursor_rects(this: &AnyObject, _: Sel) {
         let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
 
         let window_state = get_window_state(this);
-        let cursor_style = window_state.lock().cursor_style;
+        let cursor_style = {
+            let lock = window_state.lock();
+            if native_view::native_view_sets_cursor(&lock) {
+                return;
+            }
+            lock.cursor_style
+        };
 
         let cursor = native_cursor(cursor_style);
 

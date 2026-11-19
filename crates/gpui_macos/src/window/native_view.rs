@@ -44,6 +44,8 @@ pub(super) struct NativeViews {
     /// The view a mouse-down event is being delivered to, which may take
     /// first responder even though GPUI has not focused it yet.
     clicked: Option<NativeViewId>,
+    /// Whether the pointer is over a native view, which then sets the cursor.
+    pointer_over_view: bool,
     /// Set while the window routes a key equivalent between a native view and
     /// GPUI itself, so the GPUI view doesn't also handle it.
     routing_key_equivalent: bool,
@@ -633,6 +635,10 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
         }
 
         let event_type: NSEventType = msg_send![event, type];
+        if event_type == NSEventType::MouseMoved {
+            let position: NSPoint = msg_send![event, locationInWindow];
+            update_pointer_over_view(&window_state, position);
+        }
         let clicked = if matches!(
             event_type,
             NSEventType::LeftMouseDown | NSEventType::RightMouseDown | NSEventType::OtherMouseDown
@@ -658,6 +664,35 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
         let _: () = msg_send![super(this, superclass), sendEvent: event];
         window_state.lock().native_views.clicked = None;
     }
+}
+
+/// Notes whether the pointer is over a native view, and has AppKit rebuild the
+/// GPUI view's cursor rectangles when that changes.
+fn update_pointer_over_view(window_state: &Rc<Mutex<MacWindowState>>, position_in_window: NSPoint) {
+    let over_view = hit_test_native_view(window_state, position_in_window).is_some();
+    let Some(mut lock) = window_state.try_lock() else {
+        return;
+    };
+    if lock.native_views.pointer_over_view == over_view {
+        return;
+    }
+    lock.native_views.pointer_over_view = over_view;
+    let native_window = lock.native_window;
+    let gpui_view = lock.native_view.as_ptr();
+    drop(lock);
+    // SAFETY: The window and the GPUI view are live, and events are sent on the main
+    // thread. The state is unlocked because AppKit rebuilds the rectangles synchronously.
+    unsafe {
+        let _: () = msg_send![native_window, invalidateCursorRectsForView: gpui_view];
+    }
+}
+
+/// Whether a native view sets the cursor, because the pointer is over it.
+///
+/// The GPUI view lies over every native view, so its own cursor would
+/// otherwise replace the one the native view chooses.
+pub(super) fn native_view_sets_cursor(state: &MacWindowState) -> bool {
+    state.native_views.pointer_over_view && state.native_views.is_showing_any()
 }
 
 extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut AnyObject) -> Bool {
