@@ -199,6 +199,7 @@ impl Ord for SettingsFile {
         use std::cmp::Ordering;
         match (self, other) {
             (User, User) => Ordering::Equal,
+            (Global, Global) => Ordering::Equal,
             (Server, Server) => Ordering::Equal,
             (Default, Default) => Ordering::Equal,
             (Project((id1, rel_path1)), Project((id2, rel_path2))) => id1
@@ -3153,6 +3154,7 @@ mod tests {
             &wt1_subdir,
             &wt0_child2,
             &SettingsFile::Server,
+            &SettingsFile::Global,
             &wt0_child1,
             &SettingsFile::User,
         ];
@@ -3168,9 +3170,27 @@ mod tests {
                 &wt1_root,
                 &SettingsFile::Server,
                 &SettingsFile::User,
+                &SettingsFile::Global,
                 &SettingsFile::Default,
             ]
-        )
+        );
+
+        // The sort above can't detect a non-reflexive `cmp`.
+        for (left_index, left) in files.iter().enumerate() {
+            for (right_index, right) in files.iter().enumerate() {
+                assert_eq!(
+                    left.cmp(right),
+                    left_index.cmp(&right_index),
+                    "{left:?} compared to {right:?}"
+                );
+            }
+        }
+
+        let mut file_errors = BTreeMap::default();
+        file_errors.insert(SettingsFile::Global, 1);
+        file_errors.insert(SettingsFile::Global, 2);
+        assert_eq!(file_errors.len(), 1);
+        assert_eq!(file_errors.get(&SettingsFile::Global), Some(&2));
     }
 
     #[test]

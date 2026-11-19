@@ -437,16 +437,12 @@ impl DisplayMap {
             }]);
             self.block_map.deferred_edits.set(edits);
             self.block_map.retain_blocks_raw(&mut |block| {
-                if companion
+                !companion
                     .read(cx)
                     .lhs_custom_block_to_balancing_block
                     .borrow()
                     .values()
                     .any(|id| *id == block.id)
-                {
-                    return false;
-                }
-                true
             });
             return;
         };
@@ -4913,7 +4909,7 @@ pub mod tests {
         let buffer = cx.new(|cx| Buffer::local("initial", cx));
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-        // Edit the buffer. This sets buffer_changed_since_sync = true.
+        // Edit the buffer. This adds it to the multibuffer's changed buffers.
         // Importantly, do NOT call multibuffer.snapshot() yet.
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..0, "prefix ")], None, cx);

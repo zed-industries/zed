@@ -99,6 +99,9 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
             level_enabled_max = level_enabled_max.max(level as u8);
         }
     }
+    for (_, level) in &map_new.modules {
+        level_enabled_max = level_enabled_max.max(*level as u8);
+    }
     LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max, Ordering::Release);
 
     {
@@ -540,6 +543,17 @@ mod tests {
             map.is_enabled(&scope_from_scope_str("q.r.s.t"), None, Level::Warn),
             EnabledStatus::Disabled
         );
+    }
+
+    #[test]
+    fn test_refresh_from_settings_with_module_filter() {
+        let settings = [("a::b".to_string(), "trace".to_string())]
+            .into_iter()
+            .collect();
+        refresh_from_settings(&settings);
+        let is_enabled = is_scope_enabled(&scope_new(&[""]), Some("a::b"), log::Level::Trace);
+        refresh_from_settings(&HashMap::default());
+        assert!(is_enabled);
     }
 
     #[test]
