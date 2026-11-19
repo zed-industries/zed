@@ -293,13 +293,22 @@ impl OpenPathPrompt {
     }
 
     /// Directory that `./` and `../` queries resolve against: the active file's directory
-    /// when opening, otherwise the first project root, falling back to the process cwd.
+    /// when opening, otherwise the first project root (or its parent directory when the root
+    /// is a single file), falling back to the process cwd.
     fn relative_to(workspace: &Workspace, creating_path: bool, cx: &App) -> PathBuf {
         let path_style = workspace.project().read(cx).path_style(cx);
-        let project_root = workspace
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+        let project_root = workspace.visible_worktrees(cx).next().map(|worktree| {
+            let worktree = worktree.read(cx);
+            let abs_path = worktree.abs_path();
+            if worktree.root_entry().is_some_and(|entry| entry.is_file()) {
+                path_style
+                    .parent(&abs_path)
+                    .unwrap_or(&abs_path)
+                    .to_path_buf()
+            } else {
+                abs_path.to_path_buf()
+            }
+        });
         let active_file_directory = (!creating_path)
             .then(|| workspace.active_item(cx))
             .flatten()
