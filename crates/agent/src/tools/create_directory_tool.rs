@@ -153,10 +153,15 @@ impl AgentTool for CreateDirectoryTool {
                     .map(|(_, target)| target)
             });
 
-            let sensitive_kind =
-                sensitive_settings_kind(Path::new(&input.path), &canonical_roots, fs.as_ref())
-                    .await
-                    .or(global_skill_settings_kind(global_skill_directory.as_ref()));
+            let sensitive_kind = sensitive_settings_kind(
+                &project,
+                Path::new(&input.path),
+                &canonical_roots,
+                fs.as_ref(),
+                cx,
+            )
+            .await
+            .or(global_skill_settings_kind(global_skill_directory.as_ref()));
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some() {

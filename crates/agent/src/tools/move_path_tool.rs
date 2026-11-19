@@ -154,15 +154,19 @@ impl AgentTool for MovePathTool {
                 });
 
             let sensitive_kind = sensitive_settings_kind(
+                &project,
                 Path::new(&input.source_path),
                 &canonical_roots,
                 fs.as_ref(),
+                cx,
             )
             .await
             .or(sensitive_settings_kind(
+                &project,
                 Path::new(&input.destination_path),
                 &canonical_roots,
                 fs.as_ref(),
+                cx,
             )
             .await)
             .or(global_skill_settings_kind(
@@ -520,6 +524,60 @@ mod tests {
 
         let result = task.await;
         assert!(result.is_ok(), "should succeed after approval: {result:?}");
+    }
+
+    #[gpui::test]
+    async fn test_move_path_relative_path_through_symlink_to_local_settings(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root/project"),
+            json!({
+                ".zed": { "settings.json": "{}" },
+                "notes.txt": "notes"
+            }),
+        )
+        .await;
+        fs.insert_symlink(path!("/root/project/safe"), PathBuf::from(".zed"))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(MovePathTool::new(project));
+
+        for (source_path, destination_path) in [
+            ("safe/settings.json", "project/settings_copy.json"),
+            ("project/safe/settings.json", "project/settings_copy.json"),
+            ("project/notes.txt", "safe/notes.txt"),
+            ("project/notes.txt", "project/safe/notes.txt"),
+        ] {
+            let (event_stream, mut event_rx) = ToolCallEventStream::test();
+            let _task = cx.update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(MovePathToolInput {
+                        source_path: source_path.into(),
+                        destination_path: destination_path.into(),
+                    }),
+                    event_stream,
+                    cx,
+                )
+            });
+
+            let auth = event_rx.expect_authorization().await;
+            let title = auth
+                .tool_call
+                .title
+                .value()
+                .expect("expected authorization title");
+            assert!(
+                title.contains("local settings"),
+                "Moving {source_path} to {destination_path} must prompt for local settings, got: {title}",
+            );
+        }
     }
 
     #[gpui::test]

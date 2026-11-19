@@ -104,10 +104,12 @@ pub fn global_skill_settings_kind(
 /// like `~/projects/.zed/foo` doesn't classify every file inside it as
 /// `.zed/` local-settings — only files that have `.zed` (or
 /// `.agents/skills`) inside the worktree are flagged.
-pub async fn sensitive_settings_kind(
+pub async fn sensitive_settings_kind<C: gpui::AppContext>(
+    project: &Entity<Project>,
     path: &Path,
     canonical_worktree_roots: &[PathBuf],
     fs: &dyn Fs,
+    cx: &C,
 ) -> Option<SensitiveSettingsKind> {
     let local_settings_folder = paths::local_settings_folder_name();
 
@@ -123,6 +125,19 @@ pub async fn sensitive_settings_kind(
     if is_agents_skills_path(path) {
         return Some(SensitiveSettingsKind::AgentSkills);
     }
+
+    // A project-relative path would otherwise be canonicalized against the
+    // process working directory. `find_project_path` can't resolve a missing
+    // path without the root name, so resolve its nearest known ancestor.
+    let absolute_path = project.read_with(cx, |project, cx| {
+        path.ancestors().find_map(|ancestor| {
+            let project_path = project.find_project_path(ancestor, cx)?;
+            let absolute_ancestor = project.absolute_path(&project_path, cx)?;
+            let missing_suffix = path.strip_prefix(ancestor).ok()?;
+            Some(absolute_ancestor.join(missing_suffix))
+        })
+    });
+    let path = absolute_path.as_deref().unwrap_or(path);
 
     if let Some(canonical_path) = canonicalize_with_ancestors(path, fs).await {
         // Re-check the local protections against the canonical path,
@@ -530,7 +545,14 @@ pub fn authorize_file_edit(
         } else if is_agents_skills {
             Some(SensitiveSettingsKind::AgentSkills)
         } else {
-            sensitive_settings_kind(&path_owned, &canonical_roots, fs.as_ref()).await
+            sensitive_settings_kind(
+                &project_entity,
+                &path_owned,
+                &canonical_roots,
+                fs.as_ref(),
+                cx,
+            )
+            .await
         };
         let settings_kind = match settings_kind {
             Some(settings_kind) => Some(settings_kind),

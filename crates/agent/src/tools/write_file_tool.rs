@@ -1440,6 +1440,82 @@ mod tests {
         assert_eq!(on_disk, "on disk content plus user edit");
     }
 
+    #[gpui::test]
+    async fn test_streaming_write_new_file_through_symlink_to_sensitive_directory(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        for (symlink_target, input_path, created_path, title_suffix) in [
+            (
+                ".zed",
+                "safe/new_settings.json",
+                path!("/root/.zed/new_settings.json"),
+                "(local settings)",
+            ),
+            (
+                ".zed",
+                "root/safe/new_settings.json",
+                path!("/root/.zed/new_settings.json"),
+                "(local settings)",
+            ),
+            (
+                ".agents/skills",
+                "safe/new-skill.md",
+                path!("/root/.agents/skills/new-skill.md"),
+                "(agent skills)",
+            ),
+            (
+                ".agents/skills",
+                "root/safe/new-skill.md",
+                path!("/root/.agents/skills/new-skill.md"),
+                "(agent skills)",
+            ),
+        ] {
+            let fs = project::FakeFs::new(cx.executor());
+            fs.insert_tree(
+                path!("/root"),
+                json!({
+                    ".zed": { "settings.json": "{}" },
+                    ".agents": { "skills": { "my-skill": { "SKILL.md": "skill" } } },
+                }),
+            )
+            .await;
+            fs.insert_symlink(path!("/root/safe"), PathBuf::from(symlink_target))
+                .await;
+            let (write_tool, _project, _action_log, fs, _thread) =
+                setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+            cx.update(|cx| {
+                let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+                settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+                agent_settings::AgentSettings::override_global(settings, cx);
+            });
+
+            let (mut sender, input) = ToolInput::<WriteFileToolInput>::test();
+            let (event_stream, mut receiver) = ToolCallEventStream::test();
+            let _task = cx.update(|cx| write_tool.clone().run(input, event_stream, cx));
+            sender.send_full(json!({ "path": input_path, "content": "content" }));
+
+            cx.run_until_parked();
+
+            let mut authorization_titles = Vec::new();
+            while let Ok(event) = receiver.try_recv() {
+                if let Ok(crate::ThreadEvent::ToolCallAuthorization(authorization)) = event {
+                    authorization_titles.extend(authorization.tool_call.title.value().cloned());
+                }
+            }
+            assert!(
+                matches!(authorization_titles.as_slice(), [title] if title.ends_with(title_suffix)),
+                "Creating {input_path} must prompt even when edits are allowed: {authorization_titles:?}",
+            );
+            assert!(
+                !fs.is_file(created_path.as_ref()).await,
+                "{input_path} was created before the prompt was answered",
+            );
+        }
+    }
+
     async fn setup_test_with_fs(
         cx: &mut TestAppContext,
         fs: Arc<project::FakeFs>,
