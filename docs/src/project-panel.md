@@ -31,8 +31,9 @@ to `false` to open permanent tabs with a single click or {#action project_panel:
 ### Auto-reveal
 
 By default, switching to a file in the editor will automatically highlight it in the
-project panel and scroll it into view. This can be disabled with the
-`project_panel.auto_reveal_entries` setting.
+project panel and scroll it into view. This
+[auto-reveal behavior](./reference/all-settings.md#auto-reveal-entries) can be
+disabled with the `project_panel.auto_reveal_entries` setting.
 
 ### Sticky Scroll
 
@@ -103,8 +104,8 @@ suffix, the rename editor opens automatically so you can adjust the name.
 
 ### Duplicate
 
-{#action project_panel::Duplicate} ({#kb project_panel::Duplicate}) copies and
-pastes the selected entries in one step.
+{#action project_panel::Duplicate} ({#kb project_panel::Duplicate}) duplicates
+the selected entries without changing the clipboard.
 
 ### Trash and Delete
 
@@ -179,6 +180,10 @@ The `project_panel.sort_order` setting controls name comparison:
 - `"upper"` — uppercase names grouped first, then lowercase.
 - `"lower"` — lowercase names grouped first, then uppercase.
 - `"unicode"` — raw Unicode codepoint order with no case folding.
+- `"extension"` — files grouped by extension (case-insensitive, last suffix
+  only), with extensionless files, including dotfiles such as `.gitignore`,
+  first. Dotfiles with a further suffix, such as `.config.json`, keep that
+  extension. Files with the same extension are sorted by name.
 
 ## Other Actions
 

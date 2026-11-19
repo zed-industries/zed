@@ -3,10 +3,14 @@
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
 use agent::{
-    AgentTool, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput, SkillTool,
-    SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream, ToolInput,
+    AgentTool, CopyPathTool, CopyPathToolInput, CreateDirectoryTool, DeletePathTool,
+    DeletePathToolInput, ListDirectoryTool, ListDirectoryToolInput, MovePathTool,
+    MovePathToolInput, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput,
+    SkillTool, SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream,
+    ToolCallEventStreamReceiver, ToolInput, WriteFileTool, WriteFileToolInput,
     skill_body_resolver_for_project, skills_resolver_for_project,
 };
+use agent_skills::SkillIndex;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
@@ -20,6 +24,7 @@ use editor::{
 };
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
+use futures::FutureExt as _;
 use git::{
     Oid,
     repository::{CommitData, GitCommitTemplate, RepoPath, Worktree as GitWorktree},
@@ -39,15 +44,26 @@ use lsp::{
     LanguageServerId, LanguageServerName,
 };
 use node_runtime::NodeRuntime;
+#[cfg(not(windows))]
+use project::{
+    AgentId,
+    context_server_store::{ContextServerStatus, ServerStatusChangedEvent},
+};
 use project::{
     CompletionSource, LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
+    buffer_store::BufferStoreEvent,
     image_store,
-    lsp_store::log_store::{LanguageServerKind, LanguageServerLogKey, LogStore},
+    lsp_store::log_store::{
+        GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
+    },
     search::{SearchQuery, SearchResult},
+    worktree_store::WorktreeStoreEvent,
 };
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
-use rpc::proto;
+#[cfg(not(windows))]
+use remote::{MOCK_STDIO_FRAME_HEX, command::RemoteCommand};
+use rpc::{ErrorCode, ErrorExt as _, proto};
 use serde_json::json;
 use settings::{
     Settings, SettingsLocation, SettingsStore, SplicingVec, initial_server_settings_content,
@@ -64,7 +80,206 @@ use std::{
     },
 };
 use unindent::Unindent as _;
-use util::{path, path_list::PathList, paths::PathMatcher, rel_path::rel_path};
+use util::{
+    path,
+    path_list::PathList,
+    paths::{PathMatcher, PathStyle},
+    rel_path::rel_path,
+};
+
+#[gpui::test]
+async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    use project::{
+        project_settings::ProjectSettings,
+        trusted_worktrees::{self, PathTrust, TrustedWorktrees},
+    };
+    use std::time::Duration;
+
+    cx.update(|cx| {
+        let mut store = SettingsStore::test(cx);
+        store
+            .set_user_settings(
+                r#"{"git":{"auto_fetch":{"enabled":true,"interval_secs":15}}}"#,
+                cx,
+            )
+            .expect("valid client settings");
+        cx.set_global(store);
+    });
+    server_cx.update(|cx| {
+        trusted_worktrees::init(Default::default(), cx);
+    });
+    let fs = FakeFs::new(server_cx.executor());
+    let dot_git = Path::new(path!("/project/.git"));
+    fs.insert_tree(
+        path!("/project"),
+        json!({".git": {}, "README.md": "project"}),
+    )
+    .await;
+    fs.insert_branches(dot_git, &["main", "origin/main"]);
+    fs.set_remote_for_repo(dot_git, "origin", "https://example.com/repo.git");
+    let fetches = fs
+        .with_git_state(dot_git, false, |state| state.fetches.clone())
+        .expect("repository exists");
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_server_settings(r#"{"git":{"auto_fetch":{"interval_secs":45}}}"#, cx)
+                .expect("valid server settings");
+        });
+    });
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .expect("open remote project");
+    cx.run_until_parked();
+    server_cx.update(|cx| {
+        let settings = ProjectSettings::get_global(cx).git.auto_fetch;
+        assert!(
+            settings.enabled,
+            "forward existing user settings on connection"
+        );
+        assert_eq!(settings.interval_secs, 45);
+    });
+    server_cx.executor().advance_clock(Duration::from_secs(45));
+    cx.run_until_parked();
+    assert_eq!(
+        fetches.lock().len(),
+        0,
+        "untrusted repositories must not fetch"
+    );
+
+    let (worktree_store, worktree_id) = headless.read_with(server_cx, |headless, cx| {
+        let store = headless.worktree_store.clone();
+        let id = store
+            .read(cx)
+            .worktrees()
+            .next()
+            .expect("host worktree exists")
+            .read(cx)
+            .id();
+        (store, id)
+    });
+    let trusted =
+        server_cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust store exists"));
+    trusted.update(server_cx, |trusted, cx| {
+        trusted.trust(
+            &worktree_store,
+            [PathTrust::Worktree(worktree_id)].into_iter().collect(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    let repository = project
+        .read_with(cx, |project, cx| project.active_repository(cx))
+        .expect("client repository exists");
+    // Leave the client unaware of the new branch until fetch emits a Git event.
+    fs.with_git_state(dot_git, false, |state| {
+        state.branches.insert("fetched-branch".into());
+    })
+    .expect("repository exists");
+    cx.run_until_parked();
+    assert!(!repository.read_with(cx, |repository, _| {
+        repository
+            .branch_list
+            .iter()
+            .any(|branch| branch.name() == "fetched-branch")
+    }));
+    server_cx.executor().advance_clock(Duration::from_secs(15));
+    cx.run_until_parked();
+    assert_eq!(
+        fetches.lock().len(),
+        0,
+        "server interval overrides client interval"
+    );
+    server_cx.executor().advance_clock(Duration::from_secs(30));
+    cx.run_until_parked();
+    assert_eq!(fetches.lock().len(), 1);
+    assert!(repository.read_with(cx, |repository, _| {
+        repository
+            .branch_list
+            .iter()
+            .any(|branch| branch.name() == "fetched-branch")
+    }));
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{"git":{"auto_fetch":{"enabled":false,"interval_secs":15}}}"#,
+                    cx,
+                )
+                .expect("disable auto-fetch on client");
+        });
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(60));
+    cx.run_until_parked();
+    assert_eq!(fetches.lock().len(), 1);
+
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_server_settings(
+                    r#"{"git":{"auto_fetch":{"enabled":true,"interval_secs":30}}}"#,
+                    cx,
+                )
+                .expect("enable server override");
+        });
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(30));
+    cx.run_until_parked();
+    assert_eq!(fetches.lock().len(), 2);
+
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_server_settings("{}", cx)
+                .expect("clear server override");
+        });
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(60));
+    cx.run_until_parked();
+    assert_eq!(
+        fetches.lock().len(),
+        2,
+        "fall back to disabled client setting"
+    );
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{"git":{"auto_fetch":{"enabled":true,"interval_secs":15}}}"#,
+                    cx,
+                )
+                .expect("enable auto-fetch on client");
+        });
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(15));
+    cx.run_until_parked();
+    assert_eq!(fetches.lock().len(), 3);
+
+    trusted.update(server_cx, |trusted, cx| {
+        trusted.restrict(
+            worktree_store.downgrade(),
+            [PathTrust::Worktree(worktree_id)].into_iter().collect(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(45));
+    cx.run_until_parked();
+    assert_eq!(
+        fetches.lock().len(),
+        3,
+        "revoking trust stops subsequent fetches"
+    );
+}
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -463,7 +678,11 @@ async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &m
         json!({
             "project": {
                 "docs": {
-                    "image.ppm": "P3\n1 1\n255\n255 0 0\n"
+                    "image.ppm": "P3\n1 1\n255\n255 0 0\n",
+                    "image.svg": r#"<?xml version="1.0"?>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1">
+                            <rect width="1" height="1" fill="red"/>
+                        </svg>"#
                 }
             }
         }),
@@ -478,48 +697,47 @@ async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &m
         .await
         .expect("remote worktree should open");
     let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id());
-    let source = image_store::project_image_source(
-        project.downgrade(),
-        ProjectPath {
-            worktree_id,
-            path: rel_path("docs/image.ppm").into(),
-        },
-    );
-    let ImageSource::Custom(load_image) = source else {
-        panic!("expected a project-backed image source");
-    };
-    let loaded_bytes = Arc::new(std::sync::Mutex::new(None));
-    let observed_source = ImageSource::from({
-        let loaded_bytes = loaded_bytes.clone();
-        move |window: &mut gpui::Window, cx: &mut gpui::App| {
-            let result = load_image(window, cx);
-            if let Some(Ok(image)) = &result {
-                *loaded_bytes.lock().expect("loaded image mutex poisoned") =
-                    image.as_bytes(0).map(ToOwned::to_owned);
+    for image_path in ["docs/image.ppm", "docs/image.svg"] {
+        let source = image_store::project_image_source(
+            project.downgrade(),
+            ProjectPath {
+                worktree_id,
+                path: rel_path(image_path).into(),
+            },
+        );
+        let ImageSource::Custom(load_image) = source else {
+            panic!("expected a project-backed image source");
+        };
+        let loaded_bytes = Arc::new(std::sync::Mutex::new(None));
+        let observed_source = ImageSource::from({
+            let loaded_bytes = loaded_bytes.clone();
+            move |window: &mut gpui::Window, cx: &mut gpui::App| {
+                let result = load_image(window, cx);
+                if let Some(Ok(image)) = &result {
+                    *loaded_bytes.lock().expect("loaded image mutex poisoned") =
+                        image.as_bytes(0).map(ToOwned::to_owned);
+                }
+                result
             }
-            result
-        }
-    });
+        });
 
-    let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageTestView {
-        source: observed_source,
-    });
-    cx.draw(Default::default(), size(px(10.), px(10.)), {
-        let view = view.clone();
-        move |_, _| view.into_any_element()
-    });
-    cx.run_until_parked();
-    cx.draw(Default::default(), size(px(10.), px(10.)), move |_, _| {
-        view.into_any_element()
-    });
+        let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageTestView {
+            source: observed_source,
+        });
+        cx.draw(Default::default(), size(px(10.), px(10.)), {
+            let view = view.clone();
+            move |_, _| view.into_any_element()
+        });
+        cx.run_until_parked();
+        cx.draw(Default::default(), size(px(10.), px(10.)), move |_, _| {
+            view.into_any_element()
+        });
 
-    assert_eq!(
-        loaded_bytes
-            .lock()
-            .expect("loaded image mutex poisoned")
-            .as_deref(),
-        Some([0, 0, 255, 255].as_slice())
-    );
+        let loaded_bytes = loaded_bytes.lock().expect("loaded image mutex poisoned");
+        let bytes = loaded_bytes.as_ref().expect("remote image should render");
+        let pixel_count = if image_path.ends_with(".ppm") { 1 } else { 4 };
+        assert_eq!(bytes, &[0, 0, 255, 255].repeat(pixel_count), "{image_path}");
+    }
 }
 
 #[gpui::test]
@@ -594,6 +812,221 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
         cx.clone(),
     )
     .await;
+}
+
+#[gpui::test]
+async fn test_remote_project_search_backpressure_survives_cancellation(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let files = (0..4)
+        .map(|directory| {
+            let files = (0..128)
+                .map(|index| (format!("{index:03}.txt"), json!("testing rust-analyzer")))
+                .collect::<serde_json::Map<_, _>>();
+            (directory.to_string(), serde_json::Value::Object(files))
+        })
+        .collect::<serde_json::Map<_, _>>();
+    fs.insert_tree(path!("/code/project"), serde_json::Value::Object(files))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("remote worktree should open");
+    cx.run_until_parked();
+
+    let client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    let pause_incoming = client.request(proto::Ping {});
+    cx.run_until_parked();
+    let received_buffers = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = cx.update(|cx| {
+        let received_buffers = received_buffers.clone();
+        let buffer_store = project.read(cx).buffer_store().clone();
+        cx.subscribe(&buffer_store, move |_, event, cx| {
+            if let BufferStoreEvent::BufferAdded(buffer) = event {
+                received_buffers
+                    .borrow_mut()
+                    .push(buffer.read(cx).remote_id());
+            }
+        })
+    });
+
+    let shared_buffers = |cx: &mut TestAppContext| {
+        headless.read_with(cx, |headless, cx| {
+            let store = headless.buffer_store.read(cx);
+            let mut ids = store
+                .buffers()
+                .filter_map(|buffer| {
+                    let id = buffer.read(cx).remote_id();
+                    store.is_shared(id, cx).then_some(id)
+                })
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        })
+    };
+    let mut first_batch = None;
+    let mut searches = Vec::new();
+    for directory in 0..4 {
+        let query = SearchQuery::text(
+            "testing".to_string(),
+            false,
+            true,
+            false,
+            PathMatcher::new([format!("{directory}/**")], PathStyle::local()).unwrap(),
+            PathMatcher::default(),
+            false,
+            None,
+        )
+        .unwrap();
+        searches.push(project.update(cx, |project, cx| project.search(query, cx)));
+        cx.run_until_parked();
+        let shared = shared_buffers(server_cx);
+        if let Some(first_batch) = &first_batch {
+            assert_eq!(&shared, first_batch);
+        } else {
+            assert!(!shared.is_empty());
+            assert!(
+                shared.len() <= 64,
+                "queued {} buffers without an acknowledgement",
+                shared.len()
+            );
+            first_batch = Some(shared);
+        }
+        if directory >= 2 {
+            searches.clear();
+            cx.run_until_parked();
+        }
+    }
+
+    let mut replacement = std::pin::pin!(do_search_and_assert(
+        &project,
+        "rust-analyzer",
+        PathMatcher::new(["3/127.txt"], PathStyle::local()).unwrap(),
+        false,
+        &[path!("project/3/127.txt")],
+        cx.clone(),
+    ));
+    assert!(replacement.as_mut().now_or_never().is_none());
+    cx.run_until_parked();
+    let mut expected_buffers = first_batch.unwrap();
+    assert_eq!(shared_buffers(server_cx), expected_buffers);
+    drop(pause_incoming);
+    let buffers = replacement.await;
+    expected_buffers.extend(
+        buffers
+            .iter()
+            .map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id())),
+    );
+    expected_buffers.sort();
+    cx.run_until_parked();
+    received_buffers.borrow_mut().sort();
+    assert_eq!(*received_buffers.borrow(), expected_buffers);
+}
+
+#[gpui::test]
+async fn test_remote_project_search_limits_unacknowledged_bytes(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let text = format!("needle{}", "a".repeat(64 * 1024));
+    let files = (0..64)
+        .map(|index| (format!("{index:03}.txt"), json!(text)))
+        .collect::<serde_json::Map<_, _>>();
+    fs.insert_tree(path!("/code/project"), serde_json::Value::Object(files))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("remote worktree should open");
+    cx.run_until_parked();
+
+    let client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    let pause_incoming = client.request(proto::Ping {});
+    cx.run_until_parked();
+    let expected_paths = (0..64)
+        .map(|index| format!("project{}{index:03}.txt", std::path::MAIN_SEPARATOR))
+        .collect::<Vec<_>>();
+    let expected_paths = expected_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut search = std::pin::pin!(do_search_and_assert(
+        &project,
+        "needle",
+        PathMatcher::default(),
+        false,
+        &expected_paths,
+        cx.clone(),
+    ));
+    let shared_bytes = |cx: &mut TestAppContext| {
+        headless.read_with(cx, |headless, cx| {
+            let store = headless.buffer_store.read(cx);
+            store
+                .buffers()
+                .filter(|buffer| store.is_shared(buffer.read(cx).remote_id(), cx))
+                .map(|buffer| buffer.read(cx).len())
+                .sum::<usize>()
+        })
+    };
+    assert!(search.as_mut().now_or_never().is_none());
+    cx.run_until_parked();
+    let first_batch_bytes = shared_bytes(server_cx);
+    let pause_second_batch = client.request(proto::Ping {});
+    cx.run_until_parked();
+    drop(pause_incoming);
+    cx.run_until_parked();
+    let second_batch_bytes = shared_bytes(server_cx) - first_batch_bytes;
+    assert!(
+        (text.len()..1024 * 1024 + text.len()).contains(&second_batch_bytes),
+        "shared {second_batch_bytes} bytes without an acknowledgement"
+    );
+    drop(pause_second_batch);
+    search.await;
+}
+
+#[gpui::test]
+async fn test_remote_buffer_transfer_owned_by_buffer_store(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let buffer_store = headless.read_with(server_cx, |headless, _| headless.buffer_store.clone());
+    let buffer = buffer_store.update(server_cx, |store, cx| {
+        store.create_local_buffer("needle", None, false, cx)
+    });
+    let buffer_id = buffer.read_with(server_cx, |buffer, _| buffer.remote_id());
+    buffer.update(server_cx, |buffer, cx| buffer.edit([(6..6, "!")], None, cx));
+    let remote_buffer = project.update(cx, |project, cx| {
+        project
+            .buffer_store()
+            .update(cx, |store, cx| store.wait_for_remote_buffer(buffer_id, cx))
+    });
+    let transfer = buffer_store.update(server_cx, |store, cx| {
+        store.create_buffer_for_peer(&buffer, proto::REMOTE_SERVER_PEER_ID, cx)
+    });
+    drop(transfer);
+    server_cx.update(|_| drop(buffer));
+    cx.run_until_parked();
+
+    let remote_buffer = remote_buffer
+        .now_or_never()
+        .expect("the transfer should survive dropping its caller")
+        .expect("the transferred buffer should load");
+    remote_buffer.read_with(cx, |buffer, _| assert_eq!(buffer.text(), "needle!"));
 }
 
 #[gpui::test]
@@ -868,7 +1301,10 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     cx.update_global(|settings_store: &mut SettingsStore, cx| {
         settings_store.set_user_settings(
-            r#"{"languages":{"Rust":{"language_servers":["from-local-settings"]}}}"#,
+            r#"{
+                "languages": {"Rust": {"language_servers": ["from-local-settings"]}},
+                "terminal": {"shell": {"program": "client-shell"}}
+            }"#,
             cx,
         )
     })
@@ -889,7 +1325,10 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx
         .update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store.set_server_settings(
-                r#"{"languages":{"Rust":{"language_servers":["from-server-settings"]}}}"#,
+                r#"{
+                    "languages": {"Rust": {"language_servers": ["from-server-settings"]}},
+                    "terminal": {"shell": {"program": "remote-shell"}}
+                }"#,
                 cx,
             )
         })
@@ -906,6 +1345,30 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             "Server language settings should take precedence over the user settings"
         )
     });
+
+    let remote_client = project.read_with(cx, |project, _| project.remote_client());
+    let remote_shell = if let Some(remote_client) = remote_client {
+        remote_client
+            .read_with(cx, |remote_client, _| {
+                remote_client
+                    .proto_client()
+                    .request(proto::GetTerminalShell {
+                        project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                        worktree_id: None,
+                    })
+            })
+            .await
+            .ok()
+            .and_then(|response| response.shell)
+            .and_then(|shell| task::shell_from_proto(shell).ok())
+    } else {
+        None
+    };
+    assert_eq!(
+        remote_shell,
+        Some(task::Shell::Program("remote-shell".to_string())),
+        "Server terminal shell settings should take precedence over user settings"
+    );
 
     fs.insert_tree(
         "/code/project1/.zed",
@@ -2839,7 +3302,15 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
                     "lib.rs": "fn one() -> usize { 1 }"
                 }
             },
+            "project2": {
+                "README.md": "# project 2",
+            },
         }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/code/project1/linked"),
+        PathBuf::from(path!("/code/project2")),
     )
     .await;
 
@@ -2871,6 +3342,152 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
         })
         .await;
     assert!(path.is_none());
+
+    for path in [
+        path!("/code/project1/../project2/README.md"),
+        path!("/code/project1/linked/README.md"),
+    ] {
+        let resolved_path = project
+            .update(cx, |project, cx| project.resolve_abs_path(path, cx))
+            .await
+            .expect("existing path should resolve without canonicalization");
+        assert_eq!(resolved_path.abs_path(), Some(path));
+        let resolved_file_path = project
+            .update(cx, |project, cx| project.resolve_abs_file_path(path, cx))
+            .await
+            .expect("existing file path should resolve without canonicalization");
+        assert_eq!(resolved_file_path.abs_path(), Some(path));
+    }
+}
+
+#[gpui::test]
+async fn test_resolve_abs_file_path_canonical(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {},
+            "project2": {"README.md": "# project 2"},
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/code/project1/linked"),
+        PathBuf::from(path!("/code/project2")),
+    )
+    .await;
+
+    let (remote_project, _headless) = init_test(&fs, cx, server_cx).await;
+    let local_project = Project::test(fs, [], cx).await;
+    for project in [remote_project, local_project] {
+        let path = path!("/code/project1/linked/README.md");
+        let resolved_path = project
+            .update(cx, |project, cx| project.resolve_abs_path(path, cx))
+            .await
+            .expect("existing path should resolve without canonicalization");
+        assert_eq!(resolved_path.abs_path(), Some(path));
+
+        for path in [
+            path!("/code/project1/linked"),
+            path!("/code/project1/linked/missing.md"),
+        ] {
+            let resolved_path = project
+                .update(cx, |project, cx| {
+                    project.resolve_abs_file_path_canonical(path, cx)
+                })
+                .await
+                .expect("missing files and directories should not cause resolution errors");
+            assert!(resolved_path.is_none(), "{path}");
+        }
+
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/code/project2/README.md"), false, cx)
+            })
+            .await
+            .expect("canonical file worktree should open");
+        worktree.read_with(cx, |worktree, _| {
+            assert!(!worktree.is_visible());
+            assert!(worktree.is_single_file());
+        });
+
+        for path in [
+            path!("/code/project1/../project2/README.md"),
+            path!("/code/project1/linked/README.md"),
+        ] {
+            let resolved_path = project
+                .update(cx, |project, cx| {
+                    project.resolve_abs_file_path_canonical(path, cx)
+                })
+                .await
+                .expect("existing file path should canonicalize without errors")
+                .expect("existing path should resolve");
+            assert!(resolved_path.is_file());
+            assert_eq!(
+                resolved_path.abs_path(),
+                Some(path!("/code/project2/README.md")),
+                "{path}"
+            );
+            let (opened_worktree, relative_path) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_worktree(
+                        resolved_path.abs_path().expect("path should be absolute"),
+                        false,
+                        cx,
+                    )
+                })
+                .await
+                .expect("resolved file worktree should open");
+            assert!(relative_path.is_empty());
+            opened_worktree.read_with(cx, |opened_worktree, cx| {
+                assert_eq!(opened_worktree.id(), worktree.read(cx).id(), "{path}");
+                assert_eq!(project.read(cx).worktrees(cx).count(), 1);
+            });
+        }
+
+        let (project_worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/code/project1"), true, cx)
+            })
+            .await
+            .unwrap();
+        let alias = project_worktree.read_with(cx, |worktree, _| {
+            ProjectPath::from((worktree.id(), rel_path("linked/README.md")))
+        });
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(alias.clone(), cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "unsaved ")], None, cx);
+        });
+
+        let resolved = project
+            .update(cx, |project, cx| {
+                project.resolve_abs_file_link(path!("/code/project1//linked/README.md"), cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.project_path(), Some(&alias));
+        let reopened = project
+            .update(cx, |project, cx| {
+                project.open_buffer(resolved.project_path().unwrap().clone(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(reopened, buffer);
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), "unsaved # project 2");
+            assert!(buffer.is_dirty());
+        });
+        project.read_with(cx, |project, cx| {
+            assert_eq!(project.worktrees(cx).count(), 2);
+        });
+    }
 }
 
 #[gpui::test(iterations = 10)]
@@ -2918,6 +3535,72 @@ async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut 
     buffer.read_with(cx, |buf, _| {
         assert_eq!(buf.text(), "fn one() -> usize { 1 }")
     });
+}
+
+#[gpui::test]
+async fn test_removing_remote_worktree_keeps_remaining_repository_active(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "remaining": { ".git": {}, "file.txt": "remaining" },
+            "active": { ".git": {}, "file.txt": "active" },
+            "other": { ".git": {}, "file.txt": "other" },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let mut worktree_ids = HashMap::default();
+    for name in ["remaining", "active", "other"] {
+        let root = Path::new(path!("/code")).join(name);
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(root, true, cx)
+            })
+            .await
+            .expect("open remote worktree");
+        worktree_ids.insert(name, worktree.read_with(cx, |worktree, _| worktree.id()));
+    }
+    cx.run_until_parked();
+
+    let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+    let repository_for_name = |name: &str, cx: &mut TestAppContext| {
+        let root = Path::new(path!("/code")).join(name);
+        git_store.read_with(cx, |git_store, cx| {
+            git_store
+                .repositories()
+                .values()
+                .find(|repository| repository.read(cx).work_directory_abs_path.as_ref() == root)
+                .cloned()
+                .expect("remote repository is available")
+        })
+    };
+    let active_repository = repository_for_name("active", cx);
+    let remaining_repository = repository_for_name("remaining", cx);
+    active_repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+
+    for (name, expected_repository, expected_count) in [
+        ("other", Some(active_repository), 2),
+        ("active", Some(remaining_repository), 1),
+        ("remaining", None, 0),
+    ] {
+        let worktree_id = *worktree_ids.get(name).expect("remote worktree exists");
+        project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        cx.run_until_parked();
+
+        git_store.read_with(cx, |git_store, _| {
+            assert_eq!(git_store.repositories().len(), expected_count);
+            assert_eq!(
+                git_store.active_repository(),
+                expected_repository,
+                "removing {name} should preserve a remaining active repository"
+            );
+        });
+    }
 }
 
 #[gpui::test]
@@ -2975,6 +3658,90 @@ async fn test_adding_then_removing_then_adding_worktrees(
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[1].path.as_unix_str(), "README.md")
     })
+}
+
+#[gpui::test]
+async fn test_removing_missing_worktree_does_not_send_project_update(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "README.md": "# project 1",
+            },
+            "outside.txt": "not part of the project",
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    let (outside_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/outside.txt"), false, cx)
+        })
+        .await
+        .unwrap();
+    let outside_worktree_id = outside_worktree.read_with(cx, |worktree, _| worktree.id());
+    cx.run_until_parked();
+
+    let server_worktree_store =
+        headless.read_with(server_cx, |headless, _| headless.worktree_store.clone());
+    server_worktree_store.read_with(server_cx, |worktree_store, cx| {
+        assert!(
+            worktree_store
+                .worktree_for_id(outside_worktree_id, cx)
+                .is_some()
+        );
+    });
+
+    // Releasing the client's handle removes the worktree on the server.
+    cx.update(|_| drop(outside_worktree));
+    cx.run_until_parked();
+    server_worktree_store.read_with(server_cx, |worktree_store, cx| {
+        assert!(
+            worktree_store
+                .worktree_for_id(outside_worktree_id, cx)
+                .is_none()
+        );
+    });
+
+    let project_updates_sent = Arc::new(AtomicUsize::new(0));
+    let _subscription = server_cx.update(|cx| {
+        let project_updates_sent = project_updates_sent.clone();
+        cx.subscribe(&server_worktree_store, move |_, event, _| {
+            if matches!(event, WorktreeStoreEvent::WorktreeUpdateSent(_)) {
+                project_updates_sent.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+    });
+
+    // The client asks for the same removal again whenever it releases a handle
+    // that it re-created from a project update sent before the removal.
+    let proto_client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    proto_client
+        .request(proto::RemoveWorktree {
+            worktree_id: outside_worktree_id.to_proto(),
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        project_updates_sent.load(Ordering::SeqCst),
+        0,
+        "removing a worktree that is already gone must not announce the unchanged worktrees again"
+    );
 }
 
 #[gpui::test]
@@ -3123,6 +3890,137 @@ async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_remote_private_file_redaction(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".env": "TOKEN=secret\n",
+            "nested": { ".env.local": "TOKEN=secret\n" },
+            "custom.env": "TOKEN=secret\n",
+            "public.env": "TOKEN=secret\n",
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_server_settings(r#"{"private_files": ["...", "**/custom.env"]}"#, cx)
+                .expect("valid server settings");
+        });
+    });
+    let env_language = headless
+        .read_with(server_cx, |headless, _| {
+            headless.languages.language_for_name("Env")
+        })
+        .await
+        .expect("env language");
+    cx.update(|cx| {
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        editor::init(cx);
+    });
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .expect("open remote worktree");
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let cx = cx.add_empty_window();
+
+    for (path, is_private) in [
+        (".env", true),
+        ("nested/.env.local", true),
+        ("custom.env", true),
+        ("public.env", false),
+    ] {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(path)), cx)
+            })
+            .await
+            .expect("open remote buffer");
+        buffer.update(cx, |buffer, cx| {
+            assert_eq!(buffer.file().expect("remote file").is_private(), is_private);
+            buffer.set_language(Some(env_language.clone()), cx);
+        });
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+        });
+
+        for enabled in [true, false] {
+            cx.update(|_, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.editor.redact_private_values = Some(enabled);
+                    });
+                });
+            });
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.display_snapshot(cx);
+                let ranges =
+                    editor.redacted_ranges(editor::Anchor::Min..editor::Anchor::Max, &snapshot, cx);
+                let points = ranges
+                    .iter()
+                    .map(|range| range.start.to_point(&snapshot)..range.end.to_point(&snapshot))
+                    .collect::<Vec<_>>();
+                let expected = if is_private && enabled {
+                    vec![Point::new(0, 6)..Point::new(0, 12)]
+                } else {
+                    vec![]
+                };
+                assert_eq!(points, expected, "{path}, redaction enabled: {enabled}");
+            });
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_remote_private_file_rename(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({".env": "TOKEN=secret\n"}))
+        .await;
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .expect("open remote worktree");
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/.env"), cx)
+        })
+        .await
+        .expect("open remote env file");
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.file().expect("remote file").is_private());
+    });
+
+    for (from, to, is_private) in [
+        (path!("/project/.env"), path!("/project/public.env"), false),
+        (path!("/project/public.env"), path!("/project/.env"), true),
+    ] {
+        fs.rename(Path::new(from), Path::new(to), Default::default())
+            .await
+            .expect("rename remote file");
+        cx.run_until_parked();
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.file().expect("remote file").is_private(), is_private);
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -3165,6 +4063,60 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
             entry.id
         )
     });
+}
+
+#[gpui::test]
+async fn test_remote_rename_entry_onto_existing_path(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "README.rst": "existing",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let err = project
+        .update(cx, |project, cx| {
+            let worktree = worktree.read(cx);
+            let entry = worktree.entry_for_path(rel_path("README.md")).unwrap();
+            project.rename_entry(entry.id, (worktree.id(), rel_path("README.rst")).into(), cx)
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        err.error_code(),
+        ErrorCode::AlreadyExists,
+        "the collision should survive the trip from the server: {err:#}"
+    );
+
+    // Nothing was overwritten on the server.
+    assert_eq!(
+        fs.load("/code/project1/README.md".as_ref()).await.unwrap(),
+        "# project 1"
+    );
+    assert_eq!(
+        fs.load("/code/project1/README.rst".as_ref()).await.unwrap(),
+        "existing"
+    );
 }
 
 #[gpui::test]
@@ -4182,153 +5134,6 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 }
 
 #[gpui::test]
-async fn test_remote_git_checkpoints(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let fs = FakeFs::new(server_cx.executor());
-    fs.insert_tree(
-        path!("/code"),
-        json!({
-            "project1": {
-                ".git": {},
-                "file.txt": "original content",
-            },
-        }),
-    )
-    .await;
-
-    let (project, _headless) = init_test(&fs, cx, server_cx).await;
-
-    let (_worktree, _) = project
-        .update(cx, |project, cx| {
-            project.find_or_create_worktree(path!("/code/project1"), true, cx)
-        })
-        .await
-        .unwrap();
-    cx.run_until_parked();
-
-    let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
-
-    // 1. Create a checkpoint of the original state
-    let checkpoint_1 = repository
-        .update(cx, |repository, _| repository.checkpoint())
-        .await
-        .unwrap()
-        .unwrap();
-
-    // 2. Modify a file on the server-side fs
-    fs.write(
-        Path::new(path!("/code/project1/file.txt")),
-        b"modified content",
-    )
-    .await
-    .unwrap();
-
-    // 3. Create a second checkpoint with the modified state
-    let checkpoint_2 = repository
-        .update(cx, |repository, _| repository.checkpoint())
-        .await
-        .unwrap()
-        .unwrap();
-
-    // 4. compare_checkpoints: same checkpoint with itself => equal
-    let equal = repository
-        .update(cx, |repository, _| {
-            repository.compare_checkpoints(checkpoint_1.clone(), checkpoint_1.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(equal, "a checkpoint compared with itself should be equal");
-
-    // 5. compare_checkpoints: different states => not equal
-    let equal = repository
-        .update(cx, |repository, _| {
-            repository.compare_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        !equal,
-        "checkpoints of different states should not be equal"
-    );
-
-    // 6. diff_checkpoints: same checkpoint => empty diff
-    let diff = repository
-        .update(cx, |repository, _| {
-            repository.diff_checkpoints(checkpoint_1.clone(), checkpoint_1.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        diff.is_empty(),
-        "diff of identical checkpoints should be empty"
-    );
-
-    // 7. diff_checkpoints: different checkpoints => non-empty diff mentioning the changed file
-    let diff = repository
-        .update(cx, |repository, _| {
-            repository.diff_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        !diff.is_empty(),
-        "diff of different checkpoints should be non-empty"
-    );
-    assert!(
-        diff.contains("file.txt"),
-        "diff should mention the changed file"
-    );
-    assert!(
-        diff.contains("original content"),
-        "diff should contain removed content"
-    );
-    assert!(
-        diff.contains("modified content"),
-        "diff should contain added content"
-    );
-
-    // 8. restore_checkpoint: restore to original state
-    repository
-        .update(cx, |repository, _| {
-            repository.restore_checkpoint(checkpoint_1.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    cx.run_until_parked();
-
-    // 9. Create a checkpoint after restore
-    let checkpoint_3 = repository
-        .update(cx, |repository, _| repository.checkpoint())
-        .await
-        .unwrap()
-        .unwrap();
-
-    // 10. compare_checkpoints: restored state matches original
-    let equal = repository
-        .update(cx, |repository, _| {
-            repository.compare_checkpoints(checkpoint_1.clone(), checkpoint_3.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(equal, "restored state should match original checkpoint");
-
-    // 11. diff_checkpoints: restored state vs original => empty diff
-    let diff = repository
-        .update(cx, |repository, _| {
-            repository.diff_checkpoints(checkpoint_1.clone(), checkpoint_3.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(diff.is_empty(), "diff after restore should be empty");
-}
-
-#[gpui::test]
 async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -4445,8 +5250,8 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     authorization
         .response
         .send(acp_thread::SelectedPermissionOutcome::new(
-            agent_client_protocol::schema::v1::PermissionOptionId::new("allow"),
-            agent_client_protocol::schema::v1::PermissionOptionKind::AllowOnce,
+            agent_client_protocol::v2::schema::PermissionOptionId::new("allow"),
+            agent_client_protocol::v2::schema::PermissionOptionKind::AllowOnce,
         ))
         .unwrap();
 
@@ -4495,8 +5300,8 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     authorization
         .response
         .send(acp_thread::SelectedPermissionOutcome::new(
-            agent_client_protocol::schema::v1::PermissionOptionId::new("allow"),
-            agent_client_protocol::schema::v1::PermissionOptionKind::AllowOnce,
+            agent_client_protocol::v2::schema::PermissionOptionId::new("allow"),
+            agent_client_protocol::v2::schema::PermissionOptionKind::AllowOnce,
         ))
         .unwrap();
 
@@ -4520,6 +5325,693 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
             rendered: expected2
         }
     );
+}
+
+struct RemoteSkillsTest {
+    project: Entity<Project>,
+    agent: Entity<NativeAgent>,
+    connection: Rc<NativeAgentConnection>,
+    acp_thread: Entity<acp_thread::AcpThread>,
+    server_fs: Arc<FakeFs>,
+    project_root: &'static Path,
+    skills_dir: PathBuf,
+}
+
+impl RemoteSkillsTest {
+    /// With no `remote_skills`, the remote has no `~/.agents/skills`.
+    async fn new(
+        remote_skills: &[&str],
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> Self {
+        use acp_thread::AgentConnection as _;
+
+        let project_root = Path::new(path!("/project"));
+        let skills_dir = agent_skills::global_skills_dir();
+        let server_fs = FakeFs::new(server_cx.executor());
+        server_fs.insert_tree(project_root, json!({})).await;
+        for name in remote_skills {
+            server_fs
+                .insert_tree(skills_dir.join(name), skill_dir(name))
+                .await;
+        }
+        // The same path on this machine holds a different skill.
+        let local_fs = FakeFs::new(cx.executor());
+        local_fs
+            .insert_tree(skills_dir.join("local-skill"), skill_dir("local-skill"))
+            .await;
+
+        let (project, _headless_project) = init_test(&server_fs, cx, server_cx).await;
+        cx.update(|cx| {
+            LanguageModelRegistry::test(cx);
+        });
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(project_root, true, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), local_fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[project_root]), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        Self {
+            project,
+            agent,
+            connection,
+            acp_thread,
+            server_fs,
+            project_root,
+            skills_dir,
+        }
+    }
+
+    async fn add_remote_skill(&self, name: &str, cx: &mut TestAppContext) {
+        self.server_fs
+            .insert_tree(self.skills_dir.join(name), skill_dir(name))
+            .await;
+        cx.run_until_parked();
+    }
+
+    /// Like focusing the agent input.
+    fn refresh(&self, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            self.connection
+                .refresh_skills_for_project(self.project.clone(), cx)
+        });
+        cx.run_until_parked();
+    }
+
+    /// The remote's skills have different names than the local `local-skill`.
+    fn global_skills(&self, cx: &mut TestAppContext) -> Vec<String> {
+        let session_id = self
+            .acp_thread
+            .read_with(cx, |thread, _| thread.session_id().clone());
+        cx.update(|cx| {
+            self.connection
+                .available_skills(&session_id, cx)
+                .into_iter()
+                .filter(|skill| skill.source == "global")
+                .map(|skill| skill.name)
+                .collect()
+        })
+    }
+
+    /// Runs the `skill` tool the way the model would, and returns the
+    /// rendered skill.
+    async fn run_skill_tool(&self, name: &str, cx: &mut TestAppContext) -> String {
+        let skill_tool = Arc::new(SkillTool::with_body_resolver(
+            skills_resolver_for_project(self.agent.downgrade(), self.project.entity_id()),
+            skill_body_resolver_for_project(self.project.clone(), FakeFs::new(cx.executor())),
+        ));
+        let (event_stream, mut event_stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            skill_tool.run(
+                ToolInput::resolved(SkillToolInput { name: name.into() }),
+                event_stream,
+                cx,
+            )
+        });
+        allow_tool_call(&mut event_stream_rx).await;
+        let SkillToolOutput::Found { rendered } = task.await.unwrap() else {
+            panic!("{name} should be found");
+        };
+        rendered
+    }
+}
+
+fn skill_dir(name: &str) -> serde_json::Value {
+    json!({ "SKILL.md": format!("---\nname: {name}\ndescription: test skill\n---\n{name} body") })
+}
+
+#[gpui::test]
+async fn test_remote_global_skills_come_from_the_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(&["remote-skill"], cx, server_cx).await;
+
+    assert_eq!(test.global_skills(cx), ["remote-skill"]);
+    cx.update(|cx| {
+        let index = cx.global::<SkillIndex>();
+        assert!(index.global_skills.is_empty());
+        let remote_skills = &index.remote_global_skills[&test.project.entity_id()];
+        assert_eq!(remote_skills.len(), 1);
+        assert_eq!(remote_skills[0].name, "remote-skill");
+    });
+
+    let rendered = test.run_skill_tool("remote-skill", cx).await;
+    assert!(rendered.contains("remote-skill body"), "got: {rendered}");
+
+    test.add_remote_skill("added-skill", cx).await;
+    assert_eq!(test.global_skills(cx), ["added-skill", "remote-skill"]);
+
+    // Closing the window drops the thread, agent and project.
+    let RemoteSkillsTest {
+        project,
+        agent,
+        connection,
+        acp_thread,
+        ..
+    } = test;
+    let project_id = project.entity_id();
+    let weak_project = project.downgrade();
+    let weak_agent = agent.downgrade();
+    drop((acp_thread, connection, agent, project));
+    // Dropped entities are only freed when effects are next flushed.
+    cx.update(|_| {});
+    cx.run_until_parked();
+    weak_agent.assert_released();
+    weak_project.assert_released();
+    cx.update(|cx| {
+        assert!(
+            !cx.global::<SkillIndex>()
+                .remote_global_skills
+                .contains_key(&project_id),
+            "a closed project's remote global skills should be removed"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_remote_global_skill_frontmatter_comes_from_the_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(&["remote-skill"], cx, server_cx).await;
+    let long_description = "a".repeat(agent_skills::MAX_SKILL_DESCRIPTION_LEN + 1);
+    test.server_fs
+        .insert_tree(
+            test.skills_dir.join("hidden-skill"),
+            json!({
+                "SKILL.md": format!(
+                    "---\nname: hidden-skill\ndescription: {long_description}\ndisable-model-invocation: true\n---\nbody"
+                )
+            }),
+        )
+        .await;
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        let index = cx.global::<SkillIndex>();
+        let skill = index.remote_global_skills[&test.project.entity_id()]
+            .iter()
+            .find(|skill| skill.name == "hidden-skill")
+            .expect("the remote's new skill should be listed");
+        assert!(skill.disable_model_invocation);
+        assert_eq!(skill.directory_path, test.skills_dir.join("hidden-skill"));
+        assert_eq!(
+            skill.skill_file_path,
+            test.skills_dir.join("hidden-skill").join("SKILL.md")
+        );
+        assert_eq!(
+            skill.load_warnings,
+            [agent_skills::SkillLoadWarning::DescriptionTooLong {
+                actual_len: agent_skills::MAX_SKILL_DESCRIPTION_LEN + 1,
+                max_len: agent_skills::MAX_SKILL_DESCRIPTION_LEN,
+            }]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_remote_global_skill_load_errors_come_from_the_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(&["remote-skill"], cx, server_cx).await;
+    let issues = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = cx.update(|cx| {
+        let issues = issues.clone();
+        cx.subscribe(
+            &test.agent,
+            move |_, event: &agent::SkillLoadingIssuesUpdated, _| {
+                *issues.borrow_mut() = event.issues.clone();
+            },
+        )
+    });
+    test.server_fs
+        .insert_tree(
+            test.skills_dir.join("broken-skill"),
+            json!({ "SKILL.md": "no frontmatter" }),
+        )
+        .await;
+    cx.run_until_parked();
+
+    assert_eq!(test.global_skills(cx), ["remote-skill"]);
+    let issues = issues.borrow();
+    let [issue] = issues.as_slice() else {
+        panic!("expected one loading issue, got {issues:?}");
+    };
+    assert_eq!(issue.kind, agent::SkillLoadingIssueKind::LoadFailed);
+    assert_eq!(
+        issue.path,
+        test.skills_dir.join("broken-skill").join("SKILL.md")
+    );
+}
+
+#[gpui::test]
+async fn test_remote_global_skills_dir_deleted_and_recreated(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(&["remote-skill"], cx, server_cx).await;
+    assert_eq!(test.global_skills(cx), ["remote-skill"]);
+
+    test.server_fs
+        .remove_dir(
+            &test.skills_dir,
+            fs::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert!(test.global_skills(cx).is_empty());
+
+    // The watch ended with the dir, so a refresh is what finds the recreated
+    // dir and watches it again.
+    test.add_remote_skill("new-skill", cx).await;
+    test.refresh(cx);
+    assert_eq!(test.global_skills(cx), ["new-skill"]);
+
+    test.add_remote_skill("another-skill", cx).await;
+    assert_eq!(test.global_skills(cx), ["another-skill", "new-skill"]);
+}
+
+#[gpui::test]
+async fn test_agent_file_tools_reach_remote_global_skill_files(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(&["remote-skill"], cx, server_cx).await;
+    let remote_skill_dir = test.skills_dir.join("remote-skill");
+    test.server_fs
+        .insert_tree(
+            remote_skill_dir.join("references"),
+            json!({ "api.md": "remote reference" }),
+        )
+        .await;
+    // This machine has its own skill at the same path, which must not be read.
+    let local_fs = test
+        .project
+        .read_with(cx, |project, _| project.fs().clone())
+        .as_fake();
+    local_fs
+        .insert_tree(
+            test.skills_dir.join("local-only"),
+            json!({ "SKILL.md": "local skill" }),
+        )
+        .await;
+
+    let action_log = cx.new(|_| action_log::ActionLog::new(test.project.clone()));
+    let read_tool = Arc::new(ReadFileTool::new(test.project.clone(), action_log, false));
+    let read = |path: &str, cx: &mut TestAppContext| {
+        let (event_stream, _) = ToolCallEventStream::test();
+        let input = ReadFileToolInput {
+            path: path.to_string(),
+            start_line: None,
+            end_line: None,
+        };
+        cx.update(|cx| {
+            read_tool
+                .clone()
+                .run(ToolInput::resolved(input), event_stream, cx)
+        })
+    };
+    assert_eq!(
+        read("~/.agents/skills/remote-skill/references/api.md", cx)
+            .await
+            .unwrap(),
+        LanguageModelToolResultContent::Text("     1\tremote reference".into())
+    );
+    read("~/.agents/skills/local-only/SKILL.md", cx)
+        .await
+        .expect_err("a skill only on this machine isn't in the remote project");
+
+    let list_tool = Arc::new(ListDirectoryTool::new(test.project.clone()));
+    let (event_stream, _) = ToolCallEventStream::test();
+    let listing = cx
+        .update(|cx| {
+            list_tool.run(
+                ToolInput::resolved(ListDirectoryToolInput {
+                    path: remote_skill_dir.to_string_lossy().into_owned(),
+                }),
+                event_stream,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    assert!(
+        listing.contains(
+            &remote_skill_dir
+                .join("references")
+                .to_string_lossy()
+                .into_owned()
+        ) && listing.contains(
+            &remote_skill_dir
+                .join("SKILL.md")
+                .to_string_lossy()
+                .into_owned()
+        ),
+        "got: {listing}"
+    );
+}
+
+/// Answers a tool's permission prompt with "allow once".
+async fn allow_tool_call(events: &mut ToolCallEventStreamReceiver) {
+    events
+        .expect_authorization()
+        .await
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            agent_client_protocol::v2::schema::PermissionOptionId::new("allow"),
+            agent_client_protocol::v2::schema::PermissionOptionKind::AllowOnce,
+        ))
+        .unwrap();
+}
+
+/// Runs a tool that asks before touching agent skills, and allows it.
+async fn run_tool_allowing_skill_access<T: AgentTool>(
+    tool: Arc<T>,
+    input: T::Input,
+    cx: &mut TestAppContext,
+) -> Result<T::Output, T::Output> {
+    let (event_stream, mut events) = ToolCallEventStream::test();
+    let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+    if T::NAME == WriteFileTool::NAME {
+        events.expect_update_fields().await;
+    }
+    allow_tool_call(&mut events).await;
+    task.await
+}
+
+/// Creates, writes, copies, moves and deletes a remote global skill, naming
+/// the skills directory as `skills_dir`. Every tool must ask first.
+async fn run_write_tools_on_remote_global_skills(
+    test: &RemoteSkillsTest,
+    skills_dir: &str,
+    cx: &mut TestAppContext,
+) {
+    let local_fs = test
+        .project
+        .read_with(cx, |project, _| project.fs().clone())
+        .as_fake();
+    let new_skill_dir = test.skills_dir.join("new-skill");
+
+    let create_directory = Arc::new(CreateDirectoryTool::new(test.project.clone()));
+    run_tool_allowing_skill_access(
+        create_directory,
+        serde_json::from_value(json!({ "path": format!("{skills_dir}/new-skill") })).unwrap(),
+        cx,
+    )
+    .await
+    .unwrap();
+    assert!(test.server_fs.is_dir(&new_skill_dir).await);
+    assert!(
+        !local_fs.is_dir(&new_skill_dir).await,
+        "the skill must not be created on this machine"
+    );
+
+    let session_id = test
+        .acp_thread
+        .read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = cx
+        .update(|cx| test.connection.thread(&session_id, cx))
+        .unwrap();
+    let action_log = cx.new(|_| action_log::ActionLog::new(test.project.clone()));
+    let language_registry = test
+        .project
+        .read_with(cx, |project, _| project.languages().clone());
+    let write_file = Arc::new(WriteFileTool::new(
+        test.project.clone(),
+        thread.downgrade(),
+        action_log.clone(),
+        language_registry,
+    ));
+    run_tool_allowing_skill_access(
+        write_file,
+        WriteFileToolInput {
+            path: PathBuf::from(format!("{skills_dir}/new-skill/SKILL.md")),
+            content: "new skill\n".into(),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        test.server_fs
+            .load(&new_skill_dir.join("SKILL.md"))
+            .await
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "new skill\n"
+    );
+
+    let copied_dir = test.project_root.join("copied");
+    let copy_path = Arc::new(CopyPathTool::new(test.project.clone()));
+    run_tool_allowing_skill_access(
+        copy_path,
+        CopyPathToolInput {
+            source_path: format!("{skills_dir}/new-skill"),
+            destination_path: copied_dir.to_string_lossy().into_owned(),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        test.server_fs
+            .load(&copied_dir.join("SKILL.md"))
+            .await
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "new skill\n"
+    );
+
+    let renamed_dir = test.skills_dir.join("renamed");
+    let move_path = Arc::new(MovePathTool::new(test.project.clone()));
+    run_tool_allowing_skill_access(
+        move_path,
+        MovePathToolInput {
+            source_path: format!("{skills_dir}/new-skill"),
+            destination_path: format!("{skills_dir}/renamed"),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+    assert!(!test.server_fs.is_dir(&new_skill_dir).await);
+    assert!(test.server_fs.is_file(&renamed_dir.join("SKILL.md")).await);
+
+    let delete_path = Arc::new(DeletePathTool::new(test.project.clone(), action_log));
+    let (event_stream, mut events) = ToolCallEventStream::test();
+    let task = cx.update(|cx| {
+        delete_path.clone().run(
+            ToolInput::resolved(DeletePathToolInput {
+                path: format!("{skills_dir}/renamed"),
+            }),
+            event_stream,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(
+        test.server_fs.is_dir(&renamed_dir).await,
+        "the skill must not be deleted before the user allows it"
+    );
+    allow_tool_call(&mut events).await;
+    task.await.unwrap();
+    assert!(!test.server_fs.is_dir(&renamed_dir).await);
+
+    let (event_stream, _) = ToolCallEventStream::test();
+    cx.update(|cx| {
+        delete_path.run(
+            ToolInput::resolved(DeletePathToolInput {
+                path: skills_dir.to_string(),
+            }),
+            event_stream,
+            cx,
+        )
+    })
+    .await
+    .expect_err("the skills directory itself can't be deleted");
+    assert!(
+        test.server_fs
+            .is_dir(&test.skills_dir.join("remote-skill"))
+            .await
+    );
+}
+
+#[gpui::test]
+async fn test_agent_write_tools_reach_remote_global_skill_files(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(&["remote-skill"], cx, server_cx).await;
+    run_write_tools_on_remote_global_skills(&test, "~/.agents/skills", cx).await;
+}
+
+#[gpui::test]
+async fn test_always_allowed_tools_still_ask_before_touching_remote_global_skills(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(&["remote-skill"], cx, server_cx).await;
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "tool_permissions": { "default": "allow" } } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+    // Only the remote, which resolves `..`, can tell this is the skills dir.
+    let skills_dir = test
+        .skills_dir
+        .parent()
+        .unwrap()
+        .join("other")
+        .join("..")
+        .join("skills");
+    run_write_tools_on_remote_global_skills(&test, &skills_dir.to_string_lossy(), cx).await;
+}
+
+#[gpui::test]
+async fn test_remote_global_skills_leave_the_index_when_their_agent_is_dropped(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(&["remote-skill"], cx, server_cx).await;
+    let project_id = test.project.entity_id();
+
+    // A second agent that lists the project's skills without a session, as
+    // the settings page's refresh does while an external agent is selected.
+    let local_fs = test
+        .project
+        .read_with(cx, |project, _| project.fs().clone());
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), local_fs, cx));
+    let connection = NativeAgentConnection(agent.clone());
+    let RemoteSkillsTest {
+        project,
+        agent: session_agent,
+        connection: session_connection,
+        acp_thread,
+        ..
+    } = test;
+    drop((session_agent, session_connection, acp_thread));
+    cx.update(|cx| {
+        cx.default_global::<SkillIndex>()
+            .remote_global_skills
+            .clear()
+    });
+    cx.update(|cx| connection.refresh_skills_for_project(project.clone(), cx));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(
+            cx.global::<SkillIndex>()
+                .remote_global_skills
+                .contains_key(&project_id)
+        );
+    });
+
+    drop((agent, connection));
+    // Dropped entities are only freed when effects are next flushed.
+    cx.update(|_| {});
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(
+            !cx.global::<SkillIndex>()
+                .remote_global_skills
+                .contains_key(&project_id),
+            "a dropped agent's remote skills must leave the index"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_create_and_trash_remote_global_skills(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use fs::Fs as _;
+
+    let test = RemoteSkillsTest::new(&[], cx, server_cx).await;
+    assert!(test.global_skills(cx).is_empty());
+
+    let create = |name: &str, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            agent::create_remote_global_skill(&test.project, name, "test skill", "body", false, cx)
+        })
+    };
+    let skill_file_path = create("new-skill", cx).await.unwrap();
+    assert_eq!(
+        skill_file_path,
+        test.skills_dir.join("new-skill").join("SKILL.md")
+    );
+    assert!(test.server_fs.is_file(&skill_file_path).await);
+    test.refresh(cx);
+    assert_eq!(test.global_skills(cx), ["new-skill"]);
+
+    let error = create("new-skill", cx).await.unwrap_err();
+    // The skill creator shows this message as is.
+    assert!(
+        error
+            .to_string()
+            .starts_with("A skill named \"new-skill\" already exists"),
+        "got: {error:#}"
+    );
+    let error = create("../escape", cx).await.unwrap_err();
+    assert!(
+        !test
+            .server_fs
+            .is_dir(&paths::home_dir().join(".agents").join("escape"))
+            .await,
+        "an invalid name must not write outside the skills dir: {error:#}"
+    );
+
+    let client = test.project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    for directory_name in ["..", "../.agents", "new-skill/SKILL.md", ""] {
+        client
+            .request(proto::TrashGlobalSkill {
+                project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                directory_name: directory_name.to_string(),
+            })
+            .await
+            .expect_err("only a direct child of the skills dir can be trashed");
+    }
+    assert!(test.server_fs.is_file(&skill_file_path).await);
+
+    cx.update(|cx| {
+        agent::trash_remote_global_skill(&test.project, &test.skills_dir.join("new-skill"), cx)
+    })
+    .await
+    .unwrap();
+    assert!(
+        !test
+            .server_fs
+            .is_dir(&test.skills_dir.join("new-skill"))
+            .await
+    );
+    cx.run_until_parked();
+    assert!(test.global_skills(cx).is_empty());
 }
 
 #[gpui::test]
@@ -4591,7 +6083,8 @@ async fn test_remote_external_agent_server(
             })
         })
         .await
-        .unwrap();
+        .unwrap()
+        .command;
     assert_eq!(
         command,
         AgentServerCommand {
@@ -4604,6 +6097,183 @@ async fn test_remote_external_agent_server(
             ]))
         }
     );
+}
+
+#[cfg(not(windows))]
+#[gpui::test]
+async fn test_remote_external_agent_receives_env_over_stdin(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().allow_parking();
+
+    let output_dir = tempfile::tempdir().unwrap();
+    let output_path = output_dir.path().join("launch");
+    let args = stdio_launch_args(
+        &output_path,
+        r#"{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}"#,
+    );
+    server_cx.update_global(|settings_store: &mut SettingsStore, cx| {
+        settings_store
+            .set_server_settings(
+                &json!({
+                    "agent_servers": {
+                        "foo": {
+                            "type": "custom",
+                            "command": "/bin/sh",
+                            "args": args,
+                            "env": { "AGENT_TOKEN": "agent-secret-sentinel" }
+                        }
+                    }
+                })
+                .to_string(),
+                cx,
+            )
+            .unwrap();
+    });
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    let agent_server_store =
+        project.read_with(cx, |project, _| project.agent_server_store().clone());
+    let command = agent_server_store
+        .update(cx, |store, cx| {
+            store
+                .get_external_agent(&"foo".into())
+                .unwrap()
+                .get_command(vec![], HashMap::default(), &mut cx.to_async())
+        })
+        .await
+        .unwrap();
+    let connection = agent_servers::AcpConnection::stdio(
+        AgentId::new("foo"),
+        project.clone(),
+        command,
+        agent_server_store.downgrade(),
+        None,
+        HashMap::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    let (launched, first_message) = read_stdio_launch(&output_path);
+    assert_eq!(launched.program, "/bin/sh");
+    assert_eq!(launched.args, args);
+    assert_eq!(
+        launched.env,
+        HashMap::from_iter([
+            (String::from("NO_BROWSER"), String::from("1")),
+            (
+                String::from("AGENT_TOKEN"),
+                String::from("agent-secret-sentinel")
+            ),
+        ])
+    );
+    assert_eq!(launched.working_dir.as_deref(), Some(path!("/project")));
+    assert_eq!(first_message["method"], "initialize");
+    drop(connection);
+}
+
+#[cfg(not(windows))]
+#[gpui::test]
+async fn test_remote_context_server_receives_env_over_stdin(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().allow_parking();
+
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let (status_tx, mut status_rx) = futures::channel::mpsc::unbounded();
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&store, move |_, event: &ServerStatusChangedEvent, _| {
+            status_tx.unbounded_send(event.status.clone()).ok();
+        })
+    });
+
+    let output_dir = tempfile::tempdir().unwrap();
+    let output_path = output_dir.path().join("launch");
+    let args = stdio_launch_args(
+        &output_path,
+        r#"{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"test-server","version":"1.0.0"}}"#,
+    );
+    let settings = json!({
+        "context_servers": {
+            "mcp": {
+                "source": "custom",
+                "remote": true,
+                "command": "/bin/sh",
+                "args": args,
+                "env": { "MCP_TOKEN": "mcp-secret-sentinel" }
+            }
+        }
+    })
+    .to_string();
+    server_cx.update_global(|settings_store: &mut SettingsStore, cx| {
+        settings_store.set_server_settings(&settings, cx).unwrap();
+    });
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+    cx.update_global(|settings_store: &mut SettingsStore, cx| {
+        settings_store.set_user_settings(&settings, cx).unwrap();
+    });
+
+    let statuses = async {
+        let mut statuses = Vec::new();
+        while let Some(status) = status_rx.next().await {
+            let starting = status == ContextServerStatus::Starting;
+            statuses.push(status);
+            if !starting {
+                break;
+            }
+        }
+        statuses
+    }
+    .fuse();
+    let timeout = cx
+        .background_executor
+        .timer(std::time::Duration::from_secs(30))
+        .fuse();
+    futures::pin_mut!(statuses, timeout);
+    let statuses = futures::select! {
+        statuses = statuses => statuses,
+        _ = timeout => panic!("timed out waiting for the context server status"),
+    };
+    assert_eq!(
+        statuses,
+        [ContextServerStatus::Starting, ContextServerStatus::Running]
+    );
+
+    let (launched, first_message) = read_stdio_launch(&output_path);
+    assert_eq!(launched.program, "/bin/sh");
+    assert_eq!(launched.args, args);
+    assert_eq!(
+        launched.env,
+        HashMap::from_iter([(
+            String::from("MCP_TOKEN"),
+            String::from("mcp-secret-sentinel")
+        )])
+    );
+    assert_eq!(launched.working_dir.as_deref(), Some(path!("/project")));
+    assert_eq!(first_message["method"], "initialize");
 }
 
 #[gpui::test]
@@ -5288,6 +6958,284 @@ async fn test_remote_project_creation_notifies_new_entity_observers(
 }
 
 #[gpui::test]
+async fn test_remote_log_streams_follow_aggregate_demand(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let server_fs = Arc::new(FakeFs::new(server_cx.executor()));
+    server_fs
+        .insert_tree(path!("/code"), json!({ "project1": { "README.md": "" } }))
+        .await;
+    let (project, headless) = init_test(&server_fs, cx, server_cx).await;
+
+    let server_id = LanguageServerId(42);
+    let remote_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Remote {
+            project: project.downgrade(),
+        },
+        server_id,
+    );
+    let local_log_store = cx.new(|cx| LogStore::new(false, cx));
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.add_project(&project, cx);
+        log_store.add_language_server(
+            remote_server_key.kind.clone(),
+            server_id,
+            Some(LanguageServerName::new_static("test-server")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    let headless_lsp_store =
+        headless.read_with(server_cx, |headless, _| headless.lsp_store.downgrade());
+    let headless_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::LocalSsh {
+            lsp_store: headless_lsp_store,
+        },
+        server_id,
+    );
+    let headless_log_store = server_cx.update(|cx| cx.global::<GlobalLogStore>().0.clone());
+    headless_log_store.update(server_cx, |log_store, cx| {
+        log_store.add_language_server(
+            headless_server_key.kind.clone(),
+            server_id,
+            Some(LanguageServerName::new_static("test-server")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    let peer_id = proto::PeerId { owner_id: 1, id: 1 };
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.retain_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+        log_store
+            .language_servers
+            .get(&headless_server_key)
+            .is_some_and(|state| state.rpc_state.is_some())
+    }));
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::ToggleLspLogs {
+            peer_id,
+            server_id,
+            enabled: true,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.release_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "releasing a local view must preserve downstream demand on the remote host"
+    );
+
+    let other_project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.add_project(&other_project, cx);
+    });
+    for event in [project::Event::Rejoined, project::Event::HostReshared] {
+        // Forget upstream ownership without changing the remaining downstream demand.
+        headless_log_store.update(server_cx, |log_store, cx| {
+            assert!(
+                log_store
+                    .language_servers
+                    .remove(&headless_server_key)
+                    .is_some()
+            );
+            log_store.add_language_server(
+                headless_server_key.kind.clone(),
+                server_id,
+                None,
+                None,
+                None,
+                cx,
+            );
+        });
+        other_project.update(cx, |_, cx| cx.emit(event.clone()));
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        assert!(
+            headless_log_store.read_with(server_cx, |log_store, _| {
+                log_store
+                    .language_servers
+                    .get(&headless_server_key)
+                    .is_some_and(|state| state.rpc_state.is_none())
+            }),
+            "reconnecting another project must not replay this project's streams"
+        );
+
+        for _ in 0..2 {
+            project.update(cx, |_, cx| cx.emit(event.clone()));
+            cx.run_until_parked();
+            server_cx.run_until_parked();
+            assert!(
+                headless_log_store.read_with(server_cx, |log_store, _| {
+                    log_store
+                        .language_servers
+                        .get(&headless_server_key)
+                        .is_some_and(|state| state.rpc_state.is_some())
+                }),
+                "{event:?} must replay downstream-only demand without a local view"
+            );
+        }
+    }
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::CollaboratorLeft(peer_id));
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+        log_store
+            .language_servers
+            .get(&headless_server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::ToggleLspLogs {
+            peer_id,
+            server_id,
+            enabled: true,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "downstream demand must enable the stream on the remote host"
+    );
+
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.retain_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::ToggleLspLogs {
+            peer_id,
+            server_id,
+            enabled: false,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "releasing downstream demand must preserve a local view on the remote host"
+    );
+
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.release_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+        log_store
+            .language_servers
+            .get(&headless_server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::Rejoined);
+        cx.emit(project::Event::HostReshared);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_none())
+        }),
+        "reconnecting must not replay streams without any remaining demand"
+    );
+
+    for has_local_view in [false, true] {
+        project
+            .update(cx, |project, cx| project.shared(1, cx))
+            .expect("project should be shareable");
+        if has_local_view {
+            local_log_store.update(cx, |log_store, cx| {
+                log_store.retain_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+            });
+        }
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::ToggleLspLogs {
+                peer_id,
+                server_id,
+                enabled: true,
+                toggled_log_kind: LogKind::Rpc,
+            });
+        });
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }));
+
+        project
+            .update(cx, |project, cx| project.unshare(cx))
+            .expect("shared project should unshare");
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        assert_eq!(
+            headless_log_store.read_with(server_cx, |log_store, _| {
+                log_store
+                    .language_servers
+                    .get(&headless_server_key)
+                    .map(|state| state.rpc_state.is_some())
+            }),
+            Some(has_local_view),
+            "unsharing must release downstream demand while preserving local views"
+        );
+
+        if has_local_view {
+            local_log_store.update(cx, |log_store, cx| {
+                log_store.release_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+            });
+            cx.run_until_parked();
+            server_cx.run_until_parked();
+            assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+                log_store
+                    .language_servers
+                    .get(&headless_server_key)
+                    .is_some_and(|state| state.rpc_state.is_none())
+            }));
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_log_store_keys_remote_events_by_primary_kind_on_supplementary_id_collision(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
@@ -5407,6 +7355,39 @@ pub async fn init_test(
 
 fn init_logger() {
     zlog::init_test();
+}
+
+#[cfg(not(windows))]
+fn stdio_launch_args(output_path: &Path, initialize_result: &str) -> Vec<String> {
+    let script = format!(
+        r#"printf '%s\n' "${MOCK_STDIO_FRAME_HEX}" > "$1"
+IFS= read -r line
+printf '%s\n' "$line" >> "$1"
+id=$(printf '%s' "$line" | sed -nE 's/^\{{"jsonrpc":"2.0","id":("[^"]*"|[0-9]+),.*/\1/p')
+printf '{{"jsonrpc":"2.0","id":%s,"result":%s}}\n' "$id" "$2"
+exec cat >/dev/null"#
+    );
+    vec![
+        String::from("-c"),
+        script,
+        String::from("sh"),
+        output_path.display().to_string(),
+        String::from(initialize_result),
+    ]
+}
+
+#[cfg(not(windows))]
+fn read_stdio_launch(output_path: &Path) -> (RemoteCommand, serde_json::Value) {
+    let output = std::fs::read_to_string(output_path).unwrap();
+    let (frame_hex, first_line) = output.trim_end().split_once('\n').unwrap();
+    let frame = (0..frame_hex.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&frame_hex[index..index + 2], 16).unwrap())
+        .collect::<Vec<_>>();
+    let mut frame = &frame[..];
+    let command = RemoteCommand::read(&mut frame).unwrap();
+    assert_eq!(frame, b"");
+    (command, serde_json::from_str(first_line).unwrap())
 }
 
 fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {

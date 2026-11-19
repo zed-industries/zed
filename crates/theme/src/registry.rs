@@ -1,5 +1,8 @@
 use std::sync::Arc;
-use std::{fmt::Debug, path::Path};
+use std::{
+    fmt::Debug,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use collections::HashMap;
@@ -9,7 +12,7 @@ use thiserror::Error;
 
 use crate::{
     Appearance, AppearanceContent, ChevronIcons, DEFAULT_ICON_THEME_NAME, DirectoryIcons,
-    IconDefinition, IconTheme, IconThemeFamilyContent, Theme, ThemeFamily, default_icon_theme,
+    IconDefinition, IconTheme, Theme, ThemeFamily, default_icon_theme, deserialize_icon_theme,
 };
 
 /// The metadata for a theme.
@@ -59,6 +62,7 @@ impl Global for GlobalThemeRegistry {}
 struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
     icon_themes: HashMap<SharedString, Arc<IconTheme>>,
+    loaded_icon_theme: Option<LoadedIconTheme>,
     /// Whether the extensions have been loaded yet.
     extensions_loaded: bool,
 }
@@ -67,6 +71,12 @@ struct ThemeRegistryState {
 pub struct ThemeRegistry {
     state: RwLock<ThemeRegistryState>,
     assets: Box<dyn AssetSource>,
+}
+
+struct LoadedIconTheme {
+    path: PathBuf,
+    icons_root_dir: PathBuf,
+    contents: Vec<u8>,
 }
 
 impl ThemeRegistry {
@@ -103,6 +113,7 @@ impl ThemeRegistry {
             state: RwLock::new(ThemeRegistryState {
                 themes: HashMap::default(),
                 icon_themes: HashMap::default(),
+                loaded_icon_theme: None,
                 extensions_loaded: false,
             }),
             assets,
@@ -129,7 +140,9 @@ impl ThemeRegistry {
 
     /// Sets the flag indicating that the extensions have loaded.
     pub fn set_extensions_loaded(&self) {
-        self.state.write().extensions_loaded = true;
+        let mut state = self.state.write();
+        state.extensions_loaded = true;
+        state.loaded_icon_theme = None;
     }
 
     /// Inserts the given theme families into the registry.
@@ -149,6 +162,7 @@ impl ThemeRegistry {
     #[cfg(any(test, feature = "test-support"))]
     pub fn register_test_icon_themes(&self, icon_themes: impl IntoIterator<Item = IconTheme>) {
         let mut state = self.state.write();
+        state.loaded_icon_theme = None;
         for icon_theme in icon_themes {
             state
                 .icon_themes
@@ -237,8 +251,11 @@ impl ThemeRegistry {
 
     /// Removes the icon themes with the given names from the registry.
     pub fn remove_icon_themes(&self, icon_themes_to_remove: &[SharedString]) {
-        self.state
-            .write()
+        let mut state = self.state.write();
+        if !icon_themes_to_remove.is_empty() {
+            state.loaded_icon_theme = None;
+        }
+        state
             .icon_themes
             .retain(|name, _| !icon_themes_to_remove.contains(name))
     }
@@ -249,9 +266,25 @@ impl ThemeRegistry {
     /// the relative paths to icons in the theme should be resolved against.
     pub fn load_icon_theme(
         &self,
-        icon_theme_family: IconThemeFamilyContent,
+        path: &Path,
         icons_root_dir: &Path,
+        contents: Vec<u8>,
     ) -> Result<()> {
+        if self
+            .state
+            .read()
+            .loaded_icon_theme
+            .as_ref()
+            .is_some_and(|loaded| {
+                loaded.path == path
+                    && loaded.icons_root_dir == icons_root_dir
+                    && loaded.contents == contents
+            })
+        {
+            return Ok(());
+        }
+
+        let icon_theme_family = deserialize_icon_theme(&contents)?;
         let resolve_icon_path = |path: SharedString| {
             icons_root_dir
                 .join(path.as_ref())
@@ -319,6 +352,11 @@ impl ThemeRegistry {
                 .icon_themes
                 .insert(icon_theme.name.clone(), Arc::new(icon_theme));
         }
+        state.loaded_icon_theme = (!state.extensions_loaded).then(|| LoadedIconTheme {
+            path: path.to_path_buf(),
+            icons_root_dir: icons_root_dir.to_path_buf(),
+            contents,
+        });
 
         Ok(())
     }

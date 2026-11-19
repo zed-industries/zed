@@ -1009,8 +1009,10 @@ impl CompletionsMenu {
                                 label_match.string == completion.label.filter_text()
                             })
                             .or_else(|| {
-                                (completion.filter_text() == completion.label.filter_text())
-                                    .then_some(mat)
+                                // Some servers change labels during resolve despite our advertised capabilities.
+                                // Match offsets index mat.string: the candidate text, not the user's query.
+                                // Reuse those offsets only if that text equals the displayed label's filter slice.
+                                (mat.string == completion.label.filter_text()).then_some(mat)
                             })
                             .into_iter()
                             .flat_map(|string_match| {
@@ -1070,9 +1072,13 @@ impl CompletionsMenu {
                             .with_default_highlights(&style.text, main_highlights);
 
                         let suffix_label = if !suffix_text.is_empty() {
+                            let suffix_text_style = gpui::TextStyle {
+                                color: cx.theme().colors().text_muted,
+                                ..style.text.clone()
+                            };
                             Some(
                                 StyledText::new(suffix_text.to_string())
-                                    .with_default_highlights(&style.text, suffix_highlights),
+                                    .with_default_highlights(&suffix_text_style, suffix_highlights),
                             )
                         } else {
                             None
@@ -1544,7 +1550,8 @@ impl CompletionsMenu {
                 .retain(|string_match| !completions[string_match.candidate_id].is_snippet_kind());
         }
 
-        matches.sort_unstable_by_key(|string_match| {
+        // The key allocates, so build it once per match.
+        matches.sort_by_cached_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
 
             let sort_text = match &completion.source {
@@ -1801,7 +1808,11 @@ fn split_completion_label<'a>(
             }
             let shifted_start = range.start.saturating_sub(filter_range.end);
             let shifted_end = range.end - filter_range.end;
-            Some((shifted_start..shifted_end, *highlight))
+            let mut highlight = *highlight;
+            if highlight.color.is_none() {
+                highlight.fade_out = None;
+            }
+            Some((shifted_start..shifted_end, highlight))
         })
         .collect();
     (
@@ -2168,6 +2179,7 @@ mod tests {
 
     fn colored() -> HighlightStyle {
         HighlightStyle {
+            color: Some(gpui::red()),
             fade_out: Some(0.5),
             ..Default::default()
         }
@@ -2182,6 +2194,18 @@ mod tests {
         assert_eq!(suffix_text, ": String");
         assert_eq!(main_highlights, vec![]);
         assert_eq!(suffix_highlights, vec![(2..8, colored())]);
+    }
+
+    #[test]
+    fn test_split_completion_label_unfades_uncolored_suffix() {
+        let faded = HighlightStyle {
+            fade_out: Some(0.35),
+            ..Default::default()
+        };
+        let (_, (_, suffix_highlights)) =
+            split_completion_label("item detail", &(0..4), &[(4..11, faded)]);
+
+        assert_eq!(suffix_highlights, vec![(0..7, HighlightStyle::default())]);
     }
 
     #[test]

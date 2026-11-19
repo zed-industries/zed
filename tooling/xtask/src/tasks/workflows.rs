@@ -41,44 +41,47 @@ impl AsRef<str> for GitSha {
     }
 }
 
+impl std::str::FromStr for GitSha {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        const GIT_SHA_LENGTH: usize = 40;
+        if value.len() != GIT_SHA_LENGTH {
+            return Err(format!(
+                "Git SHA has wrong length! \
+                Only SHAs with a full length of {GIT_SHA_LENGTH} are supported, found {len} characters.",
+                len = value.len()
+            ));
+        }
+        if !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("Not a valid Git SHA".to_owned());
+        }
+        Ok(Self(value.to_owned()))
+    }
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "This runs only in a CLI environment"
 )]
 fn parse_ref(value: &str) -> Result<GitSha, String> {
-    const GIT_SHA_LENGTH: usize = 40;
-    (value.len() == GIT_SHA_LENGTH)
-        .then_some(value)
-        .ok_or_else(|| {
-            format!(
-                "Git SHA has wrong length! \
-                Only SHAs with a full length of {GIT_SHA_LENGTH} are supported, found {len} characters.",
-                len = value.len()
-            )
-        })
-        .and_then(|value| {
-            let mut tmp = [0; 4];
-            value
-                .chars()
-                .all(|char| u16::from_str_radix(char.encode_utf8(&mut tmp), 16).is_ok()).then_some(value)
-                .ok_or_else(|| "Not a valid Git SHA".to_owned())
-        })
-        .and_then(|sha| {
-           std::process::Command::new("git")
-               .args([
-                   "rev-parse",
-                   "--quiet",
-                   "--verify",
-                   &format!("{sha}^{{commit}}")
-               ])
-               .output()
-               .map_err(|_| "Failed to spawn Git command to verify SHA".to_owned())
-               .and_then(|output|
-                   output
-                       .status.success()
-                       .then_some(sha)
-                       .ok_or_else(|| format!("SHA {sha} is not a valid Git SHA within this repository!")))
-        }).map(|sha| GitSha(sha.to_owned()))
+    let sha = value.parse::<GitSha>()?;
+    let output = std::process::Command::new("git")
+        .args([
+            "rev-parse",
+            "--quiet",
+            "--verify",
+            &format!("{}^{{commit}}", sha.as_ref()),
+        ])
+        .output()
+        .map_err(|_| "Failed to spawn Git command to verify SHA".to_owned())?;
+    if !output.status.success() {
+        return Err(format!(
+            "SHA {} is not a valid Git SHA within this repository!",
+            sha.as_ref()
+        ));
+    }
+    Ok(sha)
 }
 
 #[derive(Parser)]

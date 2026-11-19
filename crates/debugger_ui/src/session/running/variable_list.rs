@@ -1094,6 +1094,8 @@ impl VariableList {
     fn variable_color(
         &self,
         presentation_hint: Option<&VariablePresentationHint>,
+        value: &str,
+        type_hint: Option<&str>,
         cx: &Context<Self>,
     ) -> VariableColor {
         let syntax_color_for = |name| {
@@ -1121,9 +1123,43 @@ impl VariableList {
         let value = self
             .disabled
             .then(|| Color::Disabled.color(cx))
-            .or_else(|| syntax_color_for("variable.special"));
+            .or_else(|| {
+                syntax_color_for(Self::syntax_token_for_value(value, type_hint))
+                    .or_else(|| syntax_color_for("variable.special"))
+            });
 
         VariableColor { name, value }
+    }
+
+    // pattern match by variable value as types are called different things
+    fn syntax_token_for_value(value: &str, type_hint: Option<&str>) -> &'static str {
+        if let Some(hint) = type_hint {
+            match hint.trim().to_ascii_lowercase().as_str() {
+                "bool" | "boolean" => return "boolean",
+                "nonetype" | "null" | "nil" | "none" | "undefined" | "void" => return "comment",
+                "str" | "string" | "char" | "&str" | "string_view" | "std::string" => {
+                    return "string";
+                }
+                "int" | "integer" | "long" | "short" | "byte" | "float" | "double" | "number"
+                | "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32"
+                | "uint64" | "usize" | "isize" | "size_t" | "f32" | "f64" => return "number",
+                _ => {}
+            }
+        }
+
+        let trimmed = value.trim();
+        let is_quoted = |quote: char| {
+            trimmed.len() >= 2 && trimmed.starts_with(quote) && trimmed.ends_with(quote)
+        };
+        if is_quoted('"') || is_quoted('\'') {
+            return "string";
+        }
+        match trimmed {
+            "true" | "false" | "True" | "False" | "TRUE" | "FALSE" => "boolean",
+            "nil" | "null" | "None" | "NULL" | "nullptr" | "undefined" | "NoneType" => "comment",
+            _ if !trimmed.is_empty() && trimmed.parse::<f64>().is_ok() => "number",
+            _ => "variable.special",
+        }
     }
 
     fn render_variable_value(
@@ -1175,14 +1211,26 @@ impl VariableList {
                                 },
                             )
                             .child(
-                                Label::new(format!("=  {value}"))
-                                    .single_line()
-                                    .truncate()
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .when_some(variable_color.value, |this, color| {
-                                        this.color(Color::from(color))
-                                    }),
+                                h_flex()
+                                    .min_w_0()
+                                    .child(
+                                        Label::new("=  ")
+                                            .single_line()
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .flex_shrink_0(),
+                                    )
+                                    .child(
+                                        Label::new(value.clone())
+                                            .single_line()
+                                            .truncate()
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .when_some(variable_color.value, |this, color| {
+                                                this.color(Color::from(color))
+                                            })
+                                            .flex_1(),
+                                    ),
                             )
                             .tooltip(Tooltip::text(value))
                     }
@@ -1246,7 +1294,8 @@ impl VariableList {
             return div().into_any_element();
         };
 
-        let variable_color = self.variable_color(watcher.presentation_hint.as_ref(), cx);
+        let variable_color =
+            self.variable_color(watcher.presentation_hint.as_ref(), &watcher.value, None, cx);
 
         let is_selected = self
             .selection
@@ -1456,7 +1505,12 @@ impl VariableList {
             return div().into_any_element();
         };
 
-        let variable_color = self.variable_color(dap.presentation_hint.as_ref(), cx);
+        let variable_color = self.variable_color(
+            dap.presentation_hint.as_ref(),
+            &dap.value,
+            dap.type_.as_deref(),
+            cx,
+        );
 
         let var_ref = dap.variables_reference;
         let colors = get_entry_color(cx);

@@ -1135,7 +1135,6 @@ impl BlockMap {
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
-            let mut just_processed_folded_buffer = false;
             for (block_placement, block) in blocks_in_edit.drain(..) {
                 let span =
                     ztracing::debug_span!("for block in edits", block_height = block.height());
@@ -1157,12 +1156,8 @@ impl BlockMap {
                             continue;
                         };
                         rows_before_block = delta;
-                        just_processed_folded_buffer = false;
                     }
                     &BlockPlacement::Near(position) | &BlockPlacement::Below(position) => {
-                        if just_processed_folded_buffer {
-                            continue;
-                        }
                         let Some(delta) = (position + RowDelta(1)).checked_sub(input_rows) else {
                             continue;
                         };
@@ -1174,7 +1169,6 @@ impl BlockMap {
                         };
                         rows_before_block = delta;
                         summary.input_rows = WrapRow(1) + (*range.end() - *range.start());
-                        just_processed_folded_buffer = matches!(block, Block::FoldedBuffer { .. });
                     }
                 }
 
@@ -1627,6 +1621,7 @@ impl BlockMap {
         });
         blocks.dedup_by(|right, left| match (left.0.clone(), right.0.clone()) {
             (BlockPlacement::Replace(range), BlockPlacement::Above(row))
+            | (BlockPlacement::Replace(range), BlockPlacement::Near(row))
             | (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => range.contains(&row),
             (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => {
                 if range_a.end() >= range_b.start() && range_a.start() <= range_b.end() {

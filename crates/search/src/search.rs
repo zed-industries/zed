@@ -86,8 +86,22 @@ const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
 const EXCLUDE_PLACEHOLDER: &str = "Exclude: e.g. vendor/*, *.lock";
 
 pub enum SearchSource<'a, 'b> {
+    /// Dispatches the toggle action from the button's focus handle. Only use this when the
+    /// action handlers are on that focus handle's dispatch path, as workspace-level handlers
+    /// resolve the active pane before a click in another pane has activated it.
     Buffer,
+    BufferSearchBar(&'a Context<'b, BufferSearchBar>),
     Project(&'a Context<'b, ProjectSearchBar>),
+}
+
+impl SearchSource<'_, '_> {
+    pub fn discriminant(&self) -> u32 {
+        match self {
+            SearchSource::Buffer => 0,
+            SearchSource::BufferSearchBar(_) => 1,
+            SearchSource::Project(_) => 2,
+        }
+    }
 }
 
 impl SearchOption {
@@ -135,30 +149,37 @@ impl SearchOption {
         let action = self.to_toggle_action();
         let label = self.label();
 
-        IconButton::new(
-            (label, matches!(search_source, SearchSource::Buffer) as u32),
-            self.icon(),
-        )
-        .map(|button| match search_source {
-            SearchSource::Buffer => {
-                let focus_handle = focus_handle.clone();
-                button.on_click(move |_: &ClickEvent, window, cx| {
-                    if !focus_handle.is_focused(window) {
-                        window.focus(&focus_handle, cx);
-                    }
-                    window.dispatch_action(action.boxed_clone(), cx);
-                })
-            }
-            SearchSource::Project(cx) => {
-                let options = self.as_options();
-                button.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.toggle_search_option(options, window, cx);
-                }))
-            }
-        })
-        .shape(IconButtonShape::Square)
-        .toggle_state(active.contains(self.as_options()))
-        .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
+        IconButton::new((label, search_source.discriminant()), self.icon())
+            .map(|button| match search_source {
+                SearchSource::Buffer => {
+                    let focus_handle = focus_handle.clone();
+                    button.on_click(move |_: &ClickEvent, window, cx| {
+                        if !focus_handle.is_focused(window) {
+                            window.focus(&focus_handle, cx);
+                        }
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    })
+                }
+                SearchSource::BufferSearchBar(cx) => {
+                    let focus_handle = focus_handle.clone();
+                    let options = self.as_options();
+                    button.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        if !focus_handle.is_focused(window) {
+                            window.focus(&focus_handle, cx);
+                        }
+                        this.toggle_search_option(options, window, cx);
+                    }))
+                }
+                SearchSource::Project(cx) => {
+                    let options = self.as_options();
+                    button.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.toggle_search_option(options, window, cx);
+                    }))
+                }
+            })
+            .shape(IconButtonShape::Square)
+            .toggle_state(active.contains(self.as_options()))
+            .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
     }
 }
 
