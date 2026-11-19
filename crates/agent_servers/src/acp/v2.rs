@@ -29,7 +29,7 @@ use futures::{
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use project::{
     AgentId, AgentServerStore, Project,
-    agent_server_store::{AgentServerCommand, AllAgentServersSettings},
+    agent_server_store::{AllAgentServersSettings, ResolvedAgentServerCommand},
 };
 use settings::{AgentConfigOptionValue, SettingsStore};
 use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
@@ -227,10 +227,14 @@ impl AcpV2Connection {
     pub async fn stdio(
         agent_id: AgentId,
         project: Entity<Project>,
-        command: AgentServerCommand,
+        command: ResolvedAgentServerCommand,
         agent_server_store: WeakEntity<AgentServerStore>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        let ResolvedAgentServerCommand {
+            command,
+            installation_lease,
+        } = command;
         let transport::StdioProcess {
             child,
             incoming,
@@ -239,13 +243,7 @@ impl AcpV2Connection {
             debug_log,
         } = transport::spawn_stdio(&project, command, cx)?;
         let mut child = transport::OwnedChild(child);
-        let status = child
-            .0
-            .status()
-            .map(|result| {
-                result.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
-            })
-            .boxed_local();
+        let status = child.exit_status(installation_lease);
         let stderr_task = cx
             .background_spawn(async move {
                 stderr.await.log_err();
@@ -2088,6 +2086,8 @@ mod tests {
         v2::Responder,
     };
     use gpui::TestAppContext;
+    #[cfg(unix)]
+    use project::agent_server_store::AgentServerCommand;
     use serde_json::json;
     use std::{
         sync::{Arc, Mutex},
@@ -4048,7 +4048,7 @@ mod tests {
         let project = Project::example([directory.path()], &mut cx.to_async()).await;
         let client = bounded(AcpV2Connection::stdio(
             AgentId::new("receipt-stdio"), project.clone(),
-            AgentServerCommand {
+            ResolvedAgentServerCommand::without_installation_lease(AgentServerCommand {
                 path: "/bin/sh".into(),
                 args: vec!["-c".into(), r#"
 while IFS= read -r request; do
@@ -4070,7 +4070,7 @@ while IFS= read -r request; do
 done
 "#.into()],
                 env: None,
-            },
+            }),
             WeakEntity::new_invalid(), &mut cx.to_async(),
         ), cx).await.expect("stdio connection");
         let client = Rc::new(client);
@@ -6250,7 +6250,7 @@ done
                 AcpV2Connection::stdio(
                     AgentId::new("early-stdio"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     WeakEntity::new_invalid(),
                     &mut cx.to_async(),
                 ),
@@ -6318,7 +6318,7 @@ done
                 AcpV2Connection::stdio(
                     AgentId::new("session-stdio"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     WeakEntity::new_invalid(),
                     &mut cx.to_async(),
                 ),
@@ -6419,7 +6419,7 @@ done
                 AcpV2Connection::stdio(
                     AgentId::new("close-stdio"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     WeakEntity::new_invalid(),
                     &mut cx.to_async(),
                 ),
@@ -8245,7 +8245,7 @@ done
             AcpV2Connection::stdio(
                 AgentId::new("shutdown-test"),
                 project.clone(),
-                AgentServerCommand {
+                ResolvedAgentServerCommand::without_installation_lease(AgentServerCommand {
                     path: "/bin/sh".into(),
                     args: vec![
                         "-c".into(),
@@ -8264,7 +8264,7 @@ exec sleep 60
                         .into(),
                     ],
                     env: None,
-                },
+                }),
                 WeakEntity::new_invalid(),
                 &mut cx.to_async(),
             ),
@@ -8395,11 +8395,12 @@ exec sleep 60
                     AcpV2Connection::stdio(
                         AgentId::new("startup-rejection"),
                         project,
-                        AgentServerCommand {
-                            path: "/bin/sh".into(),
-                            args: vec![
-                                "-c".into(),
-                                r#"
+                        ResolvedAgentServerCommand::without_installation_lease(
+                            AgentServerCommand {
+                                path: "/bin/sh".into(),
+                                args: vec![
+                                    "-c".into(),
+                                    r#"
 while IFS= read -r request; do
     case "$request" in
         *'"method":"initialize"'*)
@@ -8411,13 +8412,14 @@ while IFS= read -r request; do
 done
 exec sleep 60
 "#
-                                .into(),
-                            ],
-                            env: Some(HashMap::from_iter([(
-                                "ACP_STARTUP_RESPONSE".into(),
-                                response.into(),
-                            )])),
-                        },
+                                    .into(),
+                                ],
+                                env: Some(HashMap::from_iter([(
+                                    "ACP_STARTUP_RESPONSE".into(),
+                                    response.into(),
+                                )])),
+                            },
+                        ),
                         WeakEntity::new_invalid(),
                         &mut cx,
                     )
@@ -8487,7 +8489,7 @@ done
             AcpV2Connection::stdio(
                 AgentId::new("stdio-test"),
                 project.clone(),
-                command,
+                ResolvedAgentServerCommand::without_installation_lease(command),
                 WeakEntity::new_invalid(),
                 &mut cx.to_async(),
             ),
@@ -8530,7 +8532,7 @@ done
             AcpV2Connection::stdio(
                 AgentId::new("early-exit"),
                 project,
-                command,
+                ResolvedAgentServerCommand::without_installation_lease(command),
                 WeakEntity::new_invalid(),
                 &mut cx.to_async(),
             ),

@@ -34,7 +34,9 @@ use collections::{HashMap, HashSet};
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{Future, channel::mpsc};
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
-use project::agent_server_store::{AgentServerCommand, AgentServerStore};
+use project::agent_server_store::{
+    AgentServerCommand, AgentServerStore, ResolvedAgentServerCommand,
+};
 use project::context_server_store::ContextServerConfiguration;
 use project::{AgentId, Project};
 use std::{cell::RefCell, path::PathBuf, process::ExitStatus, rc::Rc, sync::Arc};
@@ -127,7 +129,7 @@ fn fallback_failure(failure: anyhow::Error, negotiation: anyhow::Error) -> anyho
 pub async fn connect(
     agent_id: AgentId,
     project: Entity<Project>,
-    command: AgentServerCommand,
+    command: ResolvedAgentServerCommand,
     agent_server_store: WeakEntity<AgentServerStore>,
     default_mode: Option<acp_v2::SessionConfigValueId>,
     default_config_options: HashMap<String, settings::AgentConfigOptionValue>,
@@ -703,7 +705,9 @@ fn first_class_terminal_auth_task(
     cx: &App,
 ) -> Task<Result<SpawnInTerminal>> {
     cx.spawn(async move |cx| {
-        let command = store
+        // The login runs in a terminal that outlives this task, so nothing here can hold
+        // the installation lease for it.
+        let ResolvedAgentServerCommand { command, .. } = store
             .update(cx, |store, cx| {
                 let agent = store
                     .get_external_agent(&agent_id)
@@ -1405,7 +1409,7 @@ done
                     connect(
                         AgentId::new("selection"),
                         project,
-                        command,
+                        ResolvedAgentServerCommand::without_installation_lease(command),
                         WeakEntity::new_invalid(),
                         None,
                         HashMap::default(),
@@ -1561,7 +1565,7 @@ done
                     connect(
                         AgentId::new("claude-acp"),
                         project,
-                        command,
+                        ResolvedAgentServerCommand::without_installation_lease(command),
                         WeakEntity::new_invalid(),
                         None,
                         HashMap::default(),
