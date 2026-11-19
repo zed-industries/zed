@@ -107,7 +107,8 @@ struct State {
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
     visible_entries: Vec<VisibleEntriesForWorktree>,
-    /// Loaded directories with nothing to display, from the same snapshot as `visible_entries`.
+    /// Directories known to show no rows when expanded, from the same snapshot as
+    /// `visible_entries`.
     empty_dir_ids: HashSet<ProjectEntryId>,
     max_width_item_index: Option<usize>,
     edit_state: Option<EditState>,
@@ -4706,18 +4707,6 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if is_local
-                                && entry.kind == EntryKind::Dir
-                                && new_entry_parent_id != Some(entry.id)
-                                && !worktree_snapshot
-                                    .child_entries(&entry.path)
-                                    .any(|child| is_entry_shown(child, hide_gitignore, hide_hidden))
-                            {
-                                new_state.empty_dir_ids.insert(entry.id);
-                            }
-                            if is_entry_shown(&entry, hide_gitignore, hide_hidden) {
-                                visible_worktree_entries.push(entry.to_owned());
-                            }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
                             {
                                 entry.id == new_entry_id || {
@@ -4728,6 +4717,22 @@ impl ProjectPanel {
                             } else {
                                 false
                             };
+                            if is_entry_shown(&entry, hide_gitignore, hide_hidden) {
+                                // A remote host sends a directory it has not loaded yet as `Dir`,
+                                // so only a local one counts.
+                                let is_loaded = is_local && entry.kind == EntryKind::Dir;
+                                // A missing chevron reads as "empty", so a directory keeps it until
+                                // it is loaded.
+                                if is_loaded
+                                    && !precedes_new_entry
+                                    && !worktree_snapshot.child_entries(&entry.path).any(|child| {
+                                        is_entry_shown(child, hide_gitignore, hide_hidden)
+                                    })
+                                {
+                                    new_state.empty_dir_ids.insert(entry.id);
+                                }
+                                visible_worktree_entries.push(entry.to_owned());
+                            }
                             if precedes_new_entry
                                 && is_entry_shown(&entry, hide_gitignore, hide_hidden)
                             {
@@ -7109,9 +7114,10 @@ impl ProjectPanel {
         let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
         let (chevron, icon) = Self::entry_icons(entry, is_expanded, cx);
-        let chevron = chevron.filter(|_| {
-            !folder_indicator.shows_icon() || !self.state.empty_dir_ids.contains(&entry.id)
-        });
+        // Without a folder icon, the chevron is all that tells a folder from a file.
+        let hide_chevron =
+            folder_indicator.shows_icon() && self.state.empty_dir_ids.contains(&entry.id);
+        let chevron = if hide_chevron { None } else { chevron };
 
         let path_style = self.project.read(cx).path_style(cx);
         let (depth, difference) =
