@@ -610,7 +610,6 @@ fn render_debugger_tab_bar(
                     .on_click(cx.listener(move |pane, _, _, cx| {
                         let is_zoomed = pane.is_zoomed();
                         pane.set_zoomed(!is_zoomed, cx);
-                        cx.notify();
                     }))
                     .tooltip({
                         let focus_handle = focus_handle.clone();
@@ -1346,13 +1345,7 @@ impl RunningState {
             // This prevents the NodeJS REPL from appearing, which is not the desired behavior
             // The expected usage is for users to provide their own Node command, e.g., `node test.js`
             // This allows the NodeJS debug client to attach correctly
-            if args
-                .iter()
-                .filter(|arg| !arg.starts_with("--"))
-                .collect::<Vec<_>>()
-                .len()
-                > 1
-            {
+            if args.iter().filter(|arg| !arg.starts_with("--")).count() > 1 {
                 Some(args.remove(0))
             } else {
                 None
@@ -1763,9 +1756,7 @@ impl RunningState {
             return;
         };
 
-        if Some(ThreadId(selected_thread.id)) != self.thread_id {
-            self.select_thread(ThreadId(selected_thread.id), window, cx);
-        }
+        self.select_thread(ThreadId(selected_thread.id), window, cx);
     }
 
     pub fn selected_thread_id(&self) -> Option<ThreadId> {

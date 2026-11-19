@@ -271,21 +271,6 @@ impl Branch {
             .strip_prefix("refs/remotes/")
             .and_then(|stripped| stripped.split("/").next())
     }
-
-    pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
-        self.upstream
-            .as_ref()
-            .and_then(|upstream| upstream.tracking.status())
-    }
-
-    pub fn priority_key(&self) -> (bool, Option<i64>) {
-        (
-            self.is_head,
-            self.most_recent_commit
-                .as_ref()
-                .map(|commit| commit.commit_timestamp),
-        )
-    }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -445,10 +430,6 @@ impl Upstream {
             .and_then(|stripped| stripped.split("/").next())
     }
 
-    pub fn stripped_ref_name(&self) -> Option<&str> {
-        self.ref_name.strip_prefix("refs/remotes/")
-    }
-
     pub fn branch_name(&self) -> Option<&str> {
         self.ref_name
             .strip_prefix("refs/remotes/")
@@ -479,10 +460,6 @@ impl From<UpstreamTrackingStatus> for UpstreamTracking {
 }
 
 impl UpstreamTracking {
-    pub fn is_gone(&self) -> bool {
-        matches!(self, UpstreamTracking::Gone)
-    }
-
     pub fn status(&self) -> Option<UpstreamTrackingStatus> {
         match self {
             UpstreamTracking::Gone => None,
@@ -2788,7 +2765,7 @@ impl GitRepository for RealGitRepository {
         async move {
             let git = git?;
             git.run_remote_command(Some(askpass), &env, &["commit", "--quiet", "-m"], |cmd| {
-                cmd.arg(&message.to_string())
+                cmd.arg(message.as_str())
                     .arg("--cleanup=strip")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
@@ -3782,7 +3759,6 @@ impl GitBinary {
         Ok(String::from_utf8(output.stdout)?)
     }
 
-    #[allow(clippy::disallowed_methods)]
     pub(crate) fn build_command<S>(&self, args: &[S]) -> util::command::Command
     where
         S: AsRef<OsStr>,

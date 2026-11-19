@@ -27,7 +27,6 @@ use workspace::{
     ModalView, OpenMode, Workspace,
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
-use zed_actions;
 
 use crate::{
     commit_view::CommitView,
@@ -1244,7 +1243,6 @@ mod remote_button {
             })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn split_button(
         id: SharedString,
         left_label: impl Into<SharedString>,
