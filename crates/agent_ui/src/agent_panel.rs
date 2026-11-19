@@ -734,10 +734,11 @@ fn format_selection_for_terminal(
             let mut parts: Vec<String> = Vec::new();
             for (buffer, range) in ranges {
                 let buffer = buffer.read(cx);
+                let snapshot = buffer.snapshot();
                 let Some(project_path) = buffer.project_path(cx) else {
+                    parts.push(snapshot.text_for_range(range.clone()).collect());
                     continue;
                 };
-                let snapshot = buffer.snapshot();
                 let point_range = range.to_point(&snapshot);
                 let line_range = point_range.start.row..=point_range.end.row;
                 let path = mention_path_for_terminal(
