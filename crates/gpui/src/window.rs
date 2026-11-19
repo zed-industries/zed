@@ -5713,8 +5713,10 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
 
+        let scope = self.element_id_stack.hash();
         self.layout_engine.as_mut().unwrap().request_layout(
-            style,
+            scope,
+            &style,
             rem_size,
             scale_factor,
             &cx.layout_id_buffer,
@@ -5738,10 +5740,23 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        let scope = self.element_id_stack.hash();
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(scope, &style, rem_size, scale_factor, measure)
+    }
+
+    /// Drops the layout nodes kept from earlier frames, so the next frame builds its
+    /// layout tree from scratch.
+    #[cfg(test)]
+    pub(crate) fn clear_layout_cache(&mut self) {
+        self.layout_engine.as_mut().unwrap().clear_layout_cache();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn layout_node_count(&self) -> usize {
+        self.layout_engine.as_ref().unwrap().node_count()
     }
 
     /// Compute the layout for the given id within the given available space.
