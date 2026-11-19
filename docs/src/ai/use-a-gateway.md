@@ -132,7 +132,7 @@ Your AWS credentials need these permissions to send requests:
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
 
-And these to list the models you can use:
+And these to list the models in your account:
 
 - `bedrock:ListInferenceProfiles`
 - `bedrock:ListFoundationModels`
@@ -143,9 +143,9 @@ Zed asks Bedrock which models you can use. After you authenticate, the model pic
 
 Models without an inference profile are not listed. Add them as [custom Bedrock models](#bedrock-custom-models).
 
-Bedrock does not report token limits or reasoning support. Zed applies the values of the model's family, and a default context window of 128,000 tokens for a family it does not know. To use other values, add a [custom Bedrock model](#bedrock-custom-models) with the model's inference profile ID as `name`. It appears in the model picker as its own entry.
+Bedrock does not report token limits, tool use, or reasoning support. Zed reads those from the public [models.dev](https://models.dev) catalog, which it fetches without your credentials and refreshes every hour. A model that the catalog does not know yet gets a context window of 128,000 tokens and no reasoning controls. To use other values, add a [custom Bedrock model](#bedrock-custom-models) with the model's inference profile ID as `name`. It appears in the model picker as its own entry.
 
-If your credentials lack the two `List` permissions, Zed shows the error in the Amazon Bedrock settings and offers only your custom models. Zed also does not list models when you set a [custom endpoint](#bedrock-custom-endpoints).
+If your credentials lack the two `List` permissions, Zed offers the models that the catalog names for your Region instead, and says so in the Amazon Bedrock settings. This list does not include your application inference profiles, and it can include a model that your account or Region cannot use. A request to such a model fails with the error from Bedrock. Zed offers the same list when you set a [custom endpoint](#bedrock-custom-endpoints).
 
 Bedrock supports Zed-prefixed AWS environment variables so Zed does not override or consume your normal AWS credentials:
 
@@ -267,7 +267,7 @@ Add models that Zed does not list, or use your own values for a listed model, wi
 
 `name` is sent to Bedrock as the model ID. Use the full ID, including a geo prefix or ARN when the model requires one (for example `us.anthropic.claude-sonnet-4-7` or `us.xai.grok-4.6`). Set `supports_tools` and `supports_images` for models that support those features. Set `thinking` to `true` to enable thinking, or to an object with `"adaptive": true`, optional `"has_xhigh": true`, and optional `budget_tokens`. Leave `default_temperature` unset for models that reject the temperature field, such as xAI and MoonshotAI models.
 
-When `name` is the ID or ARN of an inference profile that Bedrock listed, the entry takes the tool, image, caching and thinking support that you leave out from the listed model, and sets no output limit unless you set `max_output_tokens`. A listed model that always reasons keeps its own thinking behavior whatever `thinking` says.
+When `name` is the ID or ARN of an inference profile that Bedrock listed or that the catalog knows, the entry takes the tool, image, caching and thinking support and the output limit that you leave out from that model. A model that always reasons keeps its own thinking behavior whatever `thinking` says.
 
 ### Bedrock Custom Endpoints {#bedrock-custom-endpoints}
 
@@ -285,7 +285,7 @@ To send Bedrock Converse requests to a proxy or gateway instead of AWS, set `end
 }
 ```
 
-Zed does not list models when `endpoint_url` is set, so add the models your gateway serves as [custom Bedrock models](#bedrock-custom-models).
+Zed lists models from AWS, not from your gateway. With `endpoint_url` set, it offers the models that the [models.dev](https://models.dev) catalog names for your Region. Add any other model your gateway serves as a [custom Bedrock model](#bedrock-custom-models).
 
 [Mantle models](#bedrock-mantle-models), which are the models in `mantle_available_models`, are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
 

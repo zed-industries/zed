@@ -1,14 +1,12 @@
-//! Builds the Converse model list from two Bedrock control plane calls.
-//! `ListInferenceProfiles` says which models can be invoked from a Region and
-//! through which inference profile. `ListFoundationModels` gives each model's
-//! name and modalities.
+//! Lists the models that can be invoked through an inference profile, from
+//! two Bedrock control plane calls. `ListInferenceProfiles` says which models
+//! a Region reaches and through which profile. `ListFoundationModels` gives
+//! each model's name and modalities.
 //!
-//! Neither call reports token limits, tool use or reasoning support, so those
-//! come from the rules in this file. The rules name model families and the
-//! older models that differ from their family, so a new model in a known
-//! family needs no change here.
+//! Neither call reports token limits, tool use or reasoning support. Those
+//! come from the [`CapabilityCatalog`].
 
-use crate::{BedrockAdaptiveThinkingEffort, ConverseModel, ConverseThinking};
+use crate::{CapabilityCatalog, ConverseModel};
 use anyhow::{Result, anyhow};
 use aws_sdk_bedrock::Client;
 use aws_sdk_bedrock::error::{DisplayErrorContext, ProvideErrorMetadata, SdkError};
@@ -20,184 +18,17 @@ use std::collections::BTreeMap;
 
 const GLOBAL_PROFILE_ID_PREFIX: &str = "global.";
 
-/// Context windows by foundation model id prefix; the first match wins.
-const CONTEXT_WINDOWS: &[(&str, u64)] = &[
-    ("anthropic.claude-3", 200_000),
-    ("anthropic.claude-opus-4-1", 200_000),
-    ("anthropic.claude", 1_000_000),
-    ("amazon.nova-micro", 128_000),
-    ("amazon.nova-premier", 1_000_000),
-    ("amazon.nova", 300_000),
-    ("openai.gpt-6", 1_050_000),
-    ("openai.gpt-5.6", 1_000_000),
-    ("openai.gpt-5", 272_000),
-    ("xai.grok", 1_000_000),
-    ("zai.glm", 203_000),
-];
-const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
-
-/// Models that reject tools on `ConverseStream`, which is the only Converse
-/// operation Zed uses.
-///
-/// <https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-client-side.html>
-const STREAMING_TOOL_USE_UNSUPPORTED: &[&str] = &[
-    "meta.llama",
-    "mistral.pixtral-large",
-    "writer.palmyra",
-    "deepseek.r1",
-];
-
 /// Models with an inference profile that the Converse API does not serve.
 const CONVERSE_UNSUPPORTED: &[&str] = &["twelvelabs.pegasus"];
-
-const CLAUDE_MODEL_ID_PREFIX: &str = "anthropic.claude";
-/// Zed sends Claude 3 models neither thinking fields nor cache points.
-const CLAUDE_3_MODEL_ID_PREFIX: &str = "anthropic.claude-3";
-
-/// Claude models that think within a token budget, by model id prefix.
-/// Together with the next list this is every Claude 4 and later model that
-/// predates adaptive thinking on every request, so neither list grows with
-/// new models.
-const CLAUDE_BUDGET_THINKING_MODELS: &[&str] = &[
-    "anthropic.claude-opus-4-2025",
-    "anthropic.claude-opus-4-1",
-    "anthropic.claude-opus-4-5",
-    "anthropic.claude-sonnet-4-2025",
-    "anthropic.claude-sonnet-4-5",
-    "anthropic.claude-haiku-4-5",
-];
-
-/// Claude models on which adaptive thinking can be turned off, and whether
-/// they accept the `xhigh` effort. The ids are matched whole, because a later
-/// model's id can extend an earlier one's.
-const CLAUDE_OPTIONAL_ADAPTIVE_THINKING_MODELS: &[(&str, bool)] = &[
-    ("anthropic.claude-opus-4-6-v1", false),
-    ("anthropic.claude-sonnet-4-6", false),
-    ("anthropic.claude-opus-4-7", false),
-    ("anthropic.claude-opus-4-8", true),
-    ("anthropic.claude-opus-5", true),
-    ("anthropic.claude-sonnet-5", true),
-    ("anthropic.claude-fable-5", true),
-];
-
-const OPENAI_GPT_MODEL_ID_PREFIX: &str = "openai.gpt-";
-const OPENAI_OPEN_WEIGHT_MODEL_ID_PREFIX: &str = "openai.gpt-oss";
-/// The last GPT generation without the `max` reasoning effort.
-const OPENAI_GPT_5_MODEL_ID_PREFIX: &str = "openai.gpt-5";
-
-fn has_prefix_in(model_id: &str, prefixes: &[&str]) -> bool {
-    prefixes.iter().any(|prefix| model_id.starts_with(prefix))
-}
-
-fn context_window(model_id: &str) -> Option<u64> {
-    CONTEXT_WINDOWS
-        .iter()
-        .find(|(prefix, _)| model_id.starts_with(prefix))
-        .map(|(_, context_window)| *context_window)
-}
-
-fn thinking(model_id: &str) -> Option<ConverseThinking> {
-    if model_id.starts_with(OPENAI_GPT_MODEL_ID_PREFIX) {
-        if model_id.starts_with(OPENAI_OPEN_WEIGHT_MODEL_ID_PREFIX) {
-            return None;
-        }
-        let mut efforts = vec![
-            BedrockAdaptiveThinkingEffort::Low,
-            BedrockAdaptiveThinkingEffort::Medium,
-            BedrockAdaptiveThinkingEffort::High,
-            BedrockAdaptiveThinkingEffort::XHigh,
-        ];
-        if !model_id.starts_with(OPENAI_GPT_5_MODEL_ID_PREFIX) {
-            efforts.push(BedrockAdaptiveThinkingEffort::Max);
-        }
-        return Some(ConverseThinking::Reasoning {
-            efforts,
-            default_effort: BedrockAdaptiveThinkingEffort::Medium,
-        });
-    }
-
-    if !model_id.starts_with(CLAUDE_MODEL_ID_PREFIX)
-        || model_id.starts_with(CLAUDE_3_MODEL_ID_PREFIX)
-    {
-        return None;
-    }
-    if has_prefix_in(model_id, CLAUDE_BUDGET_THINKING_MODELS) {
-        return Some(ConverseThinking::budget(None));
-    }
-    let optional_adaptive_thinking = CLAUDE_OPTIONAL_ADAPTIVE_THINKING_MODELS
-        .iter()
-        .find(|(optional_model_id, _)| *optional_model_id == model_id);
-    Some(match optional_adaptive_thinking {
-        Some((_, supports_xhigh)) => ConverseThinking::adaptive(*supports_xhigh, false),
-        None => ConverseThinking::adaptive(true, true),
-    })
-}
 
 /// Whether the model can hold a text conversation over `ConverseStream`.
 fn supports_converse_stream(model: &FoundationModelSummary) -> bool {
     model.input_modalities().contains(&ModelModality::Text)
         && model.output_modalities() == [ModelModality::Text]
         && model.response_streaming_supported() == Some(true)
-        && !has_prefix_in(model.model_id(), CONVERSE_UNSUPPORTED)
-}
-
-/// What the rules say about the foundation model `model_id`. Its name and
-/// modalities are not part of the rules.
-fn describe_model(model_id: &str) -> ConverseModel {
-    let thinking = thinking(model_id);
-    ConverseModel {
-        id: model_id.to_string(),
-        request_id: model_id.to_string(),
-        base_model_id: model_id.to_string(),
-        display_name: model_id.to_string(),
-        max_tokens: context_window(model_id).unwrap_or(DEFAULT_CONTEXT_WINDOW),
-        max_output_tokens: None,
-        default_temperature: None,
-        supports_temperature: !thinking
-            .as_ref()
-            .is_some_and(ConverseThinking::is_always_on),
-        supports_tool_use: !has_prefix_in(model_id, STREAMING_TOOL_USE_UNSUPPORTED),
-        supports_images: false,
-        supports_caching: model_id.starts_with(CLAUDE_MODEL_ID_PREFIX)
-            && !model_id.starts_with(CLAUDE_3_MODEL_ID_PREFIX),
-        thinking,
-    }
-}
-
-fn converse_model(model: &FoundationModelSummary) -> ConverseModel {
-    let model_id = model.model_id();
-    ConverseModel {
-        display_name: model.model_name().unwrap_or(model_id).to_string(),
-        supports_images: model.input_modalities().contains(&ModelModality::Image),
-        ..describe_model(model_id)
-    }
-}
-
-/// Describes the model behind `request_id` when Bedrock did not list it,
-/// where `request_id` is a foundation model id or the id or ARN of an
-/// inference profile. An id the rules do not recognize describes a model of
-/// an unknown family.
-pub fn describe_unlisted_model(request_id: &str) -> ConverseModel {
-    let profile_id = request_id
-        .rsplit_once('/')
-        .map_or(request_id, |(_, profile_id)| profile_id);
-    // A profile id is a foundation model id behind a geography, and the set
-    // of geographies is open. Drop leading segments until the rules
-    // recognize what remains.
-    let base_model_id = std::iter::successors(Some(profile_id), |model_id| {
-        model_id.split_once('.').map(|(_, rest)| rest)
-    })
-    .find(|model_id| {
-        context_window(model_id).is_some()
-            || has_prefix_in(model_id, STREAMING_TOOL_USE_UNSUPPORTED)
-    })
-    .unwrap_or(profile_id);
-    ConverseModel {
-        id: request_id.to_string(),
-        request_id: request_id.to_string(),
-        display_name: request_id.to_string(),
-        ..describe_model(base_model_id)
-    }
+        && !CONVERSE_UNSUPPORTED
+            .iter()
+            .any(|prefix| model.model_id().starts_with(prefix))
 }
 
 /// The foundation model a profile routes to. Every destination Region of a
@@ -213,12 +44,17 @@ fn foundation_model_id(profile: &InferenceProfileSummary) -> Option<&str> {
 /// Region, with the profiles that route to each of them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelCatalog {
-    models: Vec<CatalogModel>,
+    models: Vec<ListedModel>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct CatalogModel {
-    model: ConverseModel,
+struct ListedModel {
+    /// The id Zed stores for the model: the foundation model id, or the ARN
+    /// of an application inference profile.
+    id: String,
+    base_model_id: String,
+    display_name: String,
+    supports_images: bool,
     geographic_profile: Option<GeographicProfile>,
     global_profile_id: Option<String>,
     /// Every profile id and ARN that routes to this model.
@@ -231,7 +67,19 @@ struct GeographicProfile {
     destination_count: usize,
 }
 
-impl CatalogModel {
+impl ListedModel {
+    fn new(id: &str, display_name: &str, model: &FoundationModelSummary) -> Self {
+        Self {
+            id: id.to_string(),
+            base_model_id: model.model_id().to_string(),
+            display_name: display_name.to_string(),
+            supports_images: model.input_modalities().contains(&ModelModality::Image),
+            geographic_profile: None,
+            global_profile_id: None,
+            routes: Vec::new(),
+        }
+    }
+
     fn request_id(&self, allow_global: bool) -> &str {
         let geographic = self
             .geographic_profile
@@ -243,7 +91,25 @@ impl CatalogModel {
         } else {
             geographic.or(global)
         };
-        profile_id.unwrap_or(&self.model.request_id)
+        profile_id.unwrap_or(&self.id)
+    }
+
+    fn converse_model(
+        &self,
+        allow_global: bool,
+        capability_catalog: &CapabilityCatalog,
+    ) -> ConverseModel {
+        let request_id = self.request_id(allow_global);
+        let request_ids = [request_id]
+            .into_iter()
+            .chain(self.routes.iter().map(String::as_str));
+        ConverseModel {
+            id: self.id.clone(),
+            request_id: request_id.to_string(),
+            display_name: self.display_name.clone(),
+            supports_images: self.supports_images,
+            ..capability_catalog.describe(&self.base_model_id, request_ids)
+        }
     }
 }
 
@@ -255,17 +121,17 @@ impl ModelCatalog {
         let foundation_models = foundation_models
             .iter()
             .filter(|model| supports_converse_stream(model))
-            .map(|model| (model.model_id(), converse_model(model)))
+            .map(|model| (model.model_id(), model))
             .collect::<BTreeMap<_, _>>();
 
-        let mut system_defined = BTreeMap::<&str, CatalogModel>::new();
+        let mut system_defined = BTreeMap::<&str, ListedModel>::new();
         let mut application = Vec::new();
         for profile in inference_profiles {
             if profile.status() != &InferenceProfileStatus::Active {
                 continue;
             }
             let Some((model_id, model)) = foundation_model_id(profile)
-                .and_then(|model_id| Some((model_id, foundation_models.get(model_id)?)))
+                .and_then(|model_id| Some((model_id, *foundation_models.get(model_id)?)))
             else {
                 continue;
             };
@@ -274,25 +140,19 @@ impl ModelCatalog {
             let routes = vec![profile_id.to_string(), profile_arn.to_string()];
             match profile.r#type() {
                 InferenceProfileType::SystemDefined => {
-                    let catalog_model =
-                        system_defined
-                            .entry(model_id)
-                            .or_insert_with(|| CatalogModel {
-                                model: model.clone(),
-                                geographic_profile: None,
-                                global_profile_id: None,
-                                routes: Vec::new(),
-                            });
-                    catalog_model.routes.extend(routes);
+                    let listed_model = system_defined.entry(model_id).or_insert_with(|| {
+                        ListedModel::new(model_id, model.model_name().unwrap_or(model_id), model)
+                    });
+                    listed_model.routes.extend(routes);
                     if profile_id.starts_with(GLOBAL_PROFILE_ID_PREFIX) {
-                        catalog_model.global_profile_id = Some(profile_id.to_string());
+                        listed_model.global_profile_id = Some(profile_id.to_string());
                         continue;
                     }
                     // A Region can offer several geographies for one model.
                     // Prefer the one that keeps requests closest to it.
                     let destination_count = profile.models().len();
                     let is_narrower =
-                        catalog_model
+                        listed_model
                             .geographic_profile
                             .as_ref()
                             .is_none_or(|current| {
@@ -300,23 +160,16 @@ impl ModelCatalog {
                                     < (current.destination_count, current.id.as_str())
                             });
                     if is_narrower {
-                        catalog_model.geographic_profile = Some(GeographicProfile {
+                        listed_model.geographic_profile = Some(GeographicProfile {
                             id: profile_id.to_string(),
                             destination_count,
                         });
                     }
                 }
                 // An application profile can only be invoked by its ARN.
-                InferenceProfileType::Application => application.push(CatalogModel {
-                    model: ConverseModel {
-                        id: profile_arn.to_string(),
-                        request_id: profile_arn.to_string(),
-                        display_name: profile.inference_profile_name().to_string(),
-                        ..model.clone()
-                    },
-                    geographic_profile: None,
-                    global_profile_id: None,
+                InferenceProfileType::Application => application.push(ListedModel {
                     routes,
+                    ..ListedModel::new(profile_arn, profile.inference_profile_name(), model)
                 }),
                 _ => {}
             }
@@ -327,26 +180,34 @@ impl ModelCatalog {
         Self { models }
     }
 
-    /// Every model in the catalog. A model reachable through both a
-    /// geographic and a global profile is routed through the global one only
-    /// when `allow_global` is set.
-    pub fn models(&self, allow_global: bool) -> impl Iterator<Item = ConverseModel> + '_ {
-        self.models.iter().map(move |catalog_model| ConverseModel {
-            request_id: catalog_model.request_id(allow_global).to_string(),
-            ..catalog_model.model.clone()
-        })
+    /// Every model in the catalog, described by `capability_catalog`. A model
+    /// reachable through both a geographic and a global profile is routed
+    /// through the global one only when `allow_global` is set.
+    pub fn models<'a>(
+        &'a self,
+        allow_global: bool,
+        capability_catalog: &'a CapabilityCatalog,
+    ) -> impl Iterator<Item = ConverseModel> + 'a {
+        self.models
+            .iter()
+            .map(move |model| model.converse_model(allow_global, capability_catalog))
     }
 
     /// The model that `request_id` resolves to, where `request_id` is a
     /// foundation model id or the id or ARN of an inference profile.
-    pub fn model_for_request_id(&self, request_id: &str) -> Option<&ConverseModel> {
+    pub fn model_for_request_id(
+        &self,
+        request_id: &str,
+        capability_catalog: &CapabilityCatalog,
+    ) -> Option<ConverseModel> {
         self.models
             .iter()
-            .find(|catalog_model| {
-                catalog_model.model.id == request_id
-                    || catalog_model.routes.iter().any(|route| route == request_id)
+            .find(|model| model.id == request_id || model.routes.iter().any(|id| id == request_id))
+            .map(|model| ConverseModel {
+                id: request_id.to_string(),
+                request_id: request_id.to_string(),
+                ..model.converse_model(false, capability_catalog)
             })
-            .map(|catalog_model| &catalog_model.model)
     }
 }
 
@@ -473,19 +334,11 @@ mod tests {
     }
 
     fn only_model(catalog: &ModelCatalog, allow_global: bool) -> Result<ConverseModel> {
-        let mut models = catalog.models(allow_global);
+        let capability_catalog = CapabilityCatalog::default();
+        let mut models = catalog.models(allow_global, &capability_catalog);
         let model = models.next().context("the catalog is empty")?;
         anyhow::ensure!(models.next().is_none(), "the catalog has several models");
         Ok(model)
-    }
-
-    /// The model a catalog lists for a foundation model with one profile.
-    fn listed_model(model_id: &str) -> Result<ConverseModel> {
-        let catalog = ModelCatalog::new(
-            &[profile("us.model", model_id, 1)?],
-            &[foundation_model(model_id, &[])?],
-        );
-        only_model(&catalog, false)
     }
 
     #[test]
@@ -546,7 +399,10 @@ mod tests {
             &[embedding, blocking, foundation_model("vendor.chat", &[])?],
         );
 
-        assert_eq!(catalog.models(false).count(), 0);
+        assert_eq!(
+            catalog.models(false, &CapabilityCatalog::default()).count(),
+            0
+        );
         Ok(())
     }
 
@@ -631,105 +487,53 @@ mod tests {
             &[profile("us.vendor.chat", "vendor.chat", 1)?],
             &[foundation_model("vendor.chat", &[])?],
         );
+        let capability_catalog = CapabilityCatalog::default();
         let profile_arn = format!("{PROFILE_ARN_PREFIX}inference-profile/us.vendor.chat");
 
         for request_id in ["vendor.chat", "us.vendor.chat", profile_arn.as_str()] {
             let model = catalog
-                .model_for_request_id(request_id)
+                .model_for_request_id(request_id, &capability_catalog)
                 .with_context(|| format!("{request_id} did not resolve"))?;
+            assert_eq!(model.request_id, request_id);
             assert_eq!(model.base_model_id, "vendor.chat");
         }
-        assert!(catalog.model_for_request_id("vendor.other").is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn describes_a_model_of_an_unknown_family_conservatively() -> Result<()> {
-        let model = listed_model("vendor.chat")?;
-
-        assert_eq!(model.max_tokens, DEFAULT_CONTEXT_WINDOW);
-        assert_eq!(model.max_output_tokens, None);
-        assert_eq!(model.default_temperature, None);
-        assert_eq!(model.thinking, None);
-        assert!(model.supports_tool_use && model.supports_temperature);
-        assert!(!model.supports_images && !model.supports_caching);
-        Ok(())
-    }
-
-    #[test]
-    fn treats_a_new_model_like_the_newest_of_its_family() -> Result<()> {
-        let claude = listed_model("anthropic.claude-not-yet-released")?;
-        assert!(claude.supports_caching && !claude.supports_temperature);
-        assert_eq!(
-            claude.thinking,
-            Some(ConverseThinking::adaptive(true, true))
+        assert!(
+            catalog
+                .model_for_request_id("vendor.other", &capability_catalog)
+                .is_none()
         );
-
-        let gpt = listed_model("openai.gpt-not-yet-released")?;
-        assert!(!gpt.supports_temperature);
-        assert!(matches!(
-            gpt.thinking,
-            Some(ConverseThinking::Reasoning {
-                default_effort: BedrockAdaptiveThinkingEffort::Medium,
-                ..
-            })
-        ));
         Ok(())
     }
 
     #[test]
-    fn keeps_older_models_on_the_thinking_they_were_released_with() -> Result<()> {
-        for model_id_prefix in CLAUDE_BUDGET_THINKING_MODELS {
-            let revision = format!("{model_id_prefix}-later-revision");
-            for model_id in [*model_id_prefix, revision.as_str()] {
-                assert_eq!(
-                    listed_model(model_id)?.thinking,
-                    Some(ConverseThinking::budget(None)),
-                    "{model_id}"
-                );
-            }
-        }
-        for (model_id, supports_xhigh) in CLAUDE_OPTIONAL_ADAPTIVE_THINKING_MODELS {
-            let model = listed_model(model_id)?;
-            assert_eq!(
-                model.thinking,
-                Some(ConverseThinking::adaptive(*supports_xhigh, false)),
-                "{model_id}"
-            );
-            assert!(model.supports_temperature);
+    fn describes_a_listed_model_from_any_profile_the_capability_catalog_knows() -> Result<()> {
+        let catalog = ModelCatalog::new(
+            &[
+                profile("us.vendor.chat", "vendor.chat", 3)?,
+                profile("global.vendor.chat", "vendor.chat", 2)?,
+            ],
+            &[foundation_model("vendor.chat", &[ModelModality::Image])?],
+        );
+        // Only the global profile is in the capability catalog.
+        let capability_catalog = CapabilityCatalog::parse(
+            r#"{"amazon-bedrock": {"models": {"global.vendor.chat": {
+                "name": "Chat (Global)",
+                "tool_call": true,
+                "modalities": {"input": ["text"], "output": ["text"]},
+                "limit": {"context": 500000, "output": 64000}
+            }}}}"#,
+        )?;
+        let model = catalog
+            .models(false, &capability_catalog)
+            .next()
+            .context("the catalog is empty")?;
 
-            let successor = listed_model(&format!("{model_id}-5"))?;
-            assert!(
-                successor
-                    .thinking
-                    .is_some_and(|thinking| thinking.is_always_on()),
-                "a model whose id extends {model_id} is a different model"
-            );
-        }
+        assert_eq!(model.request_id, "us.vendor.chat");
+        assert_eq!(model.max_tokens, 500_000);
+        assert_eq!(model.max_output_tokens, Some(64_000));
+        // Bedrock's own listing is the authority on the name and modalities.
+        assert_eq!(model.display_name, "Name of vendor.chat");
+        assert!(model.supports_images);
         Ok(())
-    }
-
-    #[test]
-    fn describes_an_unlisted_model_by_the_model_its_id_names() {
-        for request_id in [
-            "anthropic.claude-not-yet-released",
-            "us.anthropic.claude-not-yet-released",
-            "arn:aws:bedrock:us-east-1:123456789012:inference-profile/eu.anthropic.claude-not-yet-released",
-        ] {
-            let model = describe_unlisted_model(request_id);
-            assert_eq!(model.id, request_id);
-            assert_eq!(model.request_id, request_id);
-            assert_eq!(model.base_model_id, "anthropic.claude-not-yet-released");
-            assert!(
-                model
-                    .thinking
-                    .is_some_and(|thinking| thinking.is_always_on())
-            );
-        }
-
-        let unknown = describe_unlisted_model("us.vendor.chat-1.5");
-        assert_eq!(unknown.base_model_id, "us.vendor.chat-1.5");
-        assert_eq!(unknown.thinking, None);
-        assert_eq!(unknown.max_tokens, DEFAULT_CONTEXT_WINDOW);
     }
 }

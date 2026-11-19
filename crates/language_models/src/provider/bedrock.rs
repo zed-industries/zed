@@ -23,17 +23,20 @@ use bedrock::{
     BedrockMessage, BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock,
     BedrockTool, BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema,
     BedrockToolResultBlock, BedrockToolResultContentBlock, BedrockToolResultStatus,
-    BedrockToolSpec, BedrockToolUseBlock, ConverseModel, ConverseThinking, MantleModel,
-    MantleProtocol, ModelCatalog, value_to_aws_document,
+    BedrockToolSpec, BedrockToolUseBlock, CAPABILITY_CATALOG_PROVIDER, CAPABILITY_CATALOG_URL,
+    CapabilityCatalog, ConverseModel, ConverseThinking, MantleModel, MantleProtocol, ModelCatalog,
+    value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap, IndexMap};
 use credentials_provider::CredentialsProvider;
+use fs::Fs;
 use futures::{
     AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, io::BufReader,
     stream::BoxStream,
 };
 use gpui::{
-    App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window, actions,
+    App, AsyncApp, BackgroundExecutor, Context, Entity, FocusHandle, Subscription, Task, TaskExt,
+    Window, actions,
 };
 use gpui_tokio::Tokio;
 use http_client::{
@@ -59,6 +62,7 @@ use settings::{
     BedrockAvailableModel as AvailableModel, BedrockMantleAvailableModel as MantleAvailableModel,
     Settings, SettingsStore,
 };
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime};
 use strum::{EnumIter, IntoStaticStr};
@@ -67,6 +71,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::model_catalog_cache;
 use crate::provider::open_ai::{
     ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
@@ -345,11 +350,19 @@ pub struct State {
     /// auth are not cached once they arrive.
     auth_generation: u64,
     http_client: AwsHttpClient,
+    plain_http_client: Arc<dyn HttpClient>,
+    fs: Arc<dyn Fs>,
     /// The models Bedrock listed for the current auth and Region, once the
     /// first fetch has completed.
     model_catalog: Option<ModelCatalog>,
     fetch_models_task: Option<Task<()>>,
     last_fetch_models_error: Option<String>,
+    /// What the public capability catalog says about Bedrock's models. It is
+    /// empty until the catalog has loaded.
+    capability_catalog: CapabilityCatalog,
+    capability_catalog_cache_path: PathBuf,
+    refresh_capability_catalog_task: Option<Task<()>>,
+    last_capability_catalog_error: Option<String>,
     _subscription: Subscription,
 }
 
@@ -447,7 +460,17 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        if !self.is_authenticated() || self.uses_custom_endpoint() {
+        if !self.is_authenticated() {
+            self.fetch_models_task = None;
+            self.last_fetch_models_error = None;
+            self.refresh_capability_catalog_task = None;
+            self.last_capability_catalog_error = None;
+            return;
+        }
+        if self.refresh_capability_catalog_task.is_none() {
+            self.refresh_capability_catalog_task = Some(self.refresh_capability_catalog(cx));
+        }
+        if self.uses_custom_endpoint() {
             self.fetch_models_task = None;
             self.last_fetch_models_error = None;
             return;
@@ -465,6 +488,63 @@ impl State {
             result.log_err();
         });
         self.fetch_models_task.replace(task);
+    }
+
+    /// Loads the capability catalog from disk, fetches it when that copy is
+    /// missing or old, and then fetches it again every hour. The catalog is
+    /// public, so the task does not depend on which credentials are in use.
+    fn refresh_capability_catalog(&self, cx: &mut Context<Self>) -> Task<()> {
+        let http_client = self.plain_http_client.clone();
+        let fs = self.fs.clone();
+        let cache_path = self.capability_catalog_cache_path.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let cached_catalog = load_cached_capability_catalog(fs.as_ref(), &cache_path)
+                .await
+                .log_err()
+                .flatten();
+            let mut is_fresh = false;
+            if let Some((capability_catalog, cached_is_fresh)) = cached_catalog {
+                is_fresh = cached_is_fresh;
+                let applied = this.update(cx, |this, cx| {
+                    this.capability_catalog = capability_catalog;
+                    cx.notify();
+                });
+                if applied.is_err() {
+                    return;
+                }
+            }
+
+            loop {
+                if !is_fresh {
+                    let capability_catalog = fetch_capability_catalog(
+                        http_client.clone(),
+                        executor.clone(),
+                        fs.as_ref(),
+                        cache_path.clone(),
+                    )
+                    .await;
+                    let applied = this.update(cx, |this, cx| {
+                        match capability_catalog {
+                            Ok(capability_catalog) => {
+                                this.capability_catalog = capability_catalog;
+                                this.last_capability_catalog_error = None;
+                            }
+                            Err(error) => {
+                                log::warn!("Failed to fetch Bedrock model capabilities: {error:#}");
+                                this.last_capability_catalog_error = Some(format!("{error:#}"));
+                            }
+                        }
+                        cx.notify();
+                    });
+                    if applied.is_err() {
+                        return;
+                    }
+                }
+                is_fresh = false;
+                executor.timer(model_catalog_cache::REFRESH_INTERVAL).await;
+            }
+        })
     }
 
     fn reset_auth(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -659,6 +739,22 @@ impl BedrockLanguageModelProvider {
         credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut App,
     ) -> Self {
+        Self::new_with_cache(
+            http_client,
+            credentials_provider,
+            <dyn Fs>::global(cx),
+            paths::temp_dir().join("bedrock").join("models.json"),
+            cx,
+        )
+    }
+
+    fn new_with_cache(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        fs: Arc<dyn Fs>,
+        capability_catalog_cache_path: PathBuf,
+        cx: &mut App,
+    ) -> Self {
         let plain_http_client = http_client;
         let http_client = AwsHttpClient::new(plain_http_client.clone());
         let state = cx.new(|cx| State {
@@ -669,9 +765,15 @@ impl BedrockLanguageModelProvider {
             expiring_credentials: None,
             auth_generation: 0,
             http_client: http_client.clone(),
+            plain_http_client: plain_http_client.clone(),
+            fs,
             model_catalog: None,
             fetch_models_task: None,
             last_fetch_models_error: None,
+            capability_catalog: CapabilityCatalog::default(),
+            capability_catalog_cache_path,
+            refresh_capability_catalog_task: None,
+            last_capability_catalog_error: None,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -693,18 +795,32 @@ impl BedrockLanguageModelProvider {
         let bedrock_settings = &AllLanguageModelSettings::get_global(cx).bedrock;
         let state = self.state.read(cx);
         let model_catalog = state.model_catalog.as_ref();
+        let capability_catalog = &state.capability_catalog;
+        let allow_global = state.get_allow_global();
         let mut models = BTreeMap::default();
 
-        if let Some(model_catalog) = model_catalog {
-            for model in model_catalog.models(state.get_allow_global()) {
-                models.insert(model.id.clone(), model);
+        match model_catalog {
+            Some(model_catalog) => {
+                for model in model_catalog.models(allow_global, capability_catalog) {
+                    models.insert(model.id.clone(), model);
+                }
             }
+            // Without Bedrock's own listing, which the credentials in use may
+            // not be allowed to ask for, offer the models that the capability
+            // catalog names for the Region.
+            None if state.is_authenticated() => {
+                for model in capability_catalog.models_for_region(&state.get_region(), allow_global)
+                {
+                    models.insert(model.id.clone(), model);
+                }
+            }
+            None => {}
         }
 
         for model in bedrock_settings.available_models.iter() {
             models.insert(
                 model.name.clone(),
-                converse_model_from_settings(model, model_catalog),
+                converse_model_from_settings(model, model_catalog, capability_catalog),
             );
         }
 
@@ -762,60 +878,63 @@ const DEFAULT_MODEL_ID_PREFIX: &str = "anthropic.claude-sonnet-";
 const DEFAULT_FAST_MODEL_ID_PREFIX: &str = "anthropic.claude-haiku-";
 
 /// The Converse model a settings entry describes. The entry's name is sent as
-/// the model id exactly as written. An entry whose name resolves to a listed
-/// model takes what it leaves unsaid from that model. Any other entry has no
-/// optional capability unless it states one, apart from what the model its
-/// name identifies requires of every request.
+/// the model id exactly as written. An entry whose name Bedrock listed, or
+/// that the capability catalog knows, takes what it leaves unsaid from that
+/// model. Any other entry has only the capabilities it states.
 fn converse_model_from_settings(
     model: &AvailableModel,
     model_catalog: Option<&ModelCatalog>,
+    capability_catalog: &CapabilityCatalog,
 ) -> ConverseModel {
-    let listed =
-        model_catalog.and_then(|model_catalog| model_catalog.model_for_request_id(&model.name));
-    let described = listed
-        .cloned()
-        .unwrap_or_else(|| bedrock::describe_unlisted_model(&model.name));
+    let known = model_catalog
+        .and_then(|model_catalog| {
+            model_catalog.model_for_request_id(&model.name, capability_catalog)
+        })
+        .or_else(|| capability_catalog.model_for_request_id(&model.name));
+    let known = known.as_ref();
     let stated_thinking = model
         .thinking
         .as_ref()
         .map(|thinking| thinking_from_settings(Some(thinking)));
-    let thinking = match (listed, stated_thinking) {
-        // What a listed model does on every request is not the entry's to change.
-        (Some(listed), _) if always_reasons(listed) => listed.thinking.clone(),
-        (_, Some(stated_thinking)) => stated_thinking,
-        (Some(listed), None) => listed.thinking.clone(),
-        // Only the name identifies the model, so take no more from it than
-        // the reasoning its family cannot do without.
-        (None, None) => described.thinking.filter(ConverseThinking::is_always_on),
+    let known_thinking = known.and_then(|known| known.thinking.clone());
+    let thinking = match (stated_thinking, known_thinking) {
+        // What a model does on every request is not the entry's to change.
+        (_, Some(thinking)) if thinking.is_always_on() => Some(thinking),
+        (Some(stated_thinking), _) => stated_thinking,
+        (None, thinking) => thinking,
     };
     ConverseModel {
         id: model.name.clone(),
         request_id: model.name.clone(),
-        base_model_id: described.base_model_id,
+        base_model_id: known.map_or_else(
+            || bedrock::base_model_id(&model.name).to_string(),
+            |known| known.base_model_id.clone(),
+        ),
         display_name: model
             .display_name
             .clone()
-            .or_else(|| listed.map(|listed| listed.display_name.clone()))
+            .or_else(|| known.map(|known| known.display_name.clone()))
             .unwrap_or_else(|| model.name.clone()),
         max_tokens: model.max_tokens,
-        max_output_tokens: model.max_output_tokens.or_else(|| match listed {
-            Some(listed) => listed.max_output_tokens,
+        max_output_tokens: model.max_output_tokens.or_else(|| match known {
+            Some(known) => known.max_output_tokens,
             None => Some(4_096),
         }),
         default_temperature: model.default_temperature,
-        supports_temperature: !thinking
-            .as_ref()
-            .is_some_and(ConverseThinking::is_always_on),
+        supports_temperature: known.is_none_or(|known| known.supports_temperature)
+            && !thinking
+                .as_ref()
+                .is_some_and(ConverseThinking::is_always_on),
         supports_tool_use: model
             .supports_tools
-            .or_else(|| listed.map(|listed| listed.supports_tool_use))
+            .or_else(|| known.map(|known| known.supports_tool_use))
             .unwrap_or(false),
         supports_images: model
             .supports_images
-            .or_else(|| listed.map(|listed| listed.supports_images))
+            .or_else(|| known.map(|known| known.supports_images))
             .unwrap_or(false),
         supports_caching: model.cache_configuration.is_some()
-            || listed.is_some_and(|listed| listed.supports_caching),
+            || known.is_some_and(|known| known.supports_caching),
         thinking,
     }
 }
@@ -876,7 +995,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     .into()
             })
             .description(InlineDescription::Text(
-                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Zed lists the models that have an inference profile in your Region, which requires the `bedrock:ListInferenceProfiles` and `bedrock:ListFoundationModels` permissions.".into(),
+                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Zed lists the models that have an inference profile in your Region. Without the `bedrock:ListInferenceProfiles` and `bedrock:ListFoundationModels` permissions, it offers the models that models.dev names for your Region.".into(),
             )),
         ))
     }
@@ -1039,6 +1158,38 @@ where
         }
         Ok(request_auth)
     })
+}
+
+/// The capability catalog stored at `path`, and whether it is recent enough
+/// to use without fetching it again.
+async fn load_cached_capability_catalog(
+    fs: &dyn Fs,
+    path: &Path,
+) -> Result<Option<(CapabilityCatalog, bool)>> {
+    let Some((catalog, is_fresh)) = model_catalog_cache::load_cached(fs, path).await? else {
+        return Ok(None);
+    };
+    Ok(Some((CapabilityCatalog::parse(&catalog)?, is_fresh)))
+}
+
+/// Fetches the capability catalog and stores the part that describes
+/// Bedrock's models at `cache_path`.
+async fn fetch_capability_catalog(
+    http_client: Arc<dyn HttpClient>,
+    executor: BackgroundExecutor,
+    fs: &dyn Fs,
+    cache_path: PathBuf,
+) -> Result<CapabilityCatalog> {
+    let catalog = model_catalog_cache::fetch(http_client, executor, CAPABILITY_CATALOG_URL).await?;
+    let capability_catalog = CapabilityCatalog::parse(&catalog)?;
+    let mut catalog = serde_json::from_str::<serde_json::Map<String, Value>>(&catalog)?;
+    catalog.retain(|provider, _| provider == CAPABILITY_CATALOG_PROVIDER);
+    if let Err(error) =
+        model_catalog_cache::store_cached(fs, cache_path, serde_json::to_string(&catalog)?).await
+    {
+        log::warn!("Failed to cache Bedrock model capabilities: {error:#}");
+    }
+    Ok(capability_catalog)
 }
 
 /// How long listing models may take. Zed's HTTP client applies no timeout of
@@ -2996,6 +3147,8 @@ impl Render for ConfigurationView {
         let env_var_set = state.credentials_from_env;
         let auth = state.auth.clone();
         let fetch_models_error = state.last_fetch_models_error.clone();
+        let capability_catalog_error = state.last_capability_catalog_error.clone();
+        let offers_catalog_models = !state.capability_catalog.is_empty();
         let settings_auth_method = state
             .settings
             .as_ref()
@@ -3117,10 +3270,26 @@ impl Render for ConfigurationView {
             )
             .child(credentials_control)
             .when_some(fetch_models_error, |this, error| {
+                let consequence = if offers_catalog_models {
+                    "Zed offers the models that models.dev names for your Region instead."
+                } else {
+                    "Zed offers only the models in your settings."
+                };
                 this.child(
-                    Label::new(format!("Could not list Bedrock models: {error}"))
-                        .size(LabelSize::Small)
-                        .color(Color::Error),
+                    Label::new(format!(
+                        "Could not list the models in your account. {consequence} {error}"
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Warning),
+                )
+            })
+            .when_some(capability_catalog_error, |this, error| {
+                this.child(
+                    Label::new(format!(
+                        "Could not load model limits and capabilities from models.dev: {error}"
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Warning),
                 )
             })
             .into_any()
@@ -3341,6 +3510,71 @@ mod tests {
             .expect("the summary has every required member")
     }
 
+    const TEST_CACHE_PATH: &str = "/cache/bedrock/models.json";
+
+    fn new_test_provider_with_fs(
+        http_client: Arc<dyn HttpClient>,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+    ) -> BedrockLanguageModelProvider {
+        BedrockLanguageModelProvider::new_with_cache(
+            http_client,
+            Arc::new(NoCredentialsProvider),
+            fs,
+            PathBuf::from(TEST_CACHE_PATH),
+            cx,
+        )
+    }
+
+    fn new_test_provider(
+        http_client: Arc<dyn HttpClient>,
+        cx: &mut App,
+    ) -> BedrockLanguageModelProvider {
+        let fs = fs::FakeFs::new(cx.background_executor().clone());
+        new_test_provider_with_fs(http_client, fs, cx)
+    }
+
+    /// A capability catalog entry for a text model with tools.
+    fn capability_entry(name: &str, members: Value) -> Value {
+        let mut entry = serde_json::json!({
+            "name": name,
+            "tool_call": true,
+            "modalities": {"input": ["text"], "output": ["text"]},
+            "limit": {"context": 700_000, "output": 64_000},
+        });
+        if let (Some(entry), Some(members)) = (entry.as_object_mut(), members.as_object()) {
+            entry.extend(members.clone());
+        }
+        entry
+    }
+
+    /// The catalog members of a model that reasons on every request.
+    fn always_reasoning_members() -> Value {
+        serde_json::json!({
+            "reasoning": true,
+            "reasoning_options": [{"type": "effort", "values": ["low", "high"]}],
+        })
+    }
+
+    fn capability_catalog_json(models: Value) -> String {
+        serde_json::json!({
+            "amazon-bedrock": {"models": models},
+            "another-provider": {"models": {}},
+        })
+        .to_string()
+    }
+
+    fn capability_catalog(models: Value) -> CapabilityCatalog {
+        CapabilityCatalog::parse(&capability_catalog_json(models))
+            .expect("the test catalog should parse")
+    }
+
+    fn api_key_auth() -> Option<BedrockAuth> {
+        Some(BedrockAuth::ApiKey {
+            api_key: "test-key".into(),
+        })
+    }
+
     #[gpui::test]
     fn listed_models_are_offered_and_refined_by_settings(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
@@ -3365,13 +3599,8 @@ mod tests {
                     .expect("test settings should parse");
             });
         });
-        let provider = cx.update(|cx| {
-            BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
-                Arc::new(NoCredentialsProvider),
-                cx,
-            )
-        });
+        let provider =
+            cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
         let offered_ids = |cx: &mut gpui::TestAppContext| {
             cx.update(|cx| provider.provided_models(cx))
                 .into_iter()
@@ -3406,6 +3635,10 @@ mod tests {
         );
         provider.state.update(cx, |state, cx| {
             state.model_catalog = Some(model_catalog);
+            state.capability_catalog = capability_catalog(serde_json::json!({
+                "global.anthropic.claude-sonnet-9":
+                    capability_entry("Sonnet 9 (Global)", always_reasoning_members()),
+            }));
             cx.notify();
         });
 
@@ -3422,10 +3655,17 @@ mod tests {
             .update(|cx| provider.default_model(cx))
             .expect("a listed Sonnet model should be the default");
         assert_eq!(default_model.id.0.as_ref(), "anthropic.claude-sonnet-9");
+        assert_eq!(default_model.max_token_count(), 700_000);
+        assert!(default_model.supports_thinking);
+        assert!(!default_model.supports_disabling_thinking);
         let default_fast_model = cx
             .update(|cx| provider.default_fast_model(cx))
             .expect("a listed Haiku model should be the fast default");
         assert_eq!(default_fast_model.id.0.as_ref(), "anthropic.claude-haiku-9");
+        assert!(
+            !default_fast_model.supports_thinking,
+            "a model the capability catalog does not know has no reasoning controls"
+        );
 
         let converse_config = |model: &LanguageModel, cx: &mut gpui::TestAppContext| match cx
             .update(|cx| provider.config(model, cx))
@@ -3450,8 +3690,8 @@ mod tests {
             configured.name.0.as_ref(),
             "Name of anthropic.claude-sonnet-9"
         );
-        assert_eq!(
-            configured.supports_thinking, default_model.supports_thinking,
+        assert!(
+            configured.supports_thinking,
             "a settings entry takes what it leaves unsaid from the listed model"
         );
         let configured = converse_config(&configured, cx);
@@ -3460,10 +3700,151 @@ mod tests {
             "a settings entry is always invoked by its own name"
         );
         assert_eq!(configured.base_model_id, "anthropic.claude-sonnet-9");
-        assert_eq!(
-            configured.max_output_tokens, None,
-            "the output limit of a listed model is left to Bedrock"
+        assert_eq!(configured.max_output_tokens, Some(64_000));
+    }
+
+    #[gpui::test]
+    fn capability_catalog_models_stand_in_for_a_missing_listing(cx: &mut gpui::TestAppContext) {
+        let provider = test_provider(cx);
+        let offered = |cx: &mut gpui::TestAppContext| {
+            cx.update(|cx| provider.bedrock_models(cx))
+                .into_iter()
+                .filter_map(|(id, config)| match config {
+                    BedrockModelConfig::Converse(model) => Some((id, model.request_id)),
+                    BedrockModelConfig::Mantle(_) => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        provider.state.update(cx, |state, _| {
+            state.capability_catalog = capability_catalog(serde_json::json!({
+                "us.vendor.chat": capability_entry("Chat (US)", serde_json::json!({})),
+                "eu.vendor.european": capability_entry("European (EU)", serde_json::json!({})),
+            }));
+        });
+
+        assert!(
+            offered(cx).is_empty(),
+            "nothing is offered before authentication"
         );
+
+        provider
+            .state
+            .update(cx, |state, _| state.set_auth(api_key_auth()));
+        assert_eq!(
+            offered(cx),
+            [("vendor.chat".to_string(), "us.vendor.chat".to_string())],
+            "without a listing, the catalog names the models for the Region"
+        );
+
+        provider.state.update(cx, |state, _| {
+            state.model_catalog = Some(ModelCatalog::new(
+                &[listed_inference_profile(
+                    "us.vendor.listed",
+                    "vendor.listed",
+                )],
+                &[listed_foundation_model("vendor.listed")],
+            ));
+        });
+        assert_eq!(
+            offered(cx),
+            [("vendor.listed".to_string(), "us.vendor.listed".to_string())],
+            "Bedrock's own listing replaces the catalog's"
+        );
+    }
+
+    #[gpui::test]
+    async fn capability_catalog_is_fetched_cached_and_refreshed(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            gpui_tokio::init(cx);
+            // A custom endpoint keeps the test from listing models over AWS.
+            let content = serde_json::json!({
+                "language_models": {
+                    "bedrock": {"endpoint_url": "https://gateway.example.com/bedrock"}
+                }
+            })
+            .to_string();
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(&content, cx)
+                    .expect("test settings should parse");
+            });
+        });
+        let catalog_json = capability_catalog_json(serde_json::json!({
+            "us.vendor.chat": capability_entry("Chat (US)", serde_json::json!({})),
+        }));
+        let request_count = Arc::new(parking_lot::Mutex::new(0));
+        let http_client = http_client::FakeHttpClient::create({
+            let request_count = request_count.clone();
+            let catalog_json = catalog_json.clone();
+            move |request| {
+                let is_catalog_request = request.uri() == CAPABILITY_CATALOG_URL;
+                *request_count.lock() += 1;
+                let catalog_json = catalog_json.clone();
+                async move {
+                    let (status, body) = if is_catalog_request {
+                        (200, catalog_json)
+                    } else {
+                        (404, String::new())
+                    };
+                    Ok(http_client::Response::builder()
+                        .status(status)
+                        .body(AsyncBody::from(body))?)
+                }
+            }
+        });
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let provider =
+            cx.update(|cx| new_test_provider_with_fs(http_client.clone(), fs.clone(), cx));
+        let has_catalog = |provider: &BedrockLanguageModelProvider,
+                           cx: &mut gpui::TestAppContext| {
+            provider
+                .state
+                .read_with(cx, |state, _| !state.capability_catalog.is_empty())
+        };
+
+        assert!(
+            !has_catalog(&provider, cx),
+            "nothing is fetched before authentication"
+        );
+        cx.run_until_parked();
+        assert_eq!(*request_count.lock(), 0);
+
+        provider
+            .state
+            .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+        cx.run_until_parked();
+        assert!(has_catalog(&provider, cx));
+        assert_eq!(*request_count.lock(), 1);
+        provider.state.read_with(cx, |state, _| {
+            assert_eq!(state.last_capability_catalog_error, None)
+        });
+        let cached = fs
+            .load(Path::new(TEST_CACHE_PATH))
+            .await
+            .expect("the catalog should be cached");
+        assert!(cached.contains("amazon-bedrock") && !cached.contains("another-provider"));
+
+        cx.executor()
+            .advance_clock(model_catalog_cache::REFRESH_INTERVAL);
+        cx.run_until_parked();
+        assert_eq!(
+            *request_count.lock(),
+            2,
+            "the catalog is fetched again every hour"
+        );
+
+        // A second provider starts from the copy on disk, and keeps it when
+        // the catalog cannot be fetched.
+        let failing_http_client = http_client::FakeHttpClient::with_404_response();
+        let cached_provider =
+            cx.update(|cx| new_test_provider_with_fs(failing_http_client, fs.clone(), cx));
+        cached_provider
+            .state
+            .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+        cx.run_until_parked();
+        assert!(has_catalog(&cached_provider, cx));
     }
 
     #[gpui::test]
@@ -3518,13 +3899,8 @@ mod tests {
                     .expect("test settings should parse");
             });
         });
-        let provider = cx.update(|cx| {
-            BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
-                Arc::new(NoCredentialsProvider),
-                cx,
-            )
-        });
+        let provider =
+            cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
 
         provider.state.update(cx, |state, cx| {
             state.change_auth(
@@ -3571,45 +3947,46 @@ mod tests {
 
     #[test]
     fn settings_entry_keeps_the_reasoning_its_model_always_does() {
-        let name = "us.anthropic.claude-not-yet-released";
-        let base_model_id = "anthropic.claude-not-yet-released";
+        let name = "us.anthropic.claude-example";
+        let base_model_id = "anthropic.claude-example";
+        let capability_catalog = capability_catalog(serde_json::json!({
+            name: capability_entry("Example (US)", always_reasoning_members()),
+        }));
         let model_catalog = ModelCatalog::new(
             &[listed_inference_profile(name, base_model_id)],
             &[listed_foundation_model(base_model_id)],
         );
 
-        // A listed model keeps its reasoning whatever the entry states.
-        for thinking in [
-            None,
-            adaptive_thinking_settings(),
-            Some(settings::BedrockThinkingSettings::Enabled(false)),
-        ] {
-            let model =
-                converse_model_from_settings(&settings_entry(name, thinking), Some(&model_catalog));
-            assert_eq!(model.request_id, name);
-            assert_eq!(model.base_model_id, base_model_id);
-            assert!(always_reasons(&model));
-            assert!(!model.supports_temperature);
+        // The entry cannot change this, whether Bedrock listed the model or
+        // only the capability catalog knows it.
+        for model_catalog in [Some(&model_catalog), None] {
+            for thinking in [
+                None,
+                adaptive_thinking_settings(),
+                Some(settings::BedrockThinkingSettings::Enabled(false)),
+            ] {
+                let model = converse_model_from_settings(
+                    &settings_entry(name, thinking),
+                    model_catalog,
+                    &capability_catalog,
+                );
+                assert_eq!(model.request_id, name);
+                assert_eq!(model.base_model_id, base_model_id);
+                assert!(always_reasons(&model));
+                assert!(!model.supports_temperature);
+            }
         }
-
-        // Without a listing, the name alone identifies the model.
-        let unlisted = converse_model_from_settings(&settings_entry(name, None), None);
-        assert_eq!(unlisted.base_model_id, base_model_id);
-        assert!(always_reasons(&unlisted));
-        assert!(!unlisted.supports_temperature);
-
-        // What an unlisted entry states about thinking is taken as written.
-        let stated =
-            converse_model_from_settings(&settings_entry(name, adaptive_thinking_settings()), None);
-        assert_eq!(
-            stated.thinking,
-            Some(ConverseThinking::adaptive(false, false))
-        );
     }
 
     #[test]
-    fn unlisted_settings_entry_has_only_the_capabilities_it_states() {
-        let unstated = converse_model_from_settings(&settings_entry("us.vendor.chat", None), None);
+    fn unknown_settings_entry_has_only_the_capabilities_it_states() {
+        let capability_catalog = CapabilityCatalog::default();
+        let unstated = converse_model_from_settings(
+            &settings_entry("us.vendor.chat", None),
+            None,
+            &capability_catalog,
+        );
+        assert_eq!(unstated.base_model_id, "vendor.chat");
         assert_eq!(unstated.thinking, None);
         assert!(unstated.supports_temperature);
         assert_eq!(unstated.default_temperature, Some(0.5));
@@ -3624,6 +4001,7 @@ mod tests {
                 ..settings_entry("us.vendor.chat", adaptive_thinking_settings())
             },
             None,
+            &capability_catalog,
         );
         assert_eq!(
             stated.thinking,
@@ -3631,6 +4009,28 @@ mod tests {
         );
         assert_eq!(stated.max_output_tokens, Some(32_000));
         assert!(stated.supports_tool_use);
+    }
+
+    #[test]
+    fn known_settings_entry_takes_what_it_leaves_unsaid_from_the_catalog() {
+        let capability_catalog = capability_catalog(serde_json::json!({
+            "us.vendor.chat": capability_entry("Chat (US)", serde_json::json!({
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+            })),
+        }));
+        let model = converse_model_from_settings(
+            &settings_entry("us.vendor.chat", None),
+            None,
+            &capability_catalog,
+        );
+
+        assert_eq!(model.display_name, "Chat (US)");
+        assert_eq!(
+            model.max_tokens, 1_000_000,
+            "the entry states its context window"
+        );
+        assert_eq!(model.max_output_tokens, Some(64_000));
+        assert!(model.supports_tool_use && model.supports_images);
     }
 
     #[gpui::test]
@@ -3663,13 +4063,8 @@ mod tests {
                     .expect("test settings should parse");
             });
         });
-        let provider = cx.update(|cx| {
-            BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
-                Arc::new(NoCredentialsProvider),
-                cx,
-            )
-        });
+        let provider =
+            cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
 
         let shared = cx
             .update(|cx| provider.provided_models(cx))
@@ -3717,13 +4112,8 @@ mod tests {
                     .expect("test settings should parse");
             });
         });
-        let provider = cx.update(|cx| {
-            BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
-                Arc::new(NoCredentialsProvider),
-                cx,
-            )
-        });
+        let provider =
+            cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
 
         let custom = cx
             .update(|cx| provider.provided_models(cx))
@@ -5312,11 +5702,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             gpui_tokio::init(cx);
-            BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
-                Arc::new(NoCredentialsProvider),
-                cx,
-            )
+            new_test_provider(http_client::FakeHttpClient::with_404_response(), cx)
         })
     }
 

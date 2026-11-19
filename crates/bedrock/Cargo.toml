@@ -23,6 +23,7 @@ aws-sdk-bedrockruntime.workspace = true
 aws-smithy-types.workspace = true
 futures.workspace = true
 http_client.workspace = true
+log.workspace = true
 schemars = { workspace = true, features = ["derive"], optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

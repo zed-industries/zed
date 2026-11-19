@@ -1,12 +1,13 @@
-use anyhow::{Context as _, Result, anyhow, bail};
+use crate::provider::model_catalog_cache;
+use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     App, AsyncApp, BackgroundExecutor, Context, Entity, SharedString, Task, TaskExt, Window,
 };
-use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request, http};
+use http_client::{AsyncBody, CustomHeaders, HttpClient, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
@@ -23,7 +24,7 @@ use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 use ui::{
     Banner, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, Severity, Switch,
@@ -56,10 +57,7 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 const API_KEY_ENV_VAR_NAME: &str = "OPENCODE_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 const OPENCODE_SESSION_HEADER_NAME: &str = "x-opencode-session";
-const MODEL_CATALOG_RESPONSE_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
-const MODEL_CATALOG_FETCH_TIMEOUT: Duration = Duration::from_secs(15);
-const MODEL_CATALOG_DISK_FRESHNESS: Duration = Duration::from_secs(5 * 60);
-const MODEL_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const MODEL_CATALOG_REFRESH_INTERVAL: Duration = model_catalog_cache::REFRESH_INTERVAL;
 pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &[OPENCODE_SESSION_HEADER_NAME];
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -249,27 +247,19 @@ fn catalog_results(
 }
 
 async fn load_cached_catalog(fs: &dyn Fs, path: &Path) -> Result<Option<(String, bool)>> {
-    let Some(metadata) = fs.metadata(path).await? else {
+    let Some((catalog, is_fresh)) = model_catalog_cache::load_cached(fs, path).await? else {
         return Ok(None);
     };
-    let catalog = fs.load(path).await?;
     for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
         parse_discovered_models(&catalog, subscription)?;
     }
-    let is_fresh = SystemTime::now()
-        .duration_since(metadata.mtime.timestamp_for_user())
-        .is_ok_and(|age| age < MODEL_CATALOG_DISK_FRESHNESS);
     Ok(Some((catalog, is_fresh)))
 }
 
 async fn store_cached_catalog(fs: &dyn Fs, path: PathBuf, catalog: String) -> Result<()> {
     let mut catalog = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&catalog)?;
     catalog.retain(|provider, _| matches!(provider.as_str(), "opencode" | "opencode-go"));
-    if let Some(parent) = path.parent() {
-        fs.create_dir(parent).await?;
-    }
-    fs.atomic_write(path, serde_json::to_string(&catalog)?)
-        .await
+    model_catalog_cache::store_cached(fs, path, serde_json::to_string(&catalog)?).await
 }
 
 fn apply_discovery_results(
@@ -726,35 +716,7 @@ async fn fetch_model_catalog(
     client: Arc<dyn HttpClient>,
     executor: BackgroundExecutor,
 ) -> Result<String> {
-    let fetch = fetch_catalog_resource(client.as_ref(), RICH_MODEL_CATALOG_URL).fuse();
-    let timeout = executor.timer(MODEL_CATALOG_FETCH_TIMEOUT).fuse();
-    futures::pin_mut!(fetch, timeout);
-    futures::select_biased! {
-        result = fetch => result,
-        _ = timeout => bail!("OpenCode model catalog request timed out"),
-    }
-}
-
-async fn fetch_catalog_resource(client: &dyn HttpClient, url: &str) -> Result<String> {
-    // Catalogs are public; completion credentials and custom headers must not be sent here.
-    let request = Request::builder().method(Method::GET).uri(url);
-    let mut response = client
-        .send(request.body(AsyncBody::empty())?)
-        .await
-        .with_context(|| format!("requesting OpenCode catalog at {url}"))?;
-    if !response.status().is_success() {
-        bail!(
-            "OpenCode catalog request to {url} returned {}",
-            response.status()
-        );
-    }
-    let mut body = String::new();
-    response
-        .body_mut()
-        .take(MODEL_CATALOG_RESPONSE_LIMIT_BYTES)
-        .read_to_string(&mut body)
-        .await?;
-    Ok(body)
+    model_catalog_cache::fetch(client, executor, RICH_MODEL_CATALOG_URL).await
 }
 
 struct ConfigurationView {
@@ -997,6 +959,7 @@ mod tests {
     use http_client::{FakeHttpClient, Response};
     use language_model::{LanguageModelRequestMessage, MessageContent, Role};
     use parking_lot::Mutex;
+    use std::time::SystemTime;
 
     fn test_catalog() -> &'static str {
         r#"{

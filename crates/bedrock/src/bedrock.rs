@@ -1,3 +1,4 @@
+mod capability_catalog;
 mod model_catalog;
 mod models;
 
@@ -32,6 +33,7 @@ use serde_json::{Number, Value};
 use std::collections::HashMap;
 use thiserror::Error;
 
+pub use crate::capability_catalog::*;
 pub use crate::model_catalog::*;
 pub use crate::models::*;
 
