@@ -997,6 +997,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_type_and_arrow_function_highlight_boundaries() {
+        let source = Rope::from(
+            "const value:  number = 1;\nconst identity = (input: number): number => { return input; };",
+        );
+        let theme = SyntaxTheme::new_test([("type", Hsla::blue()), ("function", Hsla::red())]);
+
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            language.set_theme(&theme);
+            let grammar = language.grammar().expect("grammar should be loaded");
+            let type_highlight = grammar
+                .highlight_id_for_name("type")
+                .expect("type highlight should be defined");
+            let function_highlight = grammar
+                .highlight_id_for_name("function")
+                .expect("function highlight should be defined");
+
+            assert_eq!(
+                language
+                    .highlight_text(&source, 0..source.len())
+                    .collect::<Vec<_>>(),
+                vec![
+                    (14..20, type_highlight),
+                    (32..40, function_highlight),
+                    (51..57, type_highlight),
+                    (60..66, type_highlight),
+                ],
+                "{} highlights should exclude annotation whitespace and the arrow body",
+                language.name()
+            );
+        }
+    }
+
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
         for language in [
