@@ -55,39 +55,16 @@ use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
 
 pub fn init(db_trusted_paths: DbTrustedPaths, cx: &mut App) {
     if TrustedWorktrees::try_get_global(cx).is_none() {
-        let trusted_worktrees = cx.new(|cx: &mut Context<TrustedWorktreesStore>| {
-            if cfg!(windows) {
-                let local_paths = db_trusted_paths.get(&None).cloned().unwrap_or_default();
-                // One path at a time, so unavailable drives occupy at most one background thread.
-                cx.spawn(async move |store, cx| {
-                    for path in local_paths {
-                        let respelled = cx
-                            .background_spawn({
-                                let path = path.clone();
-                                async move { on_disk_spelling(&path) }
-                            })
-                            .await;
-                        if let Some(respelled) = respelled {
-                            store
-                                .update(cx, |store, _| store.add_respelled_path(&path, respelled))
-                                .ok();
-                        }
-                    }
-                })
-                .detach();
-            }
-            TrustedWorktreesStore::new(db_trusted_paths)
-        });
+        let trusted_worktrees = cx.new(|_| TrustedWorktreesStore::new(db_trusted_paths));
         cx.set_global(TrustedWorktrees(trusted_worktrees))
     }
 }
 
-/// Worktrees open with their canonical, on-disk path spelling, but a persisted trusted path keeps
-/// the casing it was stored with, so it stops matching once those differ (#66915).
-/// Returns the on-disk spelling of `path` when it differs only by ASCII case.
+/// Returns the on-disk spelling of `path` when it differs from `path` only by ASCII case.
 ///
-/// Paths through a symlink or junction are skipped: resolving those may land in another directory
-/// whose name differs only by case. UNC paths (network shares, `\\wsl.localhost`) are skipped too.
+/// Paths through a symlink or junction are skipped, as resolving those may land in another
+/// directory whose name differs only by case. Components are checked from the root, so no link
+/// gets followed. UNC paths (network shares, `\\wsl.localhost`) are skipped too.
 fn on_disk_spelling(path: &Path) -> Option<PathBuf> {
     let Some(Component::Prefix(prefix)) = path.components().next() else {
         return None;
@@ -95,17 +72,27 @@ fn on_disk_spelling(path: &Path) -> Option<PathBuf> {
     if !matches!(prefix.kind(), Prefix::Disk(_)) {
         return None;
     }
-    let through_link = path.ancestors().any(|ancestor| {
-        std::fs::symlink_metadata(ancestor)
-            .map_or(true, |metadata| metadata.file_type().is_symlink())
-    });
-    if through_link {
-        return None;
+    for ancestor in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        let metadata = std::fs::symlink_metadata(ancestor).ok()?;
+        if metadata.file_type().is_symlink() {
+            return None;
+        }
     }
     let canonical = std::fs::canonicalize(path).ok()?;
     let canonical = SanitizedPath::new(&canonical).as_path();
     (canonical != path && canonical.as_os_str().eq_ignore_ascii_case(path.as_os_str()))
         .then(|| canonical.to_path_buf())
+}
+
+fn starts_with_ignoring_ascii_case(path: &Path, prefix: &Path) -> bool {
+    let mut components = path.components();
+    prefix.components().all(|prefix_component| {
+        components.next().is_some_and(|component| {
+            component
+                .as_os_str()
+                .eq_ignore_ascii_case(prefix_component.as_os_str())
+        })
+    })
 }
 
 /// An initialization call to set up trust global for a particular project (remote or local).
@@ -457,24 +444,68 @@ impl TrustedWorktreesStore {
         ));
     }
 
-    /// Adds the on-disk spelling of a persisted local trusted path next to it,
-    /// unless the persisted trust was cleared meanwhile.
-    /// Worktrees restricted before that stay restricted.
-    fn add_respelled_path(&mut self, path: &Path, respelled: PathBuf) {
-        let Some(local_paths) = self.db_trusted_paths.get_mut(&None) else {
-            return;
-        };
-        if !local_paths.contains(path) || !local_paths.insert(respelled.clone()) {
-            return;
+    /// Worktrees open with their canonical, on-disk path spelling, but a persisted trusted path keeps
+    /// the casing it was stored with, so it stops matching once those differ (#66915).
+    ///
+    /// To be awaited before a local worktree at `worktree_abs_path` joins `worktree_store`:
+    /// finds the persisted local trusted paths that match the worktree path only when ignoring
+    /// ASCII case, and trusts their on-disk spelling in that store.
+    /// The file system decides whether those name the same directory; nothing restricted is lifted.
+    pub fn resolve_trusted_path_casing(
+        &mut self,
+        worktree_store: &Entity<WorktreeStore>,
+        worktree_abs_path: &Path,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let is_local_store = self
+            .worktree_stores
+            .get(&worktree_store.downgrade())
+            .is_some_and(|store_data| store_data.host.is_none());
+        let local_paths = self.db_trusted_paths.get(&None).into_iter().flatten();
+        if !cfg!(windows)
+            || !is_local_store
+            || ProjectSettings::get_global(cx).session.trust_all_worktrees
+            || local_paths
+                .clone()
+                .any(|path| worktree_abs_path.starts_with(path))
+        {
+            return Task::ready(());
         }
-        for (worktree_store, store_data) in &self.worktree_stores {
-            if store_data.host.is_none() && worktree_store.is_upgradable() {
-                self.trusted_paths
-                    .entry(worktree_store.clone())
-                    .or_default()
-                    .insert(PathTrust::AbsPath(respelled.clone()));
-            }
+        let mismatched_paths = local_paths
+            .filter(|path| starts_with_ignoring_ascii_case(worktree_abs_path, path))
+            .cloned()
+            .collect::<Vec<_>>();
+        if mismatched_paths.is_empty() {
+            return Task::ready(());
         }
+
+        let worktree_store = worktree_store.downgrade();
+        cx.spawn(async move |this, cx| {
+            let respelled_paths = cx
+                .background_spawn(async move {
+                    mismatched_paths
+                        .into_iter()
+                        .filter_map(|path| Some((on_disk_spelling(&path)?, path)))
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            this.update(cx, |this, _| {
+                let Some(local_paths) = this.db_trusted_paths.get_mut(&None) else {
+                    return;
+                };
+                for (respelled, path) in respelled_paths {
+                    // Skip the paths whose trust got cleared meanwhile.
+                    if local_paths.contains(&path) {
+                        local_paths.insert(respelled.clone());
+                        this.trusted_paths
+                            .entry(worktree_store.clone())
+                            .or_default()
+                            .insert(PathTrust::AbsPath(respelled));
+                    }
+                }
+            })
+            .ok();
+        })
     }
 
     /// Erases all trust information.

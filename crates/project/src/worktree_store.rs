@@ -947,6 +947,23 @@ impl WorktreeStore {
             )
             .await?;
 
+            // Before the worktree joins the store, so that no trust check runs before this.
+            let resolve_trusted_path_casing = this.update(cx, |_, cx| {
+                TrustedWorktrees::try_get_global(cx).map(|trusted_worktrees| {
+                    let worktree_store = cx.entity();
+                    trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                        trusted_worktrees.resolve_trusted_path_casing(
+                            &worktree_store,
+                            abs_path.as_path(),
+                            cx,
+                        )
+                    })
+                })
+            })?;
+            if let Some(resolve_trusted_path_casing) = resolve_trusted_path_casing {
+                resolve_trusted_path_casing.await;
+            }
+
             this.update(cx, |this, cx| this.add(&worktree, cx))?;
 
             if visible {

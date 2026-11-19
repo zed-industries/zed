@@ -35,69 +35,50 @@ fn init_trust_global(
 
 #[cfg(windows)]
 #[gpui::test]
-async fn test_db_trusted_path_is_respelled_only_for_casing(cx: &mut TestAppContext) {
-    use fs::{Fs as _, RealFs};
+async fn test_differently_cased_db_trusted_parent_path(cx: &mut TestAppContext) {
+    use fs::RealFs;
     use util::{paths::SanitizedPath, test::TempTree};
 
     init_test(cx);
     cx.executor().allow_parking();
 
-    let dir = TempTree::new(json!({ "Trusted": {}, "Outside": {} }));
+    let dir = TempTree::new(json!({ "Dev": { "project": {} } }));
     let root = SanitizedPath::new(dir.path()).as_path().to_path_buf();
-    let fs = RealFs::new(None, cx.executor());
-    fs.create_symlink(&root.join("Link"), root.join("Outside"))
-        .await
-        .unwrap();
-
     cx.update(|cx| {
         init(
-            DbTrustedPaths::from_iter([(
-                None,
-                HashSet::from_iter([
-                    root.join("trusted"),
-                    root.join("Link"),
-                    root.join("Missing"),
-                ]),
-            )]),
+            DbTrustedPaths::from_iter([(None, HashSet::from_iter([root.join("DEV")]))]),
             cx,
         )
     });
-    // The project registers its worktree store before the respelling finishes.
-    let project = Project::test_with_worktree_trust(
-        fs,
-        [
-            root.join("Trusted").as_path(),
-            root.join("Outside").as_path(),
-        ],
+    let project_path = root.join("Dev").join("project");
+    let untracked_project = Project::test(
+        RealFs::new(None, cx.executor()),
+        [project_path.as_path()],
         cx,
     )
     .await;
-    cx.run_until_parked();
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-    let worktree_id = |name: &str, cx: &mut TestAppContext| {
-        worktree_store.read_with(cx, |store, cx| {
-            store
-                .worktrees()
-                .find(|worktree| worktree.read(cx).abs_path().ends_with(name))
-                .unwrap()
-                .read(cx)
-                .id()
-        })
-    };
-    let trusted_id = worktree_id("Trusted", cx);
-    let outside_id = worktree_id("Outside", cx);
+    let project = Project::test_with_worktree_trust(
+        RealFs::new(None, cx.executor()),
+        [project_path.as_path()],
+        cx,
+    )
+    .await;
 
     let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
-    trusted_worktrees.update(cx, |store, cx| {
-        assert!(
-            store.can_trust(&worktree_store, trusted_id, cx),
-            "a differently cased trusted path should match its directory"
-        );
-        assert!(
-            !store.can_trust(&worktree_store, outside_id, cx),
-            "a trusted junction must not extend trust to its target"
-        );
-    });
+    for (project, trusted) in [(project, true), (untracked_project, false)] {
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store.worktrees().next().unwrap().read(cx).id()
+        });
+        trusted_worktrees.update(cx, |store, cx| {
+            assert_eq!(
+                store.can_trust(&worktree_store, worktree_id, cx),
+                trusted,
+                "a differently cased trusted parent should trust its subdirectory \
+                 only in worktree stores tracked for trust"
+            );
+        });
+    }
 }
 
 #[cfg(windows)]

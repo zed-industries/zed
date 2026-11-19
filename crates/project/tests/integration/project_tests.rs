@@ -1452,7 +1452,7 @@ async fn test_project_tasks_and_debug_scenarios_require_trust(cx: &mut gpui::Tes
 async fn test_debug_scenarios_load_with_differently_cased_db_trusted_path(
     cx: &mut gpui::TestAppContext,
 ) {
-    use project::trusted_worktrees::{self, DbTrustedPaths};
+    use project::trusted_worktrees::{self, DbTrustedPaths, TrustedWorktrees};
     use util::paths::SanitizedPath;
 
     init_test(cx);
@@ -1470,8 +1470,6 @@ async fn test_debug_scenarios_load_with_differently_cased_db_trusted_path(
     let db_trusted_paths =
         DbTrustedPaths::from_iter([(None, HashSet::from_iter([root.join("project")]))]);
     cx.update(|cx| trusted_worktrees::init(db_trusted_paths, cx));
-    // Let the respelling finish before the project opens.
-    cx.run_until_parked();
 
     let project = Project::test_with_worktree_trust(
         RealFs::new(None, cx.executor()),
@@ -1480,6 +1478,13 @@ async fn test_debug_scenarios_load_with_differently_cased_db_trusted_path(
     )
     .await;
     cx.run_until_parked();
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
+    assert!(
+        !trusted_worktrees.read_with(cx, |store, cx| store
+            .has_restricted_worktrees(&worktree_store, cx)),
+        "the worktree must never be restricted"
+    );
 
     let worktree_id = project.read_with(cx, |project, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
