@@ -798,16 +798,6 @@ impl BufferDiffSnapshot {
         edit.new
     }
 
-    pub fn base_text_point_to_buffer_range(
-        &self,
-        point: Point,
-        buffer: &text::BufferSnapshot,
-    ) -> Range<Point> {
-        let patch = self.patch_for_base_text_range(point..=point, buffer);
-        let edit = patch.edit_for_old_position(point);
-        edit.new
-    }
-
     pub fn buffer_point_to_base_text_point(
         &self,
         point: Point,
@@ -2374,10 +2364,6 @@ impl DiffHunkStatus {
 
     pub fn is_deleted(&self) -> bool {
         self.kind == DiffHunkStatusKind::Deleted
-    }
-
-    pub fn is_added(&self) -> bool {
-        self.kind == DiffHunkStatusKind::Added
     }
 
     pub fn is_modified(&self) -> bool {
