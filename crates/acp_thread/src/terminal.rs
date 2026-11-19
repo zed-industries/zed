@@ -270,6 +270,8 @@ impl SandboxWrap {
             sandbox::SandboxFsPolicy::Unrestricted {
                 protected_paths,
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         } else {
             // Project worktree paths are captured fresh; user-approved grants are
@@ -306,6 +308,8 @@ impl SandboxWrap {
                 writable_paths,
                 protected_paths,
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         };
         let network = match &self.network {
@@ -317,9 +321,14 @@ impl SandboxWrap {
                     .iter()
                     .map(|pattern| pattern.to_string())
                     .collect(),
+                allowed_tcp_ports: Vec::new(),
             },
         };
-        Ok(sandbox::SandboxPolicy { fs, network })
+        Ok(sandbox::SandboxPolicy {
+            fs,
+            network,
+            allowed_unix_sockets: Vec::new(),
+        })
     }
 }
 

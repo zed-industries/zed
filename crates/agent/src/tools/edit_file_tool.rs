@@ -1627,6 +1627,57 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_streaming_authorize_always_confirm_in_project(cx: &mut TestAppContext) {
+        let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(
+            cx,
+            json!({"src": {"main.rs": ""}, "secrets": {"key.pem": ""}}),
+        )
+        .await;
+
+        for default in [
+            settings::ToolPermissionMode::Confirm,
+            settings::ToolPermissionMode::Allow,
+        ] {
+            cx.update(|cx| {
+                let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+                settings.tool_permissions.default = default;
+                settings.tool_permissions.tools.insert(
+                    EditFileTool::NAME.into(),
+                    agent_settings::ToolRules {
+                        always_confirm: vec![
+                            agent_settings::CompiledRegex::new("^root/secrets/", false).unwrap(),
+                        ],
+                        ..Default::default()
+                    },
+                );
+                agent_settings::AgentSettings::override_global(settings, cx);
+            });
+
+            // The second path only matches the pattern once `..` is collapsed.
+            for path in ["root/secrets/key.pem", "root/src/../secrets/key.pem"] {
+                let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+                let _auth =
+                    cx.update(|cx| edit_tool.authorize(&PathBuf::from(path), &stream_tx, cx));
+                let event = stream_rx.expect_authorization().await;
+                assert_eq!(
+                    event.tool_call.title,
+                    MaybeUndefined::Value(format!("Edit `{path}`")),
+                    "default: {default:?}"
+                );
+            }
+
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            cx.update(|cx| edit_tool.authorize(&PathBuf::from("root/src/main.rs"), &stream_tx, cx))
+                .await
+                .unwrap();
+            assert!(
+                stream_rx.try_recv().is_err(),
+                "a path that matches no pattern should not prompt (default: {default:?})"
+            );
+        }
+    }
+
     /// `.agents/foo/../skills/SKILL.md` would slip past the raw
     /// `is_agents_skills_path` check (the components `.agents` and
     /// `skills` aren't consecutive once `..` sits between them), but it

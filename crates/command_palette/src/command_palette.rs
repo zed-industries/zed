@@ -713,9 +713,6 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if secondary {
-            if self.matches.is_empty() {
-                return;
-            }
             let Some(selected_command) = self.selected_command() else {
                 return;
             };

@@ -185,35 +185,6 @@ impl ProjectDiff {
         }
     }
 
-    pub fn deploy_at_project_path(
-        workspace: &mut Workspace,
-        project_path: ProjectPath,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        telemetry::event!("Git Diff Opened", source = "Agent Panel");
-        let existing = workspace.items_of_type::<Self>(cx).next();
-        let project_diff = if let Some(existing) = existing {
-            workspace.activate_item(&existing, true, true, window, cx);
-            existing
-        } else {
-            let workspace_handle = cx.entity();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
-            workspace.add_item_to_active_pane(
-                Box::new(project_diff.clone()),
-                None,
-                true,
-                window,
-                cx,
-            );
-            project_diff
-        };
-        project_diff.update(cx, |project_diff, cx| {
-            project_diff.move_to_project_path(&project_path, window, cx);
-        });
-    }
-
     pub fn autoscroll(&self, cx: &mut Context<Self>) {
         self.diff.update(cx, |diff, cx| diff.autoscroll(cx));
     }

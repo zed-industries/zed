@@ -77,6 +77,26 @@ pub fn supports_forced_tool_use(model_id: &str) -> bool {
     )
 }
 
+/// Whether this model accepts system messages inside conversation history.
+///
+/// Older models retain the flattened system-prompt representation.
+/// <https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages>
+pub fn supports_mid_conversation_system_messages(model_id: &str) -> bool {
+    matches!(
+        model_id,
+        "claude-fable-5-1"
+            | "claude-mythos-5-1"
+            | "claude-fable-5"
+            | "claude-mythos-5"
+            | "claude-mythos-preview"
+            | "claude-opus-5-5"
+            | "claude-opus-5"
+            | "claude-opus-4-8"
+            | "claude-sonnet-5-5"
+            | "claude-haiku-5-5"
+    )
+}
+
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
 
@@ -784,6 +804,7 @@ pub struct Message {
 pub enum Role {
     User,
     Assistant,
+    System,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1357,7 +1378,9 @@ pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
 impl From<language_model_core::Speed> for Speed {
     fn from(speed: language_model_core::Speed) -> Self {
         match speed {
-            language_model_core::Speed::Standard => Speed::Standard,
+            language_model_core::Speed::Standard | language_model_core::Speed::Ultrafast => {
+                Speed::Standard
+            }
             language_model_core::Speed::Fast => Speed::Fast,
         }
     }

@@ -87,7 +87,7 @@ pub use pane_group::{
     SplitDirection,
 };
 pub use persistence::{
-    RecentWorkspace, WorkspaceDb, delete_unloaded_items,
+    RecentWorkspace, WorkspaceDb, dedupe_recent_workspaces, delete_unloaded_items,
     model::{
         DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
         SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
@@ -1920,17 +1920,7 @@ impl Workspace {
                 }
 
                 project::Event::LanguageServerPrompt(request) => {
-                    struct LanguageServerPrompt;
-
-                    this.show_notification(
-                        NotificationId::composite::<LanguageServerPrompt>(request.id),
-                        cx,
-                        |cx| {
-                            cx.new(|cx| {
-                                notifications::LanguageServerPrompt::new(request.clone(), cx)
-                            })
-                        },
-                    );
+                    return this.show_language_server_prompt(request, cx);
                 }
 
                 project::Event::AgentLocationChanged => {

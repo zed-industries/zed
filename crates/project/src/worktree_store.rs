@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     future::Future,
     path::{Path, PathBuf},
     sync::{
@@ -21,6 +22,7 @@ use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PROJECT_ID},
 };
+use serde::{Deserialize, Serialize};
 use text::ReplicaId;
 use util::{
     ResultExt,
@@ -46,11 +48,21 @@ use crate::{ProjectPath, trusted_worktrees::TrustedWorktrees};
 pub struct WorktreePaths {
     paths: PathList,
     main_paths: PathList,
+    delta_clones: BTreeMap<PathBuf, DeltaClone>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeltaClone {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub is_linked_worktree: bool,
+    #[serde(default)]
+    pub checkout_path: Option<PathBuf>,
 }
 
 impl PartialEq for WorktreePaths {
     fn eq(&self, other: &Self) -> bool {
-        self.ordered_pairs().eq(other.ordered_pairs())
+        self.ordered_pairs().eq(other.ordered_pairs()) && self.delta_clones == other.delta_clones
     }
 }
 
@@ -73,7 +85,55 @@ impl WorktreePaths {
         Ok(Self {
             paths: folder_paths,
             main_paths: main_worktree_paths,
+            delta_clones: BTreeMap::new(),
         })
+    }
+
+    pub fn with_delta_clones(
+        mut self,
+        delta_clones: impl IntoIterator<Item = (PathBuf, DeltaClone)>,
+    ) -> Self {
+        self.delta_clones = delta_clones
+            .into_iter()
+            .filter(|(folder_path, _)| self.paths.paths().contains(folder_path))
+            .collect();
+        self
+    }
+
+    pub fn with_serialized_delta_clones(self, delta_clones: Option<&str>) -> Self {
+        let delta_clones = delta_clones
+            .and_then(|delta_clones| {
+                serde_json::from_str::<BTreeMap<PathBuf, DeltaClone>>(delta_clones).log_err()
+            })
+            .unwrap_or_default();
+        self.with_delta_clones(delta_clones)
+    }
+
+    pub fn serialized_delta_clones(&self) -> Option<String> {
+        if self.delta_clones.is_empty() {
+            return None;
+        }
+        serde_json::to_string(&self.delta_clones).log_err()
+    }
+
+    pub fn delta_clones(&self) -> &BTreeMap<PathBuf, DeltaClone> {
+        &self.delta_clones
+    }
+
+    pub fn delta_clone(&self, folder_path: &Path) -> Option<&DeltaClone> {
+        self.delta_clones.get(folder_path)
+    }
+
+    pub fn set_delta_clone(&mut self, folder_path: &Path, delta_clone: Option<DeltaClone>) {
+        match delta_clone {
+            Some(delta_clone) if self.paths.paths().iter().any(|path| path == folder_path) => {
+                self.delta_clones
+                    .insert(folder_path.to_path_buf(), delta_clone);
+            }
+            _ => {
+                self.delta_clones.remove(folder_path);
+            }
+        }
     }
 
     /// Build for non-linked worktrees where main == folder for every path.
@@ -81,6 +141,7 @@ impl WorktreePaths {
         Self {
             paths: folder_paths.clone(),
             main_paths: folder_paths.clone(),
+            delta_clones: BTreeMap::new(),
         }
     }
 
@@ -119,8 +180,16 @@ impl WorktreePaths {
             .ordered_pairs()
             .map(|(m, f)| (m.clone(), f.clone()))
             .unzip();
-        mains.push(main_path.to_path_buf());
-        folders.push(folder_path.to_path_buf());
+        if let Some((main, _)) = mains
+            .iter_mut()
+            .zip(&folders)
+            .find(|(_, folder)| folder.as_path() == folder_path)
+        {
+            *main = main_path.to_path_buf();
+        } else {
+            mains.push(main_path.to_path_buf());
+            folders.push(folder_path.to_path_buf());
+        }
         self.main_paths = PathList::new(&mains);
         self.paths = PathList::new(&folders);
     }
@@ -135,6 +204,8 @@ impl WorktreePaths {
             .unzip();
         self.main_paths = PathList::new(&mains);
         self.paths = PathList::new(&folders);
+        self.delta_clones
+            .retain(|folder_path, _| folders.contains(folder_path));
     }
 
     /// Remove all pairs whose folder path matches the given path.
@@ -147,6 +218,7 @@ impl WorktreePaths {
             .unzip();
         self.main_paths = PathList::new(&mains);
         self.paths = PathList::new(&folders);
+        self.delta_clones.remove(folder_path);
     }
 }
 
@@ -1490,30 +1562,65 @@ impl WorktreeStore {
         }
     }
 
-    pub fn paths(&self, cx: &App) -> WorktreePaths {
+    pub(crate) fn paths(&self, cx: &App) -> WorktreePaths {
+        self.worktree_paths(true, cx)
+    }
+
+    pub(crate) fn git_paths(&self, cx: &App) -> WorktreePaths {
+        self.worktree_paths(false, cx)
+    }
+
+    fn worktree_paths(&self, group_by_source: bool, cx: &App) -> WorktreePaths {
+        let mut delta_clones = BTreeMap::new();
         let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
             .visible_worktrees(cx)
             .map(|worktree| {
                 let snapshot = worktree.read(cx).snapshot();
                 let folder_path = snapshot.abs_path().to_path_buf();
-                let main_path = snapshot
-                    .root_repo_common_dir()
-                    .filter(|dir| !crate::git_store::is_submodule_git_dir(dir))
-                    .map(|dir| crate::git_store::repo_identity_path(dir, snapshot.path_style()))
-                    .filter(|repo_path| {
-                        snapshot.root_repo_is_linked_worktree()
-                            || *repo_path == folder_path.as_path()
-                            || !folder_path.starts_with(*repo_path)
-                    })
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| folder_path.clone());
-                (main_path, folder_path)
+                let main_path =
+                    snapshot
+                        .root_repo_common_dir()
+                        .map_or(folder_path.as_path(), |common_dir| {
+                            crate::git_store::root_repository_group_path(
+                                &folder_path,
+                                common_dir,
+                                snapshot.root_repo_is_linked_worktree(),
+                                snapshot
+                                    .root_repo_source_common_dir()
+                                    .filter(|_| group_by_source)
+                                    .map(|source_common_dir| source_common_dir.as_ref()),
+                                snapshot.path_style(),
+                            )
+                        });
+                if let Some(common_dir) = snapshot.root_repo_common_dir()
+                    && main_path
+                        != crate::git_store::root_repository_group_path(
+                            &folder_path,
+                            common_dir,
+                            snapshot.root_repo_is_linked_worktree(),
+                            None,
+                            snapshot.path_style(),
+                        )
+                {
+                    delta_clones.insert(
+                        folder_path.clone(),
+                        DeltaClone {
+                            path: common_dir.to_path_buf(),
+                            is_linked_worktree: snapshot.root_repo_is_linked_worktree(),
+                            checkout_path: snapshot
+                                .root_repo_work_directory()
+                                .map(|work_directory| work_directory.to_path_buf()),
+                        },
+                    );
+                }
+                (main_path.to_path_buf(), folder_path)
             })
             .unzip();
 
         WorktreePaths {
             paths: PathList::new(&folders),
             main_paths: PathList::new(&mains),
+            delta_clones,
         }
     }
 }

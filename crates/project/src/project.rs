@@ -47,14 +47,14 @@ use crate::{
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
-    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate, delta_checkout_short_name,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
     worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
-pub use worktree_store::WorktreePaths;
+pub use worktree_store::{DeltaClone, WorktreePaths};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -447,6 +447,8 @@ pub enum Event {
     },
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
+    /// The remote server's `~/.agents/skills` changed.
+    GlobalSkillsChanged,
     BufferEdited {
         source: BufferEditSource,
     },
@@ -1763,6 +1765,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
+            remote_proto.add_entity_message_handler(Self::handle_global_skills_changed);
             remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto
@@ -5870,6 +5873,15 @@ impl Project {
         })
     }
 
+    async fn handle_global_skills_changed(
+        this: Entity<Self>,
+        _: TypedEnvelope<proto::GlobalSkillsChanged>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |_, cx| cx.emit(Event::GlobalSkillsChanged));
+        Ok(())
+    }
+
     async fn handle_telemetry_event(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::TelemetryEvent>,
@@ -6882,6 +6894,10 @@ impl Project {
 
     pub fn worktree_paths(&self, cx: &App) -> WorktreePaths {
         self.worktree_store.read(cx).paths(cx)
+    }
+
+    pub fn git_worktree_paths(&self, cx: &App) -> WorktreePaths {
+        self.worktree_store.read(cx).git_paths(cx)
     }
 
     pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
