@@ -426,11 +426,23 @@ pub fn all_schema_file_associations(
         .flat_map(|(_, glob_strings)| glob_strings.iter().map(SharedString::from));
     let jsonc_globs = extension_globs.chain(override_globs).collect::<Vec<_>>();
 
+    let is_wsl = is_wsl();
+    let mut tasks_file_matches = user_config_file_matches(paths::tasks_file(), is_wsl);
+    tasks_file_matches.push(
+        paths::local_tasks_file_relative_path()
+            .as_unix_str()
+            .to_string(),
+    );
+    let mut debug_file_matches = user_config_file_matches(paths::debug_scenarios_file(), is_wsl);
+    debug_file_matches.push(
+        paths::local_debug_file_relative_path()
+            .as_unix_str()
+            .to_string(),
+    );
+
     let mut file_associations = serde_json::json!([
         {
-            "fileMatch": [
-                schema_file_match(paths::settings_file()),
-            ],
+            "fileMatch": user_config_file_matches(paths::settings_file(), is_wsl),
             "url": format!("{SCHEMA_URI_PREFIX}settings"),
         },
         {
@@ -439,21 +451,15 @@ pub fn all_schema_file_associations(
             "url": format!("{SCHEMA_URI_PREFIX}project_settings"),
         },
         {
-            "fileMatch": [schema_file_match(paths::keymap_file())],
+            "fileMatch": user_config_file_matches(paths::keymap_file(), is_wsl),
             "url": format!("{SCHEMA_URI_PREFIX}keymap"),
         },
         {
-            "fileMatch": [
-                schema_file_match(paths::tasks_file()),
-                paths::local_tasks_file_relative_path()
-            ],
+            "fileMatch": tasks_file_matches,
             "url": format!("{SCHEMA_URI_PREFIX}tasks"),
         },
         {
-            "fileMatch": [
-                schema_file_match(paths::debug_scenarios_file()),
-                paths::local_debug_file_relative_path()
-            ],
+            "fileMatch": debug_file_matches,
             "url": format!("{SCHEMA_URI_PREFIX}debug_tasks"),
         },
         {
@@ -617,6 +623,43 @@ fn schema_file_match(path: &std::path::Path) -> String {
         .replace('\\', "/")
 }
 
+/// Returns the `fileMatch` globs for a user config file such as `settings.json`.
+///
+/// Under WSL, Zed for Windows can open the Windows config files through
+/// `/mnt/<drive>/Users/<user>/AppData/Roaming/Zed/`, while the JSON language
+/// server runs inside WSL and only knows the Linux config directory (`zed/`).
+/// The language server matches globs case-sensitively, so in that case we also
+/// match the Windows config directory.
+fn user_config_file_matches(path: &std::path::Path, is_wsl: bool) -> Vec<String> {
+    let mut file_matches = vec![schema_file_match(path)];
+    if is_wsl && let Some(file_name) = path.file_name() {
+        file_matches.push(format!(
+            "AppData/Roaming/{}/{}",
+            paths::APP_NAME,
+            file_name.to_string_lossy()
+        ));
+    }
+    file_matches
+}
+
+fn is_wsl() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        static IS_WSL: LazyLock<bool> = LazyLock::new(|| {
+            std::env::var_os("WSL_DISTRO_NAME").is_some()
+                || std::fs::read_to_string("/proc/version").is_ok_and(|version| {
+                    let version = version.to_lowercase();
+                    version.contains("microsoft") || version.contains("wsl")
+                })
+        });
+        *IS_WSL
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,6 +668,23 @@ mod tests {
     use language::FakeLspAdapter;
     use project::Project;
     use settings::SettingsStore;
+    use std::path::Path;
+
+    #[test]
+    fn test_user_config_file_matches_windows_config_dir_only_under_wsl() {
+        let settings_file = Path::new("/home/user/.config/zed/settings.json");
+        assert_eq!(
+            user_config_file_matches(settings_file, false),
+            vec!["zed/settings.json".to_string()],
+        );
+        assert_eq!(
+            user_config_file_matches(settings_file, true),
+            vec![
+                "zed/settings.json".to_string(),
+                "AppData/Roaming/Zed/settings.json".to_string(),
+            ],
+        );
+    }
 
     #[gpui::test]
     async fn test_project_settings_schema_includes_available_lsp_adapters(cx: &mut TestAppContext) {
