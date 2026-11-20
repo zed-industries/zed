@@ -13372,7 +13372,7 @@ mod tests {
             fn permission_description(&self, _: &Self) -> String {
                 "Run test command".into()
             }
-            async fn run(self, _: &Self) -> bool {
+            async fn run(self, _: &Self, _: &gpui::BackgroundExecutor) -> bool {
                 true
             }
         }

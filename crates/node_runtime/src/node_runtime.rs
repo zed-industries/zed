@@ -169,7 +169,7 @@ impl ManagedResourceCommand<Npm> for NodeBinaryPath {
         "Get the Node.js executable path".into()
     }
 
-    async fn run(self, npm: &Npm) -> Self::Output {
+    async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
         npm.runtime.binary_path().await
     }
 }
@@ -201,7 +201,7 @@ impl ManagedResourceCommand<Npm> for LatestNpmPackageVersion {
         )
     }
 
-    async fn run(self, npm: &Npm) -> Self::Output {
+    async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
         npm.runtime.npm_package_latest_version(&self.package).await
     }
 }
@@ -234,7 +234,7 @@ impl ManagedResourceCommand<Npm> for InstalledNpmPackageVersion {
         )
     }
 
-    async fn run(self, npm: &Npm) -> Self::Output {
+    async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
         npm.runtime
             .npm_package_installed_version(&self.directory, &self.package)
             .await
@@ -265,7 +265,7 @@ impl ManagedResourceCommand<Npm> for InstallNpmPackages {
         )
     }
 
-    async fn run(self, npm: &Npm) -> Self::Output {
+    async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
         let packages = self
             .packages
             .iter()

@@ -15,7 +15,9 @@ use futures::{
     FutureExt,
     future::{LocalBoxFuture, Shared},
 };
-use gpui::{App, AsyncApp, Context, EventEmitter, SharedString, Task, WeakEntity};
+use gpui::{
+    App, AsyncApp, BackgroundExecutor, Context, EventEmitter, SharedString, Task, WeakEntity,
+};
 use serde::{Deserialize, Serialize};
 use settings_content::ResourcePermissionsContent;
 pub use settings_content::{CommandPermissionRule, NpmResourceId, ResourceId, ResourcePermission};
@@ -92,7 +94,13 @@ pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
     /// Describe the specific operation for approval without performing it.
     fn permission_description(&self, resource: &Resource) -> String;
 
-    fn run(self, resource: &Resource) -> impl Future<Output = Self::Output>;
+    /// Await resource-using background work: the store releases its read guard
+    /// when this future completes or is dropped.
+    fn run(
+        self,
+        resource: &Resource,
+        executor: &BackgroundExecutor,
+    ) -> impl Future<Output = Self::Output>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -421,7 +429,7 @@ impl ManagedResourceStore {
             if permission != ResourcePermission::Allowed {
                 return Err(ResourceAccessError::CommandDenied);
             }
-            Ok(command.run(&resource).await)
+            Ok(command.run(&resource, cx.background_executor()).await)
         })
     }
 
@@ -829,7 +837,11 @@ mod tests {
             )
         }
 
-        async fn run(self, resource: &Counter<KIND>) -> Self::Output {
+        async fn run(
+            self,
+            resource: &Counter<KIND>,
+            executor: &BackgroundExecutor,
+        ) -> Self::Output {
             match self {
                 Self::Read => Ok(resource.value.load(SeqCst)),
                 Self::Add(value) => Ok(resource.value.fetch_add(value, SeqCst) + value),
@@ -839,7 +851,10 @@ mod tests {
                     value,
                 } => {
                     started.set(true);
-                    ready.await.map_err(|_| TestError::Cancelled)?;
+                    executor
+                        .spawn(ready)
+                        .await
+                        .map_err(|_| TestError::Cancelled)?;
                     Ok(resource.value.fetch_add(value, SeqCst) + value)
                 }
                 Self::Fail => Err(TestError::Command),
@@ -849,7 +864,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn acquisition_actions_are_lazy_and_return_resources(_cx: &mut TestAppContext) {
+    async fn acquisition_actions_are_lazy_and_return_resources(cx: &mut TestAppContext) {
         for available_value in [None, Some(17)] {
             let context = TestContext {
                 available_value,
@@ -862,13 +877,23 @@ mod tests {
             assert_eq!(context.obtain_count.get(), 0);
             let action = match acquisition {
                 ResourceAcquisition::Ready { resource, action } => {
-                    assert_eq!(TestCommand::Read.run(&resource).await, Ok(17));
+                    assert_eq!(
+                        TestCommand::Read
+                            .run(&resource, &cx.background_executor)
+                            .await,
+                        Ok(17)
+                    );
                     action.expect("optional update")
                 }
                 ResourceAcquisition::RequiresAction(action) => action,
             };
             let resource = action().await.expect("acquisition action");
-            assert_eq!(TestCommand::Read.run(&resource).await, Ok(41));
+            assert_eq!(
+                TestCommand::Read
+                    .run(&resource, &cx.background_executor)
+                    .await,
+                Ok(41)
+            );
             assert_eq!(context.obtain_count.get(), 1);
         }
     }
@@ -1730,7 +1755,7 @@ mod tests {
                 panic!("a conflicting resource must not request command approval")
             }
 
-            async fn run(self, _: &Self) {
+            async fn run(self, _: &Self, _: &BackgroundExecutor) {
                 panic!("a conflicting resource must not run commands")
             }
         }

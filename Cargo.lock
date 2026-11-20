@@ -11327,6 +11327,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures 0.3.34",
+ "gpui",
  "http_client",
  "log",
  "managed_resources",

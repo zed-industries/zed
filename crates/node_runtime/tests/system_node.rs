@@ -79,6 +79,7 @@ fn configured_runtime_keeps_node_available_when_npm_is_missing() -> Result<()> {
 #[test]
 fn managed_npm_obtains_and_installs_packages() -> Result<()> {
     if env::var_os(CHILD).is_some() {
+        let executor = gpui::BackgroundExecutor::new(Arc::new(gpui::TestDispatcher::new(0)));
         let directory = env::current_dir()?;
         paths::set_custom_data_dir(&directory.join("data").to_string_lossy());
         return smol::block_on(async {
@@ -101,14 +102,16 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
                 anyhow::bail!("configured Node must be usable without npm");
             };
             assert_eq!(
-                node_runtime::NodeBinaryPath.run(&resource).await?,
+                node_runtime::NodeBinaryPath
+                    .run(&resource, &executor)
+                    .await?,
                 directory.join("node")
             );
             assert!(
                 node_runtime::LatestNpmPackageVersion {
                     package: "test-package".into()
                 }
-                .run(&resource)
+                .run(&resource, &executor)
                 .await
                 .is_err()
             );
@@ -153,7 +156,7 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
             ] {
                 assert!(description.contains(detail), "{description}");
             }
-            install().run(&npm).await?;
+            install().run(&npm, &executor).await?;
             let arguments = fs::read_to_string(directory.join("npm.args"))?;
             let arguments = arguments.lines().collect::<Vec<_>>();
             assert!(
@@ -180,7 +183,7 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
                 "#!/bin/sh\necho 'installation failed' >&2\nexit 7\n",
             )?;
             let error = install()
-                .run(&npm)
+                .run(&npm, &executor)
                 .await
                 .expect_err("npm failure propagates");
             assert!(error.to_string().contains("installation failed"));
@@ -210,6 +213,7 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
 #[test]
 fn managed_npm_downloads_only_when_allowed() -> Result<()> {
     if env::var_os(CHILD).is_some() {
+        let executor = gpui::BackgroundExecutor::new(Arc::new(gpui::TestDispatcher::new(0)));
         let directory = env::current_dir()?;
         let data_directory = directory.join("data");
         fs::create_dir(&data_directory)?;
@@ -292,7 +296,7 @@ fn managed_npm_downloads_only_when_allowed() -> Result<()> {
                 directory: package_directory,
                 packages: vec![("@example/server".into(), "1.2.3".into())],
             }
-            .run(&npm)
+            .run(&npm, &executor)
             .await?;
             let arguments = fs::read_to_string(installation.join("bin/npm.args"))?;
             assert!(arguments.lines().any(|argument| argument == "install"));

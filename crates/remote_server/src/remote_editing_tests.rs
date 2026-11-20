@@ -6520,7 +6520,7 @@ async fn managed_resource_approvals_reach_the_client(
         fn permission_description(&self, _: &Self) -> String {
             "unused".into()
         }
-        async fn run(self, _: &Self) {
+        async fn run(self, _: &Self, _: &gpui::BackgroundExecutor) {
             panic!("management did not return a resource")
         }
     }
