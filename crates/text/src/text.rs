@@ -744,6 +744,24 @@ impl FromIterator<char> for LineIndent {
     }
 }
 
+/// Computes the visual column of a line's leading indentation given an iterator of characters
+/// and the tab size. Tabs advance the column to the next tab stop multiple of `tab_size`.
+pub fn visual_column_for_text<I>(text: I, tab_size: u32) -> u32
+where
+    I: IntoIterator<Item = char>,
+{
+    let mut col: u32 = 0;
+    let tab_size = tab_size.max(1);
+    for c in text {
+        match c {
+            ' ' => col += 1,
+            '\t' => col += tab_size - (col % tab_size),
+            _ => break,
+        }
+    }
+    col
+}
+
 impl Buffer {
     pub fn new(replica_id: ReplicaId, remote_id: BufferId, base_text: impl Into<String>) -> Buffer {
         let mut base_text = base_text.into();
