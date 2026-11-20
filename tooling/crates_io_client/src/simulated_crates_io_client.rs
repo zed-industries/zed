@@ -289,6 +289,7 @@ impl CratesIoClient for SimulatedCratesIoClient {
                 let matches_owner = query
                     .keyword
                     .as_ref()
+                    .filter(|keyword| !keyword.is_empty())
                     .map(|keyword| has_value(&krate.keywords, keyword))
                     .or_else(|| {
                         query

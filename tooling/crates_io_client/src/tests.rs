@@ -226,6 +226,8 @@ fn test_list_crates_filter_precedence() -> anyhow::Result<()> {
     let team_id = client.test_team_owner(&team_owned, "github:zed-industries:crates-io")?;
     for (keyword, user_id, expected) in [
         (None, Some(client.token_user()), &user_owned),
+        (Some(""), Some(client.token_user()), &user_owned),
+        (Some(""), None, &team_owned),
         (Some("keyword"), Some(client.token_user()), &keyword_match),
         (Some("keyword"), None, &keyword_match),
     ] {
@@ -240,6 +242,13 @@ fn test_list_crates_filter_precedence() -> anyhow::Result<()> {
             [expected]
         );
     }
+    let listed = smol::block_on(client.list_crates(&CrateListQuery {
+        keyword: Some(" ".into()),
+        user_id: Some(client.token_user()),
+        team_id: Some(team_id),
+        ..Default::default()
+    }))?;
+    assert!(listed.is_empty());
     Ok(())
 }
 
