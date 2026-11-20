@@ -141,14 +141,14 @@ fn write_lines_numbered<'a>(
     }
 }
 
-/// Read a file under the global skills directory directly via the filesystem,
-/// bypassing project/worktree resolution. Used for skill resources that live
-/// outside any worktree.
+/// Read a file that lives outside any worktree but has been explicitly
+/// allowlisted for the agent. Used for skill resources and MCP downloads that
+/// live outside any worktree.
 ///
-/// Skill resources are expected to be plain text (Markdown, scripts, configs).
+/// Files are expected to be plain text (Markdown, scripts, configs).
 /// Image rendering, the action log, and the buffer-backed outline path are
 /// intentionally not exercised here — those are project concerns.
-fn read_global_skill_file(
+fn read_external_file(
     canonical_path: &Path,
     content: String,
     start_line: Option<u32>,
@@ -190,7 +190,7 @@ fn read_global_skill_file(
 
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_project_path,
+    resolve_mcp_downloads_path, resolve_project_path,
 };
 use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, outline};
 
@@ -205,7 +205,9 @@ use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, outline
 /// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
 ///   Image files are returned as visual content that you can analyze directly.
 ///
-/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+/// The only paths supported outside the project are `~/.agents/skills` (or a
+/// descendant, for global agent skills) and the thread's MCP downloads
+/// directory (absolute paths reported by MCP resource downloads).
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
@@ -319,7 +321,7 @@ impl AgentTool for ReadFileTool {
                     .load(&skill_path, cx)
                     .await
                     .map_err(tool_content_err)?;
-                return read_global_skill_file(
+                return read_external_file(
                     &skill_path,
                     content,
                     input.start_line,
@@ -327,6 +329,30 @@ impl AgentTool for ReadFileTool {
                     &input.path,
                     &event_stream,
                 );
+            }
+
+            // Fast path: if the model passes a path that resolves under this
+            // thread's MCP downloads directory, read it directly via the
+            // filesystem. MCP resource downloads live outside any worktree, so
+            // the standard project-path machinery would refuse them.
+            if let Ok(downloads_dir) = event_stream.mcp_downloads_dir(cx) {
+                if let Some(downloads_path) =
+                    resolve_mcp_downloads_path(Path::new(&input.path), &downloads_dir, fs.as_ref())
+                        .await
+                {
+                    let content = fs
+                        .load(&downloads_path)
+                        .await
+                        .map_err(tool_content_err)?;
+                    return read_external_file(
+                        &downloads_path,
+                        content,
+                        input.start_line,
+                        input.end_line,
+                        &input.path,
+                        &event_stream,
+                    );
+                }
             }
 
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
