@@ -610,16 +610,7 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
 
 #[gpui::test]
 async fn test_system_prompt(cx: &mut TestAppContext) {
-    let ThreadTest {
-        fake,
-        thread,
-        project_context,
-        ..
-    } = setup(cx, TestModel::Fake).await;
-
-    project_context.update(cx, |project_context, _cx| {
-        project_context.shell = "test-shell".into()
-    });
+    let ThreadTest { fake, thread, .. } = setup(cx, TestModel::Fake).await;
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread
         .update(cx, |thread, cx| {
@@ -627,31 +618,125 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
         })
         .unwrap();
     cx.run_until_parked();
-    let mut pending_completions = fake.pending_completions();
+    let system_prompt = pending_system_prompt(&fake);
     assert_eq!(
-        pending_completions.len(),
-        1,
-        "unexpected pending completions: {:?}",
-        pending_completions
+        system_prompt_value(&system_prompt, "Operating System"),
+        Some(std::env::consts::OS),
     );
+    let local_shell = util::shell::ShellKind::new(
+        util::get_default_system_shell_preferring_bash(),
+        cfg!(windows),
+    );
+    assert_eq!(
+        system_prompt_value(&system_prompt, "Default Shell"),
+        Some(local_shell.to_string().as_str()),
+    );
+    assert!(system_prompt.contains("## Fixing Diagnostics"));
+}
 
-    let pending_completion = pending_completions.pop().unwrap();
-    assert_eq!(pending_completion.messages[0].role, Role::System);
+#[gpui::test]
+async fn test_system_prompt_uses_remote_terminal_environment(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fake_model_provider = init_test(cx);
+    for context in [&mut *cx, &mut *server_cx] {
+        context.update(|cx| {
+            let version = release_channel::AppVersion::global(cx);
+            release_channel::init(version, cx);
+        });
+    }
 
-    let system_message = &pending_completion.messages[0];
-    let MessageContent::Text(system_prompt) = &system_message.content[0] else {
-        panic!("Expected text content");
+    let (options, server_session, connect_guard) = remote::RemoteClient::fake_server(cx, server_cx);
+    cx.update(|cx| {
+        remote::MockConnection::set_path_style(&options, util::paths::PathStyle::Unix, cx);
+        remote::MockConnection::set_default_system_shell(&options, "/usr/bin/fish", cx);
+    });
+    let server = server_cx.new(|_| ());
+    server_session
+        .add_request_handler::<client::proto::Ping, _, _, _>(server.downgrade(), |_, _, _| async {
+            Ok(client::proto::Ack {})
+        });
+    server_session.add_request_handler::<client::proto::ShutdownRemoteServer, _, _, _>(
+        server.downgrade(),
+        |_, _, _| async { Ok(client::proto::Ack {}) },
+    );
+    drop(connect_guard);
+
+    let remote_client = remote::RemoteClient::connect_mock(options, cx).await;
+    let fs = FakeFs::new(cx.executor());
+    let local_project = Project::test(fs.clone(), [], cx).await;
+    let remote_project = cx.update(|cx| {
+        let local_project = local_project.read(cx);
+        let node_runtime = local_project
+            .node_runtime()
+            .expect("test project has a node runtime");
+        Project::remote(
+            remote_client,
+            local_project.client(),
+            node_runtime.clone(),
+            local_project.user_store(),
+            local_project.languages().clone(),
+            fs,
+            false,
+            cx,
+        )
+    });
+
+    let project_context = cx.new(|_| ProjectContext::default());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(remote_project.read(cx).context_server_store(), cx));
+    let thread = cx.new(|cx| {
+        Thread::new(
+            remote_project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(fake_model_provider.model("fake")),
+            cx,
+        )
+    });
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello"], cx)
+        })
+        .expect("the fake model is ready");
+    cx.run_until_parked();
+
+    let system_prompt = pending_system_prompt(&fake_model_provider);
+    let operating_system = system_prompt_value(&system_prompt, "Operating System");
+    let shell = system_prompt_value(&system_prompt, "Default Shell")
+        .and_then(|shell| shell.rsplit('/').next());
+    assert_eq!((operating_system, shell), (Some("linux"), Some("fish")));
+
+    drop(thread);
+    drop(remote_project);
+    release_dropped_entities(cx);
+}
+
+fn pending_system_prompt(provider: &FakeLanguageModelProvider) -> String {
+    let requests = provider.pending_completions();
+    let [request] = requests.as_slice() else {
+        panic!("expected one pending model request, got {}", requests.len());
     };
-    assert!(
-        system_prompt.contains("test-shell"),
-        "unexpected system message: {:?}",
-        system_message
-    );
-    assert!(
-        system_prompt.contains("## Fixing Diagnostics"),
-        "unexpected system message: {:?}",
-        system_message
-    );
+    request
+        .messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .flat_map(|message| &message.content)
+        .filter_map(|content| match content {
+            MessageContent::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn system_prompt_value<'a>(prompt: &'a str, key: &str) -> Option<&'a str> {
+    prompt
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find_map(|(name, value)| (name.trim() == key).then(|| value.trim()))
 }
 
 #[gpui::test]
