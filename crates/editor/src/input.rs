@@ -1209,8 +1209,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.try_insert_snippet_at_selections(action, window, cx)
-            .log_err();
+        // A transaction makes the snippet count as an edit, like typed text.
+        let mut result = Ok(());
+        self.transact(window, cx, |editor, window, cx| {
+            result = editor.try_insert_snippet_at_selections(action, window, cx);
+        });
+        result.log_err();
     }
 
     pub fn toggle_block_comments(
