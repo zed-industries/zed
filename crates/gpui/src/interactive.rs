@@ -1,6 +1,6 @@
 use crate::{
     BackGestureEvent, Bounds, Capslock, Context, Empty, IntoElement, Keystroke, LongPressEvent,
-    Modifiers, Pixels, Point, Render, TouchDragEvent, Window, point, seal::Sealed,
+    Modifiers, Pixels, Point, Render, TouchDragEvent, Window, point, px, seal::Sealed,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -642,43 +642,31 @@ impl ScrollDelta {
     /// Combines two scroll deltas into one.
     /// If the signs of the deltas are the same (both positive or both negative),
     /// the deltas are added together. If the signs are opposite, the second delta
-    /// (other) is used, effectively overriding the first delta.
+    /// (other) is used, effectively overriding the first delta. A zero component
+    /// has no direction, so it never overrides the other delta.
     pub fn coalesce(self, other: ScrollDelta) -> ScrollDelta {
         match (self, other) {
-            (ScrollDelta::Pixels(a), ScrollDelta::Pixels(b)) => {
-                let x = if a.x.signum() == b.x.signum() {
-                    a.x + b.x
-                } else {
-                    b.x
-                };
-
-                let y = if a.y.signum() == b.y.signum() {
-                    a.y + b.y
-                } else {
-                    b.y
-                };
-
-                ScrollDelta::Pixels(point(x, y))
-            }
+            (ScrollDelta::Pixels(a), ScrollDelta::Pixels(b)) => ScrollDelta::Pixels(point(
+                px(coalesce_axis(a.x.as_f32(), b.x.as_f32())),
+                px(coalesce_axis(a.y.as_f32(), b.y.as_f32())),
+            )),
 
             (ScrollDelta::Lines(a), ScrollDelta::Lines(b)) => {
-                let x = if a.x.signum() == b.x.signum() {
-                    a.x + b.x
-                } else {
-                    b.x
-                };
-
-                let y = if a.y.signum() == b.y.signum() {
-                    a.y + b.y
-                } else {
-                    b.y
-                };
-
-                ScrollDelta::Lines(point(x, y))
+                ScrollDelta::Lines(point(coalesce_axis(a.x, b.x), coalesce_axis(a.y, b.y)))
             }
 
             _ => other,
         }
+    }
+}
+
+// `f32::signum` treats signed zeros as directions, but a zero component means no
+// motion and must not discard the delta accumulated on that axis.
+fn coalesce_axis(accumulated: f32, incoming: f32) -> f32 {
+    if accumulated == 0.0 || incoming == 0.0 || accumulated.signum() == incoming.signum() {
+        accumulated + incoming
+    } else {
+        incoming
     }
 }
 
@@ -900,7 +888,8 @@ mod test {
 
     use crate::{
         self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, Modifiers, ParentElement, Render, TestAppContext, Window, div,
+        KeyBinding, Keystroke, Modifiers, ParentElement, Render, ScrollDelta, TestAppContext,
+        Window, div, point, px,
     };
 
     struct TestView {
@@ -931,6 +920,35 @@ mod test {
                     ),
             )
         }
+    }
+
+    #[test]
+    fn test_scroll_delta_coalesce_zero_component_has_no_direction() {
+        let line_height = px(1.);
+        let down = ScrollDelta::Lines(point(0., -3.));
+        let right = ScrollDelta::Lines(point(1., 0.));
+        assert_eq!(
+            down.coalesce(right).pixel_delta(line_height),
+            point(px(1.), px(-3.))
+        );
+
+        let up = ScrollDelta::Pixels(point(px(-0.), px(30.)));
+        let left = ScrollDelta::Pixels(point(px(-20.), px(-0.)));
+        assert_eq!(
+            up.coalesce(left).pixel_delta(line_height),
+            point(px(-20.), px(30.))
+        );
+
+        assert_eq!(
+            down.coalesce(down).pixel_delta(line_height),
+            point(px(0.), px(-6.))
+        );
+
+        let up = ScrollDelta::Lines(point(0., 3.));
+        assert_eq!(
+            down.coalesce(up).pixel_delta(line_height),
+            point(px(0.), px(3.))
+        );
     }
 
     #[gpui::test]
