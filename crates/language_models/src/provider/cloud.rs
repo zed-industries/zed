@@ -486,6 +486,22 @@ struct ZedAiConfiguration {
 pub mod test_support {
     use super::*;
 
+    pub fn update_models(
+        provider: &CloudLanguageModelProvider,
+        response: cloud_llm_client::ListModelsResponse,
+        cx: &mut App,
+    ) {
+        provider
+            .state
+            .read(cx)
+            .provider
+            .clone()
+            .update(cx, |provider, cx| {
+                provider.update_models(response);
+                cx.notify();
+            });
+    }
+
     pub fn young_account_configuration() -> AnyElement {
         ZedAiConfiguration {
             is_connected: true,
@@ -518,7 +534,7 @@ fn zed_ai_description(
             "Your Pro trial includes $5 of GPT Luna and unlimited edit predictions for 14 days from trial start."
         }
         Some(Plan::ZedStudent) => {
-            "You have access to Zed's hosted models through your Student subscription."
+            "Your Student subscription includes hosted AI access to GPT Luna."
         }
         Some(Plan::ZedBusiness) => {
             if is_zed_model_provider_enabled {
