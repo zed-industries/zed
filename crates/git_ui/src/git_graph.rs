@@ -2434,12 +2434,12 @@ impl GitGraph {
 
         let message_task = self.load_selected_commit_message(cx, &sha, repository);
 
-        let diff_task = repository.update(cx, |repo, cx| {
+        let load_diff = repository.update(cx, |repo, cx| {
             repo.load_commit_diff(sha.to_string(), false, cx)
         });
 
         let diff_task = cx.spawn(async move |this, cx| {
-            if let Ok(diff) = diff_task.await {
+            if let Ok(diff) = load_diff.await {
                 this.update(cx, |this, cx| {
                     let stats = compute_diff_stats(&diff);
                     if let Some(details) = this.selected_commit_details.as_mut() {
