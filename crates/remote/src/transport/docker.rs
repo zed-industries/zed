@@ -463,10 +463,12 @@ impl DockerExecConnection {
         chown_command.arg("exec");
         chown_command.arg(connection_options.container_id);
         chown_command.arg("chown");
-        chown_command.arg(format!(
-            "{}:{}",
-            connection_options.remote_user, connection_options.remote_user,
-        ));
+        chown_command.arg(
+            connection_options
+                .remote_user
+                .split_once(':')
+                .map_or(connection_options.remote_user.as_str(), |(user, _)| user),
+        );
         chown_command.arg(&dst_path);
 
         let output = chown_command.output().await?;

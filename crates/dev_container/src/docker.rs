@@ -271,6 +271,24 @@ impl Docker {
         command
     }
 
+    fn create_resolve_user_ids_command(&self, image: &str, user: &str) -> Command {
+        let mut command = Command::new(&self.docker_cli);
+        command.args(&[
+            "run",
+            "--rm",
+            "--user",
+            user,
+            "--workdir",
+            "/",
+            "--entrypoint",
+            "/bin/sh",
+            image,
+            "-c",
+            PRINT_USER_IDS_SCRIPT,
+        ]);
+        command
+    }
+
     fn create_docker_compose_config_command(&self, config_files: &Vec<PathBuf>) -> Command {
         let mut command = Command::new(&self.docker_cli);
         command.arg("compose");
@@ -448,6 +466,18 @@ impl DockerClient for Docker {
         })
     }
 
+    async fn resolve_user_ids(
+        &self,
+        image: &str,
+        user: &str,
+    ) -> Result<UserIds, DevContainerError> {
+        let command = self.create_resolve_user_ids_command(image, user);
+        evaluate_json_command(command).await?.ok_or_else(|| {
+            log::error!("Resolving IDs for user {user} in image {image} produced no output");
+            DevContainerError::CommandFailed(self.docker_cli.clone())
+        })
+    }
+
     fn docker_cli(&self) -> String {
         self.docker_cli.clone()
     }
@@ -484,6 +514,15 @@ fn parse_find_process_output(raw: &str) -> Result<Option<DockerPs>, DevContainer
     }
 }
 
+const PRINT_USER_IDS_SCRIPT: &str =
+    r#"uid=$(id -u) && gid=$(id -g) && echo "{\"uid\": $uid, \"gid\": $gid}""#;
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+pub(crate) struct UserIds {
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
+}
+
 #[async_trait]
 pub(crate) trait DockerClient {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError>;
@@ -510,10 +549,24 @@ pub(crate) trait DockerClient {
         &self,
         filters: Vec<String>,
     ) -> Result<Option<DockerPs>, DevContainerError>;
+    /// Look up the numeric UID and GID when running as `user` inside of an `image`.
+    async fn resolve_user_ids(&self, image: &str, user: &str)
+    -> Result<UserIds, DevContainerError>;
     fn supports_compose_buildkit(&self) -> bool;
     /// This operates as an escape hatch for more custom uses of the docker API.
     /// See DevContainerManifest::create_docker_build as an example
     fn docker_cli(&self) -> String;
+    /// Notify the client that `image` was built from `base_image`, with the usernames
+    /// in `remapped_users` remapped to new user/group IDs.
+    /// Needed so that fake/test clients can track user IDs through image builds.
+    #[cfg(test)]
+    fn notify_image_build(
+        &self,
+        _base_image: &str,
+        _image: &str,
+        _remapped_users: &[(&str, UserIds)],
+    ) {
+    }
 }
 
 fn deserialize_environment<'de, D>(
@@ -886,6 +939,33 @@ mod test {
                 OsStr::new("inspect"),
                 OsStr::new("--format={{json . }}"),
                 OsStr::new(given_id)
+            ]
+        )
+    }
+
+    #[test]
+    fn should_create_resolve_user_ids_command() {
+        let docker = Docker {
+            docker_cli: "podman".to_string(),
+            has_buildx: false,
+        };
+
+        let command = docker.create_resolve_user_ids_command("image", "user:group");
+
+        assert_eq!(
+            command.get_args().collect::<Vec<&OsStr>>(),
+            vec![
+                OsStr::new("run"),
+                OsStr::new("--rm"),
+                OsStr::new("--user"),
+                OsStr::new("user:group"),
+                OsStr::new("--workdir"),
+                OsStr::new("/"),
+                OsStr::new("--entrypoint"),
+                OsStr::new("/bin/sh"),
+                OsStr::new("image"),
+                OsStr::new("-c"),
+                OsStr::new(super::PRINT_USER_IDS_SCRIPT),
             ]
         )
     }
