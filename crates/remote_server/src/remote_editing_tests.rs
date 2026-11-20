@@ -66,7 +66,8 @@ use remote::{MOCK_STDIO_FRAME_HEX, command::RemoteCommand};
 use rpc::{ErrorCode, ErrorExt as _, proto};
 use serde_json::json;
 use settings::{
-    Settings, SettingsLocation, SettingsStore, SplicingVec, initial_server_settings_content,
+    LocalSettingsKind, LocalSettingsPath, Settings, SettingsLocation, SettingsStore, SplicingVec,
+    WorktreeId, initial_server_settings_content,
 };
 use smol::stream::StreamExt;
 use std::{
@@ -1436,6 +1437,95 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             [ConfiguredLanguageServer::new("override-rust-analyzer")]
         )
     });
+}
+
+#[gpui::test]
+async fn test_remote_local_settings_survive_new_worktree(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".editorconfig": "root = true\n[*]\nindent_style = tab\ntab_width = 2\n",
+                ".zed": {
+                    "settings.json": r#"{"preferred_line_length": 42}"#
+                },
+                "src": {
+                    "lib.rs": "fn one() -> usize {\n\t1\n}\n"
+                }
+            },
+            "outside.rs": "fn two() -> usize { 2 }",
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        for worktree_id in [1, 2] {
+            store
+                .set_local_settings(
+                    WorktreeId::from_usize(worktree_id),
+                    LocalSettingsPath::InWorktree(Arc::from(rel_path("src"))),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"preferred_line_length": 7}"#),
+                    cx,
+                )
+                .unwrap();
+        }
+    });
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    assert_eq!(worktree_id, WorktreeId::from_usize(1));
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let buffer_settings = |cx: &TestAppContext| {
+        cx.read(|cx| {
+            let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
+            (
+                settings.tab_size.get(),
+                settings.hard_tabs,
+                settings.preferred_line_length,
+            )
+        })
+    };
+    assert_eq!(buffer_settings(cx), (2, true, 42));
+
+    let server_worktree_store =
+        headless.read_with(server_cx, |headless, _| headless.worktree_store.clone());
+    let (outside_worktree, _) = server_worktree_store
+        .update(server_cx, |worktree_store, cx| {
+            worktree_store.find_or_create_worktree(path!("/code/outside.rs"), false, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let outside_worktree_id = outside_worktree.read_with(server_cx, |worktree, _| worktree.id());
+    assert_eq!(outside_worktree_id, WorktreeId::from_usize(2));
+
+    assert_eq!(
+        cx.read(|cx| {
+            cx.global::<SettingsStore>()
+                .local_settings(outside_worktree_id)
+                .count()
+        }),
+        0
+    );
+    assert_eq!(buffer_settings(cx), (2, true, 42));
 }
 
 #[gpui::test]

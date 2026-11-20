@@ -24,7 +24,7 @@ use gpui::{
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, FakeLspAdapter, Language,
     LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
-    language_settings::{Formatter, FormatterList},
+    language_settings::{Formatter, FormatterList, LanguageSettings},
     rust_lang, tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, LanguageServerId, OneOf};
@@ -4348,6 +4348,130 @@ async fn test_local_settings(
             &[(rel_path("a").into(), Some(true))],
         )
     });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_local_settings_after_host_adds_worktree_and_reconnects(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/dir"),
+            json!({
+                ".editorconfig": "root = true\n[*]\nindent_style = tab\ntab_width = 2\n",
+                "a": {
+                    ".zed": {
+                        "settings.json": r#"{ "preferred_line_length": 42 }"#
+                    },
+                    "a.txt": "a-contents",
+                },
+            }),
+        )
+        .await;
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/outside"),
+            json!({ "b.txt": "b-contents", "c.txt": "c-contents" }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    executor.run_until_parked();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let buffer_b = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("a/a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    let guest_settings = |cx: &TestAppContext| {
+        cx.read(|cx| {
+            let settings = LanguageSettings::for_buffer(buffer_b.read(cx), cx);
+            (
+                settings.tab_size.get(),
+                settings.hard_tabs,
+                settings.preferred_line_length,
+            )
+        })
+    };
+    assert_eq!(guest_settings(cx_b), (2, true, 42));
+
+    project_a
+        .update(cx_a, |project, cx| {
+            project.find_or_create_worktree(path!("/outside/b.txt"), false, cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    assert_eq!(
+        project_b.read_with(cx_b, |project, cx| project.worktrees(cx).count()),
+        2
+    );
+    assert_eq!(guest_settings(cx_b), (2, true, 42));
+
+    server.forbid_connections();
+    server.disconnect_client(client_a.peer_id().unwrap());
+    executor.advance_clock(RECEIVE_TIMEOUT);
+    client_a
+        .fs()
+        .remove_file(
+            path!("/dir/.editorconfig").as_ref(),
+            RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    server.allow_connections();
+    client_a
+        .connect(false, &cx_a.to_async())
+        .await
+        .into_response()
+        .unwrap();
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, cx| assert!(!project.is_disconnected(cx)));
+    assert_eq!(guest_settings(cx_b), (4, false, 80));
+
+    client_a
+        .fs()
+        .insert_file(
+            path!("/dir/a/.zed/settings.json"),
+            Vec::from(r#"{ "preferred_line_length": 43 }"#),
+        )
+        .await;
+    executor.run_until_parked();
+    assert_eq!(guest_settings(cx_b), (4, false, 43));
+
+    project_a
+        .update(cx_a, |project, cx| {
+            project.find_or_create_worktree(path!("/outside/c.txt"), false, cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    assert_eq!(
+        project_b.read_with(cx_b, |project, cx| project.worktrees(cx).count()),
+        3
+    );
+    assert_eq!(guest_settings(cx_b), (4, false, 43));
 }
 
 #[gpui::test(iterations = 10)]
