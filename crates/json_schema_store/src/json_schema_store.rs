@@ -418,7 +418,7 @@ pub fn all_schema_file_associations(
         .into_iter()
         .flatten()
         // Path suffixes can be entire file names or just their extensions.
-        .flat_map(|path_suffix| [format!("*.{path_suffix}").into(), path_suffix]);
+        .flat_map(|path_suffix| [format!("*.{path_suffix}").into(), path_suffix.into()]);
     let override_globs = AllLanguageSettings::get(path, cx)
         .file_types
         .get(JSONC_LANGUAGE_NAME)

@@ -15,10 +15,10 @@ pub use grammar::{
 pub use highlight_map::{CaptureId, HighlightId, HighlightMap};
 pub use language_config::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, DecreaseIndentConfig,
-    JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
-    OrderedListConfig, Override, SoftWrap, TaskListConfig, WrapCharactersConfig, default_true,
-    deserialize_regex, deserialize_regex_vec, regex_json_schema, regex_vec_json_schema,
-    serialize_regex,
+    FirstLinePattern, JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride,
+    LanguageMatcher, OrderedListConfig, Override, PathSuffix, SoftWrap, TaskListConfig,
+    WrapCharactersConfig, default_true, deserialize_regex, deserialize_regex_vec,
+    regex_json_schema, regex_vec_json_schema, serialize_regex,
 };
 
 pub mod code_label;
