@@ -11,6 +11,7 @@ use gpui::UnderlineStyle;
 use language::LanguageName;
 
 use log::Level;
+pub use mermaid::{MERMAID_ZOOM_STEP, MermaidDiagramImage, mermaid_zoom_ticks};
 use mermaid::{
     MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
 };
@@ -56,11 +57,12 @@ use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
 
-const MERMAID_MAX_ZOOM: f32 = 2.0;
+pub const MERMAID_MAX_ZOOM: f32 = 2.0;
 /// Zoom levels within this distance of 1.0 snap back to exactly 1.0 so users
 /// can easily return to the default size.
 const MERMAID_ZOOM_SNAP_TOLERANCE: f32 = 0.05;
-const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
+/// How long zoom changes must settle before a diagram is re-rasterized.
+pub const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
@@ -72,6 +74,9 @@ type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut Ap
 /// Invoked when a mermaid diagram's zoom level changes (via scroll gesture or
 /// the reset button), so a scroll container can keep the diagram anchored.
 pub type MermaidZoomCallback = Rc<dyn Fn(&mut Window, &mut App)>;
+/// Invoked with a mermaid diagram's source offset when the user clicks its
+/// expand button, so the host can show the diagram in a larger view.
+pub type MermaidExpandCallback = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 
 #[derive(Clone, Copy, Default)]
 pub struct BlockQuoteKindColors {
@@ -929,17 +934,41 @@ impl Markdown {
     }
 
     /// Re-rasterizes a single mermaid diagram at exactly the scale it is
-    /// displayed at, reusing the cached parsed SVG so that neither mermaid
-    /// layout nor SVG parsing is re-run. While the new raster is pending, the
-    /// previous image keeps being displayed.
-    fn rerasterize_mermaid_diagram(&mut self, source_offset: usize, cx: &mut Context<Self>) {
+    /// displayed at inline, reusing the cached parsed SVG so that neither
+    /// mermaid layout nor SVG parsing is re-run. While the new raster is
+    /// pending, the previous image keeps being displayed.
+    ///
+    /// Hosts that displayed the diagram at another zoom via
+    /// [`Self::rasterize_mermaid_diagram_at`] call this when done, so the
+    /// inline diagram is sharp again.
+    pub fn rerasterize_mermaid_diagram(&mut self, source_offset: usize, cx: &mut Context<Self>) {
+        let zoom = self.mermaid_zoom_level(source_offset);
+        self.rasterize_mermaid_diagram_at(source_offset, zoom, cx);
+    }
+
+    /// Re-rasterizes a mermaid diagram for display at `zoom` (relative to its
+    /// natural size), for hosts showing it outside the inline preview, such
+    /// as in an expanded view. The inline diagram keeps its own zoom and is
+    /// drawn from this raster, scaled, until it is re-rasterized.
+    pub fn rasterize_mermaid_diagram_at(
+        &mut self,
+        source_offset: usize,
+        zoom: f32,
+        cx: &mut Context<Self>,
+    ) {
         let Some(diagram) = self.parsed_markdown.mermaid_diagrams.get(&source_offset) else {
             return;
         };
         let contents = diagram.contents.clone();
-        let zoom = self.mermaid_zoom_level(source_offset);
         self.mermaid_state.rerasterize_diagram(&contents, zoom, cx);
         cx.notify();
+    }
+
+    /// The most recent raster of a rendered mermaid diagram, or `None` if the
+    /// diagram no longer exists, hasn't rendered yet, or failed to render.
+    pub fn mermaid_diagram_image(&self, source_offset: usize) -> Option<MermaidDiagramImage> {
+        let diagram = self.parsed_markdown.mermaid_diagrams.get(&source_offset)?;
+        self.mermaid_state.diagram_image(&diagram.contents)
     }
 
     fn clear_code_block_scroll_handles(&mut self) {
@@ -1818,6 +1847,7 @@ pub struct MarkdownElement {
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
     on_mermaid_zoom: Option<MermaidZoomCallback>,
+    on_mermaid_expand: Option<MermaidExpandCallback>,
     image_resolver: Option<Box<dyn Fn(&str, &App) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
@@ -1845,6 +1875,7 @@ impl MarkdownElement {
             on_source_click: None,
             on_checkbox_toggle: None,
             on_mermaid_zoom: None,
+            on_mermaid_expand: None,
             image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
@@ -1937,6 +1968,19 @@ impl MarkdownElement {
     /// position anchored while it grows or shrinks.
     pub fn on_mermaid_zoom(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_mermaid_zoom = Some(Rc::new(handler));
+        self
+    }
+
+    /// Shows an expand button on rendered mermaid diagrams, which invokes
+    /// `handler` with the diagram's source offset when clicked. Hosts use this
+    /// to show the diagram in a larger view; see
+    /// [`Markdown::mermaid_diagram_image`] and
+    /// [`Markdown::rasterize_mermaid_diagram_at`].
+    pub fn on_mermaid_expand(
+        mut self,
+        handler: impl Fn(usize, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_mermaid_expand = Some(Rc::new(handler));
         self
     }
 
@@ -2875,6 +2919,7 @@ impl Element for MarkdownElement {
                                         zoom,
                                         copy_button_visibility,
                                         self.on_mermaid_zoom.clone(),
+                                        self.on_mermaid_expand.clone(),
                                         window,
                                         cx,
                                     ),

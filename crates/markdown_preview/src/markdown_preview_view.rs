@@ -54,6 +54,7 @@ use workspace::{
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 use crate::markdown_preview_settings::MarkdownPreviewSettings;
+use crate::mermaid_diagram_modal::MermaidDiagramModal;
 use crate::{
     CloseAndReturnToEditor, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown,
     ScrollDownByItem,
@@ -1152,6 +1153,20 @@ impl MarkdownPreviewView {
                         window,
                         cx,
                     );
+                }
+            })
+            .on_mermaid_expand({
+                let workspace = self.workspace.clone();
+                let markdown = self.markdown.clone();
+                move |source_offset, window, cx| {
+                    let markdown = markdown.clone();
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.toggle_modal(window, cx, |_window, cx| {
+                                MermaidDiagramModal::new(markdown, source_offset, cx)
+                            });
+                        })
+                        .log_err();
                 }
             })
             .on_url_hover({

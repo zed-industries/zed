@@ -10574,6 +10574,7 @@ dependencies = [
  "language",
  "log",
  "markdown",
+ "menu",
  "project",
  "serde_json",
  "settings",
