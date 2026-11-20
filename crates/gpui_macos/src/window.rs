@@ -73,7 +73,7 @@ use std::{
     time::Duration,
 };
 
-mod native_view;
+mod native_views;
 
 const WINDOW_STATE_IVAR: &CStr = c"windowState";
 
@@ -271,7 +271,7 @@ unsafe fn build_classes() {
                 sel!(characterIndexForPoint:),
                 character_index_for_point as extern "C" fn(_, Sel, NSPoint) -> NSUInteger,
             );
-            native_view::add_view_methods(&mut decl);
+            native_views::add_view_methods(&mut decl);
             decl.register()
         };
         BLURRED_VIEW_CLASS = {
@@ -416,7 +416,7 @@ unsafe fn build_window_class(name: &CStr, superclass: &AnyClass) -> *const AnyCl
         let mut decl = ClassBuilder::new(name, superclass).unwrap();
         decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
         decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(_, Sel));
-        native_view::add_window_methods(&mut decl);
+        native_views::add_window_methods(&mut decl);
 
         decl.add_method(
             sel!(canBecomeMainWindow),
@@ -713,7 +713,7 @@ struct MacWindowState {
     accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<*mut AnyObject>,
-    native_views: native_view::NativeViews,
+    native_views: native_views::NativeViews,
 }
 
 impl MacWindowState {
@@ -1220,7 +1220,7 @@ impl MacWindow {
                 closed: Arc::new(AtomicBool::new(false)),
                 accesskit_adapter: None,
                 sheet_parent: None,
-                native_views: native_view::NativeViews::default(),
+                native_views: native_views::NativeViews::default(),
             }));
             let mut window = Self(state, marker, metal_frames);
 
@@ -2186,11 +2186,11 @@ impl PlatformWindow for MacWindow {
 
     fn draw(&self, scene: &gpui::Scene) {
         let mut this = self.0.lock();
-        let native_view_layout = native_view::plan_layout(&this, scene);
-        native_view::update_background(&mut this, scene);
+        let native_view_layout = native_views::plan_layout(&this, scene);
+        native_views::update_background(&mut this, scene);
         this.renderer.draw(scene);
         drop(this);
-        native_view::apply_layout(&self.0, native_view_layout);
+        native_views::apply_layout(&self.0, native_view_layout);
     }
 
     unsafe fn attach_native_view(
@@ -2200,11 +2200,11 @@ impl PlatformWindow for MacWindow {
     ) -> Option<Box<dyn std::any::Any>> {
         // SAFETY: The caller guarantees `view` is a live, unparented `NSView`, and
         // platform windows are only used on the main thread.
-        unsafe { native_view::attach(&self.0, id, view) }
+        unsafe { native_views::attach(&self.0, id, view) }
     }
 
     fn set_focused_native_view(&self, id: Option<gpui::NativeViewId>) {
-        native_view::set_focused(&self.0, id);
+        native_views::set_focused(&self.0, id);
     }
 
     fn on_hit_test_native_view(
@@ -2798,7 +2798,7 @@ extern "C" fn reset_cursor_rects(this: &AnyObject, _: Sel) {
         let window_state = get_window_state(this);
         let cursor_style = {
             let lock = window_state.lock();
-            if native_view::native_view_sets_cursor(&lock) {
+            if native_views::native_view_sets_cursor(&lock) {
                 return;
             }
             lock.cursor_style
@@ -2816,7 +2816,7 @@ extern "C" fn handle_key_equivalent(
     _: Sel,
     native_event: *mut AnyObject,
 ) -> Bool {
-    if native_view::is_routing_key_equivalent(&unsafe { get_window_state(this) }) {
+    if native_views::is_routing_key_equivalent(&unsafe { get_window_state(this) }) {
         return Bool::NO;
     }
     handle_key_event(this, native_event, true)
@@ -3432,7 +3432,7 @@ extern "C" fn window_did_change_key_status(this: &AnyObject, selector: Sel, _: *
 
     let a11y_events = {
         let mut lock = window_state.lock();
-        let is_focused = is_active && native_view::gpui_view_is_focused(&lock);
+        let is_focused = is_active && native_views::gpui_view_is_focused(&lock);
         lock.accesskit_adapter
             .as_mut()
             .and_then(|adapter| adapter.update_view_focus_state(is_focused))
