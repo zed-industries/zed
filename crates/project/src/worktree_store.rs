@@ -945,6 +945,7 @@ impl WorktreeStore {
                         trusted_worktrees.resolve_trusted_path_casing(
                             &worktree_store,
                             abs_path.as_path(),
+                            fs.clone(),
                             cx,
                         )
                     })

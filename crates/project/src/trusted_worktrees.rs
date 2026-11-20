@@ -41,6 +41,7 @@
 
 use client::ProjectId;
 use collections::{HashMap, HashSet};
+use fs::Fs;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Task, WeakEntity};
 use remote::RemoteConnectionIdentity;
 use rpc::{AnyProtoClient, proto};
@@ -63,9 +64,9 @@ pub fn init(db_trusted_paths: DbTrustedPaths, cx: &mut App) {
 /// Returns the on-disk spelling of `path` when it differs from `path` only by ASCII case.
 ///
 /// Paths through a symlink or junction are skipped, as resolving those may land in another
-/// directory whose name differs only by case. Components are checked from the root, so no link
-/// gets followed. UNC paths (network shares, `\\wsl.localhost`) are skipped too.
-fn on_disk_spelling(path: &Path) -> Option<PathBuf> {
+/// directory whose name differs only by case. Components are checked from the root, so nothing
+/// under a link is looked up. UNC paths (network shares, `\\wsl.localhost`) are skipped too.
+async fn on_disk_spelling(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
     let Some(Component::Prefix(prefix)) = path.components().next() else {
         return None;
     };
@@ -73,12 +74,17 @@ fn on_disk_spelling(path: &Path) -> Option<PathBuf> {
         return None;
     }
     for ancestor in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
-        let metadata = std::fs::symlink_metadata(ancestor).ok()?;
-        if metadata.file_type().is_symlink() {
+        // `read_link` first, as `metadata` also reads a link's target.
+        if fs.read_link(ancestor).await.is_ok() {
+            return None;
+        }
+        let metadata = fs.metadata(ancestor).await.ok()??;
+        if metadata.is_symlink {
             return None;
         }
     }
-    let canonical = std::fs::canonicalize(path).ok()?;
+    // Resolved the way worktree paths are, which keeps mapped drive letters.
+    let canonical = fs.canonicalize(path).await.ok()?;
     let canonical = SanitizedPath::new(&canonical).as_path();
     (canonical != path && canonical.as_os_str().eq_ignore_ascii_case(path.as_os_str()))
         .then(|| canonical.to_path_buf())
@@ -469,6 +475,7 @@ impl TrustedWorktreesStore {
         &mut self,
         worktree_store: &Entity<WorktreeStore>,
         worktree_abs_path: &Path,
+        fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let worktree_store = worktree_store.downgrade();
@@ -514,14 +521,12 @@ impl TrustedWorktreesStore {
             if let Some(hold) = hold {
                 hold.await.ok();
             }
-            let respelled_paths = cx
-                .background_spawn(async move {
-                    mismatched_paths
-                        .into_iter()
-                        .filter_map(|path| Some((on_disk_spelling(&path)?, path)))
-                        .collect::<Vec<_>>()
-                })
-                .await;
+            let mut respelled_paths = Vec::new();
+            for path in mismatched_paths {
+                if let Some(respelled) = on_disk_spelling(fs.as_ref(), &path).await {
+                    respelled_paths.push((respelled, path));
+                }
+            }
             this.update(cx, |this, _| {
                 let Some(local_paths) = this.db_trusted_paths.get_mut(&None) else {
                     return;

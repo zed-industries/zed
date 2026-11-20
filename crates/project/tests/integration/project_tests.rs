@@ -1453,18 +1453,14 @@ async fn test_debug_scenarios_load_with_differently_cased_db_trusted_path(
     cx: &mut gpui::TestAppContext,
 ) {
     use project::trusted_worktrees::{self, DbTrustedPaths, TrustedWorktrees};
-    use util::paths::SanitizedPath;
 
     init_test(cx);
     TaskStore::init(None);
 
-    // The casing gets resolved on the real file system, while the worktree is scanned on a fake
-    // one, so that the test scheduler controls when the scan happens.
-    let dir = TempTree::new(json!({ "Project": {} }));
-    let root = SanitizedPath::new(dir.path()).as_path().to_path_buf();
     let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
     fs.insert_tree(
-        root.join("Project"),
+        path!("/root/Project"),
         json!({
             ".zed": {
                 "debug.json": r#"[{ "label": "debug", "adapter": "Debugpy", "request": "launch" }]"#,
@@ -1472,6 +1468,7 @@ async fn test_debug_scenarios_load_with_differently_cased_db_trusted_path(
         }),
     )
     .await;
+    let root = PathBuf::from(path!("/root"));
     let db_trusted_paths =
         DbTrustedPaths::from_iter([(None, HashSet::from_iter([root.join("project")]))]);
     cx.update(|cx| trusted_worktrees::init(db_trusted_paths, cx));

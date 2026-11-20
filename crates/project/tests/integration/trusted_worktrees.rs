@@ -94,6 +94,142 @@ async fn test_differently_cased_db_trusted_parent_path(cx: &mut TestAppContext) 
 
 #[cfg(windows)]
 #[gpui::test]
+async fn test_differently_cased_db_trusted_path_on_mapped_drive(cx: &mut TestAppContext) {
+    use fs::{Fs as _, RealFs};
+    use std::path::Path;
+    use util::{ResultExt as _, paths::SanitizedPath, test::TempTree};
+
+    /// A free drive letter mapped to the directory's administrative network share.
+    struct MappedDrive(PathBuf);
+
+    impl MappedDrive {
+        #[allow(clippy::disallowed_methods)]
+        fn new(target: &Path) -> Option<Self> {
+            let share = format!(
+                r"\\localhost\{}",
+                target.to_string_lossy().replacen(':', "$", 1)
+            );
+            if !Path::new(&share).exists() {
+                return None;
+            }
+            ('M'..='Z').rev().find_map(|letter| {
+                let root = PathBuf::from(format!("{letter}:\\"));
+                if root.exists() {
+                    return None;
+                }
+                std::process::Command::new("net")
+                    .args(["use", &format!("{letter}:"), &share, "/persistent:no"])
+                    .output()
+                    .ok()?
+                    .status
+                    .success()
+                    .then(|| Self(root))
+            })
+        }
+    }
+
+    impl Drop for MappedDrive {
+        #[allow(clippy::disallowed_methods)]
+        fn drop(&mut self) {
+            let drive = self.0.to_string_lossy();
+            std::process::Command::new("net")
+                .args(["use", drive.trim_end_matches('\\'), "/delete", "/y"])
+                .output()
+                .log_err();
+        }
+    }
+
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({ "Project": {} }));
+    let Some(drive) = MappedDrive::new(SanitizedPath::new(dir.path()).as_path()) else {
+        eprintln!("skipping: no drive letter could be mapped to a network share");
+        return;
+    };
+    cx.update(|cx| {
+        init(
+            DbTrustedPaths::from_iter([(None, HashSet::from_iter([drive.0.join("project")]))]),
+            cx,
+        )
+    });
+    let fs = RealFs::new(None, cx.executor());
+    // Zed opens a worktree by its canonical path, which keeps the mapped drive letter.
+    let worktree_path = fs.canonicalize(&drive.0.join("project")).await.unwrap();
+    assert_eq!(worktree_path, drive.0.join("Project"));
+    let project = Project::test_with_worktree_trust(fs, [worktree_path.as_path()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
+    trusted_worktrees.update(cx, |store, cx| {
+        assert!(
+            store.can_trust(&worktree_store, worktree_id, cx),
+            "a differently cased trusted path on a mapped drive should match its directory"
+        );
+    });
+}
+
+#[cfg(windows)]
+#[gpui::test]
+async fn test_db_trusted_link_differing_only_by_case(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    // A case-sensitive file system, where links may point at names differing only by case.
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({ "LINK": {}, "PARENT": { "project": {} } }),
+    )
+    .await;
+    fs.insert_symlink(path!("/root/link"), PathBuf::from(path!("/root/LINK")))
+        .await;
+    fs.insert_symlink(path!("/root/parent"), PathBuf::from(path!("/root/PARENT")))
+        .await;
+    cx.update(|cx| {
+        init(
+            DbTrustedPaths::from_iter([(
+                None,
+                HashSet::from_iter([
+                    PathBuf::from(path!("/root/link")),
+                    PathBuf::from(path!("/root/parent/project")),
+                ]),
+            )]),
+            cx,
+        )
+    });
+    let project = Project::test_with_worktree_trust(
+        fs,
+        [
+            path!("/root/LINK").as_ref(),
+            path!("/root/PARENT/project").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_ids = worktree_store.read_with(cx, |store, cx| {
+        store
+            .worktrees()
+            .map(|worktree| worktree.read(cx).id())
+            .collect::<Vec<_>>()
+    });
+    let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
+    trusted_worktrees.update(cx, |store, cx| {
+        for worktree_id in worktree_ids {
+            assert!(
+                !store.can_trust(&worktree_store, worktree_id, cx),
+                "a trusted link must not extend trust to its target"
+            );
+        }
+    });
+}
+
+#[cfg(windows)]
+#[gpui::test]
 async fn test_db_trusted_path_in_case_sensitive_directory(cx: &mut TestAppContext) {
     use fs::{Fs as _, RealFs};
     use util::{command::new_command, paths::SanitizedPath, test::TempTree};
