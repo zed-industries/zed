@@ -44,7 +44,7 @@ use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClipboardItem, ContentMask, Context, Corners, CursorStyle, DispatchPhase, Edges,
-    Element, ElementInputHandler, Entity, Focusable as _, Font, FontId, FontWeight,
+    Element, ElementInputHandler, Entity, EntityId, Focusable as _, Font, FontId, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScaledPixels, ScrollHandle, ShapedLine, SharedString, Size,
@@ -8501,8 +8501,17 @@ impl Element for EditorElement {
                         max_lines,
                     } => {
                         let editor_handle = cx.entity();
-                        window.request_measured_layout(
+                        let key = AutoHeightLayoutKey::new(
+                            editor,
+                            &self.style,
+                            min_lines,
+                            max_lines,
+                            window,
+                            cx,
+                        );
+                        window.request_keyed_measured_layout(
                             Style::default(),
+                            key,
                             move |known_dimensions, available_space, window, cx| {
                                 editor_handle
                                     .update(cx, |editor, cx| {
@@ -11356,6 +11365,50 @@ fn calculate_wrap_width(
     }
 }
 
+/// Everything an auto-height editor's measured size depends on besides the space it is
+/// given, so that it is only measured again when one of them changes.
+#[derive(PartialEq)]
+struct AutoHeightLayoutKey {
+    editor: EntityId,
+    min_lines: usize,
+    max_lines: Option<usize>,
+    font: Font,
+    font_size: Pixels,
+    line_height: Pixels,
+    soft_wrap: SoftWrap,
+    gutter_dimensions: GutterDimensions,
+    rows_version: u64,
+}
+
+impl AutoHeightLayoutKey {
+    fn new(
+        editor: &mut Editor,
+        style: &EditorStyle,
+        min_lines: usize,
+        max_lines: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Self {
+        let font = style.text.font();
+        let font_id = window.text_system().resolve_font(&font);
+        let font_size = style.text.font_size.to_pixels(window.rem_size());
+        // Taking a snapshot syncs the block map with every change made since the last
+        // one, so its rows version is current.
+        let snapshot = editor.snapshot(window, cx);
+        Self {
+            editor: cx.entity_id(),
+            min_lines,
+            max_lines,
+            font,
+            font_size,
+            line_height: style.text.line_height_in_pixels(window.rem_size()),
+            soft_wrap: editor.soft_wrap_mode(cx),
+            gutter_dimensions: snapshot.gutter_dimensions(font_id, font_size, style, window, cx),
+            rows_version: snapshot.display_snapshot.rows_version(),
+        }
+    }
+}
+
 fn compute_auto_height_layout(
     editor: &mut Editor,
     min_lines: usize,
@@ -11365,6 +11418,8 @@ fn compute_auto_height_layout(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<Size<Pixels>> {
+    #[cfg(test)]
+    tests::AUTO_HEIGHT_MEASUREMENTS.set(tests::AUTO_HEIGHT_MEASUREMENTS.get() + 1);
     let width = known_dimensions.width.or({
         if let AvailableSpace::Definite(available_width) = available_width {
             Some(available_width)
@@ -11436,6 +11491,10 @@ mod tests {
     use std::num::NonZeroU32;
     use text::PointUtf16;
     use util::test::sample_text;
+
+    thread_local! {
+        pub(super) static AUTO_HEIGHT_MEASUREMENTS: Cell<usize> = const { Cell::new(0) };
+    }
 
     // Regression test for https://github.com/zed-industries/zed/issues/65453.
     #[gpui::test]
@@ -11876,6 +11935,84 @@ mod tests {
                 "Soft wrapped editor should have no horizontal scrolling!"
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_auto_height_editor_is_measured_again_only_when_its_rows_change(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        struct AutoHeightEditorView {
+            editor: Entity<Editor>,
+        }
+
+        impl Render for AutoHeightEditorView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().w(px(400.)).child(self.editor.clone())
+            }
+        }
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("one\ntwo", cx);
+            let editor = cx.new(|cx| {
+                Editor::new(
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    buffer,
+                    None,
+                    window,
+                    cx,
+                )
+            });
+            AutoHeightEditorView { editor }
+        });
+        let editor = window.read_with(cx, |view, _| view.editor.clone()).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        // The test window also draws whenever the editor notifies, so measurements are
+        // counted across updates rather than only in explicit draws.
+        let draw = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+            editor.read_with(cx, |editor, _| {
+                editor.last_bounds().map(|bounds| bounds.size.height)
+            })
+        };
+
+        draw(cx);
+        cx.run_until_parked();
+        draw(cx);
+        let measured_before = AUTO_HEIGHT_MEASUREMENTS.get();
+        let two_lines = draw(cx);
+        assert_eq!(
+            AUTO_HEIGHT_MEASUREMENTS.get(),
+            measured_before,
+            "an unchanged editor shouldn't be measured"
+        );
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_to_end(&crate::MoveToEnd, window, cx);
+            editor.insert("\nthree", window, cx);
+        });
+        let three_lines = draw(cx);
+        assert!(
+            AUTO_HEIGHT_MEASUREMENTS.get() > measured_before,
+            "an edit adding a row should be measured"
+        );
+        let line_height = two_lines.unwrap() / 2.;
+        assert_eq!(three_lines, Some(line_height * 3.));
+
+        let measured_before = AUTO_HEIGHT_MEASUREMENTS.get();
+        assert_eq!(draw(cx), three_lines);
+        assert_eq!(
+            AUTO_HEIGHT_MEASUREMENTS.get(),
+            measured_before,
+            "an unchanged editor shouldn't be measured"
+        );
     }
 
     #[gpui::test]
