@@ -381,7 +381,7 @@ impl ImmediateBoundary {
             }
             Self::Subword { ignore_punctuation } => {
                 let classifier = classifier.clone().ignore_punctuation(*ignore_punctuation);
-                movement::is_subword_start(left, right, &classifier)
+                movement::is_subword_end(left, right, &classifier)
                     || (is_buffer_end(right) && classifier.kind(left) != CharKind::Whitespace)
             }
             Self::AngleBrackets => right == '>',
