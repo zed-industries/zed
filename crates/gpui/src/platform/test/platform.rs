@@ -1,16 +1,14 @@
-#[cfg(any(test, feature = "test-support"))]
-use crate::NoopTextSystem;
-#[cfg(any(test, feature = "test-support"))]
-use crate::PathPromptOptions;
 use crate::{
     ActivityGuard, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem,
-    CursorStyle, DevicePixels, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap,
-    OwnedMenu, Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
+    CursorStyle, DevicePixels, DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu,
+    Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
     PlatformKeyboardMapper, PlatformTextSystem, PromptButton, ScreenCaptureFrame,
     ScreenCaptureSource, ScreenCaptureStream, SharedString, SourceMetadata, SystemNotification,
     SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
     WindowParams, size,
 };
+#[cfg(any(test, feature = "test-support"))]
+use crate::{DisplayId, NoopTextSystem, PathPromptOptions};
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
 use collections::VecDeque;

@@ -241,7 +241,7 @@ impl CloudLanguageModelProvider {
         let maintain_client_status = cx.spawn(async move |cx| {
             while let Some(status) = status_rx.next().await {
                 if let Some(this) = state_ref.upgrade() {
-                    _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if this.status != status {
                             this.status = status;
                             if status.is_signed_out() {

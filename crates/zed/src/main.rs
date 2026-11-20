@@ -38,7 +38,6 @@ use gpui::{
     App, AppContext, Application, AsyncApp, EntityId, QuitMode, Task, TaskExt, UpdateGlobal as _,
     WindowHandle, block_on,
 };
-use gpui_platform;
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -215,6 +214,8 @@ fn main() {
     // args are appended verbatim and would otherwise be misinterpreted as Zed's
     // own arguments.
     sandbox::run_sandbox_launcher_if_invoked();
+    #[cfg(target_os = "linux")]
+    sandbox_linux::run_hidden_entrypoint_if_invoked();
 
     #[cfg(unix)]
     util::prevent_root_execution();
@@ -758,7 +759,7 @@ fn main() {
         outline_panel::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
-        channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
+        channel::init(&app_state.client, app_state.user_store.clone(), cx);
         search::init(cx);
         lsp_locations::init(cx);
         cx.set_global(workspace::PaneSearchBarCallbacks {

@@ -121,8 +121,6 @@ impl gpui::Global for CrashHandler {}
 actions!(
     zed,
     [
-        /// Opens the element inspector for debugging UI.
-        DebugElements,
         /// Hides the application window.
         Hide,
         /// Hides all other application windows.
@@ -139,8 +137,6 @@ actions!(
         OpenDebugTasks,
         /// Shows the default semantic token rules (read-only).
         ShowDefaultSemanticTokenRules,
-        /// Resets the application database.
-        ResetDatabase,
         /// Shows all hidden windows.
         ShowAll,
         /// Toggles fullscreen mode.
@@ -2245,7 +2241,7 @@ pub fn handle_keymap_file_changes(
                 match load_result {
                     KeymapFileLoadResult::Success { key_bindings } => {
                         reload_keymaps(cx, key_bindings);
-                        dismiss_app_notification(&notification_id.clone(), cx);
+                        dismiss_app_notification(&notification_id, cx);
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
                         key_bindings,
@@ -6288,7 +6284,6 @@ mod tests {
                 "file_finder",
                 "git",
                 "git_graph",
-                "git_onboarding",
                 "git_panel",
                 "git_picker",
                 "go_to_line",
@@ -6501,6 +6496,7 @@ mod tests {
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
         init_test_with_state(cx, cx.update(AppState::test))
     }
 
@@ -8715,7 +8711,6 @@ mod tests {
     }
 
     async fn init_startup_test(cx: &mut TestAppContext) -> Arc<AppState> {
-        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
         let app_state = init_test(cx);
         cx.update(|cx| db::kvp::KeyValueStore::global(cx))
             .write_kvp(onboarding::FIRST_OPEN.to_owned(), "false".to_owned())

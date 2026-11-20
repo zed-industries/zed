@@ -726,7 +726,7 @@ impl Render for AgentDiffPane {
                                 .full_width()
                                 .key_binding(KeyBinding::for_action_in(
                                     &ToggleFocus,
-                                    &focus_handle.clone(),
+                                    focus_handle,
                                     cx,
                                 ))
                                 .on_click(|_event, window, cx| {

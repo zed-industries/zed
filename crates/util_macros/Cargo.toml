@@ -18,6 +18,3 @@ test = false
 quote.workspace = true
 syn = { workspace = true, features = ["full", "extra-traits", "clone-impls", "parsing", "printing"] }
 perf.workspace = true
-
-[features]
-perf-enabled = []

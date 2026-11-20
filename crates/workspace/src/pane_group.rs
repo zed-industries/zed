@@ -9,7 +9,7 @@ use anyhow::Result;
 use collections::HashMap;
 use gpui::{
     Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
-    Point, StyleRefinement, WeakEntity, Window, point, size,
+    Point, StyleRefinement, WeakEntity, Window,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -29,7 +29,6 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 #[derive(Clone)]
 pub struct PaneGroup {
     pub root: Member,
-    pub is_center: bool,
 }
 
 pub struct PaneRenderResult {
@@ -41,21 +40,13 @@ pub struct PaneRenderResult {
 
 impl PaneGroup {
     pub fn with_root(root: Member) -> Self {
-        Self {
-            root,
-            is_center: false,
-        }
+        Self { root }
     }
 
     pub fn new(pane: Entity<Pane>) -> Self {
         Self {
             root: Member::Pane(pane),
-            is_center: false,
         }
-    }
-
-    pub fn set_is_center(&mut self, is_center: bool) {
-        self.is_center = is_center;
     }
 
     pub fn split(
@@ -63,7 +54,6 @@ impl PaneGroup {
         old_pane: &Entity<Pane>,
         new_pane: &Entity<Pane>,
         direction: SplitDirection,
-        cx: &mut App,
     ) {
         let found = match &mut self.root {
             Member::Pane(pane) => {
@@ -89,8 +79,6 @@ impl PaneGroup {
                 }
             }
         }
-
-        self.mark_positions(cx);
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -122,7 +110,6 @@ impl PaneGroup {
         &mut self,
         active_pane: &Entity<Pane>,
         direction: SplitDirection,
-        cx: &mut App,
     ) -> Result<bool> {
         if let Some(pane) = self.find_pane_at_border(direction)
             && pane == active_pane
@@ -130,7 +117,7 @@ impl PaneGroup {
             return Ok(false);
         }
 
-        if !self.remove_internal(active_pane)? {
+        if !self.remove(active_pane)? {
             return Ok(false);
         }
 
@@ -143,7 +130,6 @@ impl PaneGroup {
                 0
             };
             root.insert_pane(idx, active_pane);
-            self.mark_positions(cx);
             return Ok(true);
         }
 
@@ -153,7 +139,6 @@ impl PaneGroup {
             vec![Member::Pane(active_pane.clone()), self.root.clone()]
         };
         self.root = Member::Axis(PaneAxis::new(direction.axis(), members));
-        self.mark_positions(cx);
         Ok(true)
     }
 
@@ -168,15 +153,7 @@ impl PaneGroup {
     /// - Ok(true) if it found and removed a pane
     /// - Ok(false) if it found but did not remove the pane
     /// - Err(_) if it did not find the pane
-    pub fn remove(&mut self, pane: &Entity<Pane>, cx: &mut App) -> Result<bool> {
-        let result = self.remove_internal(pane);
-        if let Ok(true) = result {
-            self.mark_positions(cx);
-        }
-        result
-    }
-
-    fn remove_internal(&mut self, pane: &Entity<Pane>) -> Result<bool> {
+    pub fn remove(&mut self, pane: &Entity<Pane>) -> Result<bool> {
         match &mut self.root {
             Member::Pane(_) => Ok(false),
             Member::Axis(axis) => {
@@ -194,7 +171,6 @@ impl PaneGroup {
         direction: Axis,
         amount: Pixels,
         bounds: &Bounds<Pixels>,
-        cx: &mut App,
     ) {
         match &mut self.root {
             Member::Pane(_) => {}
@@ -202,29 +178,22 @@ impl PaneGroup {
                 let _ = axis.resize(pane, direction, amount, bounds);
             }
         };
-        self.mark_positions(cx);
     }
 
-    pub fn reset_pane_sizes(&mut self, cx: &mut App) {
+    pub fn reset_pane_sizes(&mut self) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => {
-                let _ = axis.reset_pane_sizes();
+                axis.reset_pane_sizes();
             }
         };
-        self.mark_positions(cx);
     }
 
-    pub fn swap(&mut self, from: &Entity<Pane>, to: &Entity<Pane>, cx: &mut App) {
+    pub fn swap(&mut self, from: &Entity<Pane>, to: &Entity<Pane>) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => axis.swap(from, to),
         };
-        self.mark_positions(cx);
-    }
-
-    pub fn mark_positions(&mut self, cx: &mut App) {
-        self.root.mark_positions(self.is_center, cx);
     }
 
     pub fn render(
@@ -286,9 +255,8 @@ impl PaneGroup {
         self.pane_at_pixel_position(target)
     }
 
-    pub fn invert_axies(&mut self, cx: &mut App) {
+    pub fn invert_axies(&mut self) {
         self.root.invert_pane_axies();
-        self.mark_positions(cx);
     }
 }
 
@@ -299,19 +267,6 @@ pub enum Member {
 }
 
 impl Member {
-    pub fn mark_positions(&mut self, in_center_group: bool, cx: &mut App) {
-        match self {
-            Member::Axis(pane_axis) => {
-                for member in pane_axis.members.iter_mut() {
-                    member.mark_positions(in_center_group, cx);
-                }
-            }
-            Member::Pane(entity) => entity.update(cx, |pane, _| {
-                pane.in_center_group = in_center_group;
-            }),
-        }
-    }
-
     fn full_height_column_count(&self) -> usize {
         match self {
             Member::Pane(_) => 1,
@@ -1088,27 +1043,6 @@ impl SplitDirection {
             Self::Down => rect.bottom_left().y,
             Self::Left => rect.bottom_left().x,
             Self::Right => rect.bottom_right().x,
-        }
-    }
-
-    pub fn along_edge(&self, bounds: Bounds<Pixels>, length: Pixels) -> Bounds<Pixels> {
-        match self {
-            Self::Up => Bounds {
-                origin: bounds.origin,
-                size: size(bounds.size.width, length),
-            },
-            Self::Down => Bounds {
-                origin: point(bounds.bottom_left().x, bounds.bottom_left().y - length),
-                size: size(bounds.size.width, length),
-            },
-            Self::Left => Bounds {
-                origin: bounds.origin,
-                size: size(length, bounds.size.height),
-            },
-            Self::Right => Bounds {
-                origin: point(bounds.bottom_right().x - length, bounds.bottom_left().y),
-                size: size(length, bounds.size.height),
-            },
         }
     }
 

@@ -294,18 +294,10 @@ pub struct Request {
     /// system prompt anchors its own cache prefix independent of tools and
     /// messages.
     pub system: Vec<BedrockSystemContentBlock>,
-    pub metadata: Option<Metadata>,
-    pub stop_sequences: Vec<String>,
     pub temperature: Option<f32>,
-    pub top_k: Option<u32>,
     pub top_p: Option<f32>,
     pub guardrail_identifier: Option<String>,
     pub guardrail_version: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Metadata {
-    pub user_id: Option<String>,
 }
 
 #[derive(Error, Debug)]

@@ -33,15 +33,6 @@ pub fn set_stub_agent_connection(connection: StubAgentConnection) -> StubAgentCo
     connection
 }
 
-/// Returns the shared `StubAgentConnection` used by `Agent::Stub`,
-/// creating a default one if none was registered.
-pub fn stub_agent_connection() -> StubAgentConnection {
-    STUB_AGENT_CONNECTION.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        borrow.get_or_insert_with(StubAgentConnection::new).clone()
-    })
-}
-
 pub struct StubAgentServer<C> {
     connection: C,
     agent_id: AgentId,

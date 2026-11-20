@@ -71,7 +71,6 @@ parking_lot.workspace = true
 pretty_assertions = { workspace = true, optional = true }
 project.workspace = true
 proptest = { workspace = true, optional = true }
-proptest-derive = { workspace = true, optional = true }
 rand.workspace = true
 regex.workspace = true
 rpc.workspace = true
@@ -92,7 +91,6 @@ tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
-tree-sitter-python = { workspace = true, optional = true }
 ztracing.workspace = true
 unicode-segmentation.workspace = true
 unicode-script.workspace = true
