@@ -43,6 +43,7 @@ pub(crate) struct DirectXRenderer {
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     direct_composition: Option<DirectComposition>,
+    draw_above_child_windows: bool,
     font_info: &'static FontInfo,
 
     width: u32,
@@ -155,6 +156,7 @@ impl DirectXRenderer {
         hwnd: HWND,
         directx_devices: &DirectXDevices,
         disable_direct_composition: bool,
+        draw_above_child_windows: bool,
     ) -> Result<Self> {
         if disable_direct_composition {
             log::info!("Direct Composition is disabled.");
@@ -174,8 +176,12 @@ impl DirectXRenderer {
         let direct_composition = if disable_direct_composition {
             None
         } else {
-            let composition = DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), hwnd)
-                .context("Creating DirectComposition")?;
+            let composition = DirectComposition::new(
+                devices.dxgi_device.as_ref().unwrap(),
+                hwnd,
+                draw_above_child_windows,
+            )
+            .context("Creating DirectComposition")?;
             composition
                 .set_swap_chain(&resources.swap_chain)
                 .context("Setting swap chain for DirectComposition")?;
@@ -190,6 +196,7 @@ impl DirectXRenderer {
             globals,
             pipelines,
             direct_composition,
+            draw_above_child_windows,
             font_info: Self::get_font_info(),
             width: 1,
             height: 1,
@@ -323,8 +330,11 @@ impl DirectXRenderer {
         let direct_composition = if disable_direct_composition {
             None
         } else {
-            let composition =
-                DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), self.hwnd)?;
+            let composition = DirectComposition::new(
+                devices.dxgi_device.as_ref().unwrap(),
+                self.hwnd,
+                self.draw_above_child_windows,
+            )?;
             composition.set_swap_chain(&resources.swap_chain)?;
             Some(composition)
         };
@@ -1029,9 +1039,9 @@ impl DirectXRenderPipelines {
 }
 
 impl DirectComposition {
-    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
+    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND, topmost: bool) -> Result<Self> {
         let comp_device = get_comp_device(dxgi_device)?;
-        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, false) }?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, topmost) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
         Ok(Self {
