@@ -2067,7 +2067,7 @@ mod tests {
     #[gpui::test(iterations = 16)]
     fn layout_cache_matches_rebuilding_every_frame(mut rng: StdRng, cx: &mut TestAppContext) {
         let seed = rng.random();
-        let element_count = rng.random_range(0..96);
+        let element_count = rng.random_range(0..ELEMENT_COUNT);
         let config = RandomizedElementTreeConfig::new(seed, element_count)
             .with_entity_density(rng.random_range(0.0..0.5))
             .with_handler_density(0.2)
