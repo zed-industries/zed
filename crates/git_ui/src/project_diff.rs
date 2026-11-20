@@ -48,6 +48,9 @@ actions!(
         Diff,
         /// Shows working changes relative to HEAD.
         DiffHead,
+        /// Shows the diff of the current file between the working directory
+        /// and your default branch.
+        DiffFileBranch,
         /// Toggles the git diff base between HEAD and the default branch.
         ToggleDiffBase,
         /// Adds files to the git staging area.

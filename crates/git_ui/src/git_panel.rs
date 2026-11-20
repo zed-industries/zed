@@ -17821,7 +17821,7 @@ mod tests {
         let base_ref = SharedString::from(base_ref.to_owned());
         test.workspace.update_in(cx, |workspace, window, cx| {
             BranchDiff::deploy_branch_diff_with_base_ref(
-                workspace, project, repo, base_ref, None, None, window, cx,
+                workspace, project, repo, base_ref, None, None, None, window, cx,
             );
         });
         settle_branch_mode(cx);
@@ -18536,6 +18536,7 @@ mod tests {
                 project,
                 repo,
                 "release".into(),
+                None,
                 None,
                 None,
                 window,
