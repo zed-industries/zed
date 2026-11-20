@@ -30,7 +30,7 @@ use language_model::{
     LanguageModelImageExt, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolResult, LanguageModelToolUse, MessageContent, ProviderErrorCategory, Role,
-    StopReason, TokenUsage, fake_provider::FakeLanguageModelProvider,
+    Speed, StopReason, TokenUsage, fake_provider::FakeLanguageModelProvider,
 };
 use pretty_assertions::assert_eq;
 use project::{
@@ -1806,6 +1806,164 @@ async fn test_profiles(cx: &mut TestAppContext) {
         .map(|tool| tool.name.clone())
         .collect();
     assert_eq!(tool_names, vec![InfiniteTool::NAME]);
+}
+
+#[gpui::test]
+async fn test_set_profile_applies_profile_model_settings(cx: &mut TestAppContext) {
+    let fake = init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let provider = Arc::new(FakeLanguageModelProvider::new(
+        LanguageModelProviderId::from("fake-corp".to_string()),
+        LanguageModelProviderName::from("Fake Corp".to_string()),
+    ));
+    let reasoning_model = provider.update_model("reasoning-model", |model| {
+        model.name = LanguageModelName::from("Reasoning Model".to_string());
+        model.supports_thinking = true;
+        model.supports_fast_mode = true;
+    });
+
+    cx.update(|cx| {
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(provider, cx);
+        });
+
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        for (profile_id, effort, speed) in [
+            ("planner-low", "low", Speed::Standard),
+            ("planner-high", "high", Speed::Fast),
+        ] {
+            settings.profiles.insert(
+                AgentProfileId(profile_id.into()),
+                agent_settings::AgentProfileSettings {
+                    name: profile_id.into(),
+                    tools: Default::default(),
+                    enable_all_context_servers: false,
+                    context_servers: Default::default(),
+                    default_model: Some(LanguageModelSelection {
+                        provider: LanguageModelProviderSetting("fake-corp".to_string()),
+                        model: "reasoning-model".to_string(),
+                        enable_thinking: true,
+                        effort: Some(effort.to_string()),
+                        speed: Some(speed),
+                    }),
+                },
+            );
+        }
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(fake.model("fake")),
+            cx,
+        )
+    });
+
+    for (profile_id, expected_effort, expected_speed) in [
+        ("planner-low", "low", Speed::Standard),
+        ("planner-high", "high", Speed::Fast),
+        ("planner-low", "low", Speed::Standard),
+    ] {
+        thread.update(cx, |thread, cx| {
+            thread.set_profile(AgentProfileId(profile_id.into()), cx)
+        });
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(
+                thread.model().map(|model| model.id()),
+                Some(reasoning_model.id())
+            );
+            assert!(thread.thinking_enabled());
+            assert_eq!(
+                thread.thinking_effort(),
+                Some(&expected_effort.to_string()),
+                "effort after switching to {profile_id}"
+            );
+            assert_eq!(
+                thread.speed(),
+                Some(expected_speed),
+                "speed after switching to {profile_id}"
+            );
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_new_thread_applies_default_profile_model_effort(cx: &mut TestAppContext) {
+    let fake = init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let provider = Arc::new(FakeLanguageModelProvider::new(
+        LanguageModelProviderId::from("fake-corp".to_string()),
+        LanguageModelProviderName::from("Fake Corp".to_string()),
+    ));
+    let reasoning_model = provider.update_model("reasoning-model", |model| {
+        model.name = LanguageModelName::from("Reasoning Model".to_string());
+        model.supports_thinking = true;
+    });
+
+    cx.update(|cx| {
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(provider, cx);
+        });
+
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        let profile_id = AgentProfileId("planner-high".into());
+        settings.profiles.insert(
+            profile_id.clone(),
+            agent_settings::AgentProfileSettings {
+                name: "planner-high".into(),
+                tools: Default::default(),
+                enable_all_context_servers: false,
+                context_servers: Default::default(),
+                default_model: Some(LanguageModelSelection {
+                    provider: LanguageModelProviderSetting("fake-corp".to_string()),
+                    model: "reasoning-model".to_string(),
+                    enable_thinking: true,
+                    effort: Some("high".to_string()),
+                    speed: None,
+                }),
+            },
+        );
+        settings.default_profile = profile_id;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(fake.model("fake")),
+            cx,
+        )
+    });
+
+    thread.read_with(cx, |thread, _cx| {
+        assert_eq!(
+            thread.model().map(|model| model.id()),
+            Some(reasoning_model.id())
+        );
+        assert!(thread.thinking_enabled());
+        assert_eq!(thread.thinking_effort(), Some(&"high".to_string()));
+    });
 }
 
 #[gpui::test]
