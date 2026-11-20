@@ -17,6 +17,7 @@ use time::UtcOffset;
 use time::macros::format_description;
 use util::ResultExt as _;
 use util::command::Stdio;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Blame {
@@ -181,21 +182,78 @@ async fn git_stdin_encoding(
     if encoding == UTF_16LE || encoding == UTF_16BE {
         return Ok(StdinEncoding::Utf8);
     }
-    let head_path = format!("HEAD:{}", path.as_unix_str());
-    let stored_args = ["cat-file", "blob", &head_path];
-    let converted_args = ["cat-file", "--textconv", &head_path];
-    let (stored, converted) = try_join!(
-        preflight_output(git, &stored_args),
-        preflight_output(git, &converted_args),
-    )?;
-    let has_textconv = !stored.status.success()
-        || !converted.status.success()
-        || stored.stdout != converted.stdout;
-    Ok(if has_textconv {
+    Ok(if history_has_textconv(git, path).await? {
         StdinEncoding::Utf8
     } else {
         StdinEncoding::Stored
     })
+}
+
+async fn history_has_textconv(git: &GitBinary, path: &RepoPath) -> Result<bool> {
+    let keys = preflight_output(
+        git,
+        &[
+            "config",
+            "-z",
+            "--name-only",
+            "--get-regexp",
+            r"^diff\..*\.textconv$",
+        ],
+    )
+    .await?;
+    anyhow::ensure!(
+        matches!(keys.status.code(), Some(0 | 1)),
+        "git config failed: {}",
+        String::from_utf8_lossy(&keys.stderr)
+    );
+    let keys = String::from_utf8(keys.stdout)?;
+    let drivers = keys
+        .split('\0')
+        .filter_map(|key| key.strip_prefix("diff.")?.strip_suffix(".textconv"))
+        .collect::<Vec<_>>();
+    if drivers.is_empty() {
+        return Ok(false);
+    }
+    if drivers.iter().any(|driver| driver.contains('=')) {
+        return Ok(true);
+    }
+
+    let marker = format!("zed-textconv-{}", Uuid::new_v4().simple());
+    let mut args = Vec::new();
+    for driver in drivers {
+        args.push("-c".to_string());
+        args.push(format!("diff.{driver}.textconv=echo {marker} #"));
+        args.push("-c".to_string());
+        args.push(format!("diff.{driver}.cachetextconv=false"));
+    }
+    args.push("cat-file".to_string());
+    args.push("--textconv".to_string());
+    args.push(format!("HEAD:{}", path.as_unix_str()));
+
+    let mut child = git
+        .build_command(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .context("starting git cat-file process")?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("failed to get stdout from git cat-file command")?;
+    let mut output = Vec::new();
+    stdout
+        .take(marker.len() as u64)
+        .read_to_end(&mut output)
+        .await?;
+    if output == marker.as_bytes() {
+        return Ok(true);
+    }
+    if output.len() < marker.len() {
+        return Ok(!child.status().await?.success());
+    }
+    Ok(false)
 }
 
 async fn preflight_output(git: &GitBinary, args: &[&str]) -> Result<std::process::Output> {

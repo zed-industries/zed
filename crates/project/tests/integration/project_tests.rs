@@ -17307,6 +17307,7 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
     cx.executor().allow_parking();
 
     let text = "x = \"café\"\ny = \"crème brûlée\"\nz = \"déjà vu\"\n";
+    let reencoded_file_name = "reencoded_after_commit.py";
     let file_names = [
         "unspecified.py",
         "unknown_driver.py",
@@ -17317,6 +17318,7 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
         "diff_unset.py",
         "driver_named_set.py",
         "driver_named_unset.py",
+        reencoded_file_name,
     ];
 
     let root = TempTree::new(json!({ "project": {} }));
@@ -17335,6 +17337,11 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
             &work_dir,
         );
     }
+    git_config(
+        "diff.adaptive.textconv",
+        r#"sh -c 'iconv -f UTF-8 -t UTF-8 "$0" >/dev/null 2>&1 && cat "$0" || iconv -f WINDOWS-1252 -t UTF-8 "$0"'"#,
+        &work_dir,
+    );
     let attributes = [
         "*.py -text",
         "unknown_driver.py diff=unknown",
@@ -17345,6 +17352,7 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
         "diff_unset.py -diff",
         "driver_named_set.py diff=set",
         "driver_named_unset.py diff=unset",
+        "reencoded_after_commit.py diff=adaptive",
     ];
     std::fs::write(
         work_dir.join(".gitattributes"),
@@ -17353,11 +17361,21 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
     .unwrap();
     git_add(".gitattributes", &work_dir);
     for file_name in file_names {
-        let bytes = file_content::encode_text(text.to_owned(), encoding_rs::WINDOWS_1252, false);
+        let encoding = if file_name == reencoded_file_name {
+            encoding_rs::UTF_8
+        } else {
+            encoding_rs::WINDOWS_1252
+        };
+        let bytes = file_content::encode_text(text.to_owned(), encoding, false);
         std::fs::write(work_dir.join(file_name), bytes).unwrap();
         git_add(file_name, &work_dir);
     }
     git_commit("Initial commit", &work_dir);
+    std::fs::write(
+        work_dir.join(reencoded_file_name),
+        file_content::encode_text(text.to_owned(), encoding_rs::WINDOWS_1252, false),
+    )
+    .unwrap();
 
     let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
