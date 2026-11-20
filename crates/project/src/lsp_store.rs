@@ -6346,16 +6346,17 @@ impl LspStore {
 
             let id = lsp_request.id();
             let _cleanup = if status.is_some() {
+                let token = ProgressToken::String(SharedString::from(format!("zed-request-{id}")));
                 cx.update(|cx| {
                     this.update(cx, |this, cx| {
                         this.on_lsp_work_start(
                             language_server.server_id(),
-                            ProgressToken::Number(id),
+                            token.clone(),
                             LanguageServerProgress {
                                 is_disk_based_diagnostics_progress: false,
                                 is_cancellable: false,
-                                title: None,
-                                message: status.clone(),
+                                title: status.clone(),
+                                message: None,
                                 percentage: None,
                                 last_update_at: cx.background_executor().now(),
                             },
@@ -6368,11 +6369,7 @@ impl LspStore {
                 Some(defer(|| {
                     cx.update(|cx| {
                         this.update(cx, |this, cx| {
-                            this.on_lsp_work_end(
-                                language_server.server_id(),
-                                ProgressToken::Number(id),
-                                cx,
-                            );
+                            this.on_lsp_work_end(language_server.server_id(), token, cx);
                         })
                     })
                     .log_err();

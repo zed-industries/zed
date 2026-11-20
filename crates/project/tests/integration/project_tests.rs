@@ -7382,6 +7382,83 @@ async fn test_lsp_server_document_matches_buffer_line_endings(cx: &mut gpui::Tes
     );
 }
 
+#[gpui::test]
+async fn test_references_status_keeps_numeric_server_progress(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "fn a() {}" }))
+        .await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let server_tokens = (0..16).collect::<Vec<i32>>();
+    for token in &server_tokens {
+        fake_server
+            .request::<lsp::request::WorkDoneProgressCreate>(
+                lsp::WorkDoneProgressCreateParams {
+                    token: lsp::ProgressToken::Number(*token),
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+            token: lsp::ProgressToken::Number(*token),
+            value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
+                lsp::WorkDoneProgressBegin::default(),
+            )),
+        });
+    }
+    cx.executor().run_until_parked();
+
+    fake_server.set_request_handler::<lsp::request::References, _, _>(|_, _| async move {
+        Ok(Some(Vec::new()))
+    });
+    project
+        .update(cx, |project, cx| project.references(&buffer, 0, cx))
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let pending_work = project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .language_server_statuses()
+            .flat_map(|(_, status)| status.pending_work.keys().cloned())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        pending_work,
+        server_tokens
+            .into_iter()
+            .map(ProgressToken::Number)
+            .collect::<Vec<_>>(),
+        "finishing a references request should keep the server's own progress"
+    );
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_definition(cx: &mut gpui::TestAppContext) {
     init_test(cx);
