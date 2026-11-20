@@ -108,7 +108,8 @@ impl AddToolchainState {
             .map(|worktree| worktree.read(cx).abs_path())
             .context("Could not find worktree")?;
         Ok(cx.new(|cx| {
-            let (lister, rx) = Self::create_path_browser_delegate(project.clone(), cx);
+            let (lister, rx) =
+                Self::create_path_browser_delegate(project.clone(), root_path.worktree_id, cx);
             let path_style = project.read(cx).path_style(cx);
             let picker = cx.new(|cx| {
                 let picker = Picker::uniform_list(lister, window, cx);
@@ -136,17 +137,34 @@ impl AddToolchainState {
         }))
     }
 
+    /// Directory that `./` and `../` resolve against in the path browser: the root of the
+    /// worktree the toolchain is added for, or its parent directory when that root is a file.
+    fn path_browser_base(
+        project: &Entity<Project>,
+        worktree_id: WorktreeId,
+        cx: &App,
+    ) -> Option<PathBuf> {
+        let project = project.read(cx);
+        let worktree = project.worktree_for_id(worktree_id, cx)?.read(cx);
+        let abs_path = worktree.abs_path();
+        if worktree.root_entry().is_some_and(|entry| entry.is_file()) {
+            project
+                .path_style(cx)
+                .parent(&abs_path)
+                .map(Path::to_path_buf)
+        } else {
+            Some(abs_path.to_path_buf())
+        }
+    }
+
     fn create_path_browser_delegate(
         project: Entity<Project>,
+        worktree_id: WorktreeId,
         cx: &mut Context<Self>,
     ) -> (OpenPathDelegate, oneshot::Receiver<Option<Vec<PathBuf>>>) {
         let (tx, rx) = oneshot::channel();
         let weak = cx.weak_entity();
-        let relative_to = project
-            .read(cx)
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+        let relative_to = Self::path_browser_base(&project, worktree_id, cx)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let lister = OpenPathDelegate::new(
             tx,
@@ -240,8 +258,11 @@ impl AddToolchainState {
                         {
                             let Err(e) = toolchain else { unreachable!() };
                             *error = Some(Arc::from(e.to_string()));
-                            let (delegate, rx) =
-                                Self::create_path_browser_delegate(this.project.clone(), cx);
+                            let (delegate, rx) = Self::create_path_browser_delegate(
+                                this.project.clone(),
+                                this.root_path.worktree_id,
+                                cx,
+                            );
                             picker.update(cx, |picker, cx| {
                                 *picker = Picker::uniform_list(delegate, window, cx);
                                 picker.set_query(path.to_string_lossy().as_ref(), window, cx);

@@ -731,9 +731,11 @@ impl PickerDelegate for OpenPathDelegate {
         if parent_path == &self.prompt_root {
             return None;
         }
-        let trimmed = parent_path.trim_end_matches(['/', '\\']);
-        let (dir, _) = get_dir_and_suffix(trimmed.to_string(), self.path_style);
-        Some(dir)
+        Some(parent_directory_query(
+            parent_path,
+            &self.relative_to,
+            self.path_style,
+        ))
     }
     fn confirm_completion(
         &mut self,
@@ -1109,10 +1111,18 @@ fn resolve_relative_path(path: &str, relative_to: &Path, path_style: PathStyle) 
     // Repeated separators (`.//nested`) must not turn the operand into an absolute path,
     // which `join` would use in place of the base.
     let join = |base: &Path, rest: &str| {
-        path_style
+        let mut joined = path_style
             .join(base, rest.trim_start_matches(path_style.separators_ch()))
             .to_string_lossy()
-            .into_owned()
+            .into_owned();
+        // Joining onto a verbatim (`\\?\`) base drops the trailing separator, which callers
+        // rely on to tell a directory query from a directory and file name pair.
+        if rest.ends_with(path_style.separators_ch())
+            && !joined.ends_with(path_style.separators_ch())
+        {
+            joined.push_str(path_style.primary_separator());
+        }
+        joined
     };
     if path.starts_with("./") || path.starts_with(".\\") {
         join(relative_to, &path[2..])
@@ -1125,6 +1135,15 @@ fn resolve_relative_path(path: &str, relative_to: &Path, path_style: PathStyle) 
     } else {
         path.to_string()
     }
+}
+
+/// Query for the directory above `parent_path`, resolving `./` and `../` first so that a
+/// relative query moves up from the directory it points at.
+fn parent_directory_query(parent_path: &str, relative_to: &Path, path_style: PathStyle) -> String {
+    let resolved = resolve_relative_path(parent_path, relative_to, path_style);
+    let trimmed = resolved.trim_end_matches(['/', '\\']);
+    let (dir, _) = get_dir_and_suffix(trimmed.to_string(), path_style);
+    dir
 }
 
 fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) {
@@ -1165,7 +1184,7 @@ mod tests {
 
     use util::paths::PathStyle;
 
-    use super::{get_dir_and_suffix, resolve_relative_path};
+    use super::{get_dir_and_suffix, parent_directory_query, resolve_relative_path};
 
     #[test]
     fn test_resolve_relative_path_with_windows_style() {
@@ -1251,6 +1270,49 @@ mod tests {
         assert_eq!(
             resolve_relative_path("..\\/nested\\", relative_to, windows),
             "C:\\root\\nested\\"
+        );
+    }
+
+    #[test]
+    fn test_resolve_relative_path_keeps_trailing_separator_for_verbatim_base() {
+        let windows = PathStyle::Windows;
+        assert_eq!(
+            resolve_relative_path(".\\nested\\", Path::new("\\\\?\\C:\\root"), windows),
+            "\\\\?\\C:\\root\\nested\\"
+        );
+        assert_eq!(
+            resolve_relative_path(
+                "..\\nested\\",
+                Path::new("\\\\?\\C:\\root\\subdir"),
+                windows
+            ),
+            "\\\\?\\C:\\root\\nested\\"
+        );
+    }
+
+    #[test]
+    fn test_parent_directory_query_resolves_relative_queries() {
+        let unix = PathStyle::Unix;
+        let relative_to = Path::new("/root/subdir");
+        assert_eq!(parent_directory_query("./", relative_to, unix), "/root/");
+        assert_eq!(parent_directory_query("../", relative_to, unix), "/");
+        assert_eq!(
+            parent_directory_query("./nested/", relative_to, unix),
+            "/root/subdir/"
+        );
+        assert_eq!(parent_directory_query("/a/b/", relative_to, unix), "/a/");
+        assert_eq!(parent_directory_query("/", relative_to, unix), "/");
+
+        let windows = PathStyle::Windows;
+        let relative_to = Path::new("D:\\root\\subdir");
+        assert_eq!(
+            parent_directory_query(".\\", relative_to, windows),
+            "D:\\root\\"
+        );
+        assert_eq!(parent_directory_query("..\\", relative_to, windows), "D:\\");
+        assert_eq!(
+            parent_directory_query("C:\\a\\b\\", relative_to, windows),
+            "C:\\a\\"
         );
     }
 

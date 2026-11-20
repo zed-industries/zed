@@ -420,6 +420,38 @@ async fn test_create_confirmation_keeps_the_checked_destination(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_create_confirmation_of_relative_query_against_verbatim_base(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({}))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, cx) = build_open_path_prompt(project, true, false, cx);
+    picker.update_in(cx, |picker, _, _| {
+        picker.delegate.path_style = util::paths::PathStyle::Windows;
+        picker.delegate.relative_to = PathBuf::from(r"\\?\C:\root");
+    });
+
+    insert_query(r".\nested\new.txt", &picker, cx).await;
+
+    let (tx, receiver) = futures::channel::oneshot::channel();
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.on_confirm = Some(Box::new(move |result| {
+            tx.send(result.map(|result| result.paths)).ok();
+        }));
+        picker.delegate.confirm(false, window, cx);
+    });
+
+    assert_eq!(
+        receiver.await.unwrap(),
+        Some(vec![PathBuf::from(r"\\?\C:\root\nested\new.txt")]),
+    );
+}
+
+#[gpui::test]
 async fn test_open_path_prompt_panics_with_stale_highlight_positions(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
