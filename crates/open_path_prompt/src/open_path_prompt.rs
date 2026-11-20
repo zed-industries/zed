@@ -1106,16 +1106,18 @@ fn path_candidates(
 /// so that remote paths are interpreted according to the remote OS rather than the local one.
 fn resolve_relative_path(path: &str, relative_to: &Path, path_style: PathStyle) -> String {
     let parent = || path_style.parent(relative_to).unwrap_or(relative_to);
+    // Repeated separators (`.//nested`) must not turn the operand into an absolute path,
+    // which `join` would use in place of the base.
+    let join = |base: &Path, rest: &str| {
+        path_style
+            .join(base, rest.trim_start_matches(path_style.separators_ch()))
+            .to_string_lossy()
+            .into_owned()
+    };
     if path.starts_with("./") || path.starts_with(".\\") {
-        path_style
-            .join(relative_to, &path[2..])
-            .to_string_lossy()
-            .into_owned()
+        join(relative_to, &path[2..])
     } else if path.starts_with("../") || path.starts_with("..\\") {
-        path_style
-            .join(parent(), &path[3..])
-            .to_string_lossy()
-            .into_owned()
+        join(parent(), &path[3..])
     } else if path == "." {
         relative_to.to_string_lossy().into_owned()
     } else if path == ".." {
@@ -1221,6 +1223,35 @@ mod tests {
         );
         assert_eq!(resolve_relative_path("..", relative_to, style), "/root");
         assert_eq!(resolve_relative_path("..", Path::new("/"), style), "/");
+    }
+
+    #[test]
+    fn test_resolve_relative_path_with_repeated_separators() {
+        let unix = PathStyle::Unix;
+        let relative_to = Path::new("/root/subdir");
+        assert_eq!(
+            resolve_relative_path(".//nested/", relative_to, unix),
+            "/root/subdir/nested/"
+        );
+        assert_eq!(
+            resolve_relative_path("..//nested/", relative_to, unix),
+            "/root/nested/"
+        );
+        assert_eq!(
+            resolve_relative_path(".//", relative_to, unix),
+            "/root/subdir/"
+        );
+
+        let windows = PathStyle::Windows;
+        let relative_to = Path::new("C:\\root\\subdir");
+        assert_eq!(
+            resolve_relative_path(".\\\\nested\\", relative_to, windows),
+            "C:\\root\\subdir\\nested\\"
+        );
+        assert_eq!(
+            resolve_relative_path("..\\/nested\\", relative_to, windows),
+            "C:\\root\\nested\\"
+        );
     }
 
     #[test]
