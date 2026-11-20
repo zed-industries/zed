@@ -16,6 +16,8 @@ cargo_metadata.workspace = true
 cargo_toml.workspace = true
 clap.workspace = true
 compliance = { workspace = true, features = ["octo-client"] }
+crates_io_client = { path = "../crates_io_client" }
+reqwest_client.workspace = true
 gh-workflow.workspace = true
 guppy = "0.18"
 indoc.workspace = true
@@ -33,4 +35,6 @@ toml_edit.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros"] }
+crates_io_client = { path = "../crates_io_client", features = ["test-support"] }
 tempfile.workspace = true

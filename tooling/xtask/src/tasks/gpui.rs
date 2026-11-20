@@ -2,6 +2,7 @@
 
 pub mod crate_graph;
 pub mod publish_plan;
+pub mod registry;
 pub mod validation;
 
 use std::io::{self, Write};
@@ -17,6 +18,8 @@ use crate::tasks::workflows::GitSha;
 pub enum GpuiCommand {
     /// Print the publish plan in dependency-first order
     Plan(GpuiArgs),
+    /// Repair crates.io ownership and trusted publishing, then print the checked plan
+    UpdateCratesIo(GpuiArgs),
     /// Show the dependency paths that put a crate in the publish list
     Why {
         /// Original Cargo package name
@@ -45,21 +48,43 @@ struct PublishGpuiArgs {
 
 pub fn run_gpui(command: GpuiCommand) -> Result<()> {
     let graph = crate_graph::load_workspace_graph()?;
+    let update = matches!(&command, GpuiCommand::UpdateCratesIo(_));
     match command {
-        GpuiCommand::Plan(args) => {
+        GpuiCommand::Plan(args) | GpuiCommand::UpdateCratesIo(args) => {
             let plan = publish_plan::build_publish_plan(&graph)?;
             validation::validate(&plan)?;
             println!(
                 "GPUI publish plan ({} crates, dependencies first):",
                 plan.len()
             );
-            for entry in &plan {
+            let token = std::env::var("CARGO_REGISTRY_TOKEN").context(
+                "CARGO_REGISTRY_TOKEN is required to inspect crates.io trusted publishing",
+            )?;
+            let client = crates_io_client::RealCratesIoClient::new(
+                std::sync::Arc::new(reqwest_client::ReqwestClient::user_agent(
+                    "Zed GPUI releases",
+                )?),
+                crates_io_client::ApiToken::new(token),
+            );
+            let runtime =
+                tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
+            let checked = runtime.block_on(async {
+                let checked = registry::check_plan(&client, &plan).await?;
+                if update {
+                    registry::update_crates(&client, &checked).await?;
+                    registry::check_plan(&client, &plan).await
+                } else {
+                    Ok(checked)
+                }
+            })?;
+            for (entry, checked) in plan.iter().zip(&checked) {
                 let package = entry.repository.publish_info(entry.package.name());
                 println!(
-                    "{} -> {} ({})",
+                    "{} -> {} ({}) [{:?}]",
                     package.original_name,
                     package.repository.target_name(package.original_name),
-                    package.repository.display(&args)
+                    package.repository.display(&args),
+                    checked.state
                 );
             }
         }
