@@ -1175,7 +1175,7 @@ impl WindowsWindowInner {
         None
     }
 
-    fn handle_cursor_changed(&self, lparam: LPARAM) -> Option<isize> {
+    fn handle_cursor_changed(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
         let had_cursor = self.state.current_cursor.get().is_some();
 
         self.state.current_cursor.set(if lparam.0 == 0 {
@@ -1184,7 +1184,20 @@ impl WindowsWindowInner {
             Some(HCURSOR(lparam.0 as _))
         });
 
-        if had_cursor != self.state.current_cursor.get().is_some() {
+        if self.state.hovered.get() {
+            // Windows only sends `WM_SETCURSOR` on mouse input, so run its hit-tested path now.
+            let mut point = POINT::default();
+            if unsafe { GetCursorPos(&mut point) }
+                .context("unable to get cursor position")
+                .log_err()
+                .is_some()
+            {
+                let position = (point.x as u16 as isize) | ((point.y as u16 as isize) << 16);
+                let hit_test =
+                    unsafe { SendMessageW(handle, WM_NCHITTEST, None, Some(LPARAM(position))) };
+                self.handle_set_cursor(handle, LPARAM(hit_test.0 & 0xFFFF));
+            }
+        } else if had_cursor != self.state.current_cursor.get().is_some() {
             unsafe { SetCursor(self.state.current_cursor.get()) };
         }
 
@@ -1323,7 +1336,7 @@ impl WindowsWindowInner {
             return None;
         }
         match message {
-            WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
+            WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(handle, lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => unreachable!(),
