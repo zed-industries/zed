@@ -65,7 +65,8 @@ pub fn init(db_trusted_paths: DbTrustedPaths, cx: &mut App) {
 ///
 /// Paths through a symlink or junction are skipped, as resolving those may land in another
 /// directory whose name differs only by case. Components are checked from the root, so nothing
-/// under a link is looked up. UNC paths (network shares, `\\wsl.localhost`) are skipped too.
+/// under a link is looked up. Paths with a component that cannot be checked are skipped, as are
+/// UNC paths (network shares, `\\wsl.localhost`).
 async fn on_disk_spelling(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
     let Some(Component::Prefix(prefix)) = path.components().next() else {
         return None;
@@ -74,12 +75,7 @@ async fn on_disk_spelling(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
         return None;
     }
     for ancestor in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
-        // `read_link` first, as `metadata` also reads a link's target.
-        if fs.read_link(ancestor).await.is_ok() {
-            return None;
-        }
-        let metadata = fs.metadata(ancestor).await.ok()??;
-        if metadata.is_symlink {
+        if fs.is_symlink(ancestor).await.unwrap_or(true) {
             return None;
         }
     }

@@ -174,6 +174,92 @@ async fn test_differently_cased_db_trusted_path_on_mapped_drive(cx: &mut TestApp
 
 #[cfg(windows)]
 #[gpui::test]
+async fn test_differently_cased_db_trusted_path_under_unlistable_parent(cx: &mut TestAppContext) {
+    use fs::RealFs;
+    use std::path::Path;
+    use util::{paths::SanitizedPath, test::TempTree};
+
+    /// Denies listing a directory's contents while still allowing to traverse it.
+    struct UnlistableDirectory(PathBuf, String);
+
+    impl UnlistableDirectory {
+        #[allow(clippy::disallowed_methods)]
+        fn new(path: &Path) -> Option<Self> {
+            let user = format!(
+                "{}\\{}",
+                std::env::var("USERDOMAIN").ok()?,
+                std::env::var("USERNAME").ok()?
+            );
+            let denied = std::process::Command::new("icacls")
+                .arg(path)
+                .args(["/deny", &format!("{user}:(RD)")])
+                .output()
+                .ok()?
+                .status
+                .success();
+            let unlistable = denied.then(|| Self(path.to_path_buf(), user))?;
+            // Elevated or privileged accounts may still list the directory.
+            std::fs::read_dir(path).is_err().then_some(unlistable)
+        }
+    }
+
+    impl Drop for UnlistableDirectory {
+        #[allow(clippy::disallowed_methods)]
+        fn drop(&mut self) {
+            let restored = std::process::Command::new("icacls")
+                .arg(&self.0)
+                .args(["/remove:d", &self.1])
+                .output();
+            if !restored
+                .as_ref()
+                .is_ok_and(|output| output.status.success())
+            {
+                eprintln!("failed to restore listing {:?}: {restored:?}", self.0);
+            }
+        }
+    }
+
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({ "Private": { "Project": {} } }));
+    let root = SanitizedPath::new(dir.path()).as_path().to_path_buf();
+    let Some(_unlistable) = UnlistableDirectory::new(&root.join("Private")) else {
+        eprintln!("skipping: directory listing could not be denied");
+        return;
+    };
+    cx.update(|cx| {
+        init(
+            DbTrustedPaths::from_iter([(
+                None,
+                HashSet::from_iter([root.join("Private").join("project")]),
+            )]),
+            cx,
+        )
+    });
+    let project = Project::test_with_worktree_trust(
+        RealFs::new(None, cx.executor()),
+        [root.join("Private").join("Project").as_path()],
+        cx,
+    )
+    .await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
+    trusted_worktrees.update(cx, |store, cx| {
+        assert!(
+            store.can_trust(&worktree_store, worktree_id, cx),
+            "a differently cased trusted path should match its directory \
+             even when a parent directory cannot be listed"
+        );
+    });
+}
+
+#[cfg(windows)]
+#[gpui::test]
 async fn test_db_trusted_link_differing_only_by_case(cx: &mut TestAppContext) {
     init_test(cx);
 
