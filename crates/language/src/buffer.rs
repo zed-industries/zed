@@ -1487,7 +1487,8 @@ impl Buffer {
 
     /// Assign a language to the buffer.
     pub fn set_language_async(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
-        self.set_language_(language, cfg!(any(test, feature = "test-support")), cx);
+        let may_block = cx.is_test();
+        self.set_language_(language, may_block, cx);
     }
 
     /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer.
