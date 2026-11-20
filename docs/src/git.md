@@ -350,7 +350,7 @@ Zed currently supports links to the hosted versions of
 
 ### Self-Hosted Instances
 
-Zed automatically identifies Git hosting providers by checking for keywords in your Git remote URL. For example, if your self-hosted URL contains `gitlab`, `gitea`, or other recognized provider names, Zed will automatically register that hosting provider without any configuration needed.
+Zed automatically identifies Git hosting providers by checking for keywords in your Git remote URL. For example, if your self-hosted URL contains `gitlab`, `gitea`, or other recognized provider names, Zed will automatically register that hosting provider without any configuration needed. Remotes on GitHub Enterprise Cloud with data residency (`*.ghe.com`) are detected automatically as well.
 
 However, if your self-hosted Git instance URL doesn't contain identifying keywords, you can manually configure Zed to create clickable links to your instance by adding a `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
 

@@ -108,10 +108,13 @@ impl Github {
             bail!("the GitHub instance is not self-hosted");
         }
 
-        // TODO: detecting self hosted instances by checking whether "github" is in the url or not
-        // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
-        // information.
-        if !host.contains("github") {
+        // GitHub Enterprise Cloud with data residency is always served from a subdomain of
+        // ghe.com, so those hosts can be detected reliably.
+        //
+        // TODO: detecting other self hosted instances by checking whether "github" is in the url
+        // or not is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for
+        // more information.
+        if !host.contains("github") && !host.ends_with(".ghe.com") {
             bail!("not a GitHub URL");
         }
 
@@ -355,6 +358,57 @@ mod tests {
             github.base_url,
             Url::parse("https://github.my-enterprise.com").unwrap()
         );
+    }
+
+    #[test]
+    fn test_from_remote_url_ghe_com() {
+        for remote_url in [
+            "git@acme.ghe.com:zed-industries/zed.git",
+            "https://acme.ghe.com/zed-industries/zed.git",
+        ] {
+            let github = Github::from_remote_url(remote_url).unwrap();
+
+            assert!(!github.supports_avatars());
+            assert_eq!(github.base_url, Url::parse("https://acme.ghe.com").unwrap());
+            assert_eq!(
+                github.parse_remote_url(remote_url),
+                Some(ParsedGitRemote {
+                    owner: "zed-industries".into(),
+                    repo: "zed".into(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_remote_url_rejects_ghe_com_lookalikes() {
+        for remote_url in [
+            "https://ghe.com/zed-industries/zed.git",
+            "https://notghe.com/zed-industries/zed.git",
+            "https://acme.ghe.com.example.com/zed-industries/zed.git",
+        ] {
+            assert!(
+                Github::from_remote_url(remote_url).is_err(),
+                "{remote_url} should not be detected as GitHub"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_ghe_com_permalink() {
+        let remote_url = "https://acme.ghe.com/zed-industries/zed.git";
+        let github = Github::from_remote_url(remote_url).unwrap();
+        let permalink = github.build_permalink(
+            github.parse_remote_url(remote_url).unwrap(),
+            BuildPermalinkParams::new(
+                "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                Some(6..6),
+            ),
+        );
+
+        let expected_url = "https://acme.ghe.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
