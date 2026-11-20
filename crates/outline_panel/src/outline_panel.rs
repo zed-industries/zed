@@ -137,6 +137,7 @@ pub struct OutlinePanel {
     cached_entries_update_pending: Option<CachedEntriesUpdate>,
     reveal_selection_task: Task<anyhow::Result<()>>,
     lsp_outline_refresh_task: Task<()>,
+    pending_document_symbol_buffers: HashSet<BufferId>,
     outline_fetch_tasks: HashMap<BufferId, Task<()>>,
     buffers: HashMap<BufferId, BufferOutlines>,
     cached_entries: Vec<CachedEntry>,
@@ -1277,6 +1278,7 @@ impl OutlinePanel {
                 cached_entries_update_pending: None,
                 reveal_selection_task: Task::ready(Ok(())),
                 lsp_outline_refresh_task: Task::ready(()),
+                pending_document_symbol_buffers: HashSet::default(),
                 outline_fetch_tasks: HashMap::default(),
                 buffers: HashMap::default(),
                 cached_entries: Vec::new(),
@@ -3490,6 +3492,7 @@ impl OutlinePanel {
         self.fs_entries_update_task = Task::ready(());
         self.fs_entries_update_pending = false;
         self.lsp_outline_refresh_task = Task::ready(());
+        self.pending_document_symbol_buffers.clear();
         self.outline_fetch_tasks.clear();
         self.cached_entries_update_task = Task::ready(());
         self.cached_entries_update_pending = None;
@@ -5645,6 +5648,7 @@ impl Panel for OutlinePanel {
                     outline_panel.active = active;
                     if old_active != active {
                         outline_panel.lsp_outline_refresh_task = Task::ready(());
+                        outline_panel.pending_document_symbol_buffers.clear();
                         outline_panel.outline_fetch_tasks.clear();
                         if active
                             && let Some((active_item, active_editor)) =
@@ -5839,6 +5843,9 @@ fn subscribe_for_editor_events(
                 EditorEvent::BuffersRemoved { removed_buffer_ids } => {
                     for buffer_id in removed_buffer_ids {
                         outline_panel.buffers.remove(buffer_id);
+                        outline_panel
+                            .pending_document_symbol_buffers
+                            .remove(buffer_id);
                         outline_panel.outline_fetch_tasks.remove(buffer_id);
                     }
                     outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
@@ -5914,36 +5921,22 @@ fn subscribe_for_editor_events(
                     outline_panel.invalidate_outlines(&[*buffer_id]);
                     outline_panel.update_contents(debounce, window, cx);
                 }
-                EditorEvent::OutlineSymbolsChanged => {
+                EditorEvent::DocumentSymbolsChanged(buffer_id) => {
+                    outline_panel
+                        .pending_document_symbol_buffers
+                        .insert(*buffer_id);
                     if outline_panel.lsp_outline_refresh_task.is_ready() {
                         outline_panel.lsp_outline_refresh_task =
                             cx.spawn_in(window, async move |outline_panel, cx| {
                                 cx.background_executor().timer(UPDATE_DEBOUNCE).await;
                                 outline_panel
                                     .update_in(cx, |outline_panel, window, cx| {
-                                        let Some(editor) = outline_panel.active_editor() else {
-                                            return;
-                                        };
-                                        let editor_buffer = editor.read(cx).buffer().read(cx);
-                                        let mut invalidated = false;
-                                        for (buffer_id, outlines) in &mut outline_panel.buffers {
-                                            if editor_buffer.buffer(*buffer_id).is_some_and(
-                                                |buffer| {
-                                                    LanguageSettings::for_buffer(
-                                                        buffer.read(cx),
-                                                        cx,
-                                                    )
-                                                    .document_symbols
-                                                    .lsp_enabled()
-                                                },
-                                            ) {
-                                                outlines.invalidate_outlines();
-                                                invalidated = true;
-                                            }
-                                        }
-                                        if invalidated {
-                                            outline_panel.fetch_outdated_outlines(None, window, cx);
-                                        }
+                                        let buffer_ids = outline_panel
+                                            .pending_document_symbol_buffers
+                                            .drain()
+                                            .collect::<Vec<_>>();
+                                        outline_panel.invalidate_outlines(&buffer_ids);
+                                        outline_panel.fetch_outdated_outlines(None, window, cx);
                                     })
                                     .ok();
                             });
@@ -6019,6 +6012,7 @@ mod tests {
         let (retained_sender, retained_receiver) = futures::channel::oneshot::channel::<()>();
         let (refresh_sender, refresh_receiver) = futures::channel::oneshot::channel::<()>();
         panel.update(cx, |panel, cx| {
+            panel.pending_document_symbol_buffers.insert(requested_id);
             panel.lsp_outline_refresh_task = cx.background_spawn(async move {
                 refresh_receiver
                     .await
@@ -6082,6 +6076,7 @@ mod tests {
         assert!(refresh_sender.is_canceled());
         panel.read_with(cx, |panel, _| {
             assert!(!panel.active);
+            assert!(panel.pending_document_symbol_buffers.is_empty());
             assert!(panel.outline_fetch_tasks.is_empty());
             assert_eq!(panel.buffers.len(), 2);
         });
@@ -11829,15 +11824,26 @@ outline: struct Foo  <==== selected
             );
         });
 
+        let buffer_id = editor.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("editor should contain a single buffer")
+                .read(cx)
+                .remote_id()
+        });
         for _ in 0..2 {
             outline_panel.update(cx, |panel, _| panel.outline_fetch_tasks.clear());
-            editor.update(cx, |_, cx| cx.emit(EditorEvent::OutlineSymbolsChanged));
+            editor.update(cx, |_, cx| {
+                cx.emit(EditorEvent::DocumentSymbolsChanged(buffer_id))
+            });
             cx.run_until_parked();
             cx.executor()
                 .advance_clock(UPDATE_DEBOUNCE - Duration::from_millis(1));
             editor.update(cx, |_, cx| {
                 for _ in 0..8 {
-                    cx.emit(EditorEvent::OutlineSymbolsChanged);
+                    cx.emit(EditorEvent::DocumentSymbolsChanged(buffer_id));
                 }
             });
             cx.run_until_parked();
@@ -11923,13 +11929,308 @@ outline: struct Foo  <==== selected
             );
         });
 
-        editor.update(cx, |_, cx| cx.emit(EditorEvent::OutlineSymbolsChanged));
+        editor.update(cx, |_, cx| {
+            cx.emit(EditorEvent::DocumentSymbolsChanged(buffer_id))
+        });
         cx.run_until_parked();
         outline_panel.update_in(cx, |panel, window, cx| {
             assert!(!panel.lsp_outline_refresh_task.is_ready());
             panel.clear_previous(window, cx);
             assert!(panel.lsp_outline_refresh_task.is_ready());
+            assert!(panel.pending_document_symbol_buffers.is_empty());
         });
+    }
+
+    #[gpui::test]
+    async fn test_document_symbol_changes_only_refresh_affected_buffers(cx: &mut TestAppContext) {
+        init_test(cx);
+        let root = path!("/root");
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            root,
+            json!({"a.txt": "first", "b.txt": "second", "c.txt": "third"}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(root)], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let panel = outline_panel(&workspace, cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.hide_symbols_override = Some(false);
+            panel.set_active(true, window, cx);
+        });
+        let first = open_buffer(&project, path!("/root/a.txt"), cx).await;
+        let second = open_buffer(&project, path!("/root/b.txt"), cx).await;
+        let third = open_buffer(&project, path!("/root/c.txt"), cx).await;
+        let editor = add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[
+                (&first, Vec::new()),
+                (&second, Vec::new()),
+                (&third, Vec::new()),
+            ],
+            cx,
+        );
+        wait_for_outline_tasks(&panel, cx).await;
+        let first_id = first.read_with(cx, |buffer, _| buffer.remote_id());
+        let second_id = second.read_with(cx, |buffer, _| buffer.remote_id());
+        let third_id = third.read_with(cx, |buffer, _| buffer.remote_id());
+
+        for _ in 0..2 {
+            panel.update(cx, |panel, _| {
+                assert_eq!(panel.buffers.len(), 3);
+                panel.outline_fetch_tasks.clear();
+            });
+            editor.update(cx, |_, cx| {
+                cx.emit(EditorEvent::DocumentSymbolsChanged(first_id))
+            });
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(UPDATE_DEBOUNCE - Duration::from_millis(1));
+            editor.update(cx, |_, cx| {
+                for buffer_id in [second_id, first_id, second_id] {
+                    cx.emit(EditorEvent::DocumentSymbolsChanged(buffer_id));
+                }
+            });
+            cx.run_until_parked();
+            panel.read_with(cx, |panel, _| {
+                assert_eq!(panel.pending_document_symbol_buffers.len(), 2);
+                assert!(panel.outline_fetch_tasks.is_empty());
+                assert!(
+                    panel
+                        .buffers
+                        .values()
+                        .all(|buffer| { matches!(buffer.outlines, OutlineState::Outlines(_)) })
+                );
+            });
+            cx.executor().advance_clock(Duration::from_millis(1));
+            wait_for_outline_tasks(&panel, cx).await;
+            panel.read_with(cx, |panel, _| {
+                assert!(panel.pending_document_symbol_buffers.is_empty());
+                assert_eq!(panel.outline_fetch_tasks.len(), 2);
+                assert!(panel.outline_fetch_tasks.contains_key(&first_id));
+                assert!(panel.outline_fetch_tasks.contains_key(&second_id));
+                assert!(!panel.outline_fetch_tasks.contains_key(&third_id));
+                assert!(
+                    panel
+                        .buffers
+                        .values()
+                        .all(|buffer| { matches!(buffer.outlines, OutlineState::Outlines(_)) })
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_outline_panel_prefer_lsp_document_symbols(cx: &mut TestAppContext) {
+        #[allow(deprecated)]
+        let symbols = vec![lsp::DocumentSymbol {
+            name: "lsp_only_symbol".to_string(),
+            detail: None,
+            kind: lsp::SymbolKind::STRUCT,
+            tags: None,
+            deprecated: None,
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 1)),
+            selection_range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 10)),
+            children: None,
+        }];
+        check_outline_panel_prefer_lsp_document_symbols(
+            cx,
+            symbols,
+            "outline: lsp_only_symbol  <==== selected",
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_outline_panel_prefer_lsp_empty_document_symbols(cx: &mut TestAppContext) {
+        check_outline_panel_prefer_lsp_document_symbols(cx, Vec::new(), "lib.rs  <==== selected")
+            .await;
+    }
+
+    async fn check_outline_panel_prefer_lsp_document_symbols(
+        cx: &mut TestAppContext,
+        symbols: Vec<lsp::DocumentSymbol>,
+        expected_outline: &str,
+    ) {
+        init_test(cx);
+
+        let root = path!("/root");
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            root,
+            json!({
+                "src": {
+                    "lib.rs": indoc!("
+                        struct Foo {
+                            bar: u32,
+                            baz: String,
+                        }
+                    "),
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(root)], cx).await;
+        let language_registry = project.read_with(cx, |project, _| {
+            project.languages().add(rust_lang());
+            project.languages().clone()
+        });
+        let (request_started, requests) = async_channel::unbounded();
+        let mut fake_language_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |fake_language_server| {
+                    let request_started = request_started.clone();
+                    fake_language_server
+                        .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                            move |_, _| {
+                                let (send_response, response) =
+                                    futures::channel::oneshot::channel();
+                                request_started
+                                    .try_send(send_response)
+                                    .expect("document symbol request should be observed");
+                                async move {
+                                    response
+                                        .await
+                                        .expect("document symbol response should be supplied")
+                                }
+                            },
+                        );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |panel, window, cx| panel.set_active(true, window, cx));
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/root/src/lib.rs")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..OpenOptions::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("Rust source file should open")
+            .downcast::<Editor>()
+            .expect("Rust source file should open in an editor");
+        let _fake_language_server = fake_language_servers
+            .next()
+            .await
+            .expect("Rust language server should start");
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        let tree_sitter_outline = indoc!(
+            "
+            outline: struct Foo  <==== selected
+              outline: bar
+              outline: baz"
+        );
+        assert_tree(&outline_panel, &project, tree_sitter_outline, cx);
+
+        cx.update(|_, cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.document_symbols =
+                        Some(settings::DocumentSymbols::PreferLsp);
+                });
+            });
+        });
+        let send_response = requests
+            .recv()
+            .await
+            .expect("PreferLsp should request document symbols");
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        assert_tree(&outline_panel, &project, tree_sitter_outline, cx);
+
+        outline_panel.update(cx, |panel, _| panel.outline_fetch_tasks.clear());
+        for row in [1, 2, 0] {
+            editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    let point = language::Point::new(row, 4);
+                    selections.select_ranges([point..point]);
+                });
+            });
+            wait_for_outline_tasks(&outline_panel, cx).await;
+            outline_panel.read_with(cx, |panel, _| {
+                assert!(panel.lsp_outline_refresh_task.is_ready());
+                assert!(panel.pending_document_symbol_buffers.is_empty());
+                assert!(panel.outline_fetch_tasks.is_empty());
+                assert!(
+                    panel
+                        .buffers
+                        .values()
+                        .all(|buffer| { matches!(buffer.outlines, OutlineState::Outlines(_)) })
+                );
+            });
+        }
+        assert_tree(&outline_panel, &project, tree_sitter_outline, cx);
+
+        send_response
+            .send(Ok(Some(lsp::DocumentSymbolResponse::Nested(
+                symbols.clone(),
+            ))))
+            .expect("document symbol request should still be pending");
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        assert_tree(&outline_panel, &project, expected_outline, cx);
+
+        for retry in [false, true] {
+            editor.update(cx, |editor, cx| {
+                let buffer = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("editor should contain a single buffer");
+                buffer.update(cx, |buffer, cx| {
+                    let end = buffer.len();
+                    buffer.edit([(end..end, "\n")], None, cx);
+                });
+            });
+            let send_response = requests
+                .recv()
+                .await
+                .expect("editing should request fresh document symbols");
+            wait_for_outline_tasks(&outline_panel, cx).await;
+            let expected_pending = if retry && symbols.is_empty() {
+                tree_sitter_outline.replace(SELECTED_MARKER, "")
+            } else if retry {
+                tree_sitter_outline.to_string()
+            } else {
+                expected_outline.to_string()
+            };
+            assert_tree(&outline_panel, &project, &expected_pending, cx);
+
+            let response = if retry {
+                Ok(Some(lsp::DocumentSymbolResponse::Nested(symbols.clone())))
+            } else {
+                Err(anyhow::anyhow!("document symbol refresh failed"))
+            };
+            send_response
+                .send(response)
+                .expect("document symbol refresh should still be pending");
+            wait_for_outline_tasks(&outline_panel, cx).await;
+            let expected_response = if retry {
+                expected_outline.to_string()
+            } else if symbols.is_empty() {
+                tree_sitter_outline.replace(SELECTED_MARKER, "")
+            } else {
+                tree_sitter_outline.to_string()
+            };
+            assert_tree(&outline_panel, &project, &expected_response, cx);
+        }
     }
 
     #[gpui::test]

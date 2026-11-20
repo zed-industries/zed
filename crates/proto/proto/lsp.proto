@@ -203,10 +203,14 @@ message GetDocumentSymbols {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
   repeated VectorClockEntry version = 3;
+  // If nonempty, query only these candidates and report inapplicable ones.
+  repeated uint64 server_ids = 4;
 }
 
 message GetDocumentSymbolsResponse {
   repeated DocumentSymbol symbols = 1;
+  // Not a successful empty result; the candidate does not serve this document.
+  bool inapplicable = 2;
 }
 
 message GetDocumentLinks {

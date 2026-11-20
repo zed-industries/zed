@@ -2645,6 +2645,317 @@ async fn test_remote_lsp_data_cache_converges_with_multiple_servers(
     );
 }
 
+async fn setup_remote_document_symbols_test(
+    adapter_names: &[&'static str],
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    Vec<(Entity<Buffer>, project::lsp_store::OpenLspBufferHandle)>,
+    Vec<lsp::FakeLanguageServer>,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": { "main.fake": "fn main() {}" },
+            "project2": { "main.fake": "fn other() {}" },
+        }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let language_config = || LanguageConfig {
+        name: "Fake".into(),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["fake".into()],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let capabilities = lsp::ServerCapabilities {
+        document_symbol_provider: Some(lsp::OneOf::Left(true)),
+        ..Default::default()
+    };
+    project.update(cx, |project, _| {
+        project
+            .languages()
+            .register_test_language(language_config());
+        for &name in adapter_names {
+            project.languages().register_fake_lsp_adapter(
+                "Fake",
+                FakeLspAdapter {
+                    name,
+                    capabilities: capabilities.clone(),
+                    ..Default::default()
+                },
+            );
+        }
+    });
+    let mut server_streams = server_cx.update(|cx| {
+        let languages = &headless.read(cx).languages;
+        languages.register_test_language(language_config());
+        adapter_names
+            .iter()
+            .map(|&name| {
+                languages.register_fake_lsp_adapter(
+                    "Fake",
+                    FakeLspAdapter {
+                        name,
+                        capabilities: capabilities.clone(),
+                        ..Default::default()
+                    },
+                );
+                languages.register_fake_lsp_server(
+                    LanguageServerName(name.into()),
+                    capabilities.clone(),
+                    None,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    cx.run_until_parked();
+    let mut buffers = Vec::new();
+    let mut servers = Vec::new();
+    for root in [path!("/code/project1"), path!("/code/project2")] {
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(root, true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |worktree, _| worktree.id());
+        buffers.push(
+            project
+                .update(cx, |project, cx| {
+                    project.open_buffer_with_lsp((worktree_id, rel_path("main.fake")), cx)
+                })
+                .await
+                .unwrap(),
+        );
+        for stream in &mut server_streams {
+            servers.push(stream.next().await.unwrap());
+        }
+        cx.run_until_parked();
+    }
+    (project, buffers, servers)
+}
+
+#[gpui::test]
+async fn test_remote_document_symbols_cross_worktree_outcomes_and_cache(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (project, buffers, servers) =
+        setup_remote_document_symbols_test(&["symbols"], cx, server_cx).await;
+    let (buffer, _handle) = buffers.first().unwrap();
+    let response_kind = Arc::new(AtomicUsize::new(0));
+    let request_counts = servers
+        .iter()
+        .map(|server| {
+            let count = Arc::new(AtomicUsize::new(0));
+            server.set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>({
+                let count = count.clone();
+                let response_kind = response_kind.clone();
+                move |_, _| {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let response_kind = response_kind.load(Ordering::SeqCst);
+                    async move {
+                        match response_kind {
+                            0 => anyhow::bail!("symbols unavailable"),
+                            1 => Ok(None),
+                            _ => Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new()))),
+                        }
+                    }
+                }
+            });
+            count
+        })
+        .collect::<Vec<_>>();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.read_with(cx, |store, cx| {
+        assert_eq!(
+            store
+                .relevant_server_ids_for_capability_check(buffer, cx)
+                .len(),
+            2
+        );
+    });
+    let fetch = |cx: &mut TestAppContext| {
+        lsp_store.update(cx, |store, cx| store.fetch_document_symbols(buffer, cx))
+    };
+    let assert_counts = |expected| {
+        assert_eq!(
+            request_counts
+                .iter()
+                .map(|count| count.load(Ordering::SeqCst))
+                .collect::<Vec<_>>(),
+            vec![expected, 0]
+        );
+    };
+
+    assert_eq!(fetch(cx).await, None);
+    cx.run_until_parked();
+    assert_counts(1);
+    assert_eq!(fetch(cx).await, None);
+    assert_counts(2);
+
+    response_kind.store(1, Ordering::SeqCst);
+    assert_eq!(fetch(cx).await, Some(Vec::new()));
+    assert_counts(3);
+    for _ in 0..3 {
+        // A ready task also proves that no upstream request was scheduled for the
+        // other worktree's same-adapter server, not just that its LSP stayed idle.
+        assert_eq!(fetch(cx).now_or_never(), Some(Some(Vec::new())));
+        cx.run_until_parked();
+        assert_counts(3);
+    }
+
+    response_kind.store(0, Ordering::SeqCst);
+    servers
+        .first()
+        .unwrap()
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "symbols-refresh".into(),
+                    method: "textDocument/documentSymbol".into(),
+                    register_options: Some(json!({ "label": "refresh" })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(fetch(cx).await, None);
+    assert_counts(4);
+    // Previously the omitted other-worktree server could be queried alone here,
+    // producing a fabricated authoritative empty result after the real failure.
+    assert_eq!(fetch(cx).await, None);
+    assert_counts(5);
+    cx.run_until_parked();
+    assert_counts(5);
+
+    response_kind.store(2, Ordering::SeqCst);
+    assert_eq!(fetch(cx).await, Some(Vec::new()));
+    assert_counts(6);
+    for _ in 0..3 {
+        assert_eq!(fetch(cx).now_or_never(), Some(Some(Vec::new())));
+        assert_counts(6);
+    }
+}
+
+#[gpui::test]
+async fn test_remote_document_symbols_completion_after_language_loss(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (project, buffers, servers) =
+        setup_remote_document_symbols_test(&["symbols"], cx, server_cx).await;
+    let (buffer, _handle) = buffers.first().unwrap();
+    let (started_sender, started_receiver) = futures::channel::oneshot::channel();
+    let (finish_sender, finish_receiver) = futures::channel::oneshot::channel();
+    let gates = Arc::new(std::sync::Mutex::new(Some((
+        started_sender,
+        finish_receiver,
+    ))));
+    let request_count = Arc::new(AtomicUsize::new(0));
+    servers
+        .first()
+        .unwrap()
+        .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>({
+            let request_count = request_count.clone();
+            move |_, _| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                let gates = gates.lock().unwrap().take();
+                async move {
+                    if let Some((started, finish)) = gates {
+                        started
+                            .send(())
+                            .map_err(|_| anyhow::anyhow!("test stopped waiting"))?;
+                        finish.await?;
+                    }
+                    Ok(None)
+                }
+            }
+        });
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let fetch = |cx: &mut TestAppContext| {
+        lsp_store.update(cx, |store, cx| store.fetch_document_symbols(buffer, cx))
+    };
+    let pending = fetch(cx);
+    started_receiver.await.unwrap();
+    let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
+    buffer.update(cx, |buffer, cx| buffer.set_language(None, cx));
+    finish_sender.send(()).unwrap();
+    assert_eq!(pending.await, None);
+    assert_eq!(fetch(cx).await, None);
+    assert_eq!(request_count.load(Ordering::SeqCst), 1);
+
+    buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
+    assert_eq!(fetch(cx).await, Some(Vec::new()));
+    assert_eq!(request_count.load(Ordering::SeqCst), 2);
+}
+
+#[gpui::test]
+async fn test_remote_document_symbols_partial_success_retries_only_failures(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (project, buffers, servers) =
+        setup_remote_document_symbols_test(&["first", "second"], cx, server_cx).await;
+    let (buffer, _handle) = buffers.first().unwrap();
+    let fail_second = Arc::new(AtomicBool::new(true));
+    let request_counts = servers
+        .iter()
+        .enumerate()
+        .map(|(index, server)| {
+            let count = Arc::new(AtomicUsize::new(0));
+            server.set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>({
+                let count = count.clone();
+                let fail_second = fail_second.clone();
+                move |_, _| {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let should_fail = index == 1 && fail_second.load(Ordering::SeqCst);
+                    async move {
+                        anyhow::ensure!(!should_fail, "second server unavailable");
+                        Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())))
+                    }
+                }
+            });
+            count
+        })
+        .collect::<Vec<_>>();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let fetch = |cx: &mut TestAppContext| {
+        lsp_store.update(cx, |store, cx| store.fetch_document_symbols(buffer, cx))
+    };
+    let assert_counts = |expected| {
+        assert_eq!(
+            request_counts
+                .iter()
+                .map(|count| count.load(Ordering::SeqCst))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    };
+    assert_eq!(fetch(cx).await, Some(Vec::new()));
+    cx.run_until_parked();
+    assert_counts(vec![1, 1, 0, 0]);
+    assert_eq!(fetch(cx).await, Some(Vec::new()));
+    assert_counts(vec![1, 2, 0, 0]);
+    fail_second.store(false, Ordering::SeqCst);
+    assert_eq!(fetch(cx).await, Some(Vec::new()));
+    assert_counts(vec![1, 3, 0, 0]);
+    for _ in 0..3 {
+        assert_eq!(fetch(cx).now_or_never(), Some(Some(Vec::new())));
+        cx.run_until_parked();
+        assert_counts(vec![1, 3, 0, 0]);
+    }
+}
+
 #[gpui::test]
 async fn test_remote_per_server_refresh_queries_only_the_refreshed_server(
     cx: &mut TestAppContext,

@@ -10972,13 +10972,12 @@ impl LspStore {
                 .await?;
             }
             Request::GetDocumentSymbols(get_document_symbols) => {
-                Self::query_lsp_locally::<GetDocumentSymbols>(
+                Self::query_document_symbols_locally(
                     lsp_store,
                     server_id,
                     sender_id,
                     lsp_request_id,
                     get_document_symbols,
-                    None,
                     &mut cx,
                 )
                 .await?;
@@ -11658,6 +11657,14 @@ impl LspStore {
                 non_lsp @ proto::update_language_server::Variant::StatusUpdate(_)
                 | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_)
                 | non_lsp @ proto::update_language_server::Variant::MetadataUpdated(_) => {
+                    if let proto::update_language_server::Variant::RegisteredForBuffer(registration) =
+                        &non_lsp
+                        && let Ok(buffer_id) = BufferId::new(registration.buffer_id)
+                        && let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id)
+                        && let Some(document_symbols) = &mut lsp_data.document_symbols
+                    {
+                        document_symbols.remove_server_data(language_server_id);
+                    }
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
                         name: envelope

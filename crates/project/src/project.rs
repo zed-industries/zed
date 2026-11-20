@@ -3880,7 +3880,12 @@ impl Project {
                 name,
                 message,
             } => {
-                if self.is_local()
+                if (self.is_local()
+                    || (self.is_via_remote_server()
+                        && matches!(
+                            message,
+                            proto::update_language_server::Variant::RegisteredForBuffer(_)
+                        )))
                     && !matches!(
                         message,
                         proto::update_language_server::Variant::MetadataUpdated(_)
