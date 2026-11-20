@@ -21,7 +21,8 @@ use windows::{
         Graphics::Dwm::*,
         Graphics::Gdi::*,
         System::{
-            Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
+            Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Memory::*, Ole::*,
+            SystemServices::*,
         },
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -91,6 +92,7 @@ pub struct WindowsWindowState {
     hwnd: HWND,
     pub(crate) a11y: RefCell<Option<A11yState>>,
     pub mouse_position: Cell<Point<Pixels>>,
+    pub(crate) pending_external_drag: RefCell<Option<FileDragPaths>>,
 }
 
 pub(crate) struct WindowsWindowInner {
@@ -193,6 +195,7 @@ impl WindowsWindowState {
             direct_manipulation,
             a11y: RefCell::new(None),
             mouse_position: Cell::new(Point::default()),
+            pending_external_drag: RefCell::new(None),
         })
     }
 
@@ -1074,6 +1077,35 @@ impl PlatformWindow for WindowsWindow {
         self.0.update_ime_position(self.0.hwnd, caret_position);
     }
 
+    fn can_start_external_drag(&self) -> bool {
+        true
+    }
+
+    fn start_external_drag(&self, payload: &ExternalDragPayload) -> bool {
+        let ExternalDragPayload::Files(paths) = payload;
+        if paths.entries().is_empty() {
+            log::warn!("start_external_drag declined: no paths");
+            return false;
+        }
+        self.state
+            .pending_external_drag
+            .replace(Some(paths.clone()));
+        let posted = unsafe {
+            PostMessageW(
+                Some(self.hwnd),
+                WM_GPUI_START_EXTERNAL_DRAG,
+                WPARAM(self.validation_number),
+                LPARAM(0),
+            )
+        }
+        .log_err()
+        .is_some();
+        if !posted {
+            self.state.pending_external_drag.take();
+        }
+        posted
+    }
+
     fn play_system_bell(&self) {
         // MB_OK: The sound specified as the Windows Default Beep sound.
         let _ = unsafe { MessageBeep(MB_OK) };
@@ -1285,6 +1317,74 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         self.handle_drag_drop(input);
 
         Ok(())
+    }
+}
+
+pub(crate) fn start_file_drag(hwnd: HWND, paths: &FileDragPaths) -> Result<DROPEFFECT> {
+    let global = drop_files_global(paths)?;
+    unsafe {
+        let data_object: IDataObject = SHCreateDataObject(None, None, None::<&IDataObject>)?;
+        let format = FORMATETC {
+            cfFormat: CF_HDROP.0,
+            ptd: std::ptr::null_mut(),
+            dwAspect: DVASPECT_CONTENT.0,
+            lindex: -1,
+            tymed: TYMED_HGLOBAL.0 as _,
+        };
+        let medium = STGMEDIUM {
+            tymed: TYMED_HGLOBAL.0 as _,
+            u: STGMEDIUM_0 { hGlobal: *global },
+            pUnkForRelease: std::mem::ManuallyDrop::new(None),
+        };
+        data_object.SetData(&format, &medium, true)?;
+        std::mem::forget(global);
+        Ok(SHDoDragDrop(
+            Some(hwnd),
+            &data_object,
+            None::<&IDropSource>,
+            DROPEFFECT_COPY,
+        )?)
+    }
+}
+
+fn drop_files_global(paths: &FileDragPaths) -> Result<Owned<HGLOBAL>> {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    let mut wide = Vec::<u16>::new();
+    for (path, _) in paths.entries() {
+        let start = wide.len();
+        wide.extend(path.as_os_str().encode_wide());
+        if wide[start..].contains(&0) {
+            log::warn!("start_external_drag skipped path containing a nul character");
+            wide.truncate(start);
+            continue;
+        }
+        wide.push(0);
+    }
+    anyhow::ensure!(!wide.is_empty(), "no paths to drag");
+    wide.push(0);
+
+    let header_size = std::mem::size_of::<DROPFILES>();
+    unsafe {
+        let global = Owned::new(GlobalAlloc(
+            GMEM_MOVEABLE,
+            header_size + std::mem::size_of_val(wide.as_slice()),
+        )?);
+        let ptr = GlobalLock(*global);
+        anyhow::ensure!(!ptr.is_null(), "GlobalLock returned null");
+        ptr.cast::<DROPFILES>().write(DROPFILES {
+            pFiles: header_size as u32,
+            pt: POINT::default(),
+            fNC: false.into(),
+            fWide: true.into(),
+        });
+        std::ptr::copy_nonoverlapping(
+            wide.as_ptr(),
+            ptr.cast::<u8>().add(header_size).cast::<u16>(),
+            wide.len(),
+        );
+        GlobalUnlock(*global).ok();
+        Ok(global)
     }
 }
 
@@ -1687,9 +1787,29 @@ fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::ClickState;
-    use gpui::{DevicePixels, MouseButton, point};
-    use std::time::Duration;
+    use super::{ClickState, drop_files_global};
+    use gpui::{DevicePixels, FileDragPaths, MouseButton, point};
+    use std::{path::PathBuf, time::Duration};
+    use windows::Win32::UI::Shell::HDROP;
+
+    #[test]
+    fn test_drop_files_global_round_trips_paths() {
+        let paths = FileDragPaths::new([
+            (PathBuf::from(r"C:\Users\Public\Documents"), true),
+            (PathBuf::from(r"C:\Temp\naïve file.txt"), false),
+            (PathBuf::from("C:\\Temp\\bad\0name"), false),
+        ]);
+        let global = drop_files_global(&paths).unwrap();
+        let mut names = Vec::new();
+        crate::with_file_names(HDROP(global.0), |name| names.push(name));
+        assert_eq!(
+            names,
+            [r"C:\Users\Public\Documents", r"C:\Temp\naïve file.txt"]
+        );
+
+        let only_invalid = FileDragPaths::new([(PathBuf::from("bad\0name"), false)]);
+        assert!(drop_files_global(&only_invalid).is_err());
+    }
 
     #[test]
     fn test_double_click_interval() {
