@@ -30,6 +30,8 @@ impl ScrollHandleState {
 pub struct TerminalScrollHandle {
     state: Rc<RefCell<ScrollHandleState>>,
     pub future_display_offset: Rc<Cell<Option<usize>>>,
+    #[cfg(test)]
+    offset_snapshots: Rc<RefCell<Vec<(usize, Pixels)>>>,
 }
 
 impl TerminalScrollHandle {
@@ -37,11 +39,18 @@ impl TerminalScrollHandle {
         Self {
             state: Rc::new(RefCell::new(ScrollHandleState::new(terminal))),
             future_display_offset: Rc::new(Cell::new(None)),
+            #[cfg(test)]
+            offset_snapshots: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
     pub fn update(&self, terminal: &Terminal) {
         *self.state.borrow_mut() = ScrollHandleState::new(terminal);
+    }
+
+    #[cfg(test)]
+    pub(super) fn take_offset_snapshots(&self) -> Vec<(usize, Pixels)> {
+        std::mem::take(&mut self.offset_snapshots.borrow_mut())
     }
 }
 
@@ -60,7 +69,12 @@ impl ScrollableHandle for TerminalScrollHandle {
             .total_lines
             .saturating_sub(state.viewport_lines)
             .saturating_sub(state.display_offset);
-        Point::new(Pixels::ZERO, -(scroll_offset as f32 * state.line_height))
+        let offset = Point::new(Pixels::ZERO, -(scroll_offset as f32 * state.line_height));
+        #[cfg(test)]
+        self.offset_snapshots
+            .borrow_mut()
+            .push((state.display_offset, offset.y));
+        offset
     }
 
     fn set_offset(&self, point: Point<Pixels>) {
