@@ -300,6 +300,7 @@ fn update_conflict_highlighting(
 ) {
     log::debug!("update conflict highlighting for {conflict:?}");
 
+    let outer_background = |cx: &App| cx.theme().colors().editor_background;
     let ours_background = |cx: &App| cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = |cx: &App| cx.theme().colors().version_control_conflict_marker_theirs;
 
@@ -308,14 +309,10 @@ fn update_conflict_highlighting(
         ..Default::default()
     };
 
-    editor.insert_gutter_highlight::<ConflictsOuter>(
-        outer.start..theirs.end,
-        |cx| cx.theme().colors().editor_background,
-        cx,
-    );
+    editor.insert_gutter_highlight::<ConflictsOuter>(outer.start..theirs.end, outer_background, cx);
 
     // Prevent diff hunk highlighting within the entire conflict region.
-    editor.highlight_rows::<ConflictsOuter>(outer.clone(), theirs_background, options, cx);
+    editor.highlight_rows::<ConflictsOuter>(outer.clone(), outer_background, options, cx);
     editor.highlight_rows::<ConflictsOurs>(ours.clone(), ours_background, options, cx);
     editor.highlight_rows::<ConflictsOursMarker>(
         outer.start..ours.start,
