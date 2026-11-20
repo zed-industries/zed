@@ -36,7 +36,7 @@ use crate::{
     CoreCompletion, Hover, InlayHint, InlayId, LocationLink, LspAction, LspPullDiagnostics,
     ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
     PulledDiagnostics, ResolveState, Symbol,
-    buffer_store::{BufferStore, BufferStoreEvent},
+    buffer_store::{BufferStore, BufferStoreEvent, apply_initial_line_ending},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
     lsp_store::{
@@ -5701,6 +5701,15 @@ impl LspStore {
                 buffer: buffer_handle.clone(),
                 new_language: None,
             });
+        }
+
+        // Line ending settings may be language-specific, so they are applied
+        // after detection. When the language cannot be loaded synchronously,
+        // detection is retried once it finishes loading and this runs again;
+        // it only affects unmodified buffers that carry no line endings, so
+        // that retry can still pick up the language-specific setting.
+        if self.as_local().is_some() {
+            buffer_handle.update(cx, |buffer, cx| apply_initial_line_ending(buffer, cx));
         }
     }
 
