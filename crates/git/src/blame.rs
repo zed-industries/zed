@@ -85,6 +85,11 @@ const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
 const EXACT_ENCODING_YIELD_BYTES: usize = 64 * 1024;
+const BUILTIN_DIFF_DRIVERS: &[&str] = &[
+    "ada", "bash", "bibtex", "cpp", "csharp", "css", "dts", "elixir", "fortran", "fountain",
+    "golang", "html", "ini", "java", "kotlin", "markdown", "matlab", "objc", "pascal", "perl",
+    "php", "python", "r", "ruby", "rust", "scheme", "tex",
+];
 
 #[derive(Clone, Copy)]
 enum BlameSource<'a> {
@@ -179,16 +184,42 @@ async fn git_stdin_encoding(
     if encoding == UTF_16LE || encoding == UTF_16BE {
         return Ok(StdinEncoding::Utf8);
     }
-    for diff_driver in diff_driver.into_iter().chain(["default"]) {
-        let textconv_key = format!("diff.{diff_driver}.textconv");
-        let textconv = git
-            .run(&["config", "--default", "", "--get", &textconv_key])
-            .await?;
-        if !textconv.is_empty() {
-            return Ok(StdinEncoding::Utf8);
-        }
+    if history_has_textconv(git, diff_driver.unwrap_or("unspecified")).await? {
+        return Ok(StdinEncoding::Utf8);
     }
     Ok(StdinEncoding::Stored)
+}
+
+async fn history_has_textconv(git: &GitBinary, diff_attribute: &str) -> Result<bool> {
+    let config = git.run_raw(&["config", "--list", "-z"]).await?;
+    let mut is_configured = false;
+    let mut textconv = "";
+    let mut default_textconv = "";
+    for entry in config.split('\0') {
+        let (key, value) = entry.split_once('\n').unwrap_or((entry, ""));
+        let Some((driver, variable)) = key
+            .strip_prefix("diff.")
+            .and_then(|key| key.rsplit_once('.'))
+        else {
+            continue;
+        };
+        if driver == diff_attribute {
+            is_configured = true;
+            if variable == "textconv" {
+                textconv = value;
+            }
+        }
+        if driver == "default" && variable == "textconv" {
+            default_textconv = value;
+        }
+    }
+
+    let is_driver = is_configured || BUILTIN_DIFF_DRIVERS.contains(&diff_attribute);
+    Ok(match diff_attribute {
+        _ if is_driver => !textconv.is_empty(),
+        "set" | "unset" => false,
+        _ => !default_textconv.is_empty(),
+    })
 }
 
 async fn run_git_blame(

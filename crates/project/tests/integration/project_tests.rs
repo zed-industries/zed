@@ -17307,7 +17307,14 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
     cx.executor().allow_parking();
 
     let text = "x = \"café\"\ny = \"crème brûlée\"\nz = \"déjà vu\"\n";
-    let file_names = ["unspecified.py", "unknown_driver.py"];
+    let file_names = [
+        "unspecified.py",
+        "unknown_driver.py",
+        "builtin_driver.py",
+        "configured_driver.py",
+        "diff_set.py",
+        "diff_unset.py",
+    ];
 
     let root = TempTree::new(json!({ "project": {} }));
     let work_dir = root.path().join("project");
@@ -17317,9 +17324,18 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
         "iconv -f WINDOWS-1252 -t UTF-8",
         &work_dir,
     );
+    git_config("diff.configured.xfuncname", "^def", &work_dir);
+    let attributes = [
+        "*.py -text",
+        "unknown_driver.py diff=unknown",
+        "builtin_driver.py diff=python",
+        "configured_driver.py diff=configured",
+        "diff_set.py diff",
+        "diff_unset.py -diff",
+    ];
     std::fs::write(
         work_dir.join(".gitattributes"),
-        "*.py -text\nunknown_driver.py diff=unknown\n",
+        attributes.join("\n") + "\n",
     )
     .unwrap();
     git_add(".gitattributes", &work_dir);
