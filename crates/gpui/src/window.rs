@@ -5681,10 +5681,11 @@ impl Window {
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
     /// this variant takes a function that is invoked during layout so you can use arbitrary logic to
-    /// determine the element's size. One place this is used internally is when measuring text.
+    /// determine the element's size.
     ///
     /// The given closure is invoked at layout time with the known dimensions and available space and
-    /// returns a `Size`.
+    /// returns a `Size`. It is invoked every frame; see [`Self::request_keyed_measured_layout`] to
+    /// keep the measured sizes while what they depend on is unchanged.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
     pub fn request_measured_layout<F>(&mut self, style: Style, measure: F) -> LayoutId
@@ -5692,15 +5693,79 @@ impl Window {
         F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     {
+        self.request_keyed_measure(
+            &style,
+            (),
+            |_, _| false,
+            move |_, known_dimensions, available_space, _, window, cx| {
+                measure(known_dimensions, available_space, window, cx)
+            },
+        )
+    }
+
+    /// Like [`Self::request_measured_layout`], but `key` must describe everything the size depends
+    /// on besides the known dimensions and available space: while it equals the key the element's
+    /// node was last measured with, the sizes measured then can be used without calling `measure`
+    /// again, and the node doesn't need to be laid out again.
+    ///
+    /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
+    pub fn request_keyed_measured_layout<K, F>(
+        &mut self,
+        style: Style,
+        key: K,
+        mut measure: F,
+    ) -> LayoutId
+    where
+        K: PartialEq + 'static,
+        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+            + 'static,
+    {
+        self.request_keyed_measure(
+            &style,
+            key,
+            |key, previous| key == previous,
+            move |_, known_dimensions, available_space, _, window, cx| {
+                measure(known_dimensions, available_space, window, cx)
+            },
+        )
+    }
+
+    /// Like [`Self::request_keyed_measured_layout`], but `reuse` decides whether a key measures
+    /// the same as the previous one, and `measure` is given the key and whether this is
+    /// the node's final measurement rather than a sizing probe.
+    pub(crate) fn request_keyed_measure<K, F>(
+        &mut self,
+        style: &Style,
+        key: K,
+        reuse: fn(&mut K, &mut K) -> bool,
+        measure: F,
+    ) -> LayoutId
+    where
+        K: 'static,
+        F: FnMut(
+                &K,
+                Size<Option<Pixels>>,
+                Size<AvailableSpace>,
+                bool,
+                &mut Window,
+                &mut App,
+            ) -> Size<Pixels>
+            + 'static,
+    {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
         let scope = self.element_id_stack.hash();
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_measured_layout(scope, &style, rem_size, scale_factor, measure)
+        self.layout_engine.as_mut().unwrap().request_keyed_measure(
+            scope,
+            style,
+            rem_size,
+            scale_factor,
+            key,
+            reuse,
+            measure,
+        )
     }
 
     /// Drops the layout nodes kept from earlier frames, so the next frame builds its
