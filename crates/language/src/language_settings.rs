@@ -67,6 +67,8 @@ pub struct LanguageSettings {
     pub soft_wrap: settings::SoftWrap,
     /// How to indent soft-wrapped continuation lines.
     pub soft_wrap_indent: settings::SoftWrapIndent,
+    /// Whether to soft-wrap tables when soft wrap is enabled.
+    pub soft_wrap_tables: bool,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
@@ -843,6 +845,7 @@ impl settings::Settings for AllLanguageSettings {
                 hard_tabs: settings.hard_tabs.unwrap(),
                 soft_wrap: settings.soft_wrap.unwrap(),
                 soft_wrap_indent: settings.soft_wrap_indent.unwrap(),
+                soft_wrap_tables: settings.soft_wrap_tables.unwrap(),
                 preferred_line_length: settings.preferred_line_length.unwrap(),
                 show_wrap_guides: settings.show_wrap_guides.unwrap(),
                 wrap_guides: settings.wrap_guides.unwrap(),

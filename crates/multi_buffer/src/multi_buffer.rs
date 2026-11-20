@@ -6017,6 +6017,17 @@ impl MultiBufferSnapshot {
         .map(|(range, _, _)| range)
     }
 
+    pub fn table_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<MultiBufferOffset>> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        self.lift_buffer_metadata(range, |buffer, range| {
+            Some(buffer.table_ranges(range).map(|range| (range, ())))
+        })
+        .map(|(range, _, _)| range)
+    }
+
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,

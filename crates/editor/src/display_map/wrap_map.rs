@@ -13,7 +13,7 @@ use gpui::{
     Task, TextSystem,
 };
 use language::{LanguageAwareStyling, Point, language_settings::SoftWrapIndent};
-use multi_buffer::RowInfo;
+use multi_buffer::{MultiBufferOffset, RowInfo};
 use std::{
     cmp,
     collections::VecDeque,
@@ -48,6 +48,7 @@ pub struct WrapMap {
     interpolated_edits: WrapPatch,
     edits_since_sync: WrapPatch,
     wrap_width: Option<Pixels>,
+    table_wrap_width: Option<Pixels>,
     soft_wrap_indent: SoftWrapIndent,
     background_task: Option<Task<()>>,
     font_with_size: (Font, Pixels),
@@ -192,6 +193,7 @@ impl WrapMap {
             let mut this = Self {
                 font_with_size: (font, font_size),
                 wrap_width: None,
+                table_wrap_width: None,
                 soft_wrap_indent: SoftWrapIndent::default(),
                 pending_edits: Default::default(),
                 interpolated_edits: Default::default(),
@@ -267,6 +269,22 @@ impl WrapMap {
         true
     }
 
+    /// Sets the width at which rows in tables wrap, or `None` to wrap them like other rows.
+    #[ztracing::instrument(skip_all)]
+    pub fn set_table_wrap_width(
+        &mut self,
+        table_wrap_width: Option<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if table_wrap_width == self.table_wrap_width {
+            return false;
+        }
+
+        self.table_wrap_width = table_wrap_width;
+        self.rewrap(cx);
+        true
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn set_soft_wrap_indent(&mut self, indent: SoftWrapIndent, cx: &mut Context<Self>) -> bool {
         if indent == self.soft_wrap_indent {
@@ -289,6 +307,7 @@ impl WrapMap {
         self.pending_edits.clear();
 
         if let Some(wrap_width) = self.wrap_width {
+            let table_wrap_width = self.table_wrap_width;
             let mut new_snapshot = self.snapshot.clone();
 
             let text_system = cx.text_system();
@@ -309,6 +328,7 @@ impl WrapMap {
                     tab_snapshot.clone(),
                     &tab_edits,
                     wrap_width,
+                    table_wrap_width,
                     self.indent_adjustment(tab_snapshot.tab_size),
                     &mut line_wrapper,
                     &mut fragment_builder,
@@ -323,6 +343,7 @@ impl WrapMap {
                             tab_snapshot,
                             &tab_edits,
                             wrap_width,
+                            table_wrap_width,
                             indent_adjustment,
                             &mut line_wrapper,
                             &mut fragment_builder,
@@ -396,6 +417,7 @@ impl WrapMap {
         if let Some(wrap_width) = self.wrap_width
             && self.background_task.is_none()
         {
+            let table_wrap_width = self.table_wrap_width;
             let pending_edits = self.pending_edits.clone();
             let mut snapshot = self.snapshot.clone();
             let text_system = cx.text_system().clone();
@@ -418,6 +440,7 @@ impl WrapMap {
                         tab_snapshot,
                         &tab_edits,
                         wrap_width,
+                        table_wrap_width,
                         indent_adjustment,
                         &mut line_wrapper,
                         &mut fragment_builder,
@@ -438,6 +461,7 @@ impl WrapMap {
                                 tab_snapshot,
                                 &tab_edits,
                                 wrap_width,
+                                table_wrap_width,
                                 indent_adjustment,
                                 &mut line_wrapper,
                                 &mut fragment_builder,
@@ -586,16 +610,11 @@ impl WrapSnapshot {
         new_tab_snapshot: TabSnapshot,
         tab_edits: &[TabEdit],
         wrap_width: Pixels,
+        table_wrap_width: Option<Pixels>,
         indent_adjustment: IndentAdjustment,
         line_wrapper: &mut LineWrapper,
         fragment_builder: &mut LineFragmentBuilder,
     ) -> WrapPatch {
-        #[derive(Debug)]
-        struct RowEdit {
-            old_rows: Range<u32>,
-            new_rows: Range<u32>,
-        }
-
         let mut tab_edits_iter = tab_edits.iter().peekable();
         let mut row_edits = Vec::with_capacity(tab_edits.len());
         while let Some(edit) = tab_edits_iter.next() {
@@ -618,6 +637,63 @@ impl WrapSnapshot {
 
             row_edits.push(row_edit);
         }
+
+        let mut table_rows = Vec::new();
+        let mut refreshed_tab_edits = None;
+        if table_wrap_width.is_some() {
+            table_rows = tab_rows_in_tables(&new_tab_snapshot);
+            if self
+                .tab_snapshot
+                .buffer_snapshot()
+                .non_text_state_update_count()
+                != new_tab_snapshot
+                    .buffer_snapshot()
+                    .non_text_state_update_count()
+            {
+                // Reparsing can move rows into or out of a table without editing them.
+                let old_table_rows = normalize_row_ranges(
+                    tab_rows_in_tables(&self.tab_snapshot)
+                        .into_iter()
+                        .map(|rows| {
+                            map_rows(
+                                rows,
+                                &row_edits,
+                                |edit| &edit.old_rows,
+                                |edit| &edit.new_rows,
+                            )
+                        })
+                        .collect(),
+                );
+                let refresh_edits = symmetric_difference(&old_table_rows, &table_rows)
+                    .into_iter()
+                    .map(|new_rows| RowEdit {
+                        old_rows: map_rows(
+                            new_rows.clone(),
+                            &row_edits,
+                            |edit| &edit.new_rows,
+                            |edit| &edit.old_rows,
+                        ),
+                        new_rows,
+                    })
+                    .collect::<Vec<_>>();
+                if !refresh_edits.is_empty() {
+                    row_edits = merge_row_edits(row_edits, refresh_edits);
+                    refreshed_tab_edits = Some(
+                        row_edits
+                            .iter()
+                            .map(|edit| TabEdit {
+                                old: TabPoint::new(edit.old_rows.start, 0)
+                                    ..TabPoint::new(edit.old_rows.end - 1, 0),
+                                new: TabPoint::new(edit.new_rows.start, 0)
+                                    ..TabPoint::new(edit.new_rows.end - 1, 0),
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+        }
+        let table_wrap_width = table_wrap_width.map(|width| width.max(wrap_width));
+        let mut table_rows_ix = 0;
 
         let mut new_transforms;
         if row_edits.is_empty() {
@@ -652,7 +728,7 @@ impl WrapSnapshot {
                     Highlights::default(),
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
-                for (i, _) in (edit.new_rows.start..edit.new_rows.end).enumerate() {
+                for (i, row) in (edit.new_rows.start..edit.new_rows.end).enumerate() {
                     while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
                         if let Some(ix) = chunk.text.find('\n') {
                             let (prefix, suffix) = chunk.text.split_at(ix + 1);
@@ -680,9 +756,26 @@ impl WrapSnapshot {
                         break;
                     }
 
+                    while table_rows
+                        .get(table_rows_ix)
+                        .is_some_and(|rows| rows.end <= row)
+                    {
+                        table_rows_ix += 1;
+                    }
+                    let line_wrap_width = match table_wrap_width {
+                        Some(table_wrap_width)
+                            if table_rows
+                                .get(table_rows_ix)
+                                .is_some_and(|rows| rows.start <= row) =>
+                        {
+                            table_wrap_width
+                        }
+                        _ => wrap_width,
+                    };
+
                     let mut prev_boundary_ix = 0;
                     for boundary in
-                        line_wrapper.wrap_line(&line_fragments, wrap_width, indent_adjustment)
+                        line_wrapper.wrap_line(&line_fragments, line_wrap_width, indent_adjustment)
                     {
                         let wrapped = &line[prev_boundary_ix..boundary.ix];
                         push_isomorphic(&mut edit_transforms, TextSummary::from(wrapped));
@@ -749,7 +842,7 @@ impl WrapSnapshot {
             },
         );
         self.check_invariants();
-        old_snapshot.compute_edits(tab_edits, self)
+        old_snapshot.compute_edits(refreshed_tab_edits.as_deref().unwrap_or(tab_edits), self)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1495,6 +1588,109 @@ fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
     } else {
         vec![]
     }
+}
+
+#[derive(Debug)]
+struct RowEdit {
+    old_rows: Range<u32>,
+    new_rows: Range<u32>,
+}
+
+fn tab_rows_in_tables(tab_snapshot: &TabSnapshot) -> Vec<Range<u32>> {
+    let buffer = tab_snapshot.buffer_snapshot();
+    normalize_row_ranges(
+        buffer
+            .table_ranges(MultiBufferOffset(0)..buffer.len())
+            .map(|range| {
+                let start = buffer.offset_to_point(range.start);
+                let mut end = buffer.offset_to_point(range.end);
+                // A table's range can include the newline after its last row.
+                if end.column == 0 && end.row > start.row {
+                    end.row -= 1;
+                }
+                let start_row = tab_snapshot
+                    .point_to_tab_point(Point::new(start.row, 0), Bias::Left)
+                    .row();
+                let end_row = tab_snapshot
+                    .point_to_tab_point(Point::new(end.row, 0), Bias::Left)
+                    .row();
+                start_row..end_row + 1
+            })
+            .collect(),
+    )
+}
+
+/// Sorts the ranges and merges the ones that overlap or touch.
+fn normalize_row_ranges(mut ranges: Vec<Range<u32>>) -> Vec<Range<u32>> {
+    ranges.retain(|range| !range.is_empty());
+    ranges.sort_unstable_by_key(|range| range.start);
+    let mut normalized: Vec<Range<u32>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        if let Some(last) = normalized.last_mut()
+            && range.start <= last.end
+        {
+            last.end = last.end.max(range.end);
+        } else {
+            normalized.push(range);
+        }
+    }
+    normalized
+}
+
+/// Returns the rows covered by exactly one of two normalized lists of ranges.
+fn symmetric_difference(a: &[Range<u32>], b: &[Range<u32>]) -> Vec<Range<u32>> {
+    // Ranges within a normalized list neither overlap nor touch, so each boundary toggles
+    // whether the rows after it are covered by exactly one list.
+    let mut boundaries = a
+        .iter()
+        .chain(b)
+        .flat_map(|range| [range.start, range.end])
+        .collect::<Vec<_>>();
+    boundaries.sort_unstable();
+    boundaries
+        .chunks_exact(2)
+        .filter(|pair| pair[0] < pair[1])
+        .map(|pair| pair[0]..pair[1])
+        .collect()
+}
+
+/// Maps rows across sorted, disjoint `edits`. A range that starts or ends inside an edit is
+/// widened to cover that edit, as edited rows are wrapped from scratch anyway.
+fn map_rows(
+    rows: Range<u32>,
+    edits: &[RowEdit],
+    from: fn(&RowEdit) -> &Range<u32>,
+    to: fn(&RowEdit) -> &Range<u32>,
+) -> Range<u32> {
+    let start = match edits[..edits.partition_point(|edit| from(edit).start <= rows.start)].last() {
+        Some(edit) if rows.start < from(edit).end => to(edit).start,
+        Some(edit) => rows.start - from(edit).end + to(edit).end,
+        None => rows.start,
+    };
+    let end = match edits[..edits.partition_point(|edit| from(edit).start < rows.end)].last() {
+        Some(edit) if rows.end <= from(edit).end => to(edit).end,
+        Some(edit) => rows.end - from(edit).end + to(edit).end,
+        None => rows.end,
+    };
+    start..end
+}
+
+fn merge_row_edits(mut edits: Vec<RowEdit>, other_edits: Vec<RowEdit>) -> Vec<RowEdit> {
+    edits.extend(other_edits);
+    edits.sort_unstable_by_key(|edit| edit.new_rows.start);
+    let mut merged: Vec<RowEdit> = Vec::with_capacity(edits.len());
+    for edit in edits {
+        if let Some(last) = merged.last_mut()
+            && edit.new_rows.start <= last.new_rows.end
+        {
+            last.old_rows.start = last.old_rows.start.min(edit.old_rows.start);
+            last.old_rows.end = last.old_rows.end.max(edit.old_rows.end);
+            last.new_rows.end = last.new_rows.end.max(edit.new_rows.end);
+        } else {
+            merged.push(edit);
+        }
+    }
+    merged
 }
 
 #[cfg(test)]

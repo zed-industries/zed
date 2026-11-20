@@ -75,6 +75,7 @@ several features:
 - Text redactions
 - Runnable code detection
 - Selecting classes, functions, etc.
+- Keeping tables from soft-wrapping
 
 The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/index.html) enable these
 features in Zed, using [JSON syntax](https://www.json.org/json-en.html) as a guiding example.
@@ -426,6 +427,20 @@ This query marks number and string values in key-value pairs and arrays for reda
 | Capture | Description                    |
 | ------- | ------------------------------ |
 | @redact | Captures values to be redacted |
+
+### Tables
+
+The `tables.scm` file marks tables, which aren't soft-wrapped unless the [`soft_wrap_tables`](../reference/all-settings.md#soft-wrap-tables) setting is enabled.
+
+Here's the `tables.scm` file for Markdown:
+
+```scheme
+(pipe_table) @table
+```
+
+| Capture | Description                   |
+| ------- | ----------------------------- |
+| @table  | Captures a table's whole node |
 
 ### Runnable code detection
 

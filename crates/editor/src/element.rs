@@ -8646,13 +8646,22 @@ impl Element for EditorElement {
                         ) {
                             snapshot
                         } else {
-                            let wrap_width = calculate_wrap_width(
-                                editor.soft_wrap_mode(cx),
+                            let soft_wrap = editor.soft_wrap_mode(cx);
+                            let wrap_width =
+                                calculate_wrap_width(soft_wrap, editor_width, em_layout_width);
+                            let table_wrap_width = calculate_table_wrap_width(
+                                soft_wrap,
+                                editor.soft_wrap_tables(cx),
                                 editor_width,
                                 em_layout_width,
                             );
 
-                            if editor.set_wrap_width(wrap_width, cx) {
+                            // Set the table width first: while no wrap width is set, changing it
+                            // doesn't require rewrapping the buffer.
+                            let table_wrap_width_changed =
+                                editor.set_table_wrap_width(table_wrap_width, cx);
+                            let wrap_width_changed = editor.set_wrap_width(wrap_width, cx);
+                            if table_wrap_width_changed || wrap_width_changed {
                                 editor.snapshot(window, cx)
                             } else {
                                 snapshot
@@ -11353,6 +11362,22 @@ fn calculate_wrap_width(
         SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
         SoftWrap::EditorWidth => Some(editor_width),
         SoftWrap::Bounded(column) => Some(editor_width.min(wrap_width_for(column))),
+    }
+}
+
+/// Lines in tables that shouldn't soft-wrap still wrap at the width used when
+/// soft wrap is off, which bounds the length of laid-out lines.
+fn calculate_table_wrap_width(
+    soft_wrap: SoftWrap,
+    soft_wrap_tables: bool,
+    editor_width: Pixels,
+    em_width: Pixels,
+) -> Option<Pixels> {
+    match soft_wrap {
+        SoftWrap::EditorWidth | SoftWrap::Bounded(_) if !soft_wrap_tables => {
+            calculate_wrap_width(SoftWrap::None, editor_width, em_width)
+        }
+        SoftWrap::GitDiff | SoftWrap::None | SoftWrap::EditorWidth | SoftWrap::Bounded(_) => None,
     }
 }
 

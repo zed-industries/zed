@@ -97,6 +97,7 @@ pub struct Grammar {
     pub injection_config: Option<InjectionConfig>,
     pub override_config: Option<OverrideConfig>,
     pub debug_variables_config: Option<DebugVariablesConfig>,
+    pub tables_config: Option<TablesConfig>,
     pub highlight_map: Mutex<HighlightMap>,
 }
 
@@ -253,6 +254,11 @@ pub struct DebugVariablesConfig {
     pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
 }
 
+pub struct TablesConfig {
+    pub query: Query,
+    pub table_capture_ix: u32,
+}
+
 enum Capture<'a> {
     Required(&'static str, &'a mut u32),
     Optional(&'static str, &'a mut Option<u32>),
@@ -335,6 +341,7 @@ impl Grammar {
             runnable_config: None,
             error_query,
             debug_variables_config: None,
+            tables_config: None,
             #[cfg(not(target_family = "wasm"))]
             ts_language: parseable_language
                 .resolve()
@@ -448,6 +455,11 @@ impl Grammar {
             self = self
                 .with_debug_variables_query(query.as_ref(), name)
                 .context("Error loading debug variables query")?;
+        }
+        if let Some(query) = queries.tables {
+            self = self
+                .with_tables_query(query.as_ref(), name)
+                .context("Error loading tables query")?;
         }
         Ok(self)
     }
@@ -597,6 +609,24 @@ impl Grammar {
             query,
             objects_by_capture_ix,
         });
+        Ok(self)
+    }
+
+    pub fn with_tables_query(mut self, source: &str, language_name: &LanguageName) -> Result<Self> {
+        let query = Query::new(&self.parseable_language()?, source)?;
+        let mut table_capture_ix = 0;
+        if populate_capture_indices(
+            &query,
+            language_name,
+            "tables",
+            &[],
+            &mut [Capture::Required("table", &mut table_capture_ix)],
+        ) {
+            self.tables_config = Some(TablesConfig {
+                query,
+                table_capture_ix,
+            });
+        }
         Ok(self)
     }
 

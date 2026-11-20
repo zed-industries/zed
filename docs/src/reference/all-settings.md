@@ -4033,6 +4033,7 @@ The following settings can be overridden for each specific language:
 - [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
 - [`soft_wrap_indent`](#soft-wrap-indent)
+- [`soft_wrap_tables`](#soft-wrap-tables)
 - [`tab_size`](#tab-size)
 - [`use_autoclose`](#auto-close)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
@@ -5414,6 +5415,16 @@ Positive integer values
 2. `same` to match the original line's indentation
 3. `extra_one` to add 1 extra indent level beyond the original line
 4. `extra_two` to add 2 extra indent levels beyond the original line
+
+## Soft Wrap Tables
+
+- Description: Whether to soft-wrap tables, such as Markdown tables, when `soft_wrap` is `editor_width` or `bounded`. When disabled, table rows extend past the wrap width and can be scrolled horizontally.
+- Setting: `soft_wrap_tables`
+- Default: `false`
+
+**Options**
+
+`boolean` values
 
 ## Show Wrap Guides
 
