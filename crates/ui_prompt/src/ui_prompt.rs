@@ -41,7 +41,7 @@ fn zed_prompt_renderer(
         |cx| ZedPromptRenderer {
             _level: level,
             message: cx.new(|cx| Markdown::new(SharedString::new(message), None, None, cx)),
-            actions: actions.iter().map(|a| a.label().to_string()).collect(),
+            actions: actions.to_vec(),
             focus: cx.focus_handle(),
             active_action_id: 0,
             detail: detail
@@ -56,7 +56,7 @@ fn zed_prompt_renderer(
 pub struct ZedPromptRenderer {
     _level: PromptLevel,
     message: Entity<Markdown>,
-    actions: Vec<String>,
+    actions: Vec<PromptButton>,
     focus: FocusHandle,
     active_action_id: usize,
     detail: Option<Entity<Markdown>>,
@@ -68,7 +68,7 @@ impl ZedPromptRenderer {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
+        if let Some(ix) = self.actions.iter().position(|action| action.is_cancel()) {
             cx.emit(PromptResponse(ix));
         }
     }
@@ -142,12 +142,18 @@ impl Render for ZedPromptRenderer {
                 v_flex()
                     .gap_1()
                     .children(self.actions.iter().enumerate().map(|(ix, action)| {
-                        Button::new(ix, action.clone())
+                        let style = if action.is_destructive() {
+                            ButtonStyle::Tinted(TintColor::Error)
+                        } else {
+                            ButtonStyle::Outlined
+                        };
+                        Button::new(ix, action.label().to_string())
                             .full_width()
-                            .style(ButtonStyle::Outlined)
-                            .when(ix == self.active_action_id, |s| {
-                                s.style(ButtonStyle::Tinted(TintColor::Accent))
-                            })
+                            .style(style)
+                            .when(
+                                ix == self.active_action_id && !action.is_destructive(),
+                                |button| button.style(ButtonStyle::Tinted(TintColor::Accent)),
+                            )
                             .tab_index(ix as isize)
                             .on_click(cx.listener(move |_, _, _window, cx| {
                                 cx.emit(PromptResponse(ix));
