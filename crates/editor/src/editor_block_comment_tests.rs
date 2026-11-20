@@ -228,6 +228,12 @@ async fn test_toggle_block_comments_empty_selection_roundtrip(cx: &mut TestAppCo
         editor.toggle_block_comments(&ToggleBlockComments, window, cx);
     });
 
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = /* ˇ */1 + 2;
+        }
+    "});
+
     cx.update_editor(|editor, window, cx| {
         editor.toggle_block_comments(&ToggleBlockComments, window, cx);
     });
@@ -236,6 +242,89 @@ async fn test_toggle_block_comments_empty_selection_roundtrip(cx: &mut TestAppCo
         fn main() {
             let x = ˇ1 + 2;
         }
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_block_comments_empty_selection_inside_multiple_cursors(
+    cx: &mut TestAppContext,
+) {
+    let mut cx = setup_rust_context(cx).await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = 1 + 2; ˇ
+            let y = 3 + 4; ˇ
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = 1 + 2; /* ˇ */
+            let y = 3 + 4; /* ˇ */
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = 1 + 2; ˇ
+            let y = 3 + 4; ˇ
+        }
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_block_comments_empty_selection_inside_asymmetric_markers(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let html_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "HTML".into(),
+            block_comment: Some(BlockCommentConfig {
+                start: "<!--".into(),
+                prefix: "".into(),
+                end: "-->".into(),
+                tab_size: 0,
+            }),
+            ..Default::default()
+        },
+        None,
+    ));
+
+    cx.language_registry().add(html_language.clone());
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(html_language), cx);
+    });
+
+    cx.set_state(indoc! {"
+        <div>ˇ</div>
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        <div><!-- ˇ --></div>
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        <div>ˇ</div>
     "});
 }
 
