@@ -294,7 +294,8 @@ impl OpenPathPrompt {
 
     /// Directory that `./` and `../` queries resolve against: the active file's directory
     /// when opening, otherwise the first project root (or its parent directory when the root
-    /// is a single file), falling back to the process cwd.
+    /// is a single file), falling back to the process cwd, or to the remote home directory
+    /// for a remote project, whose lister must never be asked for a client path.
     ///
     /// Workspace paths are only used when `lister` browses the project's own file system: a
     /// [`DirectoryLister::Local`] lister for a remote project lists the local machine, where the
@@ -334,9 +335,13 @@ impl OpenPathPrompt {
                     .absolute_path(&project_path, cx)
             })
             .and_then(|path| path_style.parent(&path).map(Path::to_path_buf));
-        active_file_directory
-            .or(project_root)
-            .unwrap_or_else(current_dir)
+        active_file_directory.or(project_root).unwrap_or_else(|| {
+            if project.is_local() {
+                current_dir()
+            } else {
+                PathBuf::from(REMOTE_HOME)
+            }
+        })
     }
 
     pub fn register_new_path(
@@ -1107,7 +1112,19 @@ fn path_candidates(
 /// Resolves `./`, `../`, `.` and `..` queries against `relative_to`, using `path_style`
 /// so that remote paths are interpreted according to the remote OS rather than the local one.
 fn resolve_relative_path(path: &str, relative_to: &Path, path_style: PathStyle) -> String {
-    let parent = || path_style.parent(relative_to).unwrap_or(relative_to);
+    let parent = || match path_style.parent(relative_to) {
+        // A single-component base like `~` has no lexical parent, so let the host resolve `..`.
+        Some(parent) if parent.as_os_str().is_empty() => path_style.join(relative_to, ".."),
+        Some(parent) => parent.to_path_buf(),
+        // There is no parent above a root.
+        None => relative_to.to_path_buf(),
+    };
+    // Only the path style's own separators delimit `.` and `..`: on Unix, `.\nested` is a
+    // valid file name rather than a relative path.
+    let strip_dots = |dots: &str| {
+        path.strip_prefix(dots)
+            .and_then(|rest| rest.strip_prefix(path_style.separators_ch()))
+    };
     // Repeated separators (`.//nested`) must not turn the operand into an absolute path,
     // which `join` would use in place of the base.
     let join = |base: &Path, rest: &str| {
@@ -1124,10 +1141,10 @@ fn resolve_relative_path(path: &str, relative_to: &Path, path_style: PathStyle) 
         }
         joined
     };
-    if path.starts_with("./") || path.starts_with(".\\") {
-        join(relative_to, &path[2..])
-    } else if path.starts_with("../") || path.starts_with("..\\") {
-        join(parent(), &path[3..])
+    if let Some(rest) = strip_dots(".") {
+        join(relative_to, rest)
+    } else if let Some(rest) = strip_dots("..") {
+        join(&parent(), rest)
     } else if path == "." {
         relative_to.to_string_lossy().into_owned()
     } else if path == ".." {
@@ -1136,6 +1153,10 @@ fn resolve_relative_path(path: &str, relative_to: &Path, path_style: PathStyle) 
         path.to_string()
     }
 }
+
+/// Base for `./` and `../` in a remote project with no root or active file to resolve against.
+/// The remote server expands `~` to its home directory, so this never names a client path.
+const REMOTE_HOME: &str = "~";
 
 /// Query for the directory above `parent_path`, resolving `./` and `../` first so that a
 /// relative query moves up from the directory it points at.
@@ -1184,7 +1205,7 @@ mod tests {
 
     use util::paths::PathStyle;
 
-    use super::{get_dir_and_suffix, parent_directory_query, resolve_relative_path};
+    use super::{REMOTE_HOME, get_dir_and_suffix, parent_directory_query, resolve_relative_path};
 
     #[test]
     fn test_resolve_relative_path_with_windows_style() {
@@ -1271,6 +1292,32 @@ mod tests {
             resolve_relative_path("..\\/nested\\", relative_to, windows),
             "C:\\root\\nested\\"
         );
+    }
+
+    #[test]
+    fn test_resolve_relative_path_ignores_backslash_prefixes_with_unix_style() {
+        let unix = PathStyle::Unix;
+        let relative_to = Path::new("/tmp/repro");
+        // `\` is an ordinary file name character on Unix, so these name entries literally.
+        for query in [".\\nested/", "..\\nested/", ".\\", "..\\"] {
+            assert_eq!(resolve_relative_path(query, relative_to, unix), query);
+        }
+    }
+
+    #[test]
+    fn test_resolve_relative_path_against_remote_home() {
+        let unix = PathStyle::Unix;
+        let home = Path::new(REMOTE_HOME);
+        assert_eq!(resolve_relative_path("./", home, unix), "~/");
+        assert_eq!(resolve_relative_path("./sub/", home, unix), "~/sub/");
+        assert_eq!(resolve_relative_path("../", home, unix), "~/../");
+        assert_eq!(resolve_relative_path("../sub/", home, unix), "~/../sub/");
+        assert_eq!(resolve_relative_path(".", home, unix), "~");
+        assert_eq!(resolve_relative_path("..", home, unix), "~/..");
+
+        let windows = PathStyle::Windows;
+        assert_eq!(resolve_relative_path(".\\sub\\", home, windows), "~\\sub\\");
+        assert_eq!(resolve_relative_path("..\\", home, windows), "~\\..\\");
     }
 
     #[test]
