@@ -386,7 +386,7 @@ impl ConverseModel {
     ) -> Self {
         let thinking = capabilities.and_then(|capabilities| capabilities.thinking(base_model_id));
         Self {
-            id: crate::stable_model_id(base_model_id).to_string(),
+            id: base_model_id.to_string(),
             request_id: request_id.to_string(),
             base_model_id: base_model_id.to_string(),
             foundation_model_known: capabilities.is_some(),

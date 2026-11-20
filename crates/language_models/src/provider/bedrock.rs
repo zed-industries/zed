@@ -1087,11 +1087,11 @@ impl BedrockLanguageModelProvider {
             && anthropic_model_id(config)
                 .is_some_and(|id| id.starts_with(anthropic::FABLE_MODEL_ID_PREFIX))
             && matches!(
-                models.get(anthropic::FABLE_FALLBACK_MODEL_ID),
-                Some(BedrockModelConfig::Converse(target)) if target.route == ConverseModelRoute::Automatic && target.base_model_id.strip_prefix("anthropic.") == Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+                models.get(FABLE_FALLBACK_MODEL_ID),
+                Some(BedrockModelConfig::Converse(target)) if target.route == ConverseModelRoute::Automatic
             )
         {
-            model.refusal_fallback_model_id = Some(anthropic::FABLE_FALLBACK_MODEL_ID);
+            model.refusal_fallback_model_id = Some(FABLE_FALLBACK_MODEL_ID);
         }
         model
     }
@@ -1111,6 +1111,7 @@ impl BedrockLanguageModelProvider {
 /// The newest offered model of these families is the default.
 const DEFAULT_MODEL_ID_PREFIX: &str = "anthropic.claude-sonnet-";
 const DEFAULT_FAST_MODEL_ID_PREFIX: &str = "anthropic.claude-haiku-";
+const FABLE_FALLBACK_MODEL_ID: &str = "anthropic.claude-opus-4-8";
 
 fn model_version(model_id: &str) -> Vec<u64> {
     model_id
@@ -1574,13 +1575,11 @@ fn always_reasons(model: &ConverseModel) -> bool {
 }
 
 fn converse_telemetry_id(model: &ConverseModel) -> String {
-    let id = bedrock::legacy_model_id(&model.base_model_id).unwrap_or_else(|| {
-        if model.foundation_model_known {
-            &model.base_model_id
-        } else {
-            "custom"
-        }
-    });
+    let id = if model.foundation_model_known {
+        &model.base_model_id
+    } else {
+        "custom"
+    };
     format!("bedrock/{id}")
 }
 
@@ -2499,8 +2498,9 @@ fn mantle_language_model(model: &MantleModel) -> LanguageModel {
             PROVIDER_NAME,
             format!(
                 "bedrock-mantle/{}",
-                bedrock::legacy_model_id(model.request_id())
-                    .or(model.known_foundation_model_id.as_deref())
+                model
+                    .known_foundation_model_id
+                    .as_deref()
                     .unwrap_or("custom")
             ),
             model.max_token_count(),
@@ -3792,69 +3792,12 @@ mod tests {
         Ok(())
     }
 
-    #[gpui::test]
-    fn offered_legacy_ids_resolve_saved_selections_without_changing_routes(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        init_provider_test(cx);
-        let result = cx.update(|cx| -> Result<()> {
-            let provider = Arc::new(new_test_provider(
-                http_client::FakeHttpClient::with_404_response(),
-                cx,
-            ));
-            let bases = [
-                "anthropic.claude-sonnet-4-5-20250929-v1:0",
-                "openai.gpt-5.5",
-                "vendor.chat",
-            ];
-            let profiles = bases
-                .iter()
-                .flat_map(|base| {
-                    [
-                        listed_inference_profile(&format!("us.{base}"), base),
-                        listed_inference_profile(&format!("global.{base}"), base),
-                    ]
-                })
-                .collect::<Vec<_>>();
-            let foundations = bases
-                .iter()
-                .map(|base| listed_foundation_model(base))
-                .collect::<Vec<_>>();
-            provider.state.update(cx, |state, _| {
-                state.listing = ModelListing::Listed(ModelCatalog::new(&profiles, &foundations));
-            });
-            let offered = provider.provided_models(cx);
-            assert_eq!(offered.len(), 3);
-            for (saved_id, base) in [
-                ("claude-sonnet-4-5", bases[0]),
-                ("gpt-5.5", bases[1]),
-                ("vendor.chat", bases[2]),
-            ] {
-                let selected = offered
-                    .iter()
-                    .find(|model| model.id.0.as_ref() == saved_id)
-                    .context("saved selection must be offered")?;
-                let BedrockModelConfig::Converse(config) = provider.config(selected, cx)? else {
-                    anyhow::bail!("legacy Mantle selections must resolve to Converse");
-                };
-                assert_eq!(config.id, saved_id);
-                assert_eq!(config.base_model_id, base);
-                assert_eq!(
-                    into_bedrock(LanguageModelRequest::default(), &config, None, None)?.model,
-                    format!("us.{base}")
-                );
-            }
-            Ok(())
-        });
-        assert!(result.is_ok(), "{result:?}");
-    }
-
     #[test]
-    fn public_stand_in_uses_stable_ids_and_settings_keep_verbatim_ids() -> Result<()> {
+    fn public_stand_in_uses_foundation_ids_and_settings_keep_verbatim_ids() -> Result<()> {
         let catalog = CapabilityCatalog::parse(&capability_catalog_json(serde_json::json!({
-            "us.openai.gpt-5.5": capability_entry("Public", serde_json::json!({})),
-            "global.openai.gpt-5.5": capability_entry("Public global", serde_json::json!({})),
-            "us.vendor.chat": capability_entry("Other", serde_json::json!({})),
+            "us.vendor.chat": capability_entry("Public", serde_json::json!({})),
+            "global.vendor.chat": capability_entry("Public global", serde_json::json!({})),
+            "us.vendor.other": capability_entry("Other", serde_json::json!({})),
         })))?;
         let models = catalog.models_for_region("us-east-1", false);
         assert_eq!(
@@ -3862,17 +3805,14 @@ mod tests {
                 .iter()
                 .map(|model| model.id.as_str())
                 .collect::<Vec<_>>(),
-            ["gpt-5.5", "vendor.chat"]
+            ["vendor.chat", "vendor.other"]
         );
-        let pinned = converse_model_from_settings(
-            &settings_entry("us.openai.gpt-5.5", None),
-            None,
-            &catalog,
-        );
-        assert_eq!(pinned.id, "us.openai.gpt-5.5");
+        let pinned =
+            converse_model_from_settings(&settings_entry("us.vendor.chat", None), None, &catalog);
+        assert_eq!(pinned.id, "us.vendor.chat");
         assert_eq!(
             converse_language_model(&pinned).telemetry_id.as_ref(),
-            "bedrock/gpt-5.5"
+            "bedrock/vendor.chat"
         );
         let unknown = converse_model_from_settings(
             &settings_entry(
@@ -4053,7 +3993,7 @@ mod tests {
         let result = cx.update(|cx| -> Result<()> {
             let provider = new_test_provider(http_client::FakeHttpClient::with_404_response(), cx);
             let fable = "anthropic.claude-fable-5";
-            let fallback = "anthropic.claude-opus-4-8";
+            let fallback = FABLE_FALLBACK_MODEL_ID;
             let profiles = [
                 listed_inference_profile(&format!("us.{fable}"), fable),
                 listed_inference_profile(&format!("us.{fallback}"), fallback),
@@ -4071,7 +4011,7 @@ mod tests {
             for model in provider.provided_models(cx) {
                 assert_eq!(
                     model.refusal_fallback_model_id,
-                    (model.id.0.as_ref() == "claude-fable-5").then_some("claude-opus-4-8"),
+                    (model.id.0.as_ref() == fable).then_some(fallback),
                     "{}",
                     model.id.0
                 );
@@ -4114,14 +4054,14 @@ mod tests {
             let routed = provider
                 .provided_models(cx)
                 .into_iter()
-                .find(|model| model.id.0.as_ref() == "claude-fable-5")
+                .find(|model| model.id.0.as_ref() == fable)
                 .context("stand-in Fable")?;
-            assert_eq!(routed.refusal_fallback_model_id, Some("claude-opus-4-8"));
+            assert_eq!(routed.refusal_fallback_model_id, Some(fallback));
             provider.state.update(cx, |state, _| {
                 state
                     .settings
                     .available_models
-                    .push(settings_entry(anthropic::FABLE_FALLBACK_MODEL_ID, None))
+                    .push(settings_entry(fallback, None))
             });
             assert!(
                 provider
