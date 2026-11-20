@@ -110,9 +110,10 @@ impl TestScheduler {
         });
         let waker = unsafe { Waker::new(Box::into_raw(waker) as *const (), &WAKER_VTABLE) };
         let max_ticks = if timeout.is_some() {
-            self.rng
-                .lock()
-                .random_range(self.state.lock().timeout_ticks.clone())
+            // Release `state` before locking `rng`: `schedule_*` lock `state` then `rng` and
+            // can be called from other threads, so holding `rng` while locking `state` deadlocks.
+            let timeout_ticks = self.state.lock().timeout_ticks.clone();
+            self.rng.lock().random_range(timeout_ticks)
         } else {
             usize::MAX
         };
