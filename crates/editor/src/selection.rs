@@ -834,7 +834,9 @@ impl Editor {
                         start: new_range.start,
                         end: new_range.end,
                         goal: SelectionGoal::None,
-                        reversed: selection.reversed,
+                        // Next selects forward, with the active end at the
+                        // range's end.
+                        reversed: false,
                     }
                 } else {
                     *selection
@@ -892,7 +894,9 @@ impl Editor {
                         start: new_range.start,
                         end: new_range.end,
                         goal: SelectionGoal::None,
-                        reversed: selection.reversed,
+                        // Previous selects backward, with the active end at the
+                        // range's start.
+                        reversed: true,
                     }
                 } else {
                     *selection
