@@ -225,24 +225,6 @@ impl ResponseInput {
         self
     }
 
-    /// Filters only the items this crate generated from the request.
-    ///
-    /// Provider items are a canonical replacement window that must be replayed
-    /// verbatim, so they are exempt from filtering. Callers that rewrite the
-    /// input to satisfy backend-specific requirements (and therefore can't
-    /// tolerate arbitrary items inside a replayed window) should not accept
-    /// provider-native compaction state in the first place.
-    pub fn retain(&mut self, mut predicate: impl FnMut(&ResponseInputItem) -> bool) {
-        if self
-            .leading_item
-            .as_ref()
-            .is_some_and(|item| !predicate(item))
-        {
-            self.leading_item = None;
-        }
-        self.generated_items.retain(predicate);
-    }
-
     pub fn push(&mut self, item: ResponseInputItem) {
         self.generated_items.push(item);
     }
