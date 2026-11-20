@@ -112,6 +112,110 @@ Restart Amp after adding the environment variable.
 
 OpenCode can update terminal titles automatically. For Zed notifications, add an OpenCode plugin that emits a terminal bell when OpenCode needs your attention.
 
+#### OpenCode V2
+
+Create `.opencode/plugins/zed-bell/tui.js` in your project, or `~/.config/opencode/plugins/zed-bell/tui.js` to use it globally:
+
+```js
+import { readFileSync, writeSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { Plugin } from "@opencode/plugin/tui";
+import { createEffect, on } from "solid-js";
+
+const bell = () => writeSync(1, "\x07");
+const readJson = (read) => {
+  try {
+    return JSON.parse(read());
+  } catch {
+    return undefined;
+  }
+};
+
+// The plugin API does not expose the effective permission mode.
+function autoaccept() {
+  if (process.argv.includes("--auto")) return true;
+  const config = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const mode =
+    readJson(() => process.env.OPENCODE_CLI_CONFIG_CONTENT)?.session
+      ?.permissions ??
+    readJson(() => readFileSync(join(config, "opencode", "cli.json"), "utf8"))
+      ?.session?.permissions;
+  return mode === "autoaccept";
+}
+
+export default Plugin.define({
+  id: "zed-bell",
+  setup(context) {
+    if (process.env.OPENCODE_CLIENT === "acp") return;
+
+    const { session } = context.data;
+    const [visited, setVisited] = context.storage.memory("sessions", {
+      initial: {},
+    });
+    const current = () => {
+      const route = context.ui.router.current();
+      return route.type === "session"
+        ? session.root(route.sessionID)
+        : undefined;
+    };
+    const stopTracking = context.ui.slot({
+      append: "app",
+      render: () => {
+        createEffect(
+          on(
+            current,
+            (id) =>
+              id &&
+              setVisited((draft) => {
+                draft[id] = true;
+              }),
+          ),
+        );
+        return null;
+      },
+    });
+    // Tabs are shared between terminals, so only ring for sessions visited here.
+    const belongsHere = (id) =>
+      id === current() ||
+      (visited[id] &&
+        context.ui.tabs.enabled() &&
+        context.ui.tabs.list().some((tab) => tab.sessionID === id));
+    // A parent's execution can end while its subagents are still working.
+    const busy = (id) =>
+      [id, ...session.family(id)].some(
+        (member) =>
+          session.status(member) === "running" ||
+          session.pending
+            .list(member)
+            .some((item) => item.type !== "synthetic"),
+      );
+
+    const stops = [
+      stopTracking,
+      context.data.on("session.execution.succeeded", ({ data }) => {
+        if (belongsHere(data.sessionID) && !busy(data.sessionID)) bell();
+      }),
+      context.data.on("permission.asked", ({ data }) => {
+        if (!autoaccept() && belongsHere(session.root(data.sessionID))) bell();
+      }),
+      context.data.on("form.created", ({ data }) => {
+        if (belongsHere(session.root(data.form.sessionID))) bell();
+      }),
+    ];
+    return () => stops.forEach((stop) => stop());
+  },
+});
+```
+
+The plugin rings when a session completes, asks a question, or requests a permission. It rings for the current session and open background sessions you've visited in that terminal. If you visit the same session in two terminals, both ring. After closing a terminal, visit its background sessions again to enable their bells.
+
+OpenCode's plugin API doesn't expose the permission mode, so the plugin reads `session.permissions` from your CLI settings, inline configuration, and the `--auto` flag. Permission requests don't ring in auto-approval mode.
+
+OpenCode reloads plugins when configuration changes. If an existing terminal doesn't pick up the plugin, run `/reload`. See the [OpenCode plugin documentation](https://opencode.ai/docs/build/plugins) for more information.
+
+#### OpenCode V1
+
 Create `.opencode/plugins/zed-bell.js` in your project, or `~/.config/opencode/plugins/zed-bell.js` to use it globally:
 
 ```js
