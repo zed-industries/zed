@@ -200,6 +200,7 @@ fn validate_compaction_items(items: &[Value]) -> Result<()> {
 
 #[derive(Debug, Default)]
 pub struct ResponseInput {
+    leading_item: Option<ResponseInputItem>,
     provider_items: Vec<Value>,
     generated_items: Vec<ResponseInputItem>,
 }
@@ -207,13 +208,21 @@ pub struct ResponseInput {
 impl ResponseInput {
     pub fn new(provider_items: Vec<Value>, generated_items: Vec<ResponseInputItem>) -> Self {
         Self {
+            leading_item: None,
             provider_items,
             generated_items,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.provider_items.is_empty() && self.generated_items.is_empty()
+        self.leading_item.is_none()
+            && self.provider_items.is_empty()
+            && self.generated_items.is_empty()
+    }
+
+    pub(crate) fn with_leading_item(mut self, item: ResponseInputItem) -> Self {
+        self.leading_item = Some(item);
+        self
     }
 
     /// Filters only the items this crate generated from the request.
@@ -223,7 +232,14 @@ impl ResponseInput {
     /// input to satisfy backend-specific requirements (and therefore can't
     /// tolerate arbitrary items inside a replayed window) should not accept
     /// provider-native compaction state in the first place.
-    pub fn retain(&mut self, predicate: impl FnMut(&ResponseInputItem) -> bool) {
+    pub fn retain(&mut self, mut predicate: impl FnMut(&ResponseInputItem) -> bool) {
+        if self
+            .leading_item
+            .as_ref()
+            .is_some_and(|item| !predicate(item))
+        {
+            self.leading_item = None;
+        }
         self.generated_items.retain(predicate);
     }
 
@@ -237,8 +253,14 @@ impl Serialize for ResponseInput {
     where
         S: serde::Serializer,
     {
-        let mut sequence = serializer
-            .serialize_seq(Some(self.provider_items.len() + self.generated_items.len()))?;
+        let mut sequence = serializer.serialize_seq(Some(
+            usize::from(self.leading_item.is_some())
+                + self.provider_items.len()
+                + self.generated_items.len(),
+        ))?;
+        if let Some(item) = &self.leading_item {
+            sequence.serialize_element(item)?;
+        }
         for item in &self.provider_items {
             sequence.serialize_element(item)?;
         }
