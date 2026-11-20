@@ -285,7 +285,7 @@ impl OpenPathPrompt {
     ) {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, mode, window, cx| {
             let (tx, rx) = oneshot::channel();
-            let relative_to = Self::relative_to(workspace, false, cx);
+            let relative_to = Self::relative_to(workspace, &lister, false, cx);
             let delegate = OpenPathDelegate::for_open(tx, lister, mode, relative_to, cx);
             Self::prompt_for_path(workspace, delegate, None, window, cx);
             rx
@@ -295,8 +295,22 @@ impl OpenPathPrompt {
     /// Directory that `./` and `../` queries resolve against: the active file's directory
     /// when opening, otherwise the first project root (or its parent directory when the root
     /// is a single file), falling back to the process cwd.
-    fn relative_to(workspace: &Workspace, creating_path: bool, cx: &App) -> PathBuf {
-        let path_style = workspace.project().read(cx).path_style(cx);
+    ///
+    /// Workspace paths are only used when `lister` browses the project's own file system: a
+    /// [`DirectoryLister::Local`] lister for a remote project lists the local machine, where the
+    /// remote paths may be absent or point to unrelated files.
+    fn relative_to(
+        workspace: &Workspace,
+        lister: &DirectoryLister,
+        creating_path: bool,
+        cx: &App,
+    ) -> PathBuf {
+        let current_dir = || std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let project = workspace.project().read(cx);
+        if matches!(lister, DirectoryLister::Local(..)) && !project.is_local() {
+            return current_dir();
+        }
+        let path_style = project.path_style(cx);
         let project_root = workspace.visible_worktrees(cx).next().map(|worktree| {
             let worktree = worktree.read(cx);
             let abs_path = worktree.abs_path();
@@ -322,7 +336,7 @@ impl OpenPathPrompt {
             .and_then(|path| path_style.parent(&path).map(Path::to_path_buf));
         active_file_directory
             .or(project_root)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+            .unwrap_or_else(current_dir)
     }
 
     pub fn register_new_path(
@@ -333,7 +347,7 @@ impl OpenPathPrompt {
         workspace.set_prompt_for_new_path(Box::new(
             |workspace, lister, suggested_name, window, cx| {
                 let (tx, rx) = oneshot::channel();
-                let relative_to = Self::relative_to(workspace, true, cx);
+                let relative_to = Self::relative_to(workspace, &lister, true, cx);
                 let delegate = OpenPathDelegate::new(tx, lister, true, relative_to, cx);
                 Self::prompt_for_path(workspace, delegate, suggested_name, window, cx);
                 rx
