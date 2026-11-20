@@ -1,6 +1,6 @@
 use super::tool_permissions::{
-    authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
-    global_skill_settings_kind, sensitive_settings_kind,
+    PathResolveError, authorize_symlink_escapes, canonicalize_worktree_roots,
+    collect_symlink_escapes, global_skill_settings_kind, sensitive_settings_kind,
 };
 use crate::{
     AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, ToolPermissionDecision,
@@ -213,36 +213,70 @@ impl AgentTool for MovePathTool {
                 let source = if global_source_path.is_some() {
                     PathBuf::from(&input.source_path)
                 } else {
-                    project.read_with(cx, |project, cx| {
-                        let project_path = project.find_project_path(&input.source_path, cx).ok_or_else(|| {
-                            format!("Source path {} was not found in the project.", input.source_path)
-                        })?;
+                    match project.read_with(cx, |project, cx| {
+                        let project_path = project
+                            .find_project_path(&input.source_path, cx)
+                            .ok_or_else(|| PathResolveError::NotInProject {
+                                input_path: input.source_path.clone(),
+                                message: format!(
+                                    "Source path {} was not found in the project.",
+                                    input.source_path
+                                ),
+                            })?;
                         project.entry_for_path(&project_path, cx).ok_or_else(|| {
-                            format!("Source path {} was not found in the project.", input.source_path)
+                            PathResolveError::NotInProject {
+                                input_path: input.source_path.clone(),
+                                message: format!(
+                                    "Source path {} was not found in the project.",
+                                    input.source_path
+                                ),
+                            }
                         })?;
                         project.absolute_path(&project_path, cx).ok_or_else(|| {
-                            format!("Source path {} could not be resolved.", input.source_path)
+                            PathResolveError::Message(format!(
+                                "Source path {} could not be resolved.",
+                                input.source_path
+                            ))
                         })
-                    })?
+                    }) {
+                        Ok(path) => path,
+                        Err(error) => {
+                            return Err(
+                                error.into_message(fs.as_ref(), &canonical_roots).await
+                            );
+                        }
+                    }
                 };
 
                 let destination = if global_destination_path.is_some() {
                     PathBuf::from(&input.destination_path)
                 } else {
-                    project.read_with(cx, |project, cx| {
-                        let project_path = project.find_project_path(&input.destination_path, cx).ok_or_else(|| {
-                            format!(
-                                "Destination path {} was outside the project.",
-                                input.destination_path
-                            )
-                        })?;
+                    match project.read_with(cx, |project, cx| {
+                        let project_path = project
+                            .find_project_path(&input.destination_path, cx)
+                            .ok_or_else(|| {
+                                PathResolveError::NotInProject {
+                                    input_path: input.destination_path.clone(),
+                                    message: format!(
+                                        "Destination path {} was outside the project.",
+                                        input.destination_path
+                                    ),
+                                }
+                            })?;
                         project.absolute_path(&project_path, cx).ok_or_else(|| {
-                            format!(
+                            PathResolveError::Message(format!(
                                 "Destination path {} could not be resolved.",
                                 input.destination_path
-                            )
+                            ))
                         })
-                    })?
+                    }) {
+                        Ok(path) => path,
+                        Err(error) => {
+                            return Err(
+                                error.into_message(fs.as_ref(), &canonical_roots).await
+                            );
+                        }
+                    }
                 };
 
                 let operation = GlobalSkillFileOperation::Move {
@@ -264,24 +298,35 @@ impl AgentTool for MovePathTool {
                 ));
             }
 
-            let rename_task = project.update(cx, |project, cx| {
+            let rename_task = match project.update(cx, |project, cx| {
                 match project
                     .find_project_path(&input.source_path, cx)
                     .and_then(|project_path| project.entry_for_path(&project_path, cx))
                 {
                     Some(entity) => match project.find_project_path(&input.destination_path, cx) {
                         Some(project_path) => Ok(project.rename_entry(entity.id, project_path, cx)),
-                        None => Err(format!(
-                            "Destination path {} was outside the project.",
-                            input.destination_path
-                        )),
+                        None => Err(PathResolveError::NotInProject {
+                            input_path: input.destination_path.clone(),
+                            message: format!(
+                                "Destination path {} was outside the project.",
+                                input.destination_path
+                            ),
+                        }),
                     },
-                    None => Err(format!(
-                        "Source path {} was not found in the project.",
-                        input.source_path
-                    )),
+                    None => Err(PathResolveError::NotInProject {
+                        input_path: input.source_path.clone(),
+                        message: format!(
+                            "Source path {} was not found in the project.",
+                            input.source_path
+                        ),
+                    }),
                 }
-            })?;
+            }) {
+                Ok(task) => task,
+                Err(error) => {
+                    return Err(error.into_message(fs.as_ref(), &canonical_roots).await);
+                }
+            };
 
             futures::select! {
                 result = rename_task.fuse() => result.map_err(|e| format!("Moving {} to {}: {e}", input.source_path, input.destination_path))?,
@@ -318,6 +363,65 @@ mod tests {
             settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_move_path_from_outside_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        fs.insert_tree(path!("/outside"), json!({ "settings.json": "{}" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let tool = Arc::new(MovePathTool::new(project));
+
+        // A source that exists on disk but outside the workspace gets an
+        // error that explains the workspace boundary and how to grant access.
+        let output = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(MovePathToolInput {
+                        source_path: "/outside/settings.json".into(),
+                        destination_path: path!("/root/project/settings.json").to_string(),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+        let error = output.unwrap_err().replace('\\', "/");
+        assert!(
+            error.contains(&format!(
+                "\"/outside/settings.json\" resolves to {}, which is outside the \
+                 project workspace",
+                path!("/outside/settings.json").replace('\\', "/")
+            )),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("Add Folder to Project"),
+            "unexpected error: {error}"
+        );
+
+        // A source that does not exist anywhere keeps the original message.
+        let output = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(MovePathToolInput {
+                        source_path: "/outside/missing.json".into(),
+                        destination_path: path!("/root/project/settings.json").to_string(),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+        assert_eq!(
+            output.unwrap_err(),
+            "Source path /outside/missing.json was not found in the project."
+        );
     }
 
     #[gpui::test]

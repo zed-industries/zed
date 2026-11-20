@@ -190,7 +190,7 @@ fn read_global_skill_file(
 
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_project_path,
+    resolve_project_path, unresolved_project_path_message,
 };
 use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, outline};
 
@@ -332,7 +332,7 @@ impl AgentTool for ReadFileTool {
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let (project_path, symlink_canonical_target) =
-                project.read_with(cx, |project, cx| {
+                match project.read_with(cx, |project, cx| {
                     let resolved =
                         resolve_project_path(project, &input.path, &canonical_roots, cx)?;
                     anyhow::Ok(match resolved {
@@ -342,7 +342,19 @@ impl AgentTool for ReadFileTool {
                             canonical_target,
                         } => (project_path, Some(canonical_target)),
                     })
-                }).map_err(tool_content_err)?;
+                }) {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        let message = unresolved_project_path_message(
+                            &input.path,
+                            fs.as_ref(),
+                            &canonical_roots,
+                            &error,
+                        )
+                        .await;
+                        return Err(tool_content_err(message));
+                    }
+                };
 
             let abs_path = project
                 .read_with(cx, |project, cx| {
@@ -658,6 +670,135 @@ mod test {
         assert_eq!(
             error_text(result.unwrap_err()),
             "root/nonexistent_file.txt not found"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_outside_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project_file.txt": "in project" }))
+            .await;
+        fs.insert_tree(
+            path!("/outside"),
+            json!({ "settings.json": "{\"theme\": \"one\"}" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, _) = ToolCallEventStream::test();
+
+        // A path that exists on disk but outside the workspace gets an error
+        // that explains the workspace boundary and how to grant access,
+        // instead of the bare "Path ... is not in the project" denial.
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "/outside/settings.json".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(ToolInput::resolved(input), event_stream, cx)
+            })
+            .await;
+        assert_eq!(
+            error_text(result.unwrap_err()).replace('\\', "/"),
+            format!(
+                "\"/outside/settings.json\" resolves to {}, which is outside the project \
+                 workspace (or excluded from the worktree scan), so agent tools cannot \
+                 access it. Project roots: {}. To grant access, open the folder in Zed \
+                 via \"Add Folder to Project\" or move the file inside the project.",
+                path!("/outside/settings.json").replace('\\', "/"),
+                path!("/root").replace('\\', "/"),
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_missing_file_outside_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, _) = ToolCallEventStream::test();
+
+        // A path that does not exist anywhere keeps the original resolution
+        // error, so the denial branch stays distinguishable from "missing".
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "/outside/missing.json".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(ToolInput::resolved(input), event_stream, cx)
+            })
+            .await;
+        assert_eq!(
+            error_text(result.unwrap_err()),
+            "Path /outside/missing.json is not in the project"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_scan_excluded_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".secretdir": {
+                    "config": "secret configuration"
+                }
+            }),
+        )
+        .await;
+        cx.update(|cx| {
+            use gpui::UpdateGlobal as _;
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(SplicingVec::from(vec!["**/.secretdir".to_string()]));
+                });
+            });
+        });
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, _) = ToolCallEventStream::test();
+
+        // A file that exists on disk but is excluded from the worktree scan
+        // gets an error that says so, instead of the bare "not found".
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "/root/.secretdir/config".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(ToolInput::resolved(input), event_stream, cx)
+            })
+            .await;
+        let error = error_text(result.unwrap_err()).replace('\\', "/");
+        assert!(
+            error.contains(&format!(
+                "\"/root/.secretdir/config\" resolves to {}, which is outside the project \
+                 workspace (or excluded from the worktree scan), so agent tools cannot \
+                 access it. Project roots: {}.",
+                path!("/root/.secretdir/config").replace('\\', "/"),
+                path!("/root").replace('\\', "/"),
+            )),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("Add Folder to Project"),
+            "unexpected error: {error}"
         );
     }
 
