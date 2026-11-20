@@ -473,20 +473,34 @@ pub(super) fn set_focused(window_state: &Rc<Mutex<MacWindowState>>, id: Option<N
 }
 
 /// Makes the window's first responder match the view GPUI has focused.
+///
+/// A responder that is neither the window, the GPUI view, nor inside an
+/// attached view is left with keyboard input, such as a control the app or
+/// AppKit put in the titlebar. GPUI's focus says nothing about those.
 pub(super) fn reconcile_first_responder(window_state: &Rc<Mutex<MacWindowState>>) {
-    let (native_window, gpui_view, focused_view) = {
-        let lock = window_state.lock();
-        let focused_view = lock
-            .native_views
-            .focused
-            .and_then(|id| lock.native_views.shown(id))
-            .map(|attached| attached.view.clone());
-        (lock.native_window, lock.native_view.as_ptr(), focused_view)
-    };
     // SAFETY: The window and views are live, and this runs on the main thread. The
-    // window state is unlocked because AppKit calls back into it synchronously.
+    // window state is unlocked for `makeFirstResponder:` because AppKit calls back
+    // into it synchronously.
     unsafe {
-        let current: *mut AnyObject = msg_send![native_window, firstResponder];
+        let (native_window, gpui_view, focused_view, current) = {
+            let lock = window_state.lock();
+            let native_window = lock.native_window;
+            let gpui_view = lock.native_view.as_ptr();
+            let current: *mut AnyObject = msg_send![native_window, firstResponder];
+            let is_gpui_responder = current.is_null()
+                || current == native_window
+                || current == gpui_view
+                || lock.native_views.containing(current).is_some();
+            if !is_gpui_responder {
+                return;
+            }
+            let focused_view = lock
+                .native_views
+                .focused
+                .and_then(|id| lock.native_views.shown(id))
+                .map(|attached| attached.view.clone());
+            (native_window, gpui_view, focused_view, current)
+        };
         match focused_view {
             Some(view) => {
                 let is_view: bool =

@@ -216,6 +216,10 @@ name = "native_view"
 path = "examples/native_view.rs"
 
 [[example]]
+name = "native_view_appkit_field"
+path = "examples/native_view_appkit_field.rs"
+
+[[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
 
