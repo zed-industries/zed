@@ -6063,6 +6063,7 @@ dependencies = [
  "language_extension",
  "log",
  "lsp",
+ "managed_resources",
  "moka",
  "node_runtime",
  "parking_lot",
@@ -6089,6 +6090,7 @@ dependencies = [
  "wasmparser 0.254.2",
  "wasmtime",
  "wasmtime-wasi",
+ "watch",
  "zlog",
  "ztracing",
 ]

@@ -322,6 +322,7 @@ pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     node_runtime: NodeRuntime,
+    managed_resources: Entity<managed_resources::ManagedResourceStore>,
     cx: &mut App,
 ) {
     let store = cx.new(move |cx| {
@@ -334,6 +335,7 @@ pub fn init(
             client.http_client(),
             Some(client.telemetry().clone()),
             node_runtime,
+            managed_resources,
             cx,
         )
     });
@@ -375,6 +377,7 @@ impl ExtensionStore {
         builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
         node_runtime: NodeRuntime,
+        managed_resources: Entity<managed_resources::ManagedResourceStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
@@ -398,6 +401,7 @@ impl ExtensionStore {
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
+                managed_resources,
                 extension_host_proxy,
                 work_dir,
                 cx,

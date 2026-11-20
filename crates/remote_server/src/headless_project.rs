@@ -349,6 +349,7 @@ impl HeadlessProject {
             paths::remote_extensions_dir().to_path_buf(),
             proxy,
             node_runtime,
+            managed_resources.clone(),
             cx,
         );
 

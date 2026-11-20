@@ -6498,7 +6498,6 @@ async fn managed_resource_approvals_reach_the_client(
     impl ManagedResource for ManagementProbe {
         type Key = String;
         type Context = ();
-        type Command = Self;
         type CommandKind = ();
         fn id(key: &String) -> ResourceId {
             ResourceId::Npm {
@@ -6563,7 +6562,7 @@ async fn managed_resource_approvals_reach_the_client(
         });
         server_cx.run_until_parked();
         let mut task = store.update(server_cx, |store, cx| {
-            store.execute_command::<ManagementProbe>(
+            store.execute_command::<ManagementProbe, _>(
                 "remote-runtime".into(),
                 Rc::new(()),
                 ResourceExecutionBill {

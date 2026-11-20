@@ -13346,7 +13346,6 @@ mod tests {
         impl ManagedResource for TestResource {
             type Key = ();
             type Context = ();
-            type Command = Self;
             type CommandKind = ();
             fn id(_: &()) -> ResourceId {
                 ResourceId::Npm {
@@ -13435,7 +13434,7 @@ mod tests {
             cx.run_until_parked();
             let store = cx.update(|cx| AppState::create_managed_resources(fs.clone(), cx));
             let mut task = store.update(cx, |store, cx| {
-                store.execute_command::<TestResource>(
+                store.execute_command::<TestResource, _>(
                     (),
                     Rc::new(()),
                     ResourceExecutionBill {

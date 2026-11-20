@@ -756,9 +756,7 @@ async fn convert_response(
 
 impl nodejs::Host for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .binary_path()
+        self.execute_node_command(node_runtime::NodeBinaryPath, "Locate Node.js".into())
             .await
             .map(|path| path.to_string_lossy().into_owned())
             .to_wasmtime_result()
@@ -768,24 +766,33 @@ impl nodejs::Host for WasmState {
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .npm_package_latest_version(&package_name)
-            .await
-            .map(|v| v.to_string())
-            .to_wasmtime_result()
+        let reason = format!("Find the latest version of {package_name}");
+        self.execute_node_command(
+            node_runtime::LatestNpmPackageVersion {
+                package: package_name,
+            },
+            reason,
+        )
+        .await
+        .map(|v| v.to_string())
+        .to_wasmtime_result()
     }
 
     async fn npm_package_installed_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<Option<String>, String>> {
-        self.host
-            .node_runtime
-            .npm_package_installed_version(&self.work_dir(), &package_name)
-            .await
-            .map(|option| option.map(|version| version.to_string()))
-            .to_wasmtime_result()
+        let reason = format!("Find the installed version of {package_name}");
+        self.execute_node_command(
+            node_runtime::InstalledNpmPackageVersion {
+                directory: self.work_dir(),
+                package: package_name,
+            },
+            reason,
+        )
+        .await
+        .map(|option| option.map(|version| version.to_string()))
+        .to_wasmtime_result()
     }
 
     async fn npm_install_package(
@@ -797,16 +804,295 @@ impl nodejs::Host for WasmState {
             .grant_npm_install_package(&package_name)
             .into_wasmtime_result()?;
 
-        self.host
-            .node_runtime
-            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
-            .await
-            .to_wasmtime_result()
+        let reason = format!("Install npm package {package_name}@{version}");
+        self.execute_node_command(
+            node_runtime::InstallNpmPackages {
+                directory: self.work_dir(),
+                packages: vec![(package_name, version)],
+            },
+            reason,
+        )
+        .await
+        .to_wasmtime_result()
+    }
+}
+
+impl WasmState {
+    async fn execute_node_command<Output: Send + 'static>(
+        &mut self,
+        command: impl managed_resources::ManagedResourceCommand<
+            node_runtime::Npm,
+            Output = Result<Output>,
+        > + Send,
+        reason: String,
+    ) -> Result<Output> {
+        let options = self.host.node_runtime.acquisition_options().await?;
+        let store = self.host.managed_resources.clone();
+        let http = self.host.http_client.clone();
+        let bill = managed_resources::ResourceExecutionBill {
+            root: managed_resources::ExecutionBillRoot::Extension {
+                id: self.manifest.id.clone().into(),
+            },
+            reasoning: vec![reason.into()],
+        };
+        let task = self
+            .on_main_thread(async move |cx| {
+                store.update(cx, |store, cx| {
+                    store.execute_command::<node_runtime::Npm, _>(
+                        "node".to_owned(),
+                        std::rc::Rc::new(node_runtime::NpmContext { http, options }),
+                        bill,
+                        command,
+                        cx,
+                    )
+                })
+            })
+            .await;
+        task.await?
     }
 }
 
 #[async_trait]
 impl lsp::Host for WasmState {}
+
+#[cfg(all(test, unix))]
+mod npm_tests {
+    use super::*;
+    use crate::{capability_granter::CapabilityGranter, wasm_host::WasmHost};
+    use gpui::{AppContext as _, Task, TestAppContext};
+    use managed_resources::{
+        ExecutionBillRoot, ManagedResourceStore, ResourcePermission, ResourcePermissionRequest,
+    };
+    use node_runtime::{NodeBinaryOptions, NodeRuntime};
+    use serde_json::json;
+    use std::{cell::Cell, os::unix::fs::PermissionsExt, rc::Rc};
+
+    #[gpui::test]
+    async fn node_operations_check_host_permissions(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let directory = util::test::TempTree::new(json!({"test-extension": {
+            "node_modules": {"test-package": {"package.json": "{\"version\":\"1.0.7\"}"}}
+        }}));
+        let node = directory.path().join("node");
+        let npm = directory.path().join("npm");
+        for path in [&node, &npm] {
+            std::fs::write(
+                path,
+                r#"#!/bin/sh
+echo called >> "$0.calls"
+for arg in "$@"; do
+  case "$arg" in
+    install) printf '%s\n' "$@" > "$0.args"; exit 0;;
+    info) echo '{"dist-tags":{"latest":"2.3.4"},"versions":["2.3.4"]}'; exit 0;;
+    config) echo '{}'; exit 0;;
+  esac
+done
+echo v22.0.0
+"#,
+            )
+            .expect("write executable");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+                .expect("make executable");
+        }
+        let allow = Rc::new(Cell::new(false));
+        let approvals = Rc::new(Cell::new(0));
+        let (mut options_sender, options) = watch::channel(Some(NodeBinaryOptions::default()));
+        let host = cx.update(|cx| {
+            let settings = ::settings::SettingsStore::test(cx);
+            cx.set_global(settings);
+            release_channel::init(Version::new(0, 0, 0), cx);
+            extension::init(cx);
+            gpui_tokio::init(cx);
+            let store = cx.new(|_| {
+                let allow = allow.clone();
+                let approvals = approvals.clone();
+                ManagedResourceStore::new(Default::default(), move |request, _| {
+                    let ResourcePermissionRequest::ExecuteCommand { bill, .. } = request else {
+                        panic!("configured Node must not require management");
+                    };
+                    assert_eq!(
+                        bill.root,
+                        ExecutionBillRoot::Extension {
+                            id: "test-extension".into()
+                        }
+                    );
+                    approvals.set(approvals.get() + 1);
+                    Task::ready(if allow.get() {
+                        ResourcePermission::Allowed
+                    } else {
+                        ResourcePermission::Denied
+                    })
+                })
+            });
+            WasmHost::new(
+                fs::FakeFs::new(cx.background_executor().clone()),
+                Arc::new(::http_client::BlockedHttpClient),
+                NodeRuntime::new(Arc::new(::http_client::BlockedHttpClient), None, options),
+                store,
+                Arc::new(extension::ExtensionHostProxy::default()),
+                directory.path().to_path_buf(),
+                cx,
+            )
+        });
+        let manifest: Arc<extension::ExtensionManifest> = Arc::new(
+            serde_json::from_value(json!({
+                "id": "test-extension", "name": "Test", "version": "1.0.0", "schema_version": 1
+            }))
+            .expect("manifest"),
+        );
+        let mut state = WasmState {
+            capability_granter: CapabilityGranter::new(Vec::new(), manifest.clone()),
+            manifest: manifest.clone(),
+            host,
+            table: wasmtime::component::ResourceTable::new(),
+            ctx: wasmtime_wasi::WasiCtxBuilder::new().build(),
+            language_server_status_source: None,
+        };
+        assert!(
+            NodeRuntime::unavailable()
+                .npm_package_installed_version(&state.work_dir(), "test-package")
+                .await
+                .is_err(),
+            "an installed package must not bypass runtime acquisition"
+        );
+        assert!(
+            nodejs::Host::npm_package_installed_version(&mut state, "test-package".into())
+                .await
+                .expect("host response")
+                .is_err(),
+            "the host must acquire a runtime even when the package exists"
+        );
+        assert_eq!(approvals.get(), 0);
+        options_sender
+            .send(Some(NodeBinaryOptions {
+                use_paths: Some((node, npm)),
+                ..Default::default()
+            }))
+            .expect("configure runtime");
+        let rejected =
+            nodejs::Host::npm_install_package(&mut state, "test-package".into(), "1.2.3".into())
+                .await;
+        assert!(rejected.is_err());
+        assert_eq!(approvals.get(), 0);
+        state.capability_granter = CapabilityGranter::new(
+            vec![
+                serde_json::from_value(json!({
+                    "kind": "npm:install", "package": "test-package"
+                }))
+                .expect("capability"),
+            ],
+            manifest,
+        );
+        let rejected =
+            nodejs::Host::npm_install_package(&mut state, "test-package".into(), "1.2.3".into())
+                .await
+                .expect("host response");
+        assert!(rejected.is_err());
+        assert_eq!(approvals.get(), 1);
+        assert!(!directory.path().join("npm.args").exists());
+        allow.set(true);
+        nodejs::Host::npm_install_package(&mut state, "test-package".into(), "1.2.3".into())
+            .await
+            .expect("host response")
+            .expect("installation");
+        assert_eq!(approvals.get(), 2);
+        let arguments =
+            std::fs::read_to_string(directory.path().join("npm.args")).expect("npm ran");
+        assert!(
+            arguments
+                .lines()
+                .any(|argument| argument == "test-package@1.2.3")
+        );
+        assert!(
+            arguments
+                .lines()
+                .any(|argument| argument == state.work_dir().to_str().expect("path"))
+        );
+        allow.set(false);
+        assert!(
+            nodejs::Host::node_binary_path(&mut state)
+                .await
+                .expect("host response")
+                .is_err()
+        );
+        let calls = std::fs::read_to_string(directory.path().join("npm.calls")).expect("npm calls");
+        assert!(
+            nodejs::Host::npm_package_latest_version(&mut state, "test-package".into())
+                .await
+                .expect("host response")
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("npm.calls")).expect("npm calls"),
+            calls
+        );
+        assert_eq!(approvals.get(), 4);
+        allow.set(true);
+        assert_eq!(
+            nodejs::Host::node_binary_path(&mut state)
+                .await
+                .expect("host response")
+                .expect("node path"),
+            directory.path().join("node").to_string_lossy()
+        );
+        assert_eq!(
+            nodejs::Host::npm_package_latest_version(&mut state, "test-package".into())
+                .await
+                .expect("host response")
+                .expect("registry lookup"),
+            "2.3.4"
+        );
+        assert_eq!(approvals.get(), 6);
+        assert_eq!(
+            nodejs::Host::npm_package_installed_version(&mut state, "test-package".into())
+                .await
+                .expect("host response")
+                .expect("runtime lookup"),
+            Some("1.0.7".into())
+        );
+        assert_eq!(
+            nodejs::Host::npm_package_installed_version(&mut state, "missing-package".into())
+                .await
+                .expect("host response")
+                .expect("runtime lookup"),
+            None
+        );
+        assert_eq!(approvals.get(), 8);
+        allow.set(false);
+        assert!(
+            nodejs::Host::npm_package_installed_version(&mut state, "test-package".into())
+                .await
+                .expect("host response")
+                .is_err()
+        );
+        assert_eq!(approvals.get(), 9);
+        allow.set(true);
+        std::fs::write(
+            state
+                .work_dir()
+                .join("node_modules/test-package/package.json"),
+            "not JSON",
+        )
+        .expect("corrupt metadata");
+        assert!(
+            nodejs::Host::npm_package_installed_version(&mut state, "test-package".into())
+                .await
+                .expect("host response")
+                .is_err()
+        );
+        options_sender
+            .send(Some(NodeBinaryOptions::default()))
+            .expect("disable runtime");
+        assert!(
+            nodejs::Host::npm_package_installed_version(&mut state, "missing-package".into())
+                .await
+                .expect("host response")
+                .is_err(),
+            "cached runtime must not bypass new settings"
+        );
+        assert_eq!(approvals.get(), 10);
+    }
+}
 
 impl From<::github_releases::GithubRelease> for github::GithubRelease {
     fn from(value: ::github_releases::GithubRelease) -> Self {

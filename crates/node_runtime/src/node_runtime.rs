@@ -49,6 +49,7 @@ pub struct NpmCommand {
 
 pub struct Npm {
     runtime: NodeRuntime,
+    options: NodeBinaryOptions,
 }
 
 pub struct NpmContext {
@@ -59,13 +60,16 @@ pub struct NpmContext {
 impl ManagedResource for Npm {
     type Key = String;
     type Context = NpmContext;
-    type Command = InstallNpmPackages;
     type CommandKind = NpmCommandKind;
 
     fn id(key: &Self::Key) -> ResourceId {
         ResourceId::Npm {
             payload: NpmResourceId { name: key.clone() },
         }
+    }
+
+    fn is_current(&self, context: &NpmContext) -> bool {
+        self.options == context.options
     }
 
     async fn obtain(_: &Self::Key, context: &NpmContext) -> Result<ResourceAcquisition<Self>> {
@@ -103,16 +107,19 @@ impl ManagedResource for Npm {
                 state.instance = Some(instance);
                 state.last_options = Some(context.options.clone());
             }
-            runtime.run_npm_subcommand(None, "--version", &[]).await?;
             Ok(ResourceAcquisition::Ready {
-                resource: Self { runtime },
+                resource: Self {
+                    runtime,
+                    options: context.options.clone(),
+                },
                 action: None,
             })
         } else {
+            let options = context.options.clone();
             Ok(ResourceAcquisition::RequiresAction(Box::new(move || {
                 async move {
                     runtime.run_npm_subcommand(None, "--version", &[]).await?;
-                    Ok(Self { runtime })
+                    Ok(Self { runtime, options })
                 }
                 .boxed_local()
             })))
@@ -135,6 +142,103 @@ pub struct NpmPermissionSettings {
 #[serde(rename_all = "snake_case")]
 pub enum NpmCommandKind {
     Install,
+    BinaryPath,
+    LatestVersion,
+    InstalledVersion,
+}
+
+pub struct NodeBinaryPath;
+
+impl ManagedResourceCommand<Npm> for NodeBinaryPath {
+    type Output = Result<PathBuf>;
+    type PermissionSettings = NpmPermissionSettings;
+
+    fn command_kind(&self) -> NpmCommandKind {
+        NpmCommandKind::BinaryPath
+    }
+
+    fn permission(&self, settings: &NpmPermissionSettings) -> Option<ResourcePermission> {
+        settings
+            .commands
+            .iter()
+            .find(|rule| rule.command == self.command_kind())
+            .map(|rule| rule.permission)
+    }
+
+    fn permission_description(&self, _: &Npm) -> String {
+        "Get the Node.js executable path".into()
+    }
+
+    async fn run(self, npm: &Npm) -> Self::Output {
+        npm.runtime.binary_path().await
+    }
+}
+
+pub struct LatestNpmPackageVersion {
+    pub package: String,
+}
+
+impl ManagedResourceCommand<Npm> for LatestNpmPackageVersion {
+    type Output = Result<Version>;
+    type PermissionSettings = NpmPermissionSettings;
+
+    fn command_kind(&self) -> NpmCommandKind {
+        NpmCommandKind::LatestVersion
+    }
+
+    fn permission(&self, settings: &NpmPermissionSettings) -> Option<ResourcePermission> {
+        settings
+            .commands
+            .iter()
+            .find(|rule| rule.command == self.command_kind())
+            .map(|rule| rule.permission)
+    }
+
+    fn permission_description(&self, _: &Npm) -> String {
+        format!(
+            "Query the npm registry for the latest version of {}",
+            self.package
+        )
+    }
+
+    async fn run(self, npm: &Npm) -> Self::Output {
+        npm.runtime.npm_package_latest_version(&self.package).await
+    }
+}
+
+pub struct InstalledNpmPackageVersion {
+    pub directory: PathBuf,
+    pub package: String,
+}
+
+impl ManagedResourceCommand<Npm> for InstalledNpmPackageVersion {
+    type Output = Result<Option<Version>>;
+    type PermissionSettings = NpmPermissionSettings;
+
+    fn command_kind(&self) -> NpmCommandKind {
+        NpmCommandKind::InstalledVersion
+    }
+
+    fn permission(&self, settings: &NpmPermissionSettings) -> Option<ResourcePermission> {
+        settings
+            .commands
+            .iter()
+            .find(|rule| rule.command == self.command_kind())
+            .map(|rule| rule.permission)
+    }
+
+    fn permission_description(&self, _: &Npm) -> String {
+        format!(
+            "Look up the installed version of {} in {:?}",
+            self.package, self.directory
+        )
+    }
+
+    async fn run(self, npm: &Npm) -> Self::Output {
+        npm.runtime
+            .npm_package_installed_version(&self.directory, &self.package)
+            .await
+    }
 }
 
 impl ManagedResourceCommand<Npm> for InstallNpmPackages {
@@ -214,6 +318,27 @@ impl NodeRuntime {
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
             shell_env_loaded: oneshot::channel().1.shared(),
         })))
+    }
+
+    /// Reads configured acquisition options without discovering or installing Node.
+    pub async fn acquisition_options(&self) -> Result<NodeBinaryOptions> {
+        let (mut options, shell_env_loaded) = {
+            let state = self.0.lock().await;
+            (state.options.clone(), state.shell_env_loaded.clone())
+        };
+        let options = loop {
+            if let Some(options) = options.borrow().clone() {
+                break options;
+            }
+            options.changed().await?;
+        };
+        if options.allow_path_lookup && options.use_paths.is_none() {
+            // A missing loader is also used by headless and test runtimes.
+            if let Err(error) = shell_env_loaded.await {
+                log::debug!("Node shell environment loader unavailable: {error}");
+            }
+        }
+        Ok(options)
     }
 
     async fn instance(&self) -> Box<dyn NodeRuntimeTrait> {
@@ -1522,11 +1647,11 @@ mod tests {
     use semver::{Version, VersionReq};
 
     use super::{
-        InstallNpmPackages, ManagedNodeRuntime, NodeDiscoveryError, NodeRuntimeTrait, NpmInfo,
-        NpmPermissionSettings, SystemNodeRuntime, VersionStrategy, build_npm_command_args,
-        check_node_version, deserialize_npm_info_from_response, find_node_path, find_npm_path,
-        npm_command_directory, proxy_argument, select_npm_package_version,
-        should_install_npm_package_version,
+        InstallNpmPackages, LatestNpmPackageVersion, ManagedNodeRuntime, NodeBinaryPath,
+        NodeDiscoveryError, NodeRuntimeTrait, NpmInfo, NpmPermissionSettings, SystemNodeRuntime,
+        VersionStrategy, build_npm_command_args, check_node_version,
+        deserialize_npm_info_from_response, find_node_path, find_npm_path, npm_command_directory,
+        proxy_argument, select_npm_package_version, should_install_npm_package_version,
     };
 
     #[test]
@@ -1534,9 +1659,37 @@ mod tests {
         let serialized = serde_json::json!({"commands":[{
             "permission":"prompt",
             "command":"install"
+        }, {
+            "permission":"allowed",
+            "command":"binary_path"
+        }, {
+            "permission":"denied",
+            "command":"latest_version"
+        }, {
+            "permission":"prompt",
+            "command":"installed_version"
         }]});
         let settings: NpmPermissionSettings =
             serde_json::from_value(serialized.clone()).expect("npm settings");
+        assert_eq!(
+            super::InstalledNpmPackageVersion {
+                directory: PathBuf::from("/tmp/package"),
+                package: "typescript".into(),
+            }
+            .permission(&settings),
+            Some(ResourcePermission::Prompt)
+        );
+        assert_eq!(
+            NodeBinaryPath.permission(&settings),
+            Some(ResourcePermission::Allowed)
+        );
+        assert_eq!(
+            LatestNpmPackageVersion {
+                package: "typescript".into()
+            }
+            .permission(&settings),
+            Some(ResourcePermission::Denied)
+        );
         assert_eq!(
             serde_json::to_value(&settings).expect("serializable settings"),
             serialized

@@ -675,6 +675,7 @@ fn main() {
             app_state.fs.clone(),
             app_state.client.clone(),
             app_state.node_runtime.clone(),
+            app_state.managed_resources.clone(),
             cx,
         );
 

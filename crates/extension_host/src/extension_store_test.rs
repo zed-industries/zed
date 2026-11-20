@@ -53,6 +53,14 @@ use task::{SpawnInTerminal, ZedDebugConfig};
 use theme::ThemeRegistry;
 use util::{rel_path::rel_path_buf, test::TempTree};
 
+fn managed_resources(cx: &mut gpui::App) -> Entity<managed_resources::ManagedResourceStore> {
+    cx.new(|_| {
+        managed_resources::ManagedResourceStore::new(Default::default(), |_, _| {
+            gpui::Task::ready(managed_resources::ResourcePermission::Allowed)
+        })
+    })
+}
+
 #[cfg(test)]
 #[ctor::ctor(unsafe)]
 fn init_logger() {
@@ -530,6 +538,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             http_client.clone(),
             None,
             node_runtime.clone(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -680,6 +689,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             http_client.clone(),
             None,
             node_runtime.clone(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -939,6 +949,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             builder_client,
             None,
             node_runtime,
+            managed_resources(cx),
             cx,
         )
     });
@@ -1681,6 +1692,7 @@ path_suffixes = ["foo"]
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -1797,6 +1809,7 @@ languages = ["languages/foo"]
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -1872,6 +1885,7 @@ async fn test_headless_sync_extensions_reports_failed_load_as_missing_again(
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -1955,6 +1969,7 @@ async fn test_headless_sync_uninstall_failure_does_not_block_other_extensions(
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -2406,6 +2421,7 @@ languages = ["languages/foo"]
             PathBuf::from("/extensions"),
             proxy,
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -2523,6 +2539,7 @@ languages = ["languages/foo", "languages/bar"]
             PathBuf::from("/extensions"),
             proxy,
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -2624,6 +2641,7 @@ async fn test_headless_uninstall_restores_surviving_extensions_language_config(
             PathBuf::from("/extensions"),
             proxy,
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -2695,6 +2713,7 @@ languages = ["languages/foo"]
             PathBuf::from("/extensions"),
             proxy,
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -2832,6 +2851,7 @@ languages = ["languages/foo"]
             PathBuf::from("/extensions"),
             proxy,
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -2959,6 +2979,7 @@ async fn test_headless_dev_reload_replaces_registrations(cx: &mut TestAppContext
             PathBuf::from("/extensions"),
             proxy,
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -3077,6 +3098,7 @@ languages = ["languages/foo"]
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -3180,6 +3202,7 @@ languages = ["languages/foo"]
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -3263,6 +3286,7 @@ languages = ["languages/foo"]
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -3380,6 +3404,7 @@ async fn test_headless_failed_uninstall_is_retried_on_later_syncs(cx: &mut TestA
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -3757,6 +3782,7 @@ languages = ["languages/shared"]
             PathBuf::from("/extensions"),
             proxy,
             NodeRuntime::unavailable(),
+            managed_resources(cx),
             cx,
         )
     });
@@ -4131,6 +4157,7 @@ fn create_extension_store_with(
             http_client,
             None,
             node_runtime,
+            managed_resources(cx),
             cx,
         )
     });

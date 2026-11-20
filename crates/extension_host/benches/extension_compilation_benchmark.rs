@@ -8,7 +8,7 @@ use extension::{
 };
 use extension_host::wasm_host::WasmHost;
 use fs::{Fs, RealFs};
-use gpui::{TestAppContext, TestDispatcher};
+use gpui::{AppContext as _, TestAppContext, TestDispatcher};
 use http_client::{FakeHttpClient, Response};
 use node_runtime::NodeRuntime;
 
@@ -108,6 +108,11 @@ fn wasm_host(cx: &TestAppContext, extensions_dir: &TempTree) -> Arc<WasmHost> {
             fs,
             http_client,
             NodeRuntime::unavailable(),
+            cx.new(|_| {
+                managed_resources::ManagedResourceStore::new(Default::default(), |_, _| {
+                    gpui::Task::ready(managed_resources::ResourcePermission::Allowed)
+                })
+            }),
             Arc::new(ExtensionHostProxy::new()),
             work_dir,
             cx,

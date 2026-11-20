@@ -21,10 +21,11 @@ use futures::{
     },
     future::BoxFuture,
 };
-use gpui::{App, AsyncApp, BackgroundExecutor, EntityId, Task};
+use gpui::{App, AsyncApp, BackgroundExecutor, Entity, EntityId, Task};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
+use managed_resources::ManagedResourceStore;
 use moka::sync::Cache;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
@@ -50,6 +51,7 @@ pub struct WasmHost {
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
+    managed_resources: Entity<ManagedResourceStore>,
     pub(crate) proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
@@ -613,6 +615,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
+        managed_resources: Entity<ManagedResourceStore>,
         proxy: Arc<ExtensionHostProxy>,
         work_dir: PathBuf,
         cx: &mut App,
@@ -632,6 +635,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
+            managed_resources,
             proxy,
             release_channel: ReleaseChannel::global(cx),
             granted_capabilities: extension_settings.granted_capabilities.clone(),
@@ -1038,7 +1042,7 @@ mod tests {
     use super::*;
     use extension::ExtensionHostProxy;
     use fs::FakeFs;
-    use gpui::TestAppContext;
+    use gpui::{AppContext as _, TestAppContext};
     use http_client::FakeHttpClient;
     use node_runtime::NodeRuntime;
     use serde_json::json;
@@ -1078,6 +1082,11 @@ mod tests {
                 fs.clone(),
                 FakeHttpClient::with_200_response(),
                 NodeRuntime::unavailable(),
+                cx.new(|_| {
+                    ManagedResourceStore::new(Default::default(), |_, _| {
+                        Task::ready(managed_resources::ResourcePermission::Allowed)
+                    })
+                }),
                 Arc::new(ExtensionHostProxy::default()),
                 PathBuf::from("/work"),
                 cx,
