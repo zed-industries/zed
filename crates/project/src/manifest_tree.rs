@@ -23,7 +23,9 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
-pub(crate) use server_tree::{LanguageServerTree, LanguageServerTreeNode, LaunchDisposition};
+pub(crate) use server_tree::{
+    LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ServerTreeRebase,
+};
 
 struct WorktreeRoots {
     roots: RootPathTrie<ManifestName>,
