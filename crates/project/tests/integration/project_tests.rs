@@ -17312,8 +17312,11 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
         "unknown_driver.py",
         "builtin_driver.py",
         "configured_driver.py",
+        "swift_driver.py",
         "diff_set.py",
         "diff_unset.py",
+        "driver_named_set.py",
+        "driver_named_unset.py",
     ];
 
     let root = TempTree::new(json!({ "project": {} }));
@@ -17325,13 +17328,23 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
         &work_dir,
     );
     git_config("diff.configured.xfuncname", "^def", &work_dir);
+    for driver in ["set", "unset", "unspecified"] {
+        git_config(
+            &format!("diff.{driver}.textconv"),
+            "iconv -f WINDOWS-1252 -t UTF-8",
+            &work_dir,
+        );
+    }
     let attributes = [
         "*.py -text",
         "unknown_driver.py diff=unknown",
         "builtin_driver.py diff=python",
         "configured_driver.py diff=configured",
+        "swift_driver.py diff=swift",
         "diff_set.py diff",
         "diff_unset.py -diff",
+        "driver_named_set.py diff=set",
+        "driver_named_unset.py diff=unset",
     ];
     std::fs::write(
         work_dir.join(".gitattributes"),

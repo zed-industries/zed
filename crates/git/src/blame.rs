@@ -85,11 +85,6 @@ const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
 const EXACT_ENCODING_YIELD_BYTES: usize = 64 * 1024;
-const BUILTIN_DIFF_DRIVERS: &[&str] = &[
-    "ada", "bash", "bibtex", "cpp", "csharp", "css", "dts", "elixir", "fortran", "fountain",
-    "golang", "html", "ini", "java", "kotlin", "markdown", "matlab", "objc", "pascal", "perl",
-    "php", "python", "r", "ruby", "rust", "scheme", "tex",
-];
 
 #[derive(Clone, Copy)]
 enum BlameSource<'a> {
@@ -153,30 +148,32 @@ async fn git_stdin_encoding(
     path: &RepoPath,
     encoding: &'static Encoding,
 ) -> Result<StdinEncoding> {
-    let attributes = git
-        .run_raw(&[
+    let attributes = preflight_output(
+        git,
+        &[
             "check-attr",
             "-z",
-            "diff",
             "working-tree-encoding",
             "--",
             path.as_unix_str(),
-        ])
-        .await?;
-    let mut diff_driver = None;
-    let mut has_working_tree_encoding = false;
-    for (_path, attribute, value) in attributes.split('\0').tuples() {
-        match attribute {
-            "diff" => diff_driver = Some(value),
-            // Git ignores a UTF-8 `working-tree-encoding`.
-            "working-tree-encoding" => {
-                has_working_tree_encoding = !matches!(value, "unspecified" | "unset" | "set")
+        ],
+    )
+    .await?;
+    anyhow::ensure!(
+        attributes.status.success(),
+        "git check-attr failed: {}",
+        String::from_utf8_lossy(&attributes.stderr)
+    );
+    let attributes = String::from_utf8(attributes.stdout)?;
+    let has_working_tree_encoding =
+        attributes
+            .split('\0')
+            .tuples()
+            .any(|(_path, _attribute, value)| {
+                !matches!(value, "unspecified" | "unset" | "set")
                     && !value.eq_ignore_ascii_case("utf-8")
-                    && !value.eq_ignore_ascii_case("utf8");
-            }
-            _ => {}
-        }
-    }
+                    && !value.eq_ignore_ascii_case("utf8")
+            });
 
     if has_working_tree_encoding {
         return Ok(StdinEncoding::WorkingTree);
@@ -184,42 +181,26 @@ async fn git_stdin_encoding(
     if encoding == UTF_16LE || encoding == UTF_16BE {
         return Ok(StdinEncoding::Utf8);
     }
-    if history_has_textconv(git, diff_driver.unwrap_or("unspecified")).await? {
-        return Ok(StdinEncoding::Utf8);
-    }
-    Ok(StdinEncoding::Stored)
+    let head_path = format!("HEAD:{}", path.as_unix_str());
+    let stored_args = ["cat-file", "blob", &head_path];
+    let converted_args = ["cat-file", "--textconv", &head_path];
+    let (stored, converted) = try_join!(
+        preflight_output(git, &stored_args),
+        preflight_output(git, &converted_args),
+    )?;
+    let has_textconv = !stored.status.success()
+        || !converted.status.success()
+        || stored.stdout != converted.stdout;
+    Ok(if has_textconv {
+        StdinEncoding::Utf8
+    } else {
+        StdinEncoding::Stored
+    })
 }
 
-async fn history_has_textconv(git: &GitBinary, diff_attribute: &str) -> Result<bool> {
-    let config = git.run_raw(&["config", "--list", "-z"]).await?;
-    let mut is_configured = false;
-    let mut textconv = "";
-    let mut default_textconv = "";
-    for entry in config.split('\0') {
-        let (key, value) = entry.split_once('\n').unwrap_or((entry, ""));
-        let Some((driver, variable)) = key
-            .strip_prefix("diff.")
-            .and_then(|key| key.rsplit_once('.'))
-        else {
-            continue;
-        };
-        if driver == diff_attribute {
-            is_configured = true;
-            if variable == "textconv" {
-                textconv = value;
-            }
-        }
-        if driver == "default" && variable == "textconv" {
-            default_textconv = value;
-        }
-    }
-
-    let is_driver = is_configured || BUILTIN_DIFF_DRIVERS.contains(&diff_attribute);
-    Ok(match diff_attribute {
-        _ if is_driver => !textconv.is_empty(),
-        "set" | "unset" => false,
-        _ => !default_textconv.is_empty(),
-    })
+async fn preflight_output(git: &GitBinary, args: &[&str]) -> Result<std::process::Output> {
+    let output = git.build_command(args).kill_on_drop(true).output().await?;
+    Ok(output)
 }
 
 async fn run_git_blame(
