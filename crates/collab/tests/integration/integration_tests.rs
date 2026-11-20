@@ -6019,7 +6019,7 @@ async fn test_references(
         let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name.0, "my-fake-lsp-adapter");
         assert_eq!(
-            status.pending_work.values().next().unwrap().message,
+            status.pending_work.values().next().unwrap().title,
             Some("Finding references...".into())
         );
     });
@@ -6077,7 +6077,7 @@ async fn test_references(
         let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name.0, "my-fake-lsp-adapter");
         assert_eq!(
-            status.pending_work.values().next().unwrap().message,
+            status.pending_work.values().next().unwrap().title,
             Some("Finding references...".into())
         );
     });
