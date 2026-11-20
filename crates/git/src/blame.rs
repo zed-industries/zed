@@ -218,6 +218,8 @@ async fn history_has_textconv(git: &GitBinary, path: &RepoPath) -> Result<bool> 
         return Ok(true);
     }
 
+    // git can't report whether it would textconv a path so every textconv is replaced with a
+    // command that prints a marker, and the output shows whether git ran one.
     let marker = format!("zed-textconv-{}", Uuid::new_v4().simple());
     let mut args = Vec::new();
     for driver in drivers {
