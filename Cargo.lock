@@ -5492,7 +5492,6 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-html",
  "tree-sitter-md",
- "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "tree-sitter-yaml",

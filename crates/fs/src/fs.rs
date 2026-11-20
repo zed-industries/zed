@@ -1569,7 +1569,6 @@ struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
-    git_event_tx: async_channel::Sender<PathBuf>,
     watch_roots: Vec<(PathBuf, std::sync::Weak<dyn Watcher>)>,
     watches: FakeWatches,
     events_paused: bool,
@@ -2064,8 +2063,6 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, rx) = async_channel::bounded::<PathBuf>(10);
-
         let state = Arc::new(Mutex::new(FakeFsState {
             root: FakeFsEntry::Dir {
                 inode: 0,
@@ -2074,7 +2071,6 @@ impl FakeFs {
                 entries: Default::default(),
                 git_repo_state: None,
             },
-            git_event_tx: tx,
             next_mtime: UNIX_EPOCH + Self::SYSTEMTIME_INTERVAL,
             next_inode: 1,
             watch_roots: Vec::new(),
@@ -2103,28 +2099,13 @@ impl FakeFs {
         let poll_watcher =
             fs_watcher::OsWatcher::new(fs_watcher::OsWatcherKind::Poll, executor.clone());
 
-        let this = Arc::new_cyclic(|this| Self {
+        Arc::new_cyclic(|this| Self {
             this: this.clone(),
             executor: executor.clone(),
             state,
             native_watcher,
             poll_watcher,
-        });
-
-        executor.spawn({
-            let this = this.clone();
-            async move {
-                while let Ok(git_event) = rx.recv().await {
-                    if let Some(mut state) = this.state.try_lock() {
-                        state.emit_event([(git_event, Some(PathEventKind::Changed))]);
-                    } else {
-                        panic!("Failed to lock file system state, this execution would have caused a test hang");
-                    }
-                }
-            }
-        }).detach();
-
-        this
+        })
     }
 
     /// Configures whether the fake filesystem reports as case-sensitive.
@@ -2431,13 +2412,12 @@ impl FakeFs {
         F: FnOnce(&mut FakeGitRepositoryState, &Path, &Path) -> T,
     {
         let mut state = self.state.lock();
-        let git_event_tx = state.git_event_tx.clone();
         let entry = state.entry(dot_git).context("open .git")?;
 
         if let FakeFsEntry::Dir { git_repo_state, .. } = entry {
             let repo_state = git_repo_state.get_or_insert_with(|| {
                 log::debug!("insert git state for {dot_git:?}");
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(git_event_tx)))
+                Arc::new(Mutex::new(FakeGitRepositoryState::new()))
             });
             let mut repo_state = repo_state.lock();
 
@@ -2494,9 +2474,8 @@ impl FakeFs {
             } else {
                 canonical_path.clone()
             };
-            let repo_state = git_repo_state.get_or_insert_with(|| {
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(git_event_tx)))
-            });
+            let repo_state = git_repo_state
+                .get_or_insert_with(|| Arc::new(Mutex::new(FakeGitRepositoryState::new())));
             let mut repo_state = repo_state.lock();
 
             let result = f(&mut repo_state, &canonical_path, &common_dir);

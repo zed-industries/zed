@@ -21486,9 +21486,6 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         fn meta(&self) -> ToolchainMetadata {
             ToolchainMetadata {
                 term: SharedString::new_static("Virtual Environment"),
-                new_toolchain_placeholder: SharedString::new_static(
-                    "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
-                ),
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }

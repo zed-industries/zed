@@ -30918,14 +30918,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
 
-    let test_plugin = "test_plugin";
-    let _ = language_registry.register_fake_lsp(
-        "TypeScript",
-        FakeLspAdapter {
-            prettier_plugins: vec![test_plugin],
-            ..Default::default()
-        },
-    );
+    let _ = language_registry.register_fake_lsp("TypeScript", FakeLspAdapter::default());
 
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     let buffer = project
@@ -31013,14 +31006,7 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
         settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
 
-    let test_plugin = "test_plugin";
-    let _ = language_registry.register_fake_lsp(
-        "TypeScript",
-        FakeLspAdapter {
-            prettier_plugins: vec![test_plugin],
-            ..Default::default()
-        },
-    );
+    let _ = language_registry.register_fake_lsp("TypeScript", FakeLspAdapter::default());
 
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     let buffer = project
@@ -31112,14 +31098,7 @@ async fn test_range_format_with_prettier(cx: &mut TestAppContext) {
         settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
 
-    let test_plugin = "test_plugin";
-    let _ = language_registry.register_fake_lsp(
-        "TypeScript",
-        FakeLspAdapter {
-            prettier_plugins: vec![test_plugin],
-            ..Default::default()
-        },
-    );
+    let _ = language_registry.register_fake_lsp("TypeScript", FakeLspAdapter::default());
 
     let prettier_range_format_suffix = project::TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
     let buffer = project
@@ -31193,14 +31172,7 @@ async fn test_range_format_with_prettier_explicit_language(cx: &mut TestAppConte
         settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
 
-    let test_plugin = "test_plugin";
-    let _ = language_registry.register_fake_lsp(
-        "TypeScript",
-        FakeLspAdapter {
-            prettier_plugins: vec![test_plugin],
-            ..Default::default()
-        },
-    );
+    let _ = language_registry.register_fake_lsp("TypeScript", FakeLspAdapter::default());
 
     let prettier_range_format_suffix = project::TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
     let buffer = project

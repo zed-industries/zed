@@ -10772,7 +10772,6 @@ pub struct PointForPosition {
     pub next_valid: DisplayPoint,
     pub nearest_valid: DisplayPoint,
     pub exact_unclipped: DisplayPoint,
-    pub column_overshoot_after_line_end: u32,
 }
 
 impl PointForPosition {
@@ -10878,7 +10877,6 @@ impl PositionMap {
             next_valid,
             nearest_valid,
             exact_unclipped,
-            column_overshoot_after_line_end,
         }
     }
 
@@ -10924,7 +10922,6 @@ impl PositionMap {
             next_valid,
             nearest_valid,
             exact_unclipped,
-            column_overshoot_after_line_end,
         }
     }
 }

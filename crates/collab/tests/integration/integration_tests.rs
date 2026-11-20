@@ -5524,8 +5524,6 @@ async fn test_prettier_formatting_buffer(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    let test_plugin = "test_plugin";
-
     client_a.language_registry().add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
@@ -5538,13 +5536,9 @@ async fn test_prettier_formatting_buffer(
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
-        "TypeScript",
-        FakeLspAdapter {
-            prettier_plugins: vec![test_plugin],
-            ..Default::default()
-        },
-    );
+    let mut fake_language_servers = client_a
+        .language_registry()
+        .register_fake_lsp("TypeScript", FakeLspAdapter::default());
 
     // Here we insert a fake tree with a directory that exists on disk. This is needed
     // because later we'll invoke a command, which requires passing a working directory
