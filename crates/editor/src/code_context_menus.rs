@@ -1,9 +1,9 @@
 use crate::scroll::ScrollAmount;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, Entity, Focusable, FontWeight, HighlightStyle, ListSizingBehavior, ScrollHandle,
-    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, Task, TaskExt,
-    UniformListScrollHandle, div, px, uniform_list,
+    AnyElement, Entity, Focusable, FontWeight, HighlightStyle, ListHorizontalSizingBehavior,
+    ListSizingBehavior, ScrollHandle, ScrollStrategy, SharedString, Size, StrikethroughStyle,
+    StyledText, Task, TaskExt, UniformListScrollHandle, div, px, uniform_list,
 };
 use itertools::Itertools;
 use language::CodeLabel;
@@ -920,7 +920,7 @@ impl CompletionsMenu {
         let editor_settings = EditorSettings::get_global(cx);
         let completion_detail_alignment = editor_settings.completion_detail_alignment;
         let completion_menu_item_kind = editor_settings.completion_menu_item_kind;
-        let widest_completion_ix = if self.display_options.dynamic_width {
+        let widest_completion_ix = {
             let completions = self.completions.borrow();
             let widest_completion_ix = self
                 .entries
@@ -953,8 +953,6 @@ impl CompletionsMenu {
                 .map(|(ix, _)| ix);
             drop(completions);
             widest_completion_ix
-        } else {
-            None
         };
 
         let selected_item = self.selected_item;
@@ -1157,8 +1155,6 @@ impl CompletionsMenu {
                         };
 
                         div()
-                            .min_w(COMPLETION_MENU_MIN_WIDTH)
-                            .max_w(COMPLETION_MENU_MAX_WIDTH)
                             .child(
                                 ListItem::new(mat.candidate_id)
                                     .inset(true)
@@ -1212,9 +1208,11 @@ impl CompletionsMenu {
         .max_h(max_height_in_lines as f32 * window.line_height())
         .track_scroll(&self.scroll_handle)
         .with_sizing_behavior(ListSizingBehavior::Infer)
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+        .with_width_from_item(widest_completion_ix)
         .map(|this| {
             if self.display_options.dynamic_width {
-                this.with_width_from_item(widest_completion_ix)
+                this
             } else {
                 this.w(rems(34.))
             }
@@ -1222,13 +1220,21 @@ impl CompletionsMenu {
 
         Popover::new()
             .child(
-                div().child(list).custom_scrollbars(
-                    Scrollbars::for_settings::<CompletionMenuScrollBarSetting>()
-                        .show_along(ScrollAxes::Vertical)
-                        .tracked_scroll_handle(&self.scroll_handle),
-                    window,
-                    cx,
-                ),
+                div()
+                    .min_w(COMPLETION_MENU_MIN_WIDTH)
+                    .max_w(COMPLETION_MENU_MAX_WIDTH)
+                    .child(list)
+                    .custom_scrollbars(
+                        Scrollbars::for_settings::<CompletionMenuScrollBarSetting>()
+                            .show_along(ScrollAxes::Vertical)
+                            .with_track_along(
+                                ScrollAxes::Horizontal,
+                                cx.theme().colors().surface_background,
+                            )
+                            .tracked_scroll_handle(&self.scroll_handle),
+                        window,
+                        cx,
+                    ),
             )
             .into_any_element()
     }
