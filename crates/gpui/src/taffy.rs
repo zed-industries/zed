@@ -49,7 +49,7 @@ pub struct TaffyLayoutEngine {
 /// a reused node's style, children and measure function are always brought up to date.
 #[derive(Default)]
 struct LayoutScope {
-    frame: u64,
+    /// How many of `nodes` were requested this frame.
     requested: usize,
     nodes: SmallVec<[NodeId; 4]>,
 }
@@ -166,10 +166,6 @@ impl TaffyLayoutEngine {
 
         let frame = cache.frame;
         let scope = cache.scopes.entry(scope).or_default();
-        if scope.frame != frame {
-            scope.frame = frame;
-            scope.requested = 0;
-        }
         let ordinal = scope.requested;
         scope.requested += 1;
         let id = if let Some(&id) = scope.nodes.get(ordinal) {
@@ -544,14 +540,9 @@ impl LayoutCache {
             taffy.remove(id).expect(EXPECT_MESSAGE);
         }
 
-        let frame = self.frame;
         let free_nodes = &mut self.free_nodes;
         self.scopes.retain(|_, scope| {
-            let requested = if scope.frame == frame {
-                scope.requested
-            } else {
-                0
-            };
+            let requested = std::mem::take(&mut scope.requested);
             free_nodes.extend(scope.nodes.drain(requested..));
             requested > 0
         });
@@ -1159,6 +1150,32 @@ mod tests {
                         .debug_selector(|| "root".into())
                         .into_any_element()
                 }),
+            ],
+        );
+    }
+
+    #[crate::test]
+    fn hidden_element_is_laid_out_again_when_shown(cx: &mut TestAppContext) {
+        let with_child_shown = |shown: bool| {
+            frame(move |_| {
+                let mut child = div().size(px(20.)).debug_selector(|| "child".into());
+                if !shown {
+                    child.style().display = Some(crate::Display::None);
+                }
+                div()
+                    .flex()
+                    .child(div().debug_selector(|| "wrapper".into()).child(child))
+                    .into_any_element()
+            })
+        };
+        assert_frames_match_uncached(
+            cx,
+            vec![
+                with_child_shown(false),
+                with_child_shown(false),
+                with_child_shown(true),
+                with_child_shown(false),
+                with_child_shown(true),
             ],
         );
     }
