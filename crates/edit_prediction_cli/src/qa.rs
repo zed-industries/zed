@@ -250,7 +250,7 @@ pub async fn run_qa(
                             open_ai::MessageContent::Multipart(parts) => parts
                                 .into_iter()
                                 .filter_map(|p| match p {
-                                    open_ai::MessagePart::Text { text } => Some(text),
+                                    open_ai::MessagePart::Text { text, .. } => Some(text),
                                     _ => None,
                                 })
                                 .collect::<Vec<_>>()

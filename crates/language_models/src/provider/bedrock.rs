@@ -2021,6 +2021,7 @@ impl BedrockLanguageModelProvider {
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                     reasoning_effort,
                     false,
+                    false,
                 ) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),

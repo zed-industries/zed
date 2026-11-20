@@ -465,6 +465,9 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub images: bool,
     pub parallel_tool_calls: bool,
     pub prompt_cache_key: bool,
+    /// Send explicit cache_control breakpoints to compatible Chat Completions endpoints.
+    #[serde(default)]
+    pub prompt_caching: bool,
     #[serde(default = "default_true")]
     pub chat_completions: bool,
     #[serde(default)]
@@ -480,6 +483,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
             images: false,
             parallel_tool_calls: false,
             prompt_cache_key: false,
+            prompt_caching: false,
             chat_completions: default_true(),
             interleaved_reasoning: false,
             max_tokens_parameter: false,

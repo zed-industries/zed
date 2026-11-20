@@ -627,7 +627,7 @@ fn content_to_string(content: &MessageContent) -> String {
         MessageContent::Multipart(parts) => parts
             .iter()
             .filter_map(|part| match part {
-                open_ai::MessagePart::Text { text } => Some(text.clone()),
+                open_ai::MessagePart::Text { text, .. } => Some(text.clone()),
                 _ => None,
             })
             .collect::<Vec<String>>()

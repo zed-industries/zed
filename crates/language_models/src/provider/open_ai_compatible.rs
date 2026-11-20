@@ -320,6 +320,7 @@ impl LanguageModelClient for OpenAiCompatibleLanguageModelProvider {
                 chat_completion_max_tokens_parameter(&config),
                 reasoning_effort,
                 config.capabilities.interleaved_reasoning,
+                config.capabilities.prompt_caching,
             ) {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -457,6 +458,22 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    #[test]
+    fn prompt_caching_defaults_off_and_can_be_enabled() -> Result<()> {
+        let mut value = serde_json::to_value(available_model(None))?;
+        value["capabilities"]
+            .as_object_mut()
+            .unwrap()
+            .remove("prompt_caching");
+        let model: AvailableModel = serde_json::from_value(value.clone())?;
+        assert!(!model.capabilities.prompt_caching);
+
+        value["capabilities"]["prompt_caching"] = json!(true);
+        let model: AvailableModel = serde_json::from_value(value)?;
+        assert!(model.capabilities.prompt_caching);
+        Ok(())
     }
 
     #[test]
@@ -669,6 +686,7 @@ mod tests {
             chat_completion_max_tokens_parameter(&model),
             reasoning_effort,
             model.capabilities.interleaved_reasoning,
+            model.capabilities.prompt_caching,
         )
         .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
