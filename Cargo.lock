@@ -7103,6 +7103,7 @@ dependencies = [
  "ui_input",
  "unicode-width 0.2.2",
  "unindent",
+ "url",
  "util",
  "watch",
  "workspace",
