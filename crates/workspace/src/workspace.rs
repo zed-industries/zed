@@ -443,8 +443,6 @@ actions!(
         OpenInTerminal,
         /// Opens the component preview.
         OpenComponentPreview,
-        /// Reloads the active item.
-        ReloadActiveItem,
         /// Reopens the most recently dismissed picker in the current window.
         ReopenLastPicker,
         /// Resets the active dock to its default size.

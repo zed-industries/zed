@@ -43,8 +43,6 @@ actions!(
         ToggleSelection,
         /// Selects all search matches.
         SelectAllMatches,
-        /// Cycles through search modes.
-        CycleMode,
         /// Navigates to the next query in search history.
         NextHistoryQuery,
         /// Navigates to the previous query in search history.

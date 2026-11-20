@@ -82,8 +82,6 @@ actions!(
         ToggleSelectedChannelFavorite,
         /// Starts moving a channel to a new location.
         StartMoveChannel,
-        /// Moves the selected item to the current location.
-        MoveSelected,
         /// Inserts a space character in the filter input.
         InsertSpace,
         /// Moves the selected channel up in the list.
