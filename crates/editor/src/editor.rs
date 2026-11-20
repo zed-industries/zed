@@ -10590,18 +10590,30 @@ impl Editor {
                 }
             }
             None => {
-                let selections = self
-                    .selections
-                    .all::<MultiBufferOffset>(&self.display_snapshot(cx));
+                let display_snapshot = self.display_snapshot(cx);
+                let newest_selection = self.selections.newest_display(&display_snapshot);
+                let newest_line_offset_from_top = self.visible_line_count().and_then(|visible| {
+                    let scroll_top = self.scroll_position(cx).y.max(0.);
+                    let row = newest_selection.start.row().as_f64();
+                    (row >= scroll_top.floor() && row + 1. <= scroll_top + visible)
+                        .then(|| (row - scroll_top.floor()) as u32)
+                });
+                let mut selections = self.selections.all::<MultiBufferOffset>(&display_snapshot);
+                // The newest selection's range must come last for each buffer, so the opened
+                // editor can anchor the preserved scroll offset to it.
+                selections.sort_by_key(|selection| selection.id == newest_selection.id);
                 let multi_buffer = self.buffer.read(cx);
                 let multi_buffer_snapshot = multi_buffer.snapshot(cx);
                 for selection in selections {
+                    let line_offset_from_top =
+                        newest_line_offset_from_top.filter(|_| selection.id == newest_selection.id);
                     for (snapshot, range, anchor) in multi_buffer_snapshot
                         .range_to_buffer_ranges_with_deleted_hunks(selection.range())
                     {
-                        if let Some((text_anchor, _)) = anchor.and_then(|anchor| {
-                            multi_buffer_snapshot.anchor_to_buffer_anchor(anchor)
-                        }) {
+                        let (buffer_handle, range) = if let Some((text_anchor, _)) = anchor
+                            .and_then(|anchor| {
+                                multi_buffer_snapshot.anchor_to_buffer_anchor(anchor)
+                            }) {
                             let Some(buffer_handle) = multi_buffer.buffer(text_anchor.buffer_id)
                             else {
                                 continue;
@@ -10610,22 +10622,20 @@ impl Editor {
                                 &text_anchor,
                                 &buffer_handle.read(cx).snapshot(),
                             );
-                            let range = BufferOffset(offset)..BufferOffset(offset);
-                            new_selections_by_buffer
-                                .entry(buffer_handle)
-                                .or_insert((Vec::new(), None))
-                                .0
-                                .push(range)
+                            (buffer_handle, BufferOffset(offset)..BufferOffset(offset))
                         } else {
                             let Some(buffer_handle) = multi_buffer.buffer(snapshot.remote_id())
                             else {
                                 continue;
                             };
-                            new_selections_by_buffer
-                                .entry(buffer_handle)
-                                .or_insert((Vec::new(), None))
-                                .0
-                                .push(range)
+                            (buffer_handle, range)
+                        };
+                        let (ranges, scroll_offset) = new_selections_by_buffer
+                            .entry(buffer_handle)
+                            .or_insert((Vec::new(), None));
+                        ranges.push(range);
+                        if line_offset_from_top.is_some() {
+                            *scroll_offset = line_offset_from_top;
                         }
                     }
                 }
@@ -10748,16 +10758,28 @@ impl Editor {
                             if has_file && !is_project_file {
                                 editor.set_read_only(true);
                             }
-                            let autoscroll = match scroll_offset {
-                                Some(scroll_offset) => {
-                                    Autoscroll::top_relative(scroll_offset as ScrollOffset)
-                                }
-                                None => Autoscroll::newest(),
-                            };
                             let nav_history = editor.nav_history.take();
                             let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                             let Some(buffer_snapshot) = multibuffer_snapshot.as_singleton() else {
                                 return;
+                            };
+                            let fits_viewport = |scroll_offset: u32| {
+                                editor.visible_line_count().is_none_or(|visible| {
+                                    (scroll_offset as ScrollOffset) + 1. <= visible
+                                })
+                            };
+                            let newest_anchor = ranges.last().and_then(|range| {
+                                multibuffer_snapshot
+                                    .anchor_in_excerpt(buffer_snapshot.anchor_before(range.start))
+                            });
+                            let autoscroll = match (scroll_offset, newest_anchor) {
+                                (Some(scroll_offset), Some(newest_anchor))
+                                    if fits_viewport(scroll_offset) =>
+                                {
+                                    Autoscroll::top_relative(scroll_offset as ScrollOffset)
+                                        .for_anchor(newest_anchor)
+                                }
+                                _ => Autoscroll::newest(),
                             };
                             editor.change_selections(
                                 SelectionEffects::scroll(autoscroll),
