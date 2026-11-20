@@ -1559,6 +1559,8 @@
     "enable_preview_from_file_finder": false,
     // Whether to open tabs in preview mode when opened from a multibuffer.
     "enable_preview_from_multibuffer": true,
+    // Whether to open file diffs and history commits in preview mode when opened from the git panel.
+    "enable_preview_from_git_panel": true,
     // Whether to open tabs in preview mode when code navigation is used to open a multibuffer.
     "enable_preview_multibuffer_from_code_navigation": false,
     // Whether to open tabs in preview mode when code navigation is used to open a single file.
