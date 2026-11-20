@@ -825,7 +825,7 @@ fn build_open_path_prompt(
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     (
         workspace.update_in(cx, |workspace, window, cx| {
-            let relative_to = OpenPathPrompt::relative_to(workspace, creating_path, cx);
+            let relative_to = OpenPathPrompt::relative_to(workspace, &lister, creating_path, cx);
             let delegate =
                 OpenPathDelegate::new(tx, lister.clone(), creating_path, relative_to, cx);
             let delegate = if show_hidden {
@@ -991,7 +991,8 @@ async fn test_open_path_prompt_relative_to_file_root(cx: &mut TestAppContext) {
 
     for creating_path in [false, true] {
         let relative_to = workspace.read_with(cx, |workspace, cx| {
-            OpenPathPrompt::relative_to(workspace, creating_path, cx)
+            let lister = project::DirectoryLister::Project(workspace.project().clone());
+            OpenPathPrompt::relative_to(workspace, &lister, creating_path, cx)
         });
         assert_eq!(relative_to, std::path::PathBuf::from(path!("/repro")));
     }
