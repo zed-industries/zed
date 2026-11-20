@@ -1162,6 +1162,9 @@ impl Vim {
             EditorEvent::TransactionUndone { transaction_id } => {
                 self.transaction_undone(transaction_id, window, cx)
             }
+            EditorEvent::TransactionRedone { transaction_id } => {
+                self.transaction_redone(transaction_id, window, cx);
+            }
             EditorEvent::Edited { .. } => self.push_to_change_list(window, cx),
             EditorEvent::FocusedIn => self.sync_vim_settings(window, cx),
             EditorEvent::CursorShapeChanged => self.cursor_shape_changed(window, cx),
@@ -1967,35 +1970,7 @@ impl Vim {
     ) {
         match self.mode {
             Mode::VisualLine | Mode::VisualBlock | Mode::Visual | Mode::HelixSelect => {
-                self.update_editor(cx, |vim, editor, cx| {
-                    let original_mode = vim.undo_modes.get(transaction_id);
-                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        match original_mode {
-                            Some(Mode::VisualLine) => {
-                                s.move_with(&mut |map, selection| {
-                                    selection.collapse_to(
-                                        map.prev_line_boundary(selection.start.to_point(map)).1,
-                                        SelectionGoal::None,
-                                    )
-                                });
-                            }
-                            Some(Mode::VisualBlock) => {
-                                let mut first = s.first_anchor();
-                                first.collapse_to(first.start, first.goal);
-                                s.select_anchors(vec![first]);
-                            }
-                            _ => {
-                                s.move_with(&mut |map, selection| {
-                                    selection.collapse_to(
-                                        map.clip_at_line_end(selection.start),
-                                        selection.goal,
-                                    );
-                                });
-                            }
-                        }
-                    });
-                });
-                self.switch_mode(Mode::Normal, true, window, cx)
+                self.collapse_restored_selection(transaction_id, window, cx);
             }
             Mode::Normal => {
                 self.update_editor(cx, |_, editor, cx| {
@@ -2009,6 +1984,61 @@ impl Vim {
             }
             Mode::Insert | Mode::Replace | Mode::HelixNormal => {}
         }
+    }
+
+    fn transaction_redone(
+        &mut self,
+        transaction_id: &TransactionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Redo restores the transaction's end-of-edit selection, which
+        // `local_selections_changed` may have turned into visual mode.
+        if matches!(
+            self.mode,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect
+        ) {
+            self.collapse_restored_selection(transaction_id, window, cx);
+        }
+    }
+
+    /// Where Vim puts the cursor depends on the mode the transaction started in,
+    /// which `undo_modes` records.
+    fn collapse_restored_selection(
+        &mut self,
+        transaction_id: &TransactionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(cx, |vim, editor, cx| {
+            let original_mode = vim.undo_modes.get(transaction_id);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                match original_mode {
+                    Some(Mode::VisualLine) => {
+                        s.move_with(&mut |map, selection| {
+                            selection.collapse_to(
+                                map.prev_line_boundary(selection.start.to_point(map)).1,
+                                SelectionGoal::None,
+                            )
+                        });
+                    }
+                    Some(Mode::VisualBlock) => {
+                        let mut first = s.first_anchor();
+                        first.collapse_to(first.start, first.goal);
+                        s.select_anchors(vec![first]);
+                    }
+                    _ => {
+                        s.move_with(&mut |map, selection| {
+                            selection.collapse_to(
+                                map.clip_at_line_end(selection.start),
+                                selection.goal,
+                            );
+                        });
+                    }
+                }
+            });
+        });
+        self.switch_mode(Mode::Normal, true, window, cx);
     }
 
     fn local_selections_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
