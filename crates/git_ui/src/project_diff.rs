@@ -1860,6 +1860,76 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_unsaved_restore_survives_refresh(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "FOO\n",
+                "other.txt": "OTHER\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt", "foo\n".into()), ("other.txt", "other\n".into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        let editor = diff.read_with(cx, |diff, cx| diff.editor(cx).read(cx).rhs_editor().clone());
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                - ˇfoo
+                + FOO
+
+                - other
+                + OTHER
+            "
+            .unindent(),
+        );
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.git_restore(&Default::default(), window, cx);
+        });
+        cx.run_until_parked();
+
+        fs.insert_file(path!("/project/other.txt"), "other\n".into())
+            .await;
+        cx.run_until_parked();
+
+        let multibuffer_text = editor.update(cx, |editor, cx| editor.text(cx));
+        assert!(
+            multibuffer_text.starts_with("foo\n"),
+            "the unsaved restoration should still be shown, got {multibuffer_text:?}"
+        );
+
+        editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(SaveOptions::default(), project.clone(), window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let text = String::from_utf8(fs.read_file_sync("/project/foo.txt").unwrap()).unwrap();
+        assert_eq!(text, "foo\n");
+    }
+
+    #[gpui::test]
     async fn test_scroll_to_beginning_with_deletion(cx: &mut TestAppContext) {
         init_test(cx);
 
