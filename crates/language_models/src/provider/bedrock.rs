@@ -985,6 +985,13 @@ async fn build_converse_client(
     BedrockClient::new(&config_builder.load().await)
 }
 
+fn base_model_id(model_id: &str) -> &str {
+    model_id
+        .rsplit_once("anthropic.")
+        .map(|(_, id)| id)
+        .unwrap_or(model_id)
+}
+
 fn converse_language_model(model: &ConverseModel) -> LanguageModel {
     let is_gpt_6_astra = matches!(model, ConverseModel::Gpt6Astra);
     let reasoning_model = converse_reasoning_model(model.request_id());
@@ -1045,9 +1052,9 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
         tool_choice_support: LanguageModelToolChoiceSupport {
             auto: model.supports_tool_use(),
             any: model.supports_tool_use()
-                && anthropic::supports_forced_tool_use(
+                && anthropic::supports_forced_tool_use(base_model_id(
                     reasoning_model.as_ref().unwrap_or(model).id(),
-                ),
+                )),
             none: model.supports_tool_use(),
         },
         supports_streaming_tools: true,
@@ -2135,10 +2142,7 @@ pub fn into_bedrock(
         Some(ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeOpus5_5)
     );
     let is_gpt_6_astra = reasoning_model == Some(ConverseModel::Gpt6Astra);
-    let base_model_id = model
-        .rsplit_once("anthropic.")
-        .map(|(_, id)| id)
-        .unwrap_or(&model);
+    let base_model_id = base_model_id(&model);
     if (!anthropic::supports_forced_tool_use(base_model_id) || always_adaptive)
         && request.tool_choice == Some(LanguageModelToolChoice::Any)
     {
@@ -2495,10 +2499,8 @@ pub fn into_bedrock(
         {
             Some(bedrock::Thinking::Adaptive {
                 effort: selected_effort(effort),
-                binding_controls_beta: model
-                    .rsplit_once("anthropic.")
-                    .filter(|(_, model_id)| anthropic::binds_thinking_blocks_to_prefix(model_id))
-                    .map(|_| anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string()),
+                binding_controls_beta: anthropic::binds_thinking_blocks_to_prefix(base_model_id)
+                    .then(|| anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string()),
             })
         }
         BedrockModelMode::Thinking { budget_tokens } if request.thinking_allowed => {
@@ -4141,10 +4143,48 @@ mod tests {
     fn test_sonnet_5_5_and_haiku_5_5_tool_choice_and_thinking() -> Result<()> {
         let sonnet_5_5 = ConverseModel::ClaudeSonnet5_5;
         let haiku_5_5 = ConverseModel::ClaudeHaiku5_5;
+        let custom_sonnet = ConverseModel::Custom {
+            name: "us.anthropic.claude-sonnet-5-5".into(),
+            max_tokens: 1_000_000,
+            display_name: None,
+            max_output_tokens: Some(128_000),
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: Some(true),
+            supports_images: Some(true),
+            thinking: None,
+        };
+        let custom_haiku = ConverseModel::Custom {
+            name: "us.anthropic.claude-haiku-5-5".into(),
+            max_tokens: 1_000_000,
+            display_name: None,
+            max_output_tokens: Some(128_000),
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: Some(true),
+            supports_images: Some(true),
+            thinking: None,
+        };
 
-        // Tool choice support
-        assert!(!converse_language_model(&sonnet_5_5).tool_choice_support.any);
-        assert!(converse_language_model(&haiku_5_5).tool_choice_support.any);
+        // Tool choice support: Sonnet 5.5 rejects forced tool use, Haiku 5.5 allows it
+        for model in [&sonnet_5_5, &custom_sonnet] {
+            let language_model = converse_language_model(model);
+            assert!(language_model.supports_tools);
+            assert!(
+                !language_model.tool_choice_support.any,
+                "{} rejects forced tool use",
+                model.id()
+            );
+        }
+        for model in [&haiku_5_5, &custom_haiku] {
+            let language_model = converse_language_model(model);
+            assert!(language_model.supports_tools);
+            assert!(
+                language_model.tool_choice_support.any,
+                "{} allows forced tool use",
+                model.id()
+            );
+        }
 
         let forced_sonnet = into_bedrock(
             LanguageModelRequest {
@@ -4162,6 +4202,22 @@ mod tests {
         );
         assert!(forced_sonnet.is_err());
 
+        let forced_custom_sonnet = into_bedrock(
+            LanguageModelRequest {
+                tool_choice: Some(LanguageModelToolChoice::Any),
+                ..Default::default()
+            },
+            custom_sonnet.id().to_string(),
+            custom_sonnet.default_temperature(),
+            custom_sonnet.max_output_tokens(),
+            custom_sonnet.thinking_mode(),
+            custom_sonnet.supports_caching(),
+            custom_sonnet.supports_tool_use(),
+            None,
+            None,
+        );
+        assert!(forced_custom_sonnet.is_err());
+
         let forced_haiku = into_bedrock(
             LanguageModelRequest {
                 tool_choice: Some(LanguageModelToolChoice::Any),
@@ -4177,6 +4233,47 @@ mod tests {
             None,
         );
         assert!(forced_haiku.is_ok());
+
+        let forced_custom_haiku = into_bedrock(
+            LanguageModelRequest {
+                tool_choice: Some(LanguageModelToolChoice::Any),
+                ..Default::default()
+            },
+            custom_haiku.id().to_string(),
+            custom_haiku.default_temperature(),
+            custom_haiku.max_output_tokens(),
+            custom_haiku.thinking_mode(),
+            custom_haiku.supports_caching(),
+            custom_haiku.supports_tool_use(),
+            None,
+            None,
+        );
+        assert!(forced_custom_haiku.is_ok());
+
+        // Adaptive thinking includes binding controls beta header for custom models too
+        let adaptive_custom_sonnet = into_bedrock(
+            LanguageModelRequest {
+                thinking_allowed: true,
+                ..Default::default()
+            },
+            custom_sonnet.id().to_string(),
+            custom_sonnet.default_temperature(),
+            custom_sonnet.max_output_tokens(),
+            BedrockModelMode::AdaptiveThinking {
+                effort: bedrock::BedrockAdaptiveThinkingEffort::High,
+            },
+            custom_sonnet.supports_caching(),
+            custom_sonnet.supports_tool_use(),
+            None,
+            None,
+        )?;
+        assert!(matches!(
+            adaptive_custom_sonnet.thinking,
+            Some(bedrock::Thinking::Adaptive {
+                binding_controls_beta: Some(ref beta),
+                ..
+            }) if beta == anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER
+        ));
 
         // When thinking is disallowed:
         // Sonnet 5.5 sends between_tools

@@ -1005,7 +1005,12 @@ impl ConverseModel {
             // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-8.html>
             // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-7.html>
             (
-                Self::ClaudeOpus5_5 | Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7,
+                Self::ClaudeOpus5_5
+                | Self::ClaudeOpus5
+                | Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
+                | Self::ClaudeSonnet5_5
+                | Self::ClaudeHaiku5_5,
                 "ca",
             ) => Ok(format!("us.{}", model_id)),
 
@@ -1035,8 +1040,10 @@ impl ConverseModel {
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
+                | Self::ClaudeSonnet5_5
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
+                | Self::ClaudeHaiku5_5
                 | Self::ClaudeHaiku4_5,
                 "au",
             ) => Ok(format!("{}.{}", region_group, model_id)),
@@ -1053,6 +1060,7 @@ impl ConverseModel {
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
+                | Self::ClaudeHaiku5_5
                 | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite,
                 "jp",
@@ -1537,6 +1545,11 @@ mod tests {
             ConverseModel::ClaudeSonnet5.cross_region_inference_id("ap-northeast-1", false)?,
             "global.anthropic.claude-sonnet-5"
         );
+        // Sonnet 5.5 has no JP geo profile, so it falls back to global.
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("ap-northeast-1", false)?,
+            "global.anthropic.claude-sonnet-5-5"
+        );
         // Opus 5.5 has no APAC geo profile outside AU and JP.
         assert_eq!(
             ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-south-1", false)?,
@@ -1600,6 +1613,14 @@ mod tests {
             ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-southeast-2", false)?,
             "au.anthropic.claude-opus-5-5"
         );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("ap-southeast-2", false)?,
+            "au.anthropic.claude-sonnet-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeHaiku5_5.cross_region_inference_id("ap-southeast-2", false)?,
+            "au.anthropic.claude-haiku-5-5"
+        );
         Ok(())
     }
 
@@ -1620,6 +1641,10 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-northeast-1", false)?,
             "jp.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeHaiku5_5.cross_region_inference_id("ap-northeast-1", false)?,
+            "jp.anthropic.claude-haiku-5-5"
         );
         assert_eq!(
             ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ap-northeast-1", false)?,
@@ -1655,6 +1680,14 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ca-central-1", false)?,
             "us.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-sonnet-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeHaiku5_5.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-haiku-5-5"
         );
         assert_eq!(
             ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ca-west-1", false)?,
