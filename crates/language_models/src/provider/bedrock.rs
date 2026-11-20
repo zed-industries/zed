@@ -1166,30 +1166,10 @@ fn converse_model_from_settings(
         None => thinking_from_settings(model.thinking.as_ref()),
         Some(known) => {
             let mut thinking = known.thinking.clone();
-            if let Some(settings::BedrockThinkingSettings::Config(config)) = &model.thinking {
-                match &mut thinking {
-                    Some(ConverseThinking::Budget { budget_tokens }) => {
-                        *budget_tokens = config.budget_tokens.unwrap_or(*budget_tokens);
-                    }
-                    Some(ConverseThinking::Adaptive {
-                        efforts,
-                        default_effort,
-                        ..
-                    }) if config.has_xhigh == Some(false) => {
-                        if let Some(alternative) = efforts
-                            .iter()
-                            .copied()
-                            .find(|effort| *effort != BedrockAdaptiveThinkingEffort::XHigh)
-                        {
-                            efforts
-                                .retain(|effort| *effort != BedrockAdaptiveThinkingEffort::XHigh);
-                            if !efforts.contains(default_effort) {
-                                *default_effort = alternative;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+            if let Some(settings::BedrockThinkingSettings::Config(config)) = &model.thinking
+                && let Some(ConverseThinking::Budget { budget_tokens }) = &mut thinking
+            {
+                *budget_tokens = config.budget_tokens.unwrap_or(*budget_tokens);
             }
             thinking
         }
