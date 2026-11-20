@@ -1791,8 +1791,13 @@ fn is_color_glyph(
 
 const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
 
+/// Characters DirectWrite treats as mandatory line breaks, other than `\n`,
+/// which callers split on before shaping.
 fn is_line_separator(character: char) -> bool {
-    matches!(character, '\u{2028}' | '\u{2029}')
+    matches!(
+        character,
+        '\r' | '\u{b}' | '\u{c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    )
 }
 
 #[cfg(test)]
@@ -1938,6 +1943,14 @@ mod tests {
     #[test]
     fn unicode_paragraph_separators_preserve_shaped_line_cursor() -> Result<()> {
         check_unicode_separator_cursor('\u{2029}')
+    }
+
+    #[test]
+    fn other_mandatory_breaks_preserve_shaped_line_cursor() -> Result<()> {
+        for separator in ['\r', '\u{b}', '\u{c}', '\u{85}'] {
+            check_unicode_separator_cursor(separator)?;
+        }
+        Ok(())
     }
 
     fn check_unicode_separator_cursor(separator: char) -> Result<()> {
