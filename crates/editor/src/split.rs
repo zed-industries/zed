@@ -4,7 +4,7 @@ use std::{
 };
 
 use buffer_diff::{BufferDiff, BufferDiffSnapshot, DiffHunkStatus};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 
 use fs::Fs;
 use gpui::{
@@ -23,7 +23,10 @@ use settings::{DiffViewStyle, SeedQuerySetting, Settings, SettingsStore, update_
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 
 use crate::{
-    display_map::CompanionExcerptPatch,
+    display_map::{
+        BlockPlacement, BlockProperties, BlockStyle, CompanionExcerptPatch, CustomBlockId,
+        RenderBlock,
+    },
     element::SplitSide,
     split_editor_view::{SplitEditorState, SplitEditorView},
 };
@@ -531,6 +534,15 @@ impl RenderOnce for DiffStyleControls {
     }
 }
 
+/// Renders content above the first buffer header.
+pub type RenderTopBlock = Arc<dyn Send + Sync + Fn(&mut Window, &mut App) -> AnyElement>;
+
+#[derive(Clone)]
+pub(crate) struct TopBlock {
+    pub(crate) id: CustomBlockId,
+    pub(crate) render: RenderTopBlock,
+}
+
 pub struct SplittableEditor {
     rhs_multibuffer: Entity<MultiBuffer>,
     rhs_editor: Entity<Editor>,
@@ -544,6 +556,7 @@ pub struct SplittableEditor {
     /// mode, regardless of the current diff view style setting.
     too_narrow_for_split: bool,
     last_width: Option<Pixels>,
+    top_block: Option<TopBlock>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -590,6 +603,57 @@ impl SplittableEditor {
         self.rhs_editor.update(cx, |editor, cx| {
             editor.set_diff_hunk_renderer(renderer, cx);
         });
+    }
+
+    /// Replaces the element above the first buffer header. It scrolls with the content and
+    /// spans both panes in split mode.
+    pub fn set_top_block(&mut self, render: RenderTopBlock, cx: &mut Context<Self>) {
+        let splittable_editor = cx.weak_entity();
+        let block_render: RenderBlock = Arc::new({
+            let render = render.clone();
+            move |cx| {
+                let is_split = splittable_editor
+                    .read_with(cx.app, |editor, _| editor.is_split())
+                    .unwrap_or(false);
+                if is_split {
+                    // The split overlay measures and paints the block.
+                    div()
+                        .h(cx.line_height * cx.height as f32)
+                        .into_any_element()
+                } else {
+                    div()
+                        .size_full()
+                        .pr(cx.margins.right)
+                        .block_mouse_except_scroll()
+                        .child(render(cx.window, cx.app))
+                        .into_any_element()
+                }
+            }
+        });
+        let previous_block = self.top_block.take();
+        let block_id = self.rhs_editor.update(cx, |editor, cx| {
+            if let Some(previous_block) = previous_block {
+                editor.remove_blocks(HashSet::from_iter([previous_block.id]), None, cx);
+            }
+            editor
+                .insert_blocks(
+                    [BlockProperties {
+                        placement: BlockPlacement::Above(Anchor::Min),
+                        height: Some(1),
+                        style: BlockStyle::Sticky,
+                        render: block_render,
+                        priority: 0,
+                    }],
+                    None,
+                    cx,
+                )
+                .pop()
+        });
+        self.top_block = block_id.map(|id| TopBlock { id, render });
+    }
+
+    pub(crate) fn top_block(&self) -> Option<&TopBlock> {
+        self.top_block.as_ref()
     }
 
     fn focused_side(&self) -> SplitSide {
@@ -705,6 +769,7 @@ impl SplittableEditor {
             searched_side: None,
             too_narrow_for_split: false,
             last_width: None,
+            top_block: None,
             _subscriptions: subscriptions,
         }
     }
@@ -2355,7 +2420,9 @@ mod tests {
     use buffer_diff::BufferDiff;
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
-    use gpui::{AppContext as _, Entity, Pixels, VisualTestContext};
+    use gpui::{
+        AppContext as _, Entity, IntoElement as _, Pixels, Styled as _, VisualTestContext, size,
+    };
     use gpui::{BorrowAppContext as _, Element as _};
     use language::language_settings::SoftWrap;
     use language::{Buffer, Capability};
@@ -6099,6 +6166,268 @@ mod tests {
             get_block_height(&lhs_editor, lhs_block_id, &mut cx),
             Some(5)
         );
+    }
+
+    #[gpui::test]
+    async fn test_top_block_in_split_view(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let base_text = "
+            bbb
+            ccc
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+            editor.set_top_block(
+                Arc::new(|window, _| div().h(window.line_height() * 2.5).into_any()),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let rhs_editor = editor.read_with(cx, |editor, _| editor.rhs_editor.clone());
+        let rhs_block_id = editor.read_with(cx, |editor, _| editor.top_block.as_ref().unwrap().id);
+        cx.update(|_, cx| {
+            set_block_content_for_tests(&rhs_editor, rhs_block_id, cx, |_| "top block".to_string());
+        });
+        let lhs_top_block = |cx: &mut VisualTestContext| {
+            let lhs_editor =
+                editor.read_with(cx, |editor, _| editor.lhs.as_ref().unwrap().editor.clone());
+            let lhs_block_id = lhs_editor.read_with(cx, |lhs_editor, cx| {
+                let display_map = lhs_editor.display_map.read(cx);
+                let companion = display_map.companion().unwrap().read(cx);
+                let mapping = companion
+                    .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
+                *mapping.borrow().get(&rhs_block_id).unwrap()
+            });
+            cx.update(|_, cx| {
+                set_block_content_for_tests(&lhs_editor, lhs_block_id, cx, |_| {
+                    "top block".to_string()
+                });
+            });
+            (lhs_editor, lhs_block_id)
+        };
+        let expected_rhs = "
+            § top block
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+        .unindent();
+        let expected_lhs = "
+            § top block
+            § <no file>
+            § -----
+            § spacer
+            bbb
+            ccc"
+        .unindent();
+
+        lhs_top_block(cx);
+        assert_split_content(&editor, expected_rhs.clone(), expected_lhs.clone(), &mut cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.unsplit(window, cx);
+            editor.split(window, cx);
+        });
+        cx.run_until_parked();
+        let (lhs_editor, lhs_block_id) = lhs_top_block(cx);
+        assert_split_content(&editor, expected_rhs, expected_lhs, &mut cx);
+
+        cx.draw(
+            gpui::Point::default(),
+            size(px(3000.), px(3000.)),
+            |_, _| editor.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        let block_height = |editor: &Entity<Editor>, block_id, cx: &mut VisualTestContext| {
+            editor.update_in(cx, |editor, window, cx| {
+                editor
+                    .snapshot(window, cx)
+                    .block_for_id(crate::BlockId::Custom(block_id))
+                    .map(|block| block.height())
+            })
+        };
+        assert_eq!(block_height(&rhs_editor, rhs_block_id, &mut cx), Some(3));
+        assert_eq!(block_height(&lhs_editor, lhs_block_id, &mut cx), Some(3));
+    }
+
+    #[gpui::test]
+    async fn test_top_block_with_folded_files(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Unified).await;
+        editor.update(cx, |editor, cx| {
+            editor.set_top_block(Arc::new(|_, _| div().into_any()), cx);
+        });
+        let rhs_editor = editor.read_with(cx, |editor, _| editor.rhs_editor.clone());
+        let block_id = editor.read_with(cx, |editor, _| editor.top_block.as_ref().unwrap().id);
+
+        for index in 0..2 {
+            let (buffer, diff) = buffer_with_diff("old\n", "new\n", cx);
+            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+            editor.update(cx, |editor, cx| {
+                editor.update_excerpts_for_path(
+                    PathKey::sorted(index),
+                    buffer.clone(),
+                    vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                    0,
+                    diff,
+                    cx,
+                );
+            });
+            for folded in [true, false, true] {
+                rhs_editor.update(cx, |editor, cx| {
+                    if folded {
+                        editor.fold_buffer(buffer_id, cx);
+                    } else {
+                        editor.unfold_buffer(buffer_id, cx);
+                    }
+                });
+                cx.run_until_parked();
+                let blocks = rhs_editor.update(cx, |editor, cx| {
+                    let snapshot = editor.display_snapshot(cx);
+                    snapshot
+                        .blocks_in_range(crate::DisplayRow(0)..snapshot.max_point().row() + 1)
+                        .filter(|(_, block)| block.id() == crate::BlockId::Custom(block_id))
+                        .map(|(row, _)| row)
+                        .collect::<Vec<_>>()
+                });
+                assert_eq!(blocks, [crate::DisplayRow(0)]);
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_custom_block_height_at_fractional_scale(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+        let text = (0..10)
+            .map(|row| format!("line {row}\n"))
+            .collect::<String>();
+        let (buffer, diff) = buffer_with_diff(&text, &text, cx);
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff,
+                cx,
+            );
+            editor.set_top_block(
+                Arc::new(|window, _| div().h(window.line_height() * 3.).into_any()),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let rhs_editor = editor.read_with(cx, |editor, _| editor.rhs_editor.clone());
+        let top_block_id = editor.read_with(cx, |editor, _| editor.top_block.as_ref().unwrap().id);
+        let block_id = rhs_editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            editor.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Above(snapshot.anchor_before(Point::new(5, 0))),
+                    height: Some(3),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|cx| div().h(cx.line_height * 2.5).into_any()),
+                    priority: 0,
+                }],
+                None,
+                cx,
+            )[0]
+        });
+
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            cx.simulate_scale_factor_change(scale);
+            for _ in 0..3 {
+                cx.draw(
+                    gpui::Point::default(),
+                    size(px(3000.), px(3000.)),
+                    |_, _| editor.clone().into_any_element(),
+                );
+                cx.run_until_parked();
+            }
+            let heights = rhs_editor.update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                [block_id, top_block_id].map(|block_id| {
+                    snapshot
+                        .block_for_id(crate::BlockId::Custom(block_id))
+                        .map(|block| block.height())
+                })
+            });
+            assert_eq!(heights, [Some(3), Some(3)], "scale factor {scale}");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_top_block_resize_keeps_viewport(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Unified).await;
+
+        let text = (0..50)
+            .map(|row| format!("line {row}\n"))
+            .collect::<String>();
+        let (buffer, diff) = buffer_with_diff(&text, &text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+            editor.set_top_block(Arc::new(|_, _| div().into_any()), cx);
+        });
+        cx.run_until_parked();
+
+        let rhs_editor = editor.read_with(cx, |editor, _| editor.rhs_editor.clone());
+        let block_id = editor.read_with(cx, |editor, _| editor.top_block.as_ref().unwrap().id);
+        let scroll_and_resize =
+            |scroll_top: Option<f64>, height: u32, cx: &mut VisualTestContext| {
+                rhs_editor.update_in(cx, |editor, window, cx| {
+                    if let Some(scroll_top) = scroll_top {
+                        editor.set_scroll_position(gpui::point(0., scroll_top), window, cx);
+                    }
+                    editor.resize_blocks(HashMap::from_iter([(block_id, height)]), None, cx);
+                    editor.scroll_position(cx).y
+                })
+            };
+
+        // Within the block, the viewport stays in place as it grows, even after scrolling past it.
+        scroll_and_resize(None, 3, cx);
+        scroll_and_resize(Some(20.), 3, cx);
+        assert_eq!(scroll_and_resize(Some(1.), 6, cx), 1.);
+
+        // Below the block, the viewport follows the text.
+        assert_eq!(scroll_and_resize(Some(20.), 8, cx), 22.);
     }
 
     #[gpui::test]

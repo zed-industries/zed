@@ -944,6 +944,7 @@ impl BlockMap {
 
             let mut old_start = edit.old.start;
             let mut new_start = edit.new.start;
+            let mut top_blocks_preserved = false;
 
             // Only preserve transforms that:
             // * Strictly precedes this edit
@@ -996,6 +997,9 @@ impl BlockMap {
                     debug_assert!(transform.summary.input_rows > WrapRow(0));
                     old_start -= transform_rows_before_edit;
                     new_start -= transform_rows_before_edit;
+                    // Blocks above a replacement starting at zero were already copied by
+                    // cursor.slice, so don't insert them again when rebuilding the range.
+                    top_blocks_preserved = old_start == WrapRow(0);
                 }
             }
 
@@ -1090,8 +1094,12 @@ impl BlockMap {
                 self.custom_blocks[start_block_ix..end_block_ix]
                     .iter()
                     .filter_map(|block| {
+                        if top_blocks_preserved && block.placement.is_above_start() {
+                            return None;
+                        }
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
                         if !matches!(placement, BlockPlacement::Replace(_))
+                            && !block.placement.is_above_start()
                             && wrap_snapshot.intersects_fold(Point::new(
                                 block
                                     .placement
@@ -1584,6 +1592,7 @@ impl BlockMap {
             placement_a
                 .start()
                 .cmp(placement_b.start())
+                .then_with(|| block_b.is_above_start().cmp(&block_a.is_above_start()))
                 .then_with(|| placement_b.end().cmp(placement_a.end()))
                 .then_with(|| placement_a.tie_break().cmp(&placement_b.tie_break()))
                 .then_with(|| {
@@ -1774,7 +1783,11 @@ pub(crate) fn balancing_block(
         their_snapshot,
         my_point,
     );
-    let their_anchor = their_snapshot.anchor_at(their_range.start, my_anchor.bias());
+    let their_anchor = if my_block.placement.is_above_start() {
+        Anchor::Min
+    } else {
+        their_snapshot.anchor_at(their_range.start, my_anchor.bias())
+    };
     let their_placement = match my_block.placement {
         BlockPlacement::Above(_) => BlockPlacement::Above(their_anchor),
         BlockPlacement::Below(_) => {
