@@ -59,16 +59,12 @@ fn thinking_opt_out_fallback(model_id: &str) -> Option<Thinking> {
 }
 
 fn requires_adaptive_thinking(model_id: &str) -> bool {
-    let Some((family, major, minor)) = parse_claude_model_version(model_id) else {
-        return false;
-    };
-    let minimum_version = match family {
-        "opus" => (4, 7),
-        "sonnet" | "fable" | "mythos" => (5, 0),
-        "haiku" => (5, 5),
-        _ => return false,
-    };
-    (major, minor) >= minimum_version
+    model_version_at_least(model_id, |family| match family {
+        "opus" => Some((4, 7)),
+        "sonnet" | "fable" | "mythos" => Some((5, 0)),
+        "haiku" => Some((5, 5)),
+        _ => None,
+    })
 }
 
 // Mythos Preview accepts manual thinking but still rejects non-default temperature.
@@ -77,29 +73,21 @@ fn rejects_custom_temperature(model_id: &str) -> bool {
     if model_id == "claude-mythos-preview" {
         return true;
     }
-    let Some((family, major, minor)) = parse_claude_model_version(model_id) else {
-        return false;
-    };
-    let minimum_version = match family {
-        "opus" => (4, 7),
-        "sonnet" | "fable" | "mythos" => (5, 0),
-        "haiku" => (5, 5),
-        _ => return false,
-    };
-    (major, minor) >= minimum_version
+    model_version_at_least(model_id, |family| match family {
+        "opus" => Some((4, 7)),
+        "sonnet" | "fable" | "mythos" => Some((5, 0)),
+        "haiku" => Some((5, 5)),
+        _ => None,
+    })
 }
 
 /// <https://platform.claude.com/docs/en/build-with-claude/preserved-thinking/prefix-checks#outcomes>
 pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
-    let Some((family, major, minor)) = parse_claude_model_version(model_id) else {
-        return false;
-    };
-    let minimum_version = match family {
-        "opus" | "sonnet" | "haiku" => (5, 5),
-        "fable" | "mythos" => (5, 1),
-        _ => return false,
-    };
-    (major, minor) >= minimum_version
+    model_version_at_least(model_id, |family| match family {
+        "opus" | "sonnet" | "haiku" => Some((5, 5)),
+        "fable" | "mythos" => Some((5, 1)),
+        _ => None,
+    })
 }
 
 /// Checks for models that reject forced tool choice on every request, not
@@ -126,16 +114,22 @@ pub fn supports_mid_conversation_system_messages(model_id: &str) -> bool {
     if model_id == "claude-mythos-preview" {
         return true;
     }
+    model_version_at_least(model_id, |family| match family {
+        "opus" => Some((4, 8)),
+        "sonnet" | "haiku" => Some((5, 5)),
+        "fable" | "mythos" => Some((5, 0)),
+        _ => None,
+    })
+}
+
+fn model_version_at_least(
+    model_id: &str,
+    minimum_version: impl FnOnce(&str) -> Option<(u8, u8)>,
+) -> bool {
     let Some((family, major, minor)) = parse_claude_model_version(model_id) else {
         return false;
     };
-    let minimum_version = match family {
-        "opus" => (4, 8),
-        "sonnet" | "haiku" => (5, 5),
-        "fable" | "mythos" => (5, 0),
-        _ => return false,
-    };
-    (major, minor) >= minimum_version
+    minimum_version(family).is_some_and(|minimum| (major, minor) >= minimum)
 }
 
 fn parse_claude_model_version(model_id: &str) -> Option<(&str, u8, u8)> {
