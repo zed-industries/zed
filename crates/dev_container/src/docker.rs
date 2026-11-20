@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, process::Output};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -354,6 +354,7 @@ impl DockerClient for Docker {
 
         Ok(())
     }
+
     async fn run_docker_exec(
         &self,
         container_id: &str,
@@ -361,7 +362,7 @@ impl DockerClient for Docker {
         user: &str,
         env: &HashMap<String, String>,
         inner_command: Command,
-    ) -> Result<(), DevContainerError> {
+    ) -> Result<Output, DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
 
         command.args(&["exec", "-w", remote_folder, "-u", user]);
@@ -374,31 +375,20 @@ impl DockerClient for Docker {
 
         command.arg(container_id);
 
-        command.arg("sh");
-
-        let mut inner_program_script: Vec<String> =
-            vec![inner_command.get_program().display().to_string()];
-        let mut args: Vec<String> = inner_command
-            .get_args()
-            .map(|arg| arg.display().to_string())
-            .collect();
-        inner_program_script.append(&mut args);
-        command.args(&["-c", &inner_program_script.join(" ")]);
+        // Kept separate to avoid word-splitting a multi-word script argument.
+        command.arg(inner_command.get_program());
+        command.args(inner_command.get_args());
 
         let output = command.output().await.map_err(|e| {
             log::error!("Error running command {e} in container exec");
             DevContainerError::ContainerNotValid(container_id.to_string())
         })?;
+
         let std_out = String::from_utf8_lossy(&output.stdout);
         log::debug!("Command output:\n {std_out}");
-        if !output.status.success() {
-            let std_err = String::from_utf8_lossy(&output.stderr);
-            log::error!("Command produced a non-successful output. StdErr: {std_err}");
-            return Err(DevContainerError::DevContainerScriptsFailed);
-        }
-
-        Ok(())
+        Ok(output)
     }
+
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
 
@@ -497,6 +487,10 @@ pub(crate) trait DockerClient {
         project_name: &str,
         services: Option<&Vec<String>>,
     ) -> Result<(), DevContainerError>;
+
+    /// Returns the Docker CLI's output, including unsuccessful exit statuses.
+    /// Callers decide how to handle the status and report stderr. `Err` means
+    /// launching or collecting output from the CLI failed.
     async fn run_docker_exec(
         &self,
         container_id: &str,
@@ -504,7 +498,8 @@ pub(crate) trait DockerClient {
         user: &str,
         env: &HashMap<String, String>,
         inner_command: Command,
-    ) -> Result<(), DevContainerError>;
+    ) -> Result<Output, DevContainerError>;
+
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError>;
     async fn find_process_by_filters(
         &self,
@@ -892,9 +887,10 @@ mod test {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn docker_exec_returns_error_on_nonzero_exit() {
+    fn docker_exec_returns_distinct_error_when_process_cannot_start() {
+        let temp_dir = tempfile::tempdir().unwrap();
         let docker = Docker {
-            docker_cli: "false".to_string(),
+            docker_cli: temp_dir.path().join("missing-docker").display().to_string(),
             has_buildx: false,
         };
 
@@ -906,10 +902,68 @@ mod test {
             Command::new("true"),
         ));
 
-        assert!(matches!(
+        assert_eq!(
             result,
-            Err(DevContainerError::DevContainerScriptsFailed)
-        ));
+            Err(DevContainerError::ContainerNotValid(
+                "container".to_string()
+            ))
+        );
+    }
+
+    // Regression: flattening arguments through a second `sh -c` made `npm install` run bare `npm`.
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn docker_exec_keeps_lifecycle_script_as_one_argument() {
+        use indoc::indoc;
+        use std::os::unix::fs::PermissionsExt;
+
+        // Print each argument on its own line for the assertion below.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let fake_docker = temp_dir.path().join("docker.sh");
+        std::fs::write(
+            &fake_docker,
+            indoc! {r#"
+                #!/bin/sh
+                printf '%s\n' "$@"
+            "#},
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_docker, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let docker = Docker {
+            docker_cli: fake_docker.display().to_string(),
+            has_buildx: false,
+        };
+
+        let mut inner_command = Command::new("/bin/sh");
+        inner_command.args(&["-c", "npm install"]);
+
+        let output = gpui::block_on(docker.run_docker_exec(
+            "container",
+            "/workspace",
+            "root",
+            &HashMap::new(),
+            inner_command,
+        ))
+        .unwrap();
+        assert!(output.status.success());
+
+        let received_args = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            received_args.lines().collect::<Vec<_>>(),
+            vec![
+                "exec",
+                "-w",
+                "/workspace",
+                "-u",
+                "root",
+                "container",
+                "/bin/sh",
+                "-c",
+                "npm install",
+            ],
+            "the script must arrive as one argv entry, not be word-split"
+        );
     }
 
     #[test]
