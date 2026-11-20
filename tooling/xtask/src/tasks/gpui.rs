@@ -30,8 +30,9 @@ pub struct GpuiArgs {
     /// Full commit SHA to use when checking out workspace crates
     #[arg(long)]
     sha: GitSha,
-    #[arg(long)]
-    mutate_crates_io: bool,
+    /// Whether this is a dry-run
+    #[arg(short, long, default_value_t = true)]
+    dry_run: std::primitive::bool,
 }
 
 #[derive(Parser)]
