@@ -2587,6 +2587,8 @@ fn make_scroll_wheel_event(
     gpui::ScrollEvent {
         position,
         delta: ScrollDelta::Lines(delta),
+        // One scroll increment (a wheel notch) is scaled to SCROLL_LINES lines.
+        wheel_notches: Some(delta.map(|lines| lines / SCROLL_LINES)),
         modifiers,
         touch_phase: TouchPhase::default(),
         source: gpui::ScrollSource::Pointer,

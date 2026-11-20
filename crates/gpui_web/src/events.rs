@@ -666,6 +666,7 @@ impl WebWindowInner {
             this.dispatch_input(PlatformInput::Scroll(ScrollEvent {
                 position,
                 delta,
+                wheel_notches: None,
                 modifiers,
                 touch_phase: TouchPhase::Moved,
                 source: ScrollSource::Pointer,

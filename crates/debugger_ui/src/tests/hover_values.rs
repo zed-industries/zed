@@ -972,6 +972,7 @@ async fn test_hover_values_keyboard_selection_scrolls_into_view(
         editor_cx.simulate_event(gpui::ScrollEvent {
             position,
             delta: gpui::ScrollDelta::Pixels(delta),
+            wheel_notches: None,
             modifiers: Modifiers::none(),
             touch_phase: gpui::TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
