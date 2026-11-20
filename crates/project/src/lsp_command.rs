@@ -3365,6 +3365,21 @@ impl LspCommand for GetCompletions {
             position: Some(language::proto::serialize_anchor(&anchor)),
             version: serialize_version(&buffer.version()),
             server_id: self.server_id.map(|id| id.to_proto()),
+            trigger_character: self
+                .context
+                .trigger_character
+                .clone()
+                .filter(|_| self.context.trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER),
+            trigger_kind: match self.context.trigger_kind {
+                CompletionTriggerKind::TRIGGER_CHARACTER => {
+                    proto::get_completions::TriggerKind::TriggerCharacter
+                }
+                CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS => {
+                    proto::get_completions::TriggerKind::TriggerForIncompleteCompletions
+                }
+                _ => proto::get_completions::TriggerKind::Invoked,
+            }
+            .into(),
         }
     }
 
@@ -3374,6 +3389,15 @@ impl LspCommand for GetCompletions {
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> Result<Self> {
+        let trigger_kind = match message.trigger_kind() {
+            proto::get_completions::TriggerKind::Invoked => CompletionTriggerKind::INVOKED,
+            proto::get_completions::TriggerKind::TriggerCharacter => {
+                CompletionTriggerKind::TRIGGER_CHARACTER
+            }
+            proto::get_completions::TriggerKind::TriggerForIncompleteCompletions => {
+                CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS
+            }
+        };
         let version = deserialize_version(&message.version);
         buffer
             .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
@@ -3390,8 +3414,10 @@ impl LspCommand for GetCompletions {
         Ok(Self {
             position,
             context: CompletionContext {
-                trigger_kind: CompletionTriggerKind::INVOKED,
-                trigger_character: None,
+                trigger_kind,
+                trigger_character: message
+                    .trigger_character
+                    .filter(|_| trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER),
             },
             server_id: message
                 .server_id
