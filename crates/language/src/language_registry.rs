@@ -693,42 +693,25 @@ impl LanguageRegistry {
         cx: &App,
     ) -> Option<LanguageId> {
         let user_file_types = all_language_settings(Some(file), cx);
-        let filename = file
-            .path()
-            .file_name()
-            .unwrap_or_else(|| file.file_name(cx));
-        let paths = [Some(file.full_path(cx)), file.file_system_abs_path(cx)];
-        let path_style = file.path_style(cx);
-        let normalized_paths = paths.each_ref().map(|path| {
-            if path_style.is_windows()
-                && let Some(path) = path.as_deref().and_then(Path::to_str)
-                && path.contains('\\')
-            {
-                Some(PathBuf::from(path.replace('\\', "/")))
-            } else {
-                None
+        // The file system path is the most complete one: for single-file worktrees,
+        // the full path is only the file name. Files that don't exist on a file
+        // system, like git blobs, only have their full path.
+        let path = file
+            .file_system_abs_path(cx)
+            .unwrap_or_else(|| file.full_path(cx));
+        // Neither `Path` nor globset treat `\` as a separator on non-Windows hosts,
+        // so remote Windows paths need normalizing to match suffixes and globs.
+        let path = match path.to_str() {
+            Some(path_text) if file.path_style(cx).is_windows() && path_text.contains('\\') => {
+                PathBuf::from(path_text.replace('\\', "/"))
             }
-        });
-        let paths = paths
-            .iter()
-            .filter_map(Option::as_deref)
-            .chain(normalized_paths.iter().filter_map(Option::as_deref))
-            .collect::<SmallVec<[_; 4]>>();
-        self.language_for_file_internal(
-            Some(filename),
-            &paths,
-            content,
-            Some(&user_file_types.file_types),
-        )
+            _ => path,
+        };
+        self.language_for_file_internal(&path, content, &user_file_types.file_types)
     }
 
     pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<LanguageId> {
-        self.language_for_file_internal(
-            path.file_name().and_then(|filename| filename.to_str()),
-            &[path],
-            None,
-            None,
-        )
+        self.language_for_file_internal(path, None, &FxHashMap::default())
     }
 
     #[ztracing::instrument(skip_all)]
@@ -750,17 +733,14 @@ impl LanguageRegistry {
 
     fn language_for_file_internal(
         self: &Arc<Self>,
-        filename: Option<&str>,
-        paths: &[&Path],
+        path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
+        user_file_types: &FxHashMap<Arc<str>, (GlobSet, Vec<String>)>,
     ) -> Option<LanguageId> {
-        self.state.read().available_languages.find_for_file(
-            filename,
-            paths,
-            content,
-            user_file_types,
-        )
+        self.state
+            .read()
+            .available_languages
+            .find_for_file(path, content, user_file_types)
     }
 
     #[ztracing::instrument(skip_all)]

@@ -62,34 +62,36 @@ struct LanguageIndex(usize);
 struct PathSuffixIndex(usize);
 
 /// Lookup structures over `AvailableLanguages::languages`, rebuilt whenever the
-/// set of languages changes, so that detecting a language doesn't need to visit
-/// every registered language.
+/// set of languages changes, so that queries don't need to visit every
+/// registered language.
 #[derive(Default)]
 struct LanguageLookup {
     suffix_globs: Option<GlobSet>,
     /// The suffix that each glob in `suffix_globs` was built from, indexed by glob.
     suffixes: Vec<(LanguageIndex, PathSuffixIndex)>,
+    /// The languages declaring each path suffix, in registration order.
+    languages_by_suffix: FxHashMap<UniCase<SharedString>, SmallVec<[LanguageIndex; 1]>>,
     first_line_patterns: Option<RegexSet>,
     /// The language of each pattern in `first_line_patterns`, indexed by pattern.
     first_line_pattern_languages: Vec<LanguageIndex>,
-    languages_by_name: FxHashMap<LanguageName, SmallVec<[LanguageIndex; 1]>>,
-    /// Modeline aliases, grammar names and language names, each mapping to the
-    /// first language that declares them.
+    /// The languages with each name, in registration order.
+    languages_by_name: FxHashMap<UniCase<LanguageName>, SmallVec<[LanguageIndex; 1]>>,
+    /// Modeline aliases and grammar names, each mapping to the first language
+    /// that declares them.
     modeline_aliases: FxHashMap<UniCase<SharedString>, LanguageIndex>,
     grammar_names: FxHashMap<UniCase<SharedString>, LanguageIndex>,
-    language_names: FxHashMap<UniCase<SharedString>, LanguageIndex>,
 }
 
 impl LanguageLookup {
     fn new(languages: &[AvailableLanguage]) -> Self {
         let mut suffix_globs = GlobSetBuilder::new();
         let mut suffixes = Vec::new();
+        let mut languages_by_suffix = FxHashMap::<_, SmallVec<_>>::default();
         let mut first_line_patterns = Vec::new();
         let mut first_line_pattern_languages = Vec::new();
         let mut languages_by_name = FxHashMap::<_, SmallVec<_>>::default();
         let mut modeline_aliases = FxHashMap::default();
         let mut grammar_names = FxHashMap::default();
-        let mut language_names = FxHashMap::default();
 
         for (language_index, language) in languages.iter().enumerate() {
             let language_index = LanguageIndex(language_index);
@@ -107,13 +109,19 @@ impl LanguageLookup {
                         );
                     }
                 }
+                push_unique(
+                    languages_by_suffix
+                        .entry(UniCase::new(suffix.as_shared_string().clone()))
+                        .or_default(),
+                    language_index,
+                );
             }
             if let Some(pattern) = &language.matcher.first_line_pattern {
                 first_line_patterns.push(pattern.as_str());
                 first_line_pattern_languages.push(language_index);
             }
             languages_by_name
-                .entry(language.name.clone())
+                .entry(UniCase::new(language.name.clone()))
                 .or_default()
                 .push(language_index);
             for alias in &language.matcher.modeline_aliases {
@@ -126,9 +134,6 @@ impl LanguageLookup {
                     .entry(UniCase::new(SharedString::from(grammar)))
                     .or_insert(language_index);
             }
-            language_names
-                .entry(UniCase::new(language.name.0.clone()))
-                .or_insert(language_index);
         }
 
         let suffix_globs = suffix_globs
@@ -148,23 +153,36 @@ impl LanguageLookup {
         Self {
             suffix_globs,
             suffixes,
+            languages_by_suffix,
             first_line_patterns,
             first_line_pattern_languages,
             languages_by_name,
             modeline_aliases,
             grammar_names,
-            language_names,
         }
     }
 
+    /// The languages whose name equals `name` case-insensitively, in registration order.
+    fn languages_named(&self, name: LanguageName) -> &[LanguageIndex] {
+        self.languages_by_name
+            .get(&UniCase::new(name))
+            .map_or(&[], |languages| languages.as_slice())
+    }
+
+    /// The languages with a path suffix equal to `suffix` case-insensitively, in
+    /// registration order.
+    fn languages_with_suffix(&self, suffix: SharedString) -> &[LanguageIndex] {
+        self.languages_by_suffix
+            .get(&UniCase::new(suffix))
+            .map_or(&[], |languages| languages.as_slice())
+    }
+
     /// Returns `(language, score)` pairs, sorted by language, for every language
-    /// with a path suffix matching one of the `candidates`, which are built from
-    /// `filename` and `paths`.
+    /// with a path suffix matching one of the `candidates` built from `path`.
     fn suffix_scores(
         &self,
         languages: &[AvailableLanguage],
-        filename: Option<&str>,
-        paths: &[&Path],
+        path: &Path,
         candidates: &[(&str, globset::Candidate<'_>)],
     ) -> SmallVec<[(LanguageIndex, usize); 4]> {
         let score = |&(language_index, suffix_index): &(LanguageIndex, PathSuffixIndex)| {
@@ -179,26 +197,23 @@ impl LanguageLookup {
             (score > 0).then_some((language_index, score))
         };
 
+        // On ordinary paths every candidate is a suffix of the full path, so matching
+        // the full path finds all of them. Non-UTF8 parents and trailing separators or
+        // `/.` need an exact scan: Path::file_name and globset do not agree about these
+        // paths' basenames.
+        let full_path_candidate = path
+            .to_str()
+            .zip(path.file_name().and_then(|name| name.to_str()))
+            .filter(|(path, filename)| path.ends_with(filename))
+            .and_then(|_| candidates.last());
         let mut scores: SmallVec<[(LanguageIndex, usize); 4]> =
-            match (&self.suffix_globs, Self::glob_targets(filename, paths)) {
-                (Some(globs), Some(targets)) => {
-                    let mut glob_indices = Vec::new();
-                    let mut target_matches = Vec::new();
-                    for target in &targets {
-                        globs.matches_candidate_into(
-                            &globset::Candidate::new(target),
-                            &mut target_matches,
-                        );
-                        glob_indices.append(&mut target_matches);
-                    }
-                    glob_indices.sort_unstable();
-                    glob_indices.dedup();
-                    glob_indices
-                        .into_iter()
-                        .filter_map(|glob_index| self.suffixes.get(glob_index))
-                        .filter_map(score)
-                        .collect()
-                }
+            match (&self.suffix_globs, full_path_candidate) {
+                (Some(globs), Some((_, candidate))) => globs
+                    .matches_candidate(candidate)
+                    .into_iter()
+                    .filter_map(|glob_index| self.suffixes.get(glob_index))
+                    .filter_map(score)
+                    .collect(),
                 _ => self.suffixes.iter().filter_map(score).collect(),
             };
         scores.sort_unstable_by(|(language_a, score_a), (language_b, score_b)| {
@@ -206,40 +221,6 @@ impl LanguageLookup {
         });
         scores.dedup_by_key(|(language_index, _)| *language_index);
         scores
-    }
-
-    /// Returns the texts to match the suffix globs against, such that every
-    /// candidate built from `filename` and `paths` is a suffix of one of them.
-    ///
-    /// Returns `None` if a path needs an exact scan instead: for non-UTF8 parents
-    /// and trailing separators or `/.`, `Path::file_name` and globset do not agree
-    /// about the path's basename.
-    fn glob_targets<'a>(
-        filename: Option<&'a str>,
-        paths: &[&'a Path],
-    ) -> Option<SmallVec<[&'a str; 4]>> {
-        let mut targets = SmallVec::<[&str; 4]>::new();
-        for path in paths {
-            let Some(path_text) = path.to_str() else {
-                continue;
-            };
-            let path_filename = path.file_name().and_then(|name| name.to_str())?;
-            if !path_text.ends_with(path_filename) {
-                return None;
-            }
-            targets.push(path_text);
-        }
-        // The extension is always a suffix of the filename, so covering the filename
-        // covers both of them.
-        if let Some(filename) = filename
-            && !targets.iter().any(|target| target.ends_with(filename))
-        {
-            if filename.is_empty() || filename.contains(['/', '\\']) {
-                return None;
-            }
-            targets.push(filename);
-        }
-        Some(targets)
     }
 
     fn first_line_matches(&self, content: &str) -> SmallVec<[LanguageIndex; 2]> {
@@ -255,6 +236,12 @@ impl LanguageLookup {
     }
 }
 
+fn push_unique(languages: &mut SmallVec<[LanguageIndex; 1]>, language_index: LanguageIndex) {
+    if languages.last() != Some(&language_index) {
+        languages.push(language_index);
+    }
+}
+
 fn suffix_score(suffix: &str, candidates: &[(&str, globset::Candidate<'_>)]) -> usize {
     candidates
         .iter()
@@ -265,14 +252,6 @@ fn suffix_score(suffix: &str, candidates: &[(&str, globset::Candidate<'_>)]) -> 
                     .is_some_and(|prefix| prefix.ends_with('.'))
         })
         .map_or(0, |(text, _)| text.len())
-}
-
-#[derive(Copy, Clone, Default)]
-enum LanguageMatchPrecedence {
-    #[default]
-    Undetermined,
-    PathOrContent(usize),
-    UserConfigured(usize),
 }
 
 /// The result of [`AvailableLanguages::update`].
@@ -389,36 +368,43 @@ impl AvailableLanguages {
     }
 
     pub(super) fn find_name_by_extension(&self, extension: &str) -> Option<LanguageName> {
-        self.languages
+        self.lookup
+            .languages_with_suffix(SharedString::from(extension))
             .iter()
+            .filter_map(|language_index| self.language_at(*language_index))
             .find(|language| {
                 language
                     .matcher
                     .path_suffixes
                     .iter()
-                    .any(|suffix| suffix == extension)
+                    .any(|suffix| suffix.as_str() == extension)
             })
             .map(|language| language.name.clone())
     }
 
     pub(super) fn find_by_exact_name(&self, name: &str) -> Option<AvailableLanguage> {
-        self.languages
+        self.lookup
+            .languages_named(LanguageName::new(name))
             .iter()
+            .filter_map(|language_index| self.language_at(*language_index))
             .find(|language| language.name.0.as_ref() == name)
             .cloned()
     }
 
     pub(super) fn find_by_modeline_name(&self, modeline_name: &str) -> Option<AvailableLanguage> {
-        let modeline_name = UniCase::new(SharedString::from(modeline_name));
-        [
-            &self.lookup.modeline_aliases,
-            &self.lookup.grammar_names,
-            &self.lookup.language_names,
-        ]
-        .into_iter()
-        .find_map(|names| names.get(&modeline_name))
-        .and_then(|language_index| self.language_at(*language_index))
-        .cloned()
+        let modeline_name = SharedString::from(modeline_name);
+        let key = UniCase::new(modeline_name.clone());
+        self.lookup
+            .modeline_aliases
+            .get(&key)
+            .or_else(|| self.lookup.grammar_names.get(&key))
+            .or_else(|| {
+                self.lookup
+                    .languages_named(LanguageName::from(modeline_name))
+                    .first()
+            })
+            .and_then(|language_index| self.language_at(*language_index))
+            .cloned()
     }
 
     pub(super) fn mark_all_unloaded(&mut self) {
@@ -433,244 +419,140 @@ impl AvailableLanguages {
         }
     }
 
+    /// Finds the most recently registered language whose name matches `name`
+    /// case-insensitively.
     pub(super) fn find_by_name(&self, name: &str) -> Option<LanguageId> {
-        let name = UniCase::new(name);
-        self.find_best_match(
-            |language_name, _, current_best_match| match current_best_match {
-                LanguageMatchPrecedence::Undetermined if UniCase::new(&language_name.0) == name => {
-                    Some(LanguageMatchPrecedence::PathOrContent(name.len()))
-                }
-                LanguageMatchPrecedence::Undetermined
-                | LanguageMatchPrecedence::UserConfigured(_)
-                | LanguageMatchPrecedence::PathOrContent(_) => None,
-            },
-        )
+        self.lookup
+            .languages_named(LanguageName::new(name))
+            .last()
+            .and_then(|language_index| self.language_at(*language_index))
+            .map(AvailableLanguage::id)
     }
 
+    /// Finds the most recently registered language whose name or one of whose path
+    /// suffixes matches `string` case-insensitively.
     pub(super) fn find_by_name_or_extension(&self, string: &str) -> Option<LanguageId> {
-        let string = UniCase::new(string);
-        self.find_best_match(|name, matcher, current_best_match| {
-            let name_matches = || {
-                UniCase::new(&name.0) == string
-                    || matcher
-                        .path_suffixes
-                        .iter()
-                        .any(|suffix| UniCase::new(suffix) == string)
-            };
-
-            match current_best_match {
-                LanguageMatchPrecedence::Undetermined => {
-                    name_matches().then_some(LanguageMatchPrecedence::PathOrContent(string.len()))
-                }
-                LanguageMatchPrecedence::PathOrContent(len) => (string.len() > len
-                    && name_matches())
-                .then_some(LanguageMatchPrecedence::PathOrContent(string.len())),
-                LanguageMatchPrecedence::UserConfigured(_) => None,
-            }
-        })
+        let string = SharedString::from(string);
+        let by_name = self
+            .lookup
+            .languages_named(LanguageName::from(string.clone()))
+            .last();
+        let by_suffix = self.lookup.languages_with_suffix(string).last();
+        by_name
+            .max(by_suffix)
+            .and_then(|language_index| self.language_at(*language_index))
+            .map(AvailableLanguage::id)
     }
 
+    /// Finds the language for the file at `path`.
+    ///
+    /// Languages the user associated with the path in `user_file_types` take
+    /// precedence, followed by the language with the longest matching path suffix.
+    /// The first line of `content` is only consulted if no path matches.
     pub(super) fn find_for_file(
         &self,
-        filename: Option<&str>,
-        paths: &[&Path],
+        path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
+        user_file_types: &FxHashMap<Arc<str>, (GlobSet, Vec<String>)>,
     ) -> Option<LanguageId> {
+        let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
         // and no other extension which is not the desired behavior here,
         // as we want `.zshrc` to result in extension being `Some("zshrc")`
         let extension = filename.and_then(|filename| filename.split('.').next_back());
-        let path_suffixes = [extension, filename]
-            .into_iter()
-            .chain(paths.iter().map(|path| path.to_str()))
-            .filter_map(|suffix| suffix.map(|suffix| (suffix, globset::Candidate::new(suffix))))
-            .collect::<SmallVec<[_; 6]>>();
-        let default_scores =
-            self.lookup
-                .suffix_scores(&self.languages, filename, paths, &path_suffixes);
-        let custom_scores = user_file_types
+        let path_suffixes = [extension, filename, path.to_str()]
             .into_iter()
             .flatten()
+            .map(|suffix| (suffix, globset::Candidate::new(suffix)))
+            .collect::<SmallVec<[_; 3]>>();
+
+        let default_scores = self
+            .lookup
+            .suffix_scores(&self.languages, path, &path_suffixes);
+        let custom_scores = user_file_types
+            .iter()
             .filter_map(|(language_name, (custom_suffixes, _))| {
-                let language_indices = self.lookup.languages_by_name.get(language_name.as_ref())?;
+                let languages = self
+                    .lookup
+                    .languages_named(LanguageName::from(SharedString::from(language_name)))
+                    .iter()
+                    .copied()
+                    .filter(|language_index| {
+                        self.language_at(*language_index)
+                            .is_some_and(|language| language.name.0.as_ref() == &**language_name)
+                    })
+                    .collect::<SmallVec<[_; 1]>>();
+                if languages.is_empty() {
+                    return None;
+                }
                 let len = path_suffixes
                     .iter()
                     .find(|(_, candidate)| custom_suffixes.is_match_candidate(candidate))
                     .map(|(suffix, _)| suffix.len())?;
                 Some(
-                    language_indices
-                        .iter()
-                        .map(move |language_index| (*language_index, len)),
+                    languages
+                        .into_iter()
+                        .map(move |language_index| (language_index, len)),
                 )
             })
             .flatten()
             .collect::<SmallVec<[_; 2]>>();
+
+        if default_scores.is_empty() && custom_scores.is_empty() {
+            return self.find_for_first_line(content?);
+        }
 
         let mut candidates = default_scores
             .iter()
             .chain(&custom_scores)
             .map(|(language_index, _)| *language_index)
             .collect::<SmallVec<[_; 8]>>();
-        // Content is only consulted while no match has been found yet, so it can only
-        // affect the result for languages registered after every path match.
-        let highest_path_candidate = candidates.iter().max().copied();
-        let content_matches = if let Some(content) = content
-            && self
-                .lookup
-                .first_line_pattern_languages
-                .last()
-                .is_some_and(|language_index| {
-                    highest_path_candidate.is_none_or(|highest| *language_index > highest)
-                }) {
-            let end = content.clip_point(Point::new(0, 256), Bias::Left);
-            let end = content.point_to_offset(end);
-            let first_line = content.chunks_in_range(0..end).collect::<String>();
-            self.lookup.first_line_matches(&first_line)
-        } else {
-            SmallVec::new()
-        };
-        candidates.extend(content_matches.iter().copied());
         candidates.sort_unstable_by(|a, b| b.cmp(a));
         candidates.dedup();
 
-        self.find_best_match_among(
-            candidates,
-            |language_index, _language, current_best_match| {
-                let path_matches_default_suffix = || {
-                    default_scores
-                        .binary_search_by_key(&language_index, |(language_index, _)| {
-                            *language_index
-                        })
-                        .ok()
-                        .and_then(|position| default_scores.get(position))
-                        .map(|(_, len)| *len)
-                };
-
-                let path_matches_custom_suffix = || {
-                    custom_scores
-                        .iter()
-                        .find(|(custom_language_index, _)| *custom_language_index == language_index)
-                        .map(|(_, len)| *len)
-                };
-
-                let content_matches = || content_matches.contains(&language_index);
-
-                // Only return a match for the given file if we have a better match than
-                // the current one.
-                match current_best_match {
-                    LanguageMatchPrecedence::PathOrContent(current_len) => {
-                        if let Some(len) = path_matches_custom_suffix() {
-                            // >= because user config should win tie with system ext len
-                            (len >= current_len)
-                                .then_some(LanguageMatchPrecedence::UserConfigured(len))
-                        } else if let Some(len) = path_matches_default_suffix() {
-                            // >= because user config should win tie with system ext len
-                            (len >= current_len)
-                                .then_some(LanguageMatchPrecedence::PathOrContent(len))
-                        } else {
-                            None
-                        }
-                    }
-                    LanguageMatchPrecedence::Undetermined => {
-                        if let Some(len) = path_matches_custom_suffix() {
-                            Some(LanguageMatchPrecedence::UserConfigured(len))
-                        } else if let Some(len) = path_matches_default_suffix() {
-                            Some(LanguageMatchPrecedence::PathOrContent(len))
-                        } else if content_matches() {
-                            Some(LanguageMatchPrecedence::PathOrContent(1))
-                        } else {
-                            None
-                        }
-                    }
-                    LanguageMatchPrecedence::UserConfigured(_) => None,
+        // Languages are visited newest first, so that on equal scores the most recent
+        // registration wins. A user-configured match wins ties against the default
+        // matches seen so far and ends the search. If it is shorter than one of them,
+        // the language is skipped, including its default match.
+        let mut best_default_match = None::<(LanguageIndex, usize)>;
+        for language_index in candidates {
+            let best_len = best_default_match.map(|(_, len)| len);
+            if let Some((_, custom_len)) = custom_scores
+                .iter()
+                .find(|(custom_language_index, _)| *custom_language_index == language_index)
+            {
+                if best_len.is_none_or(|best_len| *custom_len >= best_len) {
+                    return self.language_at(language_index).map(AvailableLanguage::id);
                 }
-            },
-        )
+                continue;
+            }
+            if let Some((_, len)) = default_scores
+                .binary_search_by_key(&language_index, |(language_index, _)| *language_index)
+                .ok()
+                .and_then(|position| default_scores.get(position))
+                && best_len.is_none_or(|best_len| *len > best_len)
+            {
+                best_default_match = Some((language_index, *len));
+            }
+        }
+        best_default_match
+            .and_then(|(language_index, _)| self.language_at(language_index))
+            .map(AvailableLanguage::id)
     }
 
-    fn find_best_match(
-        &self,
-        callback: impl Fn(
-            &LanguageName,
-            &LanguageMatcher,
-            LanguageMatchPrecedence,
-        ) -> Option<LanguageMatchPrecedence>,
-    ) -> Option<LanguageId> {
-        self.find_best_match_among(
-            (0..self.languages.len()).rev().map(LanguageIndex),
-            |_, language, precedence| callback(&language.name, &language.matcher, precedence),
-        )
-    }
-
-    /// Folds over the languages at `candidates`, which must be in descending order.
-    /// Languages that are not candidates must be ones for which `callback` would return `None`.
-    fn find_best_match_among(
-        &self,
-        candidates: impl IntoIterator<Item = LanguageIndex>,
-        callback: impl Fn(
-            LanguageIndex,
-            &AvailableLanguage,
-            LanguageMatchPrecedence,
-        ) -> Option<LanguageMatchPrecedence>,
-    ) -> Option<LanguageId> {
-        candidates
+    /// Finds the most recently registered language whose first line pattern
+    /// matches the first line of `content`.
+    fn find_for_first_line(&self, content: &Rope) -> Option<LanguageId> {
+        self.lookup.first_line_patterns.as_ref()?;
+        let end = content.clip_point(Point::new(0, 256), Bias::Left);
+        let end = content.point_to_offset(end);
+        let first_line = content.chunks_in_range(0..end).collect::<String>();
+        self.lookup
+            .first_line_matches(&first_line)
             .into_iter()
-            .filter_map(|language_index| Some((language_index, self.language_at(language_index)?)))
-            .fold(None, |best_language_match, (language_index, language)| {
-                let current_match_type = best_language_match
-                    .as_ref()
-                    .map_or(LanguageMatchPrecedence::default(), |(_, score)| *score);
-                let language_score = callback(language_index, language, current_match_type);
-
-                match (language_score, current_match_type) {
-                    // no current best, so our candidate is better
-                    (
-                        Some(
-                            LanguageMatchPrecedence::PathOrContent(_)
-                            | LanguageMatchPrecedence::UserConfigured(_),
-                        ),
-                        LanguageMatchPrecedence::Undetermined,
-                    ) => language_score.map(|new_score| (language, new_score)),
-
-                    // our candidate is better only if the name is longer
-                    (
-                        Some(LanguageMatchPrecedence::PathOrContent(new_len)),
-                        LanguageMatchPrecedence::PathOrContent(current_len),
-                    )
-                    | (
-                        Some(LanguageMatchPrecedence::UserConfigured(new_len)),
-                        LanguageMatchPrecedence::UserConfigured(current_len),
-                    )
-                    | (
-                        Some(LanguageMatchPrecedence::PathOrContent(new_len)),
-                        LanguageMatchPrecedence::UserConfigured(current_len),
-                    ) => {
-                        if new_len > current_len {
-                            language_score.map(|new_score| (language, new_score))
-                        } else {
-                            best_language_match
-                        }
-                    }
-
-                    // our candidate is better if the name is longer or equal to
-                    (
-                        Some(LanguageMatchPrecedence::UserConfigured(new_len)),
-                        LanguageMatchPrecedence::PathOrContent(current_len),
-                    ) => {
-                        if new_len >= current_len {
-                            language_score.map(|new_score| (language, new_score))
-                        } else {
-                            best_language_match
-                        }
-                    }
-                    // no candidate, use current best
-                    (None, _) | (Some(LanguageMatchPrecedence::Undetermined), _) => {
-                        best_language_match
-                    }
-                }
-            })
-            .map(|(available_language, _)| available_language.id())
+            .max()
+            .and_then(|language_index| self.language_at(language_index))
+            .map(AvailableLanguage::id)
     }
 }
 
@@ -700,12 +582,7 @@ mod tests {
         path: &Path,
         content: Option<&Rope>,
     ) -> Option<LanguageId> {
-        languages.find_for_file(
-            path.file_name().and_then(|filename| filename.to_str()),
-            &[path],
-            content,
-            None,
-        )
+        languages.find_for_file(path, content, &FxHashMap::default())
     }
 
     fn detected(languages: &AvailableLanguages, path: &Path) -> Option<LanguageName> {
@@ -866,6 +743,7 @@ mod tests {
         languages.update(
             &[],
             vec![
+                language("C", &["c"]),
                 with_first_line("Shell", &["sh"], r"^#!.*\bbash\b"),
                 with_first_line("Python", &[], r"^#!.*\bpython"),
                 language("Text", &["txt"]),
@@ -895,6 +773,46 @@ mod tests {
             detected_with_content("script.txt", python),
             Some("Text".into())
         );
+        // A path match is never overridden by content, even by a later registration
+        // and a single-character extension.
+        assert_eq!(detected_with_content("script.c", python), Some("C".into()));
+    }
+
+    #[test]
+    fn name_and_suffix_lookups_are_case_insensitive() {
+        let mut languages = AvailableLanguages::default();
+        languages.update(
+            &[],
+            vec![
+                language("Make", &["Makefile", "mk"]),
+                language("make", &["makefile"]),
+                language("Other", &["MK"]),
+            ],
+        );
+        let name_of = |id: Option<LanguageId>| {
+            id.and_then(|id| languages.get_language(id))
+                .map(AvailableLanguage::name)
+        };
+
+        assert_eq!(name_of(languages.find_by_name("MAKE")), Some("make".into()));
+        assert_eq!(
+            languages
+                .find_by_exact_name("Make")
+                .map(|language| language.name()),
+            Some("Make".into())
+        );
+        assert_eq!(languages.find_by_exact_name("MAKE").map(|l| l.name()), None);
+        assert_eq!(
+            name_of(languages.find_by_name_or_extension("mk")),
+            Some("Other".into())
+        );
+        assert_eq!(
+            name_of(languages.find_by_name_or_extension("MAKEFILE")),
+            Some("make".into())
+        );
+        assert_eq!(languages.find_name_by_extension("mk"), Some("Make".into()));
+        assert_eq!(languages.find_name_by_extension("MK"), Some("Other".into()));
+        assert_eq!(languages.find_name_by_extension("Mk"), None);
     }
 
     #[test]
@@ -922,39 +840,6 @@ mod tests {
         assert_eq!(modeline_language("Alpha_Grammar"), Some("Alpha".into()));
         assert_eq!(modeline_language("beta"), Some("Beta".into()));
         assert_eq!(modeline_language("missing"), None);
-    }
-
-    #[test]
-    fn suffixes_match_against_every_path() {
-        let mut languages = AvailableLanguages::default();
-        languages.update(
-            &[],
-            vec![
-                language("Text", &["txt"]),
-                language("Ssh Config", &["ssh/config"]),
-            ],
-        );
-        let detected_for = |filename: &str, paths: &[&str]| {
-            let paths = paths.iter().map(Path::new).collect::<Vec<_>>();
-            languages
-                .find_for_file(Some(filename), &paths, None, None)
-                .and_then(|id| languages.get_language(id))
-                .map(AvailableLanguage::name)
-        };
-
-        // A single-file worktree's full path is only the filename, while the absolute
-        // path carries the directories a suffix may need.
-        assert_eq!(
-            detected_for("config", &["config", "/home/user/.ssh/config"]),
-            Some("Ssh Config".into())
-        );
-        assert_eq!(detected_for("config", &["config"]), None);
-        // A filename that differs from every path's file name is matched, too.
-        assert_eq!(
-            detected_for("notes.txt", &["worktree"]),
-            Some("Text".into())
-        );
-        assert_eq!(detected_for("notes.txt", &[]), Some("Text".into()));
     }
 
     #[cfg(unix)]
