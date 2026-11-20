@@ -47,7 +47,7 @@ use std::{
     borrow::Borrow,
     collections::BTreeMap,
     ffi::OsStr,
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
@@ -320,6 +320,64 @@ impl DapStore {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
 
+                    if let Some(connection) = &binary.connection {
+                        let timeout = connection.timeout.unwrap_or_else(|| {
+                            cx.update(|cx| {
+                                dap::debugger_settings::DebuggerSettings::get_global(cx).timeout
+                            })
+                        });
+                        let proxy = remote.read_with(cx, |remote, _cx| {
+                            remote.tcp_proxy_command(
+                                SocketAddr::new(connection.host, connection.port),
+                                timeout,
+                                binary.command.as_deref(),
+                                &binary.arguments,
+                            )
+                        })?;
+                        if let Some(proxy) = proxy {
+                            let address = SocketAddr::new(connection.host, connection.port);
+                            let (command, child_command) =
+                                remote.read_with(cx, |remote, _cx| -> Result<_> {
+                                    let child_proxy = remote
+                                        .tcp_proxy_command(address, timeout, None, &[])?
+                                        .context("Missing TCP stdio proxy command")?;
+                                    let working_dir =
+                                        binary.cwd.as_ref().map(|path| path.display().to_string());
+                                    let command = remote.build_command(
+                                        Some(proxy.program),
+                                        &proxy.args,
+                                        &binary.envs,
+                                        working_dir.clone(),
+                                        None,
+                                        Interactive::No,
+                                    )?;
+                                    let child_command = remote.build_command(
+                                        Some(child_proxy.program),
+                                        &child_proxy.args,
+                                        &binary.envs,
+                                        working_dir,
+                                        None,
+                                        Interactive::No,
+                                    )?;
+                                    Ok((command, child_command))
+                                })?;
+                            return Ok(DebugAdapterBinary {
+                                command: Some(command.program),
+                                arguments: command.args,
+                                envs: command.env,
+                                cwd: None,
+                                connection: Some(TcpArguments {
+                                    stdio_proxy: Some(dap::adapters::StdioProxy {
+                                        command: child_command.program,
+                                        arguments: child_command.args,
+                                    }),
+                                    ..connection.clone()
+                                }),
+                                request_args: binary.request_args,
+                            });
+                        }
+                    }
+
                     let port_forwarding;
                     let connection;
                     if let Some(c) = binary.connection {
@@ -336,6 +394,7 @@ impl DapStore {
                             port,
                             host,
                             timeout: c.timeout,
+                            stdio_proxy: None,
                         })
                     } else {
                         port_forwarding = None;

@@ -528,6 +528,7 @@ impl DebugAdapter for GoDebugAdapter {
                 host,
                 port,
                 timeout,
+                stdio_proxy: None,
             });
         } else {
             let minidelve_path = self.install_shim(delegate).await?;

@@ -8,6 +8,7 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::net::SocketAddr;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
@@ -777,15 +778,46 @@ impl RemoteConnection for DockerExecConnection {
         self.proxy_process.lock().is_none()
     }
 
+    fn tcp_proxy_command(
+        &self,
+        address: SocketAddr,
+        timeout: u64,
+        program: Option<&str>,
+        args: &[String],
+    ) -> Result<Option<CommandTemplate>> {
+        let remote_binary_relpath = self
+            .remote_binary_relpath
+            .as_ref()
+            .context("Remote binary path not set")?;
+        let mut arguments = vec!["tcp".to_owned(), address.to_string(), timeout.to_string()];
+        if let Some(program) = program {
+            arguments.extend(["--".to_owned(), program.to_owned()]);
+            arguments.extend_from_slice(args);
+        }
+        Ok(Some(CommandTemplate {
+            program: format!(
+                "{}/{}",
+                self.remote_dir_for_server.trim_end_matches('/'),
+                remote_binary_relpath.display(PathStyle::Unix),
+            ),
+            args: arguments,
+            env: HashMap::default(),
+        }))
+    }
+
     fn build_command(
         &self,
         program: Option<String>,
         args: &[String],
         env: &HashMap<String, String>,
         working_dir: Option<String>,
-        _port_forward: Option<(u16, String, u16)>,
+        port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
     ) -> Result<CommandTemplate> {
+        anyhow::ensure!(
+            port_forward.is_none(),
+            "Port forwarding is not supported by docker exec"
+        );
         let mut parsed_working_dir = None;
 
         let path_style = self.path_style();
@@ -1108,6 +1140,75 @@ mod tests {
                 "\"podman\" \"exec\" \"-w\" \"/workspace\" \"-u\" \"user\"",
                 " \"-e\" \"GH_TOKEN=<redacted>\" \"container_id\" \"sh\""
             )
+        );
+    }
+
+    #[test]
+    fn tcp_proxy_runs_inside_container() -> Result<()> {
+        let mut connection = connection(&[("PATH", "/custom/bin")]);
+        connection.remote_binary_relpath = Some(RelPath::from_unix_str("remote server")?.into());
+        for use_podman in [false, true] {
+            connection.connection_options.use_podman = use_podman;
+            for address in ["127.0.0.1:4567", "[::1]:4567"] {
+                for program in [Some("/python with spaces"), None] {
+                    let proxy = connection
+                        .tcp_proxy_command(
+                            address.parse()?,
+                            1234,
+                            program,
+                            &["argument with spaces".to_owned(), "--flag".to_owned()],
+                        )?
+                        .context("Missing proxy")?;
+                    let template = connection.build_command(
+                        Some(proxy.program),
+                        &proxy.args,
+                        &HashMap::default(),
+                        Some("/workspace".to_owned()),
+                        None,
+                        Interactive::No,
+                    )?;
+                    assert_eq!(
+                        template.program,
+                        if use_podman { "podman" } else { "docker" }
+                    );
+                    let mut expected = vec![
+                        "exec",
+                        "-u",
+                        "user",
+                        "-w",
+                        "/workspace",
+                        "-e",
+                        "PATH=/custom/bin",
+                        "-i",
+                        "container_id",
+                        "/tmp/zed/remote server",
+                        "tcp",
+                        address,
+                        "1234",
+                    ];
+                    if let Some(program) = program {
+                        expected.extend(["--", program, "argument with spaces", "--flag"]);
+                    }
+                    assert_eq!(template.args, expected);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unsupported_port_forwarding() {
+        assert!(
+            connection(&[])
+                .build_command(
+                    None,
+                    &[],
+                    &HashMap::default(),
+                    None,
+                    Some((1234, "localhost".to_owned(), 5678)),
+                    Interactive::No,
+                )
+                .is_err()
         );
     }
 

@@ -40,6 +40,7 @@ use semver::Version;
 use std::{
     collections::VecDeque,
     fmt,
+    net::SocketAddr,
     ops::ControlFlow,
     path::PathBuf,
     sync::{
@@ -1006,6 +1007,17 @@ impl RemoteClient {
         connection.build_stdio_command(command)
     }
 
+    pub fn tcp_proxy_command(
+        &self,
+        address: SocketAddr,
+        timeout: u64,
+        program: Option<&str>,
+        args: &[String],
+    ) -> Result<Option<CommandTemplate>> {
+        let connection = self.remote_connection().context("no remote connection")?;
+        connection.tcp_proxy_command(address, timeout, program, args)
+    }
+
     pub fn build_forward_ports_command(
         &self,
         forwards: Vec<(u16, String, u16)>,
@@ -1495,6 +1507,16 @@ pub trait RemoteConnection: Send + Sync {
     fn has_been_killed(&self) -> bool;
     fn shares_network_interface(&self) -> bool {
         false
+    }
+    /// Returns a remote command that exposes TCP over stdio when port forwarding is unavailable.
+    fn tcp_proxy_command(
+        &self,
+        _address: SocketAddr,
+        _timeout: u64,
+        _program: Option<&str>,
+        _args: &[String],
+    ) -> Result<Option<CommandTemplate>> {
+        Ok(None)
     }
     fn build_command(
         &self,
