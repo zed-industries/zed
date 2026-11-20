@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use crate::{
     real_crates_io_client::{MIN_REQUEST_INTERVAL, RequestThrottle},
+    simulated_crates_io_client::SimulatedCratesIoClient,
     *,
 };
 
@@ -175,6 +176,68 @@ fn test_list_crates_requests_next_page_only_after_full_page() {
 }
 
 #[test]
+fn test_list_crates_filters_by_team_id() -> anyhow::Result<()> {
+    let simulated_client = SimulatedCratesIoClient::new();
+    let owner = simulated_client.token_user();
+    let matching = simulated_client.test_crate("matching", owner);
+    let other = simulated_client.test_crate("other", owner);
+    simulated_client.test_crate("unowned-by-team", owner);
+    let team_id = simulated_client.test_team_owner(&matching, "github:zed-industries:crates-io")?;
+    let other_team_id = simulated_client.test_team_owner(&other, "github:zed-industries:other")?;
+    let query = CrateListQuery {
+        team_id: Some(team_id),
+        ..Default::default()
+    };
+
+    let crates = smol::block_on(simulated_client.list_crates(&query))?;
+    assert_eq!(
+        crates.iter().map(|krate| &krate.name).collect::<Vec<_>>(),
+        [&matching]
+    );
+    let crates = smol::block_on(simulated_client.list_crates(&CrateListQuery {
+        team_id: Some(other_team_id),
+        ..Default::default()
+    }))?;
+    assert_eq!(
+        crates.iter().map(|krate| &krate.name).collect::<Vec<_>>(),
+        [&other]
+    );
+    assert_eq!(
+        smol::block_on(simulated_client.list_crates(&CrateListQuery::default()))?.len(),
+        3
+    );
+
+    let (fake_http_client, requests) = recording_fake_http_client(|_| {
+        (
+            StatusCode::OK,
+            json!({
+                "crates": [crate_json("matching")],
+                "meta": { "next_page": null },
+            }),
+        )
+    });
+    let real_client = RealCratesIoClient::new(fake_http_client, ApiToken::new("secret"));
+    let crates = smol::block_on(real_client.list_crates(&query))?;
+    assert_eq!(
+        crates.iter().map(|krate| &krate.name).collect::<Vec<_>>(),
+        [&matching]
+    );
+    let requests = requests.lock();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests.first().map(|request| request.uri.as_str()),
+        Some(
+            format!(
+                "https://crates.io/api/v1/crates?per_page=100&team_id={}",
+                team_id.0
+            )
+            .as_str()
+        )
+    );
+    Ok(())
+}
+
+#[test]
 fn test_update_crate_sends_settings_wrapped_in_crate_object() {
     let (fake_http_client, requests) =
         recording_fake_http_client(|_| (StatusCode::OK, json!({ "crate": crate_json("gpui") })));
@@ -316,12 +379,12 @@ fn test_owner_endpoints_match_crates_io_api() {
     let client = || RealCratesIoClient::new(fake_http_client.clone(), ApiToken::new("secret"));
     let gpui = CrateName::new("gpui");
     let owner_logins = [
-        OwnerLogin::Username("maxbrunsfeld".to_owned()),
-        OwnerLogin::CratesIoUser("maxbrunsfeld".to_owned()),
-        OwnerLogin::GitHubUser("maxbrunsfeld".to_owned()),
+        OwnerLogin::Username("maxbrunsfeld".into()),
+        OwnerLogin::CratesIoUser("maxbrunsfeld".to_owned().into()),
+        OwnerLogin::GitHubUser("maxbrunsfeld".into()),
         OwnerLogin::GitHubTeam {
-            organization: "zed-industries".to_owned(),
-            team: "crates-io".to_owned(),
+            organization: "zed-industries".into(),
+            team: "crates-io".into(),
         },
     ];
 

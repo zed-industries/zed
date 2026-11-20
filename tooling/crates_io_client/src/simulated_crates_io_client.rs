@@ -280,6 +280,12 @@ impl CratesIoClient for SimulatedCratesIoClient {
                     (None, None) => true,
                 };
                 matches_owner
+                    && query.team_id.is_none_or(|team_id| {
+                        simulated_crate
+                            .team_owners
+                            .iter()
+                            .any(|team| team.id == team_id)
+                    })
                     && query.search.as_ref().is_none_or(|search| {
                         krate
                             .name
@@ -374,7 +380,7 @@ impl CratesIoClient for SimulatedCratesIoClient {
                 OwnerLogin::Username(username)
                 | OwnerLogin::CratesIoUser(username)
                 | OwnerLogin::GitHubUser(username) => {
-                    let username = username.clone();
+                    let username = username.to_string();
                     if simulated_crate.invited_owners.contains(login) {
                         OwnerAddition::UserAlreadyInvited { username }
                     } else {
