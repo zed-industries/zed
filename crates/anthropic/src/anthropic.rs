@@ -22,7 +22,18 @@ pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
+pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
+pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
 
+/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
+pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
+
+/// The smallest input-token trigger Anthropic accepts for compaction.
+pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
+
+/// Fast mode availability does not follow model version order.
+/// <https://platform.claude.com/docs/en/build-with-claude/fast-mode#feature-availability>
 pub fn supports_fast_mode(model_id: &str) -> bool {
     matches!(
         model_id,
@@ -34,41 +45,66 @@ pub fn supports_fast_mode(model_id: &str) -> bool {
     )
 }
 
-/// Model IDs where adaptive thinking runs by default when a request omits the
-/// `thinking` field, and where thinking must instead be turned off with an
-/// explicit `thinking: {"type": "disabled"}`.
+/// Explicit opt-out for models that think by default, used when the Models API
+/// doesn't advertise an off mode. Keep this model-specific: Opus 5 accepts
+/// `disabled`, but Opus 5.5 rejects it.
 ///
-/// On earlier Opus models omitting `thinking` means thinking is off; Claude
-/// Opus 5 flipped that default, as did Claude Sonnet 5 and Haiku 5.5. Claude Fable 5 and
-/// Claude Mythos 5 also think by default, but they reject `{"type":
-/// "disabled"}` with a 400 error, so they are deliberately excluded here
-/// (thinking cannot be turned off for them at all).
-///
-/// <https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-5>
-pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "claude-opus-5" | "claude-sonnet-5" | "claude-haiku-5-5"
-    )
+/// <https://platform.claude.com/docs/en/build-with-claude/thinking#turning-thinking-off>
+fn thinking_opt_out_fallback(model_id: &str) -> Option<Thinking> {
+    match model_id {
+        "claude-sonnet-5-5" => Some(Thinking::BetweenTools),
+        "claude-opus-5" | "claude-sonnet-5" | "claude-haiku-5-5" => Some(Thinking::Disabled),
+        _ => None,
+    }
 }
 
-pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
-pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
-pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
+fn requires_adaptive_thinking(model_id: &str) -> bool {
+    let Some((family, major, minor)) = parse_claude_model_version(model_id) else {
+        return false;
+    };
+    let minimum_version = match family {
+        "opus" => (4, 7),
+        "sonnet" | "fable" | "mythos" => (5, 0),
+        "haiku" => (5, 5),
+        _ => return false,
+    };
+    (major, minor) >= minimum_version
+}
 
+// Mythos Preview accepts manual thinking but still rejects non-default temperature.
+// <https://platform.claude.com/docs/en/build-with-claude/thinking#sampling-parameters>
+fn rejects_custom_temperature(model_id: &str) -> bool {
+    if model_id == "claude-mythos-preview" {
+        return true;
+    }
+    let Some((family, major, minor)) = parse_claude_model_version(model_id) else {
+        return false;
+    };
+    let minimum_version = match family {
+        "opus" => (4, 7),
+        "sonnet" | "fable" | "mythos" => (5, 0),
+        "haiku" => (5, 5),
+        _ => return false,
+    };
+    (major, minor) >= minimum_version
+}
+
+/// <https://platform.claude.com/docs/en/build-with-claude/preserved-thinking/prefix-checks#outcomes>
 pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "claude-fable-5-2"
-            | "claude-mythos-5-2"
-            | "claude-opus-5-5"
-            | "claude-fable-5-1"
-            | "claude-mythos-5-1"
-            | "claude-sonnet-5-5"
-            | "claude-haiku-5-5"
-    )
+    let Some((family, major, minor)) = parse_claude_model_version(model_id) else {
+        return false;
+    };
+    let minimum_version = match family {
+        "opus" | "sonnet" | "haiku" => (5, 5),
+        "fable" | "mythos" => (5, 1),
+        _ => return false,
+    };
+    (major, minor) >= minimum_version
 }
 
+/// Checks for models that reject forced tool choice on every request, not
+/// request-specific restrictions such as manual extended thinking.
+/// <https://platform.claude.com/docs/en/build-with-claude/thinking#response-prefill-and-forced-tool-use>
 pub fn supports_forced_tool_use(model_id: &str) -> bool {
     !matches!(
         model_id,
@@ -83,31 +119,31 @@ pub fn supports_forced_tool_use(model_id: &str) -> bool {
 
 /// Whether this model accepts system messages inside conversation history.
 ///
-/// Older models retain the flattened system-prompt representation.
+/// Infer support for newer versions of known model families. The cutoff is
+/// family-specific: Sonnet 5 lacks support even though Opus 4.8 has it.
 /// <https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages>
 pub fn supports_mid_conversation_system_messages(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "claude-fable-5-2"
-            | "claude-mythos-5-2"
-            | "claude-fable-5-1"
-            | "claude-mythos-5-1"
-            | "claude-fable-5"
-            | "claude-mythos-5"
-            | "claude-mythos-preview"
-            | "claude-opus-5-5"
-            | "claude-opus-5"
-            | "claude-opus-4-8"
-            | "claude-sonnet-5-5"
-            | "claude-haiku-5-5"
-    )
+    if model_id == "claude-mythos-preview" {
+        return true;
+    }
+    let Some((family, major, minor)) = parse_claude_model_version(model_id) else {
+        return false;
+    };
+    let minimum_version = match family {
+        "opus" => (4, 8),
+        "sonnet" | "haiku" => (5, 5),
+        "fable" | "mythos" => (5, 0),
+        _ => return false,
+    };
+    (major, minor) >= minimum_version
 }
 
-/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
-pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
-
-/// The smallest input-token trigger Anthropic accepts for compaction.
-pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
+fn parse_claude_model_version(model_id: &str) -> Option<(&str, u8, u8)> {
+    let (family, version) = model_id.strip_prefix("claude-")?.split_once('-')?;
+    let (major, minor) = version.split_once('-').unwrap_or((version, "0"));
+    // Only infer from plain versions, not dated snapshots or custom aliases.
+    Some((family, major.parse().ok()?, minor.parse().ok()?))
+}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -953,9 +989,8 @@ pub enum Thinking {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         block_binding: Option<ThinkingBlockBinding>,
     },
-    /// Explicitly turns thinking off. Required by models where thinking runs
-    /// by default (see [`requires_explicit_thinking_opt_out`]); only accepted
-    /// at effort `high` or below.
+    /// Explicitly turns thinking off. Some models only accept it at effort
+    /// `high` or below.
     Disabled,
     /// The lowest thinking setting, for models that think by default but
     /// reject [`Thinking::Disabled`] (Claude Sonnet 5.5).
@@ -1913,6 +1948,70 @@ mod tests {
         assert!(!model.supports_thinking);
         assert!(!model.supports_adaptive_thinking);
         assert_eq!(model.mode, AnthropicModelMode::Default);
+    }
+
+    #[test]
+    fn thinking_prefix_binding_uses_family_specific_version_cutoffs() {
+        for (model_id, expected) in [
+            ("claude-opus-5-4", false),
+            ("claude-opus-5-5", true),
+            ("claude-opus-5-10", true),
+            ("claude-sonnet-5", false),
+            ("claude-sonnet-5-5", true),
+            ("claude-sonnet-6", true),
+            ("claude-haiku-5-4", false),
+            ("claude-haiku-5-5", true),
+            ("claude-haiku-6", true),
+            ("claude-fable-5", false),
+            ("claude-fable-5-1", true),
+            ("claude-fable-6", true),
+            ("claude-mythos-preview", false),
+            ("claude-mythos-5", false),
+            ("claude-mythos-5-1", true),
+            ("claude-mythos-6", true),
+            ("claude-opus-5-5-20260921", false),
+            ("claude-opus-latest", false),
+            ("claude-unknown-6", false),
+        ] {
+            assert_eq!(
+                binds_thinking_blocks_to_prefix(model_id),
+                expected,
+                "{model_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn system_message_support_uses_family_specific_version_cutoffs() {
+        for (model_id, expected) in [
+            ("claude-opus-4-7", false),
+            ("claude-opus-4-8", true),
+            ("claude-opus-4-10", true),
+            ("claude-opus-5", true),
+            ("claude-sonnet-5", false),
+            ("claude-sonnet-5-4", false),
+            ("claude-sonnet-5-5", true),
+            ("claude-sonnet-6", true),
+            ("claude-haiku-4-5-20251001", false),
+            ("claude-haiku-5-4", false),
+            ("claude-haiku-5-5", true),
+            ("claude-haiku-6", true),
+            ("claude-fable-5", true),
+            ("claude-fable-6", true),
+            ("claude-mythos-5", true),
+            ("claude-mythos-6", true),
+            ("claude-mythos-preview", true),
+            ("claude-opus-4-20250514", false),
+            ("claude-opus-latest", false),
+            ("claude-unknown-6", false),
+            ("custom-opus-6", false),
+        ] {
+            assert_eq!(
+                supports_mid_conversation_system_messages(model_id),
+                expected,
+                "{model_id}"
+            );
+        }
     }
 
     #[test]
