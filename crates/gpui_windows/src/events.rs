@@ -94,6 +94,7 @@ impl WindowsWindowInner {
             // So, let's eagerly activate the window.
             WM_MOUSEACTIVATE => Some(MA_ACTIVATE as isize),
             WM_ACTIVATE => self.handle_activate_msg(wparam),
+            WM_NCACTIVATE => self.handle_nc_activate_msg(handle, wparam),
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
@@ -798,15 +799,8 @@ impl WindowsWindowInner {
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
 
-        let events = self
-            .state
-            .a11y
-            .try_borrow_mut()
-            .ok()
-            .and_then(|mut a11y| a11y.as_mut()?.adapter.update_window_focus_state(activated));
-        if let Some(events) = events {
-            events.raise();
-        }
+        // Activation moves the keyboard focus, and the system announces that to UI Automation.
+        self.update_a11y_window_focus(activated, false);
 
         let this = self.clone();
 
@@ -841,6 +835,20 @@ impl WindowsWindowInner {
             })
             .detach();
 
+        None
+    }
+
+    fn handle_nc_activate_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
+        // A window that is already its thread's active window and keyboard focus becomes the
+        // foreground window without a new `WM_ACTIVATE` or `WM_SETFOCUS`, for example when it was
+        // opened by a process that could not take the foreground and the user then clicks it.
+        // Only `WM_NCACTIVATE` is sent, so report the focus to the accessibility adapter here.
+        if wparam.0 != 0
+            && unsafe { GetForegroundWindow() } == handle
+            && unsafe { GetFocus() } == handle
+        {
+            self.update_a11y_window_focus(true, true);
+        }
         None
     }
 

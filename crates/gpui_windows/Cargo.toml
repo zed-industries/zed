@@ -60,6 +60,7 @@ windows = { workspace = true, features = [
     "Win32_System_StationsAndDesktops",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
+    "Win32_UI_Accessibility",
     "Win32_UI_Controls",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_Ime",

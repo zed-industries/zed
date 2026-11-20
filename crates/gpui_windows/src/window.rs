@@ -23,7 +23,10 @@ use windows::{
         System::{
             Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
         },
-        UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
+        UI::{
+            Accessibility::NotifyWinEvent, Controls::*, HiDpi::*, Input::KeyboardAndMouse::*,
+            Shell::*, WindowsAndMessaging::*,
+        },
     },
     core::*,
 };
@@ -1096,6 +1099,7 @@ impl PlatformWindow for WindowsWindow {
         *self.state.a11y.borrow_mut() = Some(A11yState {
             adapter,
             activation_handler,
+            window_focused: is_focused,
         });
     }
 
@@ -1123,6 +1127,48 @@ impl PlatformWindow for WindowsWindow {
 pub(crate) struct A11yState {
     pub(crate) adapter: accesskit_windows::Adapter,
     pub(crate) activation_handler: A11yActivationHandler,
+    /// The window focus state last reported to the adapter.
+    pub(crate) window_focused: bool,
+}
+
+impl WindowsWindowInner {
+    /// Reports the window's focus state to the accessibility adapter, if it changed.
+    ///
+    /// With `notify_focus`, also asks UI Automation to resolve the focused element again. That
+    /// is needed when the window gains focus without the system announcing a focus change.
+    pub(crate) fn update_a11y_window_focus(&self, focused: bool, notify_focus: bool) {
+        let events = self.state.a11y.try_borrow_mut().ok().and_then(|mut a11y| {
+            let a11y = a11y.as_mut()?;
+            if a11y.window_focused == focused {
+                return None;
+            }
+            a11y.window_focused = focused;
+            Some(a11y.adapter.update_window_focus_state(focused))
+        });
+        // The borrow must be dropped before raising events; see `a11y_tree_update`.
+        let Some(events) = events else {
+            return;
+        };
+        if let Some(events) = events {
+            events.raise();
+        }
+        if focused && notify_focus {
+            notify_a11y_focus(self.hwnd);
+        }
+    }
+}
+
+/// Raises `EVENT_OBJECT_FOCUS` for the window's client area, which makes UI Automation ask the
+/// window's provider (the AccessKit adapter) for the focused element.
+fn notify_a11y_focus(hwnd: HWND) {
+    unsafe {
+        NotifyWinEvent(
+            EVENT_OBJECT_FOCUS,
+            hwnd,
+            OBJID_CLIENT.0,
+            CHILDID_SELF as i32,
+        )
+    };
 }
 
 pub(crate) struct A11yActivationHandler {
