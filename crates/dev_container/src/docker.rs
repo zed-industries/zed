@@ -680,6 +680,7 @@ fn parse_compose_volume_string(s: &str) -> Option<MountDefinition> {
             source: Some(source.to_string()),
             target: target.to_string(),
             mount_type: None,
+            ..Default::default()
         })
     } else {
         // No colon at all — anonymous volume with only a target path
@@ -690,6 +691,7 @@ fn parse_compose_volume_string(s: &str) -> Option<MountDefinition> {
             source: None,
             target: s.to_string(),
             mount_type: None,
+            ..Default::default()
         })
     }
 }
@@ -1155,6 +1157,7 @@ mod test {
                             mount_type: Some("bind".to_string()),
                             source: Some("/path/to".to_string()),
                             target: "/workspaces".to_string(),
+                            ..Default::default()
                         }],
                         network_mode: Some("service:db".to_string()),
 
@@ -1192,6 +1195,7 @@ mod test {
                             mount_type: Some("volume".to_string()),
                             source: Some("postgres-data".to_string()),
                             target: "/var/lib/postgresql/data".to_string(),
+                            ..Default::default()
                         }],
                         environment: Some(HashMap::from([
                             ("POSTGRES_DB".to_string(), "postgres".to_string()),
