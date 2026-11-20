@@ -1575,6 +1575,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    path_load_counts: std::collections::HashMap<PathBuf, usize>,
     read_dir_hooks: BTreeMap<PathBuf, BoxFuture<'static, ()>>,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
@@ -2079,6 +2080,7 @@ impl FakeFs {
             events_paused: false,
             read_dir_call_count: 0,
             metadata_call_count: 0,
+            path_load_counts: Default::default(),
             read_dir_hooks: Default::default(),
             path_write_counts: Default::default(),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -2248,6 +2250,7 @@ impl FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let mut state = self.state.lock();
+        *state.path_load_counts.entry(path.clone()).or_insert(0) += 1;
         let entry = state.entry(&path)?;
         entry.file_content(&path).cloned()
     }
@@ -3008,6 +3011,16 @@ impl FakeFs {
     /// How many `metadata` calls have been issued.
     pub fn metadata_call_count(&self) -> usize {
         self.state.lock().metadata_call_count
+    }
+
+    pub fn load_count_for_path(&self, path: impl AsRef<Path>) -> usize {
+        let path = normalize_path(path.as_ref());
+        self.state
+            .lock()
+            .path_load_counts
+            .get(&path)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// How many write operations have been issued for a specific path.
