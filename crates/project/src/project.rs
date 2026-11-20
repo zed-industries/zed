@@ -145,9 +145,9 @@ use util::{
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
-    Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
-    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
-    discover_root_repo_common_dir,
+    Entry, EntryExclusions, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange,
+    ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
+    WorktreeSettings, discover_root_repo_common_dir,
 };
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -6949,6 +6949,7 @@ pub fn path_suffix(path: &Path, detail: usize) -> String {
 pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,
+    pub exclusions: EntryExclusions,
     pub include_root_name: bool,
     pub candidates: Candidates,
 }
@@ -7015,6 +7016,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
     fn candidates(&'a self, start: usize) -> Self::Candidates {
         PathMatchCandidateSetIter {
+            exclusions: self.exclusions,
             traversal: match self.candidates {
                 Candidates::Directories => self.snapshot.directories(self.include_ignored, start),
                 Candidates::Files => self.snapshot.files(self.include_ignored, start),
@@ -7026,19 +7028,22 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
 pub struct PathMatchCandidateSetIter<'a> {
     traversal: Traversal<'a>,
+    exclusions: EntryExclusions,
 }
 
 impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
-    type Item = fuzzy::PathMatchCandidate<'a>;
+    type Item = Option<fuzzy::PathMatchCandidate<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.traversal
-            .next()
-            .map(|entry| fuzzy::PathMatchCandidate {
-                is_dir: entry.kind.is_dir(),
-                path: &entry.path,
-                char_bag: entry.char_bag,
-            })
+        let entry = self.traversal.next()?;
+        if entry.exclusions.intersects(self.exclusions) {
+            return Some(None);
+        }
+        Some(Some(fuzzy::PathMatchCandidate {
+            is_dir: entry.kind.is_dir(),
+            path: &entry.path,
+            char_bag: entry.char_bag,
+        }))
     }
 }
 
@@ -7087,6 +7092,7 @@ impl<'a> fuzzy_nucleo::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
     }
     fn candidates(&'a self, start: usize) -> Self::Candidates {
         PathMatchCandidateSetNucleoIter {
+            exclusions: self.exclusions,
             traversal: match self.candidates {
                 Candidates::Directories => self.snapshot.directories(self.include_ignored, start),
                 Candidates::Files => self.snapshot.files(self.include_ignored, start),
@@ -7098,18 +7104,21 @@ impl<'a> fuzzy_nucleo::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
 pub struct PathMatchCandidateSetNucleoIter<'a> {
     traversal: Traversal<'a>,
+    exclusions: EntryExclusions,
 }
 
 impl<'a> Iterator for PathMatchCandidateSetNucleoIter<'a> {
-    type Item = fuzzy_nucleo::PathMatchCandidate<'a>;
+    type Item = Option<fuzzy_nucleo::PathMatchCandidate<'a>>;
     fn next(&mut self) -> Option<Self::Item> {
-        self.traversal
-            .next()
-            .map(|entry| fuzzy_nucleo::PathMatchCandidate {
-                is_dir: entry.kind.is_dir(),
-                path: &entry.path,
-                char_bag: entry.char_bag,
-            })
+        let entry = self.traversal.next()?;
+        if entry.exclusions.intersects(self.exclusions) {
+            return Some(None);
+        }
+        Some(Some(fuzzy_nucleo::PathMatchCandidate {
+            is_dir: entry.kind.is_dir(),
+            path: &entry.path,
+            char_bag: entry.char_bag,
+        }))
     }
 }
 
