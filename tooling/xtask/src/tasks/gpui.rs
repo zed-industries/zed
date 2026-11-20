@@ -47,16 +47,9 @@ struct PublishGpuiArgs {
 }
 
 pub fn run_gpui(command: GpuiCommand) -> Result<()> {
-    let graph = crate_graph::load_workspace_graph()?;
     let update = matches!(&command, GpuiCommand::UpdateCratesIo(_));
     match command {
         GpuiCommand::Plan(args) | GpuiCommand::UpdateCratesIo(args) => {
-            let plan = publish_plan::build_publish_plan(&graph)?;
-            validation::validate(&plan)?;
-            println!(
-                "GPUI publish plan ({} crates, dependencies first):",
-                plan.len()
-            );
             let token = std::env::var("CARGO_REGISTRY_TOKEN").context(
                 "CARGO_REGISTRY_TOKEN is required to inspect crates.io trusted publishing",
             )?;
@@ -68,6 +61,9 @@ pub fn run_gpui(command: GpuiCommand) -> Result<()> {
             );
             let runtime =
                 tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
+            let graph = crate_graph::load_workspace_graph()?;
+            let plan = publish_plan::build_publish_plan(&graph)?;
+            validation::validate(&plan)?;
             let checked = runtime.block_on(async {
                 let checked = registry::check_plan(&client, &plan).await?;
                 if update {
@@ -77,18 +73,27 @@ pub fn run_gpui(command: GpuiCommand) -> Result<()> {
                     Ok(checked)
                 }
             })?;
+            println!(
+                "GPUI publish plan ({} crates, dependencies first):",
+                plan.len()
+            );
             for (entry, checked) in plan.iter().zip(&checked) {
                 let package = entry.repository.publish_info(entry.package.name());
                 println!(
                     "{} -> {} ({}) [{:?}]",
                     package.original_name,
-                    package.repository.target_name(package.original_name),
+                    match &checked.state {
+                        registry::PublishState::NotPublished { target_crate_name } =>
+                            target_crate_name,
+                        _ => &checked.name,
+                    },
                     package.repository.display(&args),
                     checked.state
                 );
             }
         }
         GpuiCommand::Why { crate_name } => {
+            let graph = crate_graph::load_workspace_graph()?;
             let explanation = crate_graph::explain_crate(&graph, &crate_name)?;
             println!(
                 "Why `{crate_name}` is in the GPUI publish list (A -> B means A depends on B):"

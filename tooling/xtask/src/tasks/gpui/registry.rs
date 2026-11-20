@@ -1,9 +1,12 @@
-use std::{borrow::Cow, collections::BTreeMap};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail, ensure};
 use crates_io_client::{
-    CrateListQuery, CrateName, CrateUpdate, CratesIoClient, CratesIoError, NewGitHubConfig, Owner,
-    OwnerLogin, TeamId,
+    Crate, CrateListQuery, CrateName, CrateUpdate, CratesIoClient, CratesIoError, NewGitHubConfig,
+    Owner, OwnerLogin, TeamId,
 };
 
 use super::publish_plan::PublishPlanEntry;
@@ -36,7 +39,9 @@ fn owner_matches(required: &OwnerLogin, owner: &Owner) -> bool {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PublishState {
-    NotPublished,
+    NotPublished {
+        target_crate_name: CrateName,
+    },
     RequiresCratesIoUpdates {
         missing_owners: Vec<OwnerLogin>,
         missing_workflow: bool,
@@ -67,16 +72,17 @@ pub async fn check_plan(
     let names = plan
         .iter()
         .map(|entry| CrateName::new(entry.repository.target_name(entry.package.name())));
-    check_crates(client, names).await
+    check_crates(client, names, TEAM_ID).await
 }
 
 async fn check_crates(
     client: &dyn CratesIoClient,
     names: impl IntoIterator<Item = CrateName>,
+    team_id: TeamId,
 ) -> Result<Vec<CheckedCrate>> {
-    let mut team_crates: BTreeMap<_, _> = client
+    let team_crates: BTreeMap<_, _> = client
         .list_crates(&CrateListQuery {
-            team_id: Some(TEAM_ID),
+            team_id: Some(team_id),
             ..Default::default()
         })
         .await
@@ -86,27 +92,29 @@ async fn check_crates(
         .collect();
     let mut checked = Vec::new();
     for name in names {
-        // A crate missing from the team list may exist under different owners.
-        let krate = match team_crates.remove(&name) {
-            Some(krate) => krate,
-            None => match client.get_crate(&name).await {
-                Ok(details) => details.krate,
-                Err(CratesIoError::NotFound { .. }) => {
-                    checked.push(CheckedCrate {
-                        name,
-                        state: PublishState::NotPublished,
-                    });
-                    continue;
-                }
-                Err(error) => {
-                    return Err(error).with_context(|| format!("failed to look up {name}"));
-                }
-            },
+        let resolved = if let Some(krate) = team_crates.get(&name) {
+            let owners = client
+                .list_owners(&name)
+                .await
+                .with_context(|| format!("failed to list owners of {name}"))?;
+            ResolvedCrate::Published {
+                krate: krate.clone(),
+                owners,
+            }
+        } else {
+            resolve_target_crate_name(client, &name).await?
         };
-        let owners = client
-            .list_owners(&name)
-            .await
-            .with_context(|| format!("failed to list owners of {name}"))?;
+        let (krate, owners) = match resolved {
+            ResolvedCrate::NotPublished(target_crate_name) => {
+                checked.push(CheckedCrate {
+                    name,
+                    state: PublishState::NotPublished { target_crate_name },
+                });
+                continue;
+            }
+            ResolvedCrate::Published { krate, owners } => (krate, owners),
+        };
+        let name = krate.name.clone();
         let missing_owners: Vec<_> = REQUIRED_OWNERS
             .iter()
             .filter(|required| !owners.iter().any(|owner| owner_matches(required, owner)))
@@ -134,7 +142,71 @@ async fn check_crates(
         };
         checked.push(CheckedCrate { name, state });
     }
+    let mut targets = BTreeSet::new();
+    for krate in &checked {
+        let target = match &krate.state {
+            PublishState::NotPublished { target_crate_name } => target_crate_name,
+            _ => &krate.name,
+        };
+        ensure!(
+            targets.insert(target.as_str().to_ascii_lowercase().replace('_', "-")),
+            "multiple planned crates resolve to crates.io name {target}"
+        );
+    }
     Ok(checked)
+}
+
+enum ResolvedCrate {
+    NotPublished(CrateName),
+    Published { krate: Crate, owners: Vec<Owner> },
+}
+
+async fn resolve_target_crate_name(
+    client: &dyn CratesIoClient,
+    planned_name: &CrateName,
+) -> Result<ResolvedCrate> {
+    if let Some(resolved) = check_crate_name(client, planned_name).await? {
+        return Ok(resolved);
+    }
+    let normalized = planned_name.as_str().to_ascii_lowercase().replace('_', "-");
+    ensure!(
+        !normalized.starts_with("zed-"),
+        "planned crates.io name {planned_name} is already taken and already has a zed prefix"
+    );
+    let prefixed = CrateName::new(format!("zed-{planned_name}"));
+    if let Some(resolved) = check_crate_name(client, &prefixed).await? {
+        return Ok(resolved);
+    }
+    bail!("neither planned crates.io name {planned_name} nor fallback {prefixed} is available")
+}
+
+async fn check_crate_name(
+    client: &dyn CratesIoClient,
+    name: &CrateName,
+) -> Result<Option<ResolvedCrate>> {
+    match client.get_crate(name).await {
+        Ok(details) => {
+            let owners = client
+                .list_owners(&details.krate.name)
+                .await
+                .with_context(|| format!("failed to list owners of {name}"))?;
+            if owners.iter().any(|owner| {
+                REQUIRED_OWNERS
+                    .iter()
+                    .any(|required| owner_matches(required, owner))
+            }) {
+                Ok(Some(ResolvedCrate::Published {
+                    krate: details.krate,
+                    owners,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(CratesIoError::NotFound { .. }) => Ok(Some(ResolvedCrate::NotPublished(name.clone()))),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to check crates.io name availability for {name}")),
+    }
 }
 
 pub async fn update_crates(client: &dyn CratesIoClient, checked: &[CheckedCrate]) -> Result<()> {
@@ -185,8 +257,16 @@ mod tests {
     async fn checks_and_repairs_without_treating_invitations_as_ownership() -> Result<()> {
         let client = SimulatedCratesIoClient::new();
         let name = client.test_crate("gpui", client.token_user());
-        let names = || vec![name.clone(), CrateName::new("unpublished")];
-        let checked = check_crates(client.as_ref(), names()).await?;
+        let team_id = client.test_team_owner(&name, "github:zed-industries:crates-io")?;
+        let unassociated = client.test_crate("unassociated", client.token_user());
+        let names = || {
+            vec![
+                name.clone(),
+                CrateName::new("unpublished"),
+                unassociated.clone(),
+            ]
+        };
+        let checked = check_crates(client.as_ref(), names(), team_id).await?;
         assert!(matches!(
             checked[0].state,
             PublishState::RequiresCratesIoUpdates {
@@ -195,9 +275,20 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(checked[1].state, PublishState::NotPublished);
+        assert_eq!(
+            checked[1].state,
+            PublishState::NotPublished {
+                target_crate_name: CrateName::new("unpublished"),
+            }
+        );
+        assert_eq!(
+            checked[2].state,
+            PublishState::NotPublished {
+                target_crate_name: CrateName::new("zed-unassociated"),
+            }
+        );
         update_crates(client.as_ref(), &checked).await?;
-        let checked = check_crates(client.as_ref(), names()).await?;
+        let checked = check_crates(client.as_ref(), names(), team_id).await?;
         assert!(
             matches!(&checked[0].state, PublishState::RequiresCratesIoUpdates { missing_owners, missing_workflow: false, enable_trusted_only: false } if missing_owners.len() == 3)
         );
@@ -208,10 +299,89 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn propagates_permission_errors() {
+    async fn updates_owned_crates_outside_the_team_list_including_fallbacks() -> Result<()> {
+        for (planned, published) in [("owned", "owned"), ("taken", "zed-taken")] {
+            let client = SimulatedCratesIoClient::new();
+            if planned != published {
+                client.test_crate(planned, client.token_user());
+            }
+            let name = client.test_crate(published, client.token_user());
+            client.test_team_owner(&name, "github:zed-industries:crates-io")?;
+            let checked =
+                check_crates(client.as_ref(), vec![CrateName::new(planned)], TEAM_ID).await?;
+            assert_eq!(checked[0].name, name);
+            assert!(
+                matches!(&checked[0].state, PublishState::RequiresCratesIoUpdates {
+                missing_owners, missing_workflow: true, enable_trusted_only: true,
+            } if missing_owners.len() == 3)
+            );
+            update_crates(client.as_ref(), &checked).await?;
+            assert!(client.get_crate(&name).await?.krate.trustpub_only);
+            assert_eq!(client.list_github_configs(&name).await?.len(), 1);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn recognizes_required_individual_owners() {
+        let owner = Owner::User(crates_io_client::User {
+            id: crates_io_client::UserId(1),
+            login: "maxbrunsfeld".into(),
+            name: None,
+        });
+        assert!(
+            REQUIRED_OWNERS
+                .iter()
+                .any(|required| owner_matches(required, &owner))
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_taken_fallbacks_and_already_prefixed_names() -> Result<()> {
+        let client = SimulatedCratesIoClient::new();
+        let name = client.test_crate("taken", client.token_user());
+        let fallback = client.test_crate("zed-taken", client.token_user());
+        for name in [name, fallback] {
+            assert!(
+                resolve_target_crate_name(client.as_ref(), &name)
+                    .await
+                    .is_err()
+            );
+        }
+        let name = client.test_crate("Zed_existing", client.token_user());
+        assert!(
+            resolve_target_crate_name(client.as_ref(), &name)
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_conflicts_between_resolved_plan_names() -> Result<()> {
+        let client = SimulatedCratesIoClient::new();
+        let name = client.test_crate("taken", client.token_user());
+        let result = check_crates(
+            client.as_ref(),
+            vec![name, CrateName::new("zed-taken")],
+            TEAM_ID,
+        )
+        .await;
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn propagates_permission_errors() -> Result<()> {
         let client = SimulatedCratesIoClient::new();
         let other_user = client.test_user();
         let name = client.test_crate("gpui", other_user);
-        assert!(check_crates(client.as_ref(), vec![name]).await.is_err());
+        let team_id = client.test_team_owner(&name, "github:zed-industries:crates-io")?;
+        assert!(
+            check_crates(client.as_ref(), vec![name], team_id)
+                .await
+                .is_err()
+        );
+        Ok(())
     }
 }

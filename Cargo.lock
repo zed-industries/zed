@@ -22307,12 +22307,14 @@ dependencies = [
  "cargo_toml",
  "clap",
  "compliance",
+ "crates_io_client",
  "gh-workflow",
  "guppy",
  "indexmap 2.14.2",
  "indoc",
  "itertools 0.14.0",
  "regex",
+ "reqwest_client",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -22322,6 +22324,7 @@ dependencies = [
  "tokio",
  "toml 0.9.8",
  "toml_edit 0.22.27",
+ "tracing-subscriber",
  "url",
 ]
 
