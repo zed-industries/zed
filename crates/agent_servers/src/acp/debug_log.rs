@@ -1,7 +1,6 @@
 // The log shows v1 and v2 traffic. v1's ID type also covers the `null` ID of error
 // responses, which v2 keeps even though v2 requests can't use it.
 use agent_client_protocol::{Error, v1::schema::RequestId};
-use collections::HashSet;
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -47,31 +46,6 @@ pub struct AcpDebugMessage {
 struct ParsedDebugMessage {
     message: AcpDebugMessage,
     valid_envelope: bool,
-}
-
-fn redact_auth_status(payload: &mut Option<serde_json::Value>) {
-    use serde_json::Value;
-    const REDACTED: &str = "[redacted]";
-
-    // ACP logs can be shared. Only the standard states are safe to copy verbatim;
-    // even extension field names and custom state strings can identify an account.
-    match payload {
-        Some(Value::Object(fields)) => {
-            fields.retain(|key, value| match (key.as_str(), value.as_str()) {
-                (
-                    "state",
-                    Some("authenticated" | "unauthenticated" | "not_required" | "unknown"),
-                ) => true,
-                ("state" | "accounts" | "_meta" | "authStatus", _) => {
-                    *value = REDACTED.into();
-                    true
-                }
-                _ => false,
-            })
-        }
-        None | Some(Value::Null) => {}
-        Some(value) => *value = REDACTED.into(),
-    }
 }
 
 impl AcpDebugMessage {
@@ -152,8 +126,7 @@ impl AcpDebugMessage {
             if let Some(error) = object.get("error") {
                 let acp_error =
                     serde_json::from_value::<Error>(error.clone()).unwrap_or_else(|err| {
-                        // A serde diagnostic can quote account data from the wire.
-                        log::warn!("Failed to deserialize ACP error ({:?})", err.classify());
+                        log::warn!("Failed to deserialize ACP error: {err}");
                         Error::internal_error().data(error.to_string())
                     });
 
@@ -182,8 +155,6 @@ impl AcpDebugMessage {
 struct AcpDebugLogState {
     messages: VecDeque<AcpDebugMessage>,
     subscribers: Vec<async_channel::Sender<AcpDebugMessage>>,
-    // Responses don't repeat the method name. Keep the IDs even if the request leaves the backlog.
-    auth_status_requests: HashSet<RequestId>,
     // Startup fallback must not depend on eviction from the diagnostic backlog.
     initialization: Option<InitializationExchange>,
 }
@@ -247,36 +218,7 @@ impl AcpDebugLog {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         state.subscribers.retain(|sender| !sender.is_closed());
-        for mut parsed in messages {
-            match (parsed.message.direction, &mut parsed.message.message) {
-                (
-                    AcpDebugMessageDirection::Outgoing,
-                    AcpDebugMessageContent::Request { id, method, .. },
-                ) if method.as_ref() == "auth/status" => {
-                    state.auth_status_requests.insert(id.clone());
-                }
-                (
-                    AcpDebugMessageDirection::Incoming,
-                    AcpDebugMessageContent::Response { id, result },
-                ) if state.auth_status_requests.remove(id) => match result {
-                    Ok(payload) => redact_auth_status(payload),
-                    Err(error) => {
-                        error.message = "Auth status query failed".into();
-                        error.data = None;
-                    }
-                },
-                (
-                    AcpDebugMessageDirection::Incoming,
-                    AcpDebugMessageContent::Notification { method, params },
-                ) if matches!(
-                    method.as_ref(),
-                    "auth/status_update" | "_auth/status_update"
-                ) =>
-                {
-                    redact_auth_status(params);
-                }
-                _ => {}
-            }
+        for parsed in messages {
             let message = &parsed.message;
             match (message.direction, &message.message) {
                 (
@@ -345,90 +287,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auth_status_redacted_from_live_and_buffered_debug_messages() {
+    fn auth_status_debug_messages_preserve_the_wire_payload() {
         use AcpDebugMessageDirection::{Incoming, Outgoing};
         use serde_json::json;
+
+        let snapshot = json!({
+            "state": "authenticated",
+            "accounts": [{"label": "Work", "email": "user@example.test", "active": true}],
+            "_meta": {"source": "test"}
+        });
+        let legacy = json!({"authStatus": {"kind": "account", "label": "Work"}});
         let log = AcpDebugLog::default();
         let (_, live) = log.subscribe();
-        log.record_line(Outgoing, r#"{"id":1,"method":"auth/status","params":{}}"#);
-        log.record_line(Incoming, r#"{"id":2,"result":{"unrelated":true}}"#);
         log.record_line(
-            Incoming,
-            r#"{"method":"auth/status_update","params":{"state":"unauthenticated"}}"#,
+            Outgoing,
+            r#"{"jsonrpc":"2.0","id":1,"method":"auth/status","params":{}}"#,
         );
-        log.record_line(Incoming, r#"{"method":"_auth/status_update","params":{"authStatus":{"account":{"email":"private"}}}}"#);
-        log.record_line(
-            Incoming,
-            r#"{"id":1,"result":{"state":"authenticated","accounts":[{"label":"private"}],"_meta":{"email":"private"},"private-extension":true}}"#,
-        );
-        log.record_line(Outgoing, r#"{"id":3,"method":"auth/status"}"#);
-        log.record_line(
-            Incoming,
-            r#"{"id":3,"error":{"code":-32603,"message":"private","data":{"account":"private"}}}"#,
-        );
+        for message in [
+            json!({"jsonrpc":"2.0", "id":1, "result":snapshot}),
+            json!({"jsonrpc":"2.0", "method":"auth/status_update", "params":snapshot}),
+            json!({"jsonrpc":"2.0", "method":"_auth/status_update", "params":legacy}),
+        ] {
+            log.record_line(Incoming, &message.to_string());
+        }
         for messages in [
             log.subscribe().0,
             std::iter::from_fn(|| live.try_recv().ok()).collect(),
         ] {
-            let contents = messages
-                .into_iter()
-                .map(|entry| entry.message)
+            let payloads = messages
+                .iter()
+                .filter_map(|entry| match &entry.message {
+                    AcpDebugMessageContent::Response {
+                        result: Ok(value), ..
+                    } => value.as_ref(),
+                    AcpDebugMessageContent::Notification { params, .. } => params.as_ref(),
+                    _ => None,
+                })
                 .collect::<Vec<_>>();
-            let [
-                AcpDebugMessageContent::Request {
-                    params: Some(request),
-                    ..
-                },
-                AcpDebugMessageContent::Response {
-                    result: Ok(Some(unrelated)),
-                    ..
-                },
-                AcpDebugMessageContent::Notification {
-                    params: Some(update),
-                    ..
-                },
-                AcpDebugMessageContent::Notification {
-                    params: Some(legacy),
-                    ..
-                },
-                AcpDebugMessageContent::Response {
-                    result: Ok(Some(result)),
-                    ..
-                },
-                AcpDebugMessageContent::Request { .. },
-                AcpDebugMessageContent::Response {
-                    result: Err(error), ..
-                },
-            ] = contents.as_slice()
-            else {
-                panic!("unexpected auth status log entries")
-            };
-            assert_eq!(request, &json!({}));
-            assert_eq!(unrelated, &json!({"unrelated": true}));
-            assert_eq!(update, &json!({"state": "unauthenticated"}));
-            assert_eq!(legacy, &json!({"authStatus": "[redacted]"}));
-            assert_eq!(
-                result,
-                &json!({"state": "authenticated", "accounts": "[redacted]", "_meta": "[redacted]"})
-            );
-            assert!(error.message != "private" && error.data.is_none());
-        }
-    }
-
-    #[test]
-    fn auth_status_log_distinguishes_unrecognized_payloads_from_null() {
-        use serde_json::json;
-        for (mut payload, expected) in [
-            (
-                Some(json!({"state": "_private", "private": true})),
-                Some(json!({"state": "[redacted]"})),
-            ),
-            (Some(json!(["private"])), Some(json!("[redacted]"))),
-            (Some(json!(null)), Some(json!(null))),
-            (None, None),
-        ] {
-            redact_auth_status(&mut payload);
-            assert_eq!(payload, expected);
+            assert_eq!(payloads, [&snapshot, &snapshot, &legacy]);
         }
     }
 
