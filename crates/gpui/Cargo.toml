@@ -95,7 +95,7 @@ refineable.workspace = true
 scheduler.workspace = true
 resvg.workspace = true
 usvg.workspace = true
-ttf-parser = "0.25"
+ttf-parser = { version = "0.25", features = ["gvar-alloc"] }
 schemars = { workspace = true, features = ["derive"] }
 seahash = "4.1"
 serde = { workspace = true, features = ["derive"] }

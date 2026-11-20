@@ -583,6 +583,37 @@ mod tests {
     }
 
     #[test]
+    fn renders_text_with_many_glyph_variations() -> Result<()> {
+        let mut fontdb = Database::new();
+        fontdb.load_font_data(
+            include_bytes!("../test_fixtures/variable_font/GPUIVariableFontFixture.ttf").to_vec(),
+        );
+        // Keep system font fallback from hiding missing glyph outlines.
+        let renderer = SvgRenderer {
+            asset_source: Arc::new(()),
+            usvg_options: Arc::new(usvg::Options {
+                fontdb: Arc::new(fontdb),
+                ..Default::default()
+            }),
+        };
+
+        for text in ["Start", "End"] {
+            let svg = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60"><text x="10" y="45" font-family="GPUI Variable Font Fixture" font-size="40">{text}</text></svg>"#
+            );
+            let parsed = renderer.parse_svg(svg.as_bytes())?;
+            let image = renderer.render_parsed(&parsed, 1.)?;
+            let pixels = image.as_bytes(0).expect("rendered SVG should have a frame");
+
+            assert!(
+                pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
+                "{text:?} should render visible glyphs from the variable font"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn measured_text_width_matches_rasterized_advance() -> Result<()> {
         let renderer = SvgRenderer::new(Arc::new(BundledFonts));
         let font = SvgTextFont {
