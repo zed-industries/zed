@@ -35,7 +35,7 @@ use crate::{
     CodeAction, Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource,
     CoreCompletion, Hover, InlayHint, InlayId, LocationLink, LspAction, LspPullDiagnostics,
     ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
-    PulledDiagnostics, ResolveState, Symbol,
+    PulledDiagnostics, RemotelyCreatedModelGuard, RemotelyCreatedModels, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -4598,11 +4598,12 @@ pub struct FormattableBuffer {
 pub struct RemoteLspStore {
     upstream_client: Option<AnyProtoClient>,
     upstream_project_id: u64,
+    remotely_created_models: Arc<Mutex<RemotelyCreatedModels>>,
 }
 
 pub(crate) enum LspStoreMode {
-    Local(LocalLspStore),   // ssh host and collab host
-    Remote(RemoteLspStore), // collab guest
+    Local(LocalLspStore),   // ssh remote server and collab host
+    Remote(RemoteLspStore), // collab guest and ssh client
 }
 
 impl LspStoreMode {
@@ -4653,7 +4654,19 @@ pub struct BufferLspData {
 struct LspKey {
     request_type: TypeId,
     server_queried: Option<LanguageServerId>,
-    sender_id: proto::PeerId,
+    sender: LspQuerySender,
+}
+
+/// Who an incoming [`proto::LspQuery`] is answered for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct LspQuerySender {
+    /// The peer that receives the response and the buffers it refers to.
+    peer_id: proto::PeerId,
+    /// Set when a host proxies the query of one of its downstream peers. Over a remote server
+    /// connection every query of the host has the same `peer_id`, so this tells the queries of
+    /// the host and of its different downstream peers apart: each of them may supersede its own
+    /// earlier requests, but never another's.
+    forwarded_for: Option<proto::PeerId>,
 }
 
 impl BufferLspData {
@@ -5075,6 +5088,7 @@ impl LspStore {
         languages: Arc<LanguageRegistry>,
         upstream_client: AnyProtoClient,
         project_id: u64,
+        remotely_created_models: Arc<Mutex<RemotelyCreatedModels>>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
@@ -5089,6 +5103,7 @@ impl LspStore {
             mode: LspStoreMode::Remote(RemoteLspStore {
                 upstream_client: Some(upstream_client),
                 upstream_project_id: project_id,
+                remotely_created_models,
             }),
             downstream_client: None,
             last_formatting_failure: None,
@@ -5932,6 +5947,30 @@ impl LspStore {
         server: &LanguageServer,
     ) -> serde_json::Result<String> {
         serde_json::to_string(&self.synced_server_capabilities(server))
+    }
+
+    /// Serializes the capabilities of a server that runs here, or that the upstream peer
+    /// announced to this store.
+    fn serialize_synced_server_capabilities_by_id(
+        &self,
+        server_id: LanguageServerId,
+    ) -> Option<serde_json::Result<String>> {
+        if let Some(server) = self.language_server_for_id(server_id) {
+            return Some(self.serialize_synced_server_capabilities(&server));
+        }
+        let capabilities = SyncedServerCapabilities {
+            server_capabilities: self.lsp_server_capabilities.get(&server_id)?.clone(),
+            initial_server_capabilities: self
+                .lsp_server_initial_capabilities
+                .get(&server_id)
+                .cloned(),
+            text_document_registrations: self
+                .lsp_server_text_document_registrations
+                .get(&server_id)
+                .filter(|registrations| !registrations.is_empty())
+                .cloned(),
+        };
+        Some(serde_json::to_string(&capabilities))
     }
 
     fn notify_server_capabilities_updated(&self, server: &LanguageServer, cx: &mut Context<Self>) {
@@ -10126,9 +10165,9 @@ impl LspStore {
         self.downstream_client = Some((downstream_client.clone(), project_id));
 
         for (server_id, status) in &self.language_server_statuses {
-            if let Some(server) = self.language_server_for_id(*server_id)
-                && let Some(capabilities) =
-                    self.serialize_synced_server_capabilities(&server).log_err()
+            if let Some(capabilities) = self
+                .serialize_synced_server_capabilities_by_id(*server_id)
+                .and_then(|capabilities| capabilities.log_err())
             {
                 downstream_client
                     .send(proto::StartLanguageServer {
@@ -10752,6 +10791,125 @@ impl LspStore {
         self.request_filtered_lsp_locally(buffer, position, request, None, cx)
     }
 
+    fn request_lsp_locally_for_query<P, R>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: Option<P>,
+        request: R,
+        for_server_id: Option<LanguageServerId>,
+        cx: &mut Context<Self>,
+    ) -> Task<Vec<(LanguageServerId, R::Response)>>
+    where
+        P: ToOffset,
+        R: LspCommand + Clone,
+        <R::LspRequest as lsp::request::Request>::Result: Send,
+        <R::LspRequest as lsp::request::Request>::Params: Send,
+    {
+        let Some(server_id) = for_server_id else {
+            return self.request_multiple_lsp_locally(buffer, position, request, cx);
+        };
+        let server_task = self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Other(server_id),
+            request.clone(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            match server_task.await {
+                Ok(response) => vec![(server_id, response)],
+                // rust-analyzer likes to error with this when its still loading up
+                Err(e)
+                    if !should_log_lsp_response_error(&e)
+                        || !should_log_lsp_request_failure(&format!("{e:#}")) =>
+                {
+                    Vec::new()
+                }
+                Err(e) => {
+                    log::error!("Error handling response for request {request:?}: {e:#}");
+                    Vec::new()
+                }
+            }
+        })
+    }
+
+    /// Asks the upstream peer, which runs the language servers, on behalf of a downstream peer.
+    fn request_multiple_lsp_upstream<T>(
+        &self,
+        buffer: &Entity<Buffer>,
+        request: T,
+        for_server_id: Option<LanguageServerId>,
+        forwarded_for: proto::PeerId,
+        cx: &mut Context<Self>,
+    ) -> Task<Vec<(LanguageServerId, T::Response)>>
+    where
+        T: LspCommand + Clone,
+        T::ProtoRequest: proto::LspRequestMessage,
+        <T::ProtoRequest as proto::LspRequestMessage>::Response:
+            Into<<T::ProtoRequest as proto::RequestMessage>::Response>,
+    {
+        let Some((upstream_client, project_id)) = self.upstream_client() else {
+            return Task::ready(Vec::new());
+        };
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+        let response_task = upstream_client.request_lsp_for_peer(
+            project_id,
+            for_server_id.map(|server_id| server_id.to_proto()),
+            Some(forwarded_for),
+            request_timeout,
+            cx.background_executor().clone(),
+            request.to_proto(project_id, buffer.read(cx)),
+        );
+        let buffer = buffer.clone();
+        cx.spawn(async move |lsp_store, cx| {
+            let Some(lsp_store) = lsp_store.upgrade() else {
+                return Vec::new();
+            };
+            let responses = match response_task.await {
+                Ok(Some(responses)) => responses.payload,
+                Ok(None) => return Vec::new(),
+                Err(e) => {
+                    log::error!("Error querying upstream for request {request:?}: {e:#}");
+                    return Vec::new();
+                }
+            };
+            join_all(responses.into_iter().map(|response| {
+                let server_id = LanguageServerId::from_proto(response.server_id);
+                let task = request.clone().response_from_proto(
+                    response.response.into(),
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                );
+                async move { (server_id, task.await) }
+            }))
+            .await
+            .into_iter()
+            .filter_map(|(server_id, response)| match response {
+                Ok(response) => Some((server_id, response)),
+                Err(e) => {
+                    log::error!("Error handling upstream response for request {request:?}: {e:#}");
+                    None
+                }
+            })
+            .collect()
+        })
+    }
+
+    /// Keeps the buffers and worktrees that the upstream peer creates while answering a request
+    /// alive until the returned guard is dropped, as nothing else holds them before the response
+    /// that refers to them is processed.
+    fn retain_remotely_created_models(&self, cx: &mut App) -> Option<RemotelyCreatedModelGuard> {
+        let remote = self.as_remote()?;
+        Some(Project::retain_remotely_created_models_impl(
+            &remote.remotely_created_models,
+            &self.buffer_store,
+            &self.worktree_store,
+            cx,
+        ))
+    }
+
     fn request_filtered_lsp_locally<P, R>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -10907,11 +11065,13 @@ impl LspStore {
         )
         .await?;
         let server_to_query = server_to_query(&request);
-        let response = this
-            .update(&mut cx, |this, cx| {
-                this.request_lsp(buffer_handle.clone(), server_to_query, request, cx)
-            })
-            .await?;
+        let (_retained_models, response) = this.update(&mut cx, |this, cx| {
+            (
+                this.retain_remotely_created_models(cx),
+                this.request_lsp(buffer_handle.clone(), server_to_query, request, cx),
+            )
+        });
+        let response = response.await?;
         this.update(&mut cx, |this, cx| {
             Ok(T::response_to_proto(
                 response,
@@ -10929,17 +11089,20 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         use proto::lsp_query::Request;
-        let sender_id = envelope.original_sender_id().unwrap_or_default();
+        let sender = LspQuerySender {
+            peer_id: envelope.original_sender_id().unwrap_or_default(),
+            forwarded_for: envelope.payload.forwarded_for,
+        };
         let lsp_query = envelope.payload;
         let lsp_request_id = LspRequestId(lsp_query.lsp_request_id);
         let server_id = lsp_query.server_id.map(LanguageServerId::from_proto);
         match lsp_query.request.context("invalid LSP query request")? {
             Request::GetReferences(get_references) => {
                 let position = get_references.position.and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetReferences>(
+                Self::answer_lsp_query::<GetReferences>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_references,
                     position,
@@ -10948,10 +11111,10 @@ impl LspStore {
                 .await?;
             }
             Request::GetDocumentColor(get_document_color) => {
-                Self::query_lsp_locally::<GetDocumentColor>(
+                Self::answer_lsp_query::<GetDocumentColor>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_document_color,
                     None,
@@ -10960,10 +11123,10 @@ impl LspStore {
                 .await?;
             }
             Request::GetFoldingRanges(get_folding_ranges) => {
-                Self::query_lsp_locally::<GetFoldingRanges>(
+                Self::answer_lsp_query::<GetFoldingRanges>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_folding_ranges,
                     None,
@@ -10972,10 +11135,10 @@ impl LspStore {
                 .await?;
             }
             Request::GetDocumentSymbols(get_document_symbols) => {
-                Self::query_lsp_locally::<GetDocumentSymbols>(
+                Self::answer_lsp_query::<GetDocumentSymbols>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_document_symbols,
                     None,
@@ -11004,7 +11167,7 @@ impl LspStore {
                     });
                     lsp_store.serve_lsp_query::<GetDocumentLinks>(
                         server_id,
-                        sender_id,
+                        sender,
                         lsp_request_id,
                         &buffer,
                         buffer_version,
@@ -11015,10 +11178,10 @@ impl LspStore {
             }
             Request::GetHover(get_hover) => {
                 let position = get_hover.position.and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetHover>(
+                Self::answer_lsp_query::<GetHover>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_hover,
                     position,
@@ -11027,10 +11190,10 @@ impl LspStore {
                 .await?;
             }
             Request::GetCodeActions(get_code_actions) => {
-                Self::query_lsp_locally::<GetCodeActions>(
+                Self::answer_lsp_query::<GetCodeActions>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_code_actions,
                     None,
@@ -11040,10 +11203,10 @@ impl LspStore {
             }
             Request::GetSignatureHelp(get_signature_help) => {
                 let position = get_signature_help.position.and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetSignatureHelp>(
+                Self::answer_lsp_query::<GetSignatureHelp>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_signature_help,
                     position,
@@ -11052,10 +11215,10 @@ impl LspStore {
                 .await?;
             }
             Request::GetCodeLens(get_code_lens) => {
-                Self::query_lsp_locally::<GetCodeLens>(
+                Self::answer_lsp_query::<GetCodeLens>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_code_lens,
                     None,
@@ -11065,10 +11228,10 @@ impl LspStore {
             }
             Request::GetDefinition(get_definition) => {
                 let position = get_definition.position.and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetDefinitions>(
+                Self::answer_lsp_query::<GetDefinitions>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_definition,
                     position,
@@ -11080,10 +11243,10 @@ impl LspStore {
                 let position = get_edit_prediction_definition
                     .position
                     .and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetEditPredictionDefinitions>(
+                Self::answer_lsp_query::<GetEditPredictionDefinitions>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_edit_prediction_definition,
                     position,
@@ -11093,10 +11256,10 @@ impl LspStore {
             }
             Request::GetDeclaration(get_declaration) => {
                 let position = get_declaration.position.and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetDeclarations>(
+                Self::answer_lsp_query::<GetDeclarations>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_declaration,
                     position,
@@ -11106,10 +11269,10 @@ impl LspStore {
             }
             Request::GetTypeDefinition(get_type_definition) => {
                 let position = get_type_definition.position.and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetTypeDefinitions>(
+                Self::answer_lsp_query::<GetTypeDefinitions>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_type_definition,
                     position,
@@ -11121,10 +11284,10 @@ impl LspStore {
                 let position = get_edit_prediction_type_definition
                     .position
                     .and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetEditPredictionTypeDefinitions>(
+                Self::answer_lsp_query::<GetEditPredictionTypeDefinitions>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_edit_prediction_type_definition,
                     position,
@@ -11134,10 +11297,10 @@ impl LspStore {
             }
             Request::GetImplementation(get_implementation) => {
                 let position = get_implementation.position.and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetImplementations>(
+                Self::answer_lsp_query::<GetImplementations>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_implementation,
                     position,
@@ -11157,7 +11320,7 @@ impl LspStore {
                 Self::deduplicate_range_based_lsp_requests::<InlayHints>(
                     &lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     &inlay_hints,
                     query_start..query_end,
@@ -11165,10 +11328,10 @@ impl LspStore {
                 )
                 .await
                 .context("preparing inlay hints request")?;
-                Self::query_lsp_locally::<InlayHints>(
+                Self::answer_lsp_query::<InlayHints>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     inlay_hints,
                     None,
@@ -11179,10 +11342,10 @@ impl LspStore {
             }
             Request::PrepareCallHierarchy(prepare_call_hierarchy) => {
                 let position = prepare_call_hierarchy.position.and_then(deserialize_anchor);
-                Self::query_lsp_locally::<PrepareCallHierarchy>(
+                Self::answer_lsp_query::<PrepareCallHierarchy>(
                     lsp_store,
                     server_id,
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     prepare_call_hierarchy,
                     position,
@@ -11196,10 +11359,10 @@ impl LspStore {
                     .as_ref()
                     .map(|item| LanguageServerId::from_proto(item.server_id))
                     .context("missing call hierarchy item")?;
-                Self::query_lsp_locally::<GetIncomingCalls>(
+                Self::answer_lsp_query::<GetIncomingCalls>(
                     lsp_store,
                     Some(item_server_id),
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_incoming_calls,
                     None,
@@ -11213,10 +11376,10 @@ impl LspStore {
                     .as_ref()
                     .map(|item| LanguageServerId::from_proto(item.server_id))
                     .context("missing call hierarchy item")?;
-                Self::query_lsp_locally::<GetOutgoingCalls>(
+                Self::answer_lsp_query::<GetOutgoingCalls>(
                     lsp_store,
                     Some(item_server_id),
-                    sender_id,
+                    sender,
                     lsp_request_id,
                     get_outgoing_calls,
                     None,
@@ -11226,7 +11389,7 @@ impl LspStore {
             }
             //////////////////////////////
             // Below are LSP queries that need to fetch more data,
-            // hence cannot just proxy the request to language server with `query_lsp_locally`.
+            // hence cannot just proxy the request to language server with `answer_lsp_query`.
             Request::GetDocumentDiagnostics(get_document_diagnostics) => {
                 let (_, buffer) = Self::wait_for_buffer_version::<GetDocumentDiagnostics>(
                     &lsp_store,
@@ -11239,7 +11402,7 @@ impl LspStore {
                     let key = LspKey {
                         request_type: TypeId::of::<GetDocumentDiagnostics>(),
                         server_queried: server_id,
-                        sender_id,
+                        sender,
                     };
                     if <GetDocumentDiagnostics as LspCommand>::ProtoRequest::stop_previous_requests(
                     ) {
@@ -11267,6 +11430,21 @@ impl LspStore {
                 });
             }
             Request::SemanticTokens(semantic_tokens) => {
+                // Upstream fetches carry no `forwarded_for`, so the queries of the host and of
+                // its guests would supersede each other on the remote server.
+                if lsp_store.read_with(&cx, |lsp_store, _| lsp_store.upstream_client().is_some()) {
+                    return Self::answer_lsp_query::<SemanticTokensFull>(
+                        lsp_store,
+                        server_id,
+                        sender,
+                        lsp_request_id,
+                        semantic_tokens,
+                        None,
+                        &mut cx,
+                    )
+                    .await
+                    .map(|()| proto::Ack {});
+                }
                 let (buffer_version, buffer) = Self::wait_for_buffer_version::<SemanticTokensFull>(
                     &lsp_store,
                     &semantic_tokens,
@@ -11279,7 +11457,7 @@ impl LspStore {
                         lsp_store.fetch_semantic_tokens_for_buffer(&buffer, for_server, cx);
                     lsp_store.serve_lsp_query::<SemanticTokensFull>(
                         server_id,
-                        sender_id,
+                        sender,
                         lsp_request_id,
                         &buffer,
                         buffer_version,
@@ -11315,10 +11493,13 @@ impl LspStore {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let action =
             Self::deserialize_code_action(envelope.payload.action.context("invalid action")?)?;
-        let apply_code_action = this.update(&mut cx, |this, cx| {
+        let (_retained_models, apply_code_action) = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
-            anyhow::Ok(this.apply_code_action(buffer, action, false, cx))
+            anyhow::Ok((
+                this.retain_remotely_created_models(cx),
+                this.apply_code_action(buffer, action, false, cx),
+            ))
         })?;
 
         let project_transaction = apply_code_action.await?;
@@ -11549,12 +11730,28 @@ impl LspStore {
         envelope: TypedEnvelope<proto::StartLanguageServer>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let server = envelope.payload.server.context("invalid server")?;
+        let proto::StartLanguageServer {
+            server,
+            capabilities,
+            ..
+        } = envelope.payload;
+        let server = server.context("invalid server")?;
         lsp_store.update(&mut cx, |lsp_store, cx| {
             let server_id = LanguageServerId(server.id as usize);
             let server_name = LanguageServerName::from_proto(server.name.clone());
-            let language_name = server.language_name.map(LanguageName::from_proto);
-            lsp_store.insert_synced_server_capabilities(server_id, &envelope.payload.capabilities);
+            let language_name = server.language_name.clone().map(LanguageName::from_proto);
+            lsp_store.insert_synced_server_capabilities(server_id, &capabilities);
+
+            // A host of a remote project shares the servers of its upstream peer with its guests.
+            if let Some((downstream_client, project_id)) = lsp_store.downstream_client.as_ref() {
+                downstream_client
+                    .send(proto::StartLanguageServer {
+                        project_id: *project_id,
+                        server: Some(server.clone()),
+                        capabilities,
+                    })
+                    .log_err();
+            }
 
             if let Some(ref lang_name) = language_name {
                 lsp_store.try_register_remote_adapter_locally(&server_name, lang_name);
@@ -11658,6 +11855,23 @@ impl LspStore {
                 non_lsp @ proto::update_language_server::Variant::StatusUpdate(_)
                 | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_)
                 | non_lsp @ proto::update_language_server::Variant::MetadataUpdated(_) => {
+                    // The project forwards the other updates in order with buffer operations,
+                    // but metadata updates are always sent directly by the store that has them.
+                    if matches!(
+                        non_lsp,
+                        proto::update_language_server::Variant::MetadataUpdated(_)
+                    ) && let Some((downstream_client, project_id)) =
+                        lsp_store.downstream_client.as_ref()
+                    {
+                        downstream_client
+                            .send(proto::UpdateLanguageServer {
+                                project_id: *project_id,
+                                server_name: envelope.payload.server_name.clone(),
+                                language_server_id: envelope.payload.language_server_id,
+                                variant: Some(non_lsp.clone()),
+                            })
+                            .log_err();
+                    }
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
                         name: envelope
@@ -14763,7 +14977,7 @@ impl LspStore {
     async fn deduplicate_range_based_lsp_requests<T>(
         lsp_store: &Entity<Self>,
         server_id: Option<LanguageServerId>,
-        sender_id: proto::PeerId,
+        sender: LspQuerySender,
         lsp_request_id: LspRequestId,
         proto_request: &T::ProtoRequest,
         range: Range<Anchor>,
@@ -14793,7 +15007,7 @@ impl LspStore {
                     let key = LspKey {
                         request_type: TypeId::of::<T>(),
                         server_queried: server_id,
-                        sender_id,
+                        sender,
                     };
                     let previous_request = lsp_data
                         .chunk_lsp_requests
@@ -14817,10 +15031,10 @@ impl LspStore {
         Ok(())
     }
 
-    async fn query_lsp_locally<T>(
+    async fn answer_lsp_query<T>(
         lsp_store: Entity<Self>,
         for_server_id: Option<LanguageServerId>,
-        sender_id: proto::PeerId,
+        sender: LspQuerySender,
         lsp_request_id: LspRequestId,
         proto_request: T::ProtoRequest,
         position: Option<Anchor>,
@@ -14831,6 +15045,8 @@ impl LspStore {
         T::ProtoRequest: proto::LspRequestMessage,
         <T::ProtoRequest as proto::RequestMessage>::Response:
             Into<<T::ProtoRequest as proto::LspRequestMessage>::Response>,
+        <T::ProtoRequest as proto::LspRequestMessage>::Response:
+            Into<<T::ProtoRequest as proto::RequestMessage>::Response>,
     {
         let (buffer_version, buffer) =
             Self::wait_for_buffer_version::<T>(&lsp_store, &proto_request, cx).await?;
@@ -14839,33 +15055,26 @@ impl LspStore {
         let key = LspKey {
             request_type: TypeId::of::<T>(),
             server_queried: for_server_id,
-            sender_id,
+            sender,
         };
         lsp_store.update(cx, |lsp_store, cx| {
-            let request_task = match for_server_id {
-                Some(server_id) => {
-                    let server_task = lsp_store.request_lsp(
-                        buffer.clone(),
-                        LanguageServerToQuery::Other(server_id),
-                        request.clone(),
-                        cx,
-                    );
-                    cx.background_spawn(async move {
-                        let mut responses = Vec::new();
-                        match server_task.await {
-                            Ok(response) => responses.push((server_id, response)),
-                            // rust-analyzer likes to error with this when its still loading up
-                            Err(e)
-                                if !should_log_lsp_response_error(&e)
-                                    || !should_log_lsp_request_failure(&format!("{e:#}")) => {}
-                            Err(e) => log::error!(
-                                "Error handling response for request {request:?}: {e:#}"
-                            ),
-                        }
-                        responses
-                    })
-                }
-                None => lsp_store.request_multiple_lsp_locally(&buffer, position, request, cx),
+            let retained_models = lsp_store.retain_remotely_created_models(cx);
+            let request_task = if lsp_store.upstream_client().is_some() {
+                lsp_store.request_multiple_lsp_upstream(
+                    &buffer,
+                    request,
+                    for_server_id,
+                    sender.peer_id,
+                    cx,
+                )
+            } else {
+                lsp_store.request_lsp_locally_for_query(
+                    &buffer,
+                    position,
+                    request,
+                    for_server_id,
+                    cx,
+                )
             };
             let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
             if T::ProtoRequest::stop_previous_requests() {
@@ -14877,6 +15086,8 @@ impl LspStore {
                 lsp_request_id,
                 cx.spawn(async move |lsp_store, cx| {
                     let response = request_task.await;
+                    // The response refers to the retained models; sharing them with the peer keeps them alive.
+                    let _retained_models = retained_models;
                     lsp_store
                         .update(cx, |lsp_store, cx| {
                             if let Some((client, project_id)) = lsp_store.downstream_client.clone()
@@ -14889,7 +15100,7 @@ impl LspStore {
                                             T::response_to_proto(
                                                 response,
                                                 lsp_store,
-                                                sender_id,
+                                                sender.peer_id,
                                                 &buffer_version,
                                                 cx,
                                             )
@@ -14899,7 +15110,7 @@ impl LspStore {
                                     .collect::<HashMap<_, _>>();
                                 match client.send_lsp_response::<T::ProtoRequest>(
                                     project_id,
-                                    sender_id,
+                                    sender.peer_id,
                                     lsp_request_id,
                                     response,
                                 ) {
@@ -14920,7 +15131,7 @@ impl LspStore {
     fn serve_lsp_query<T>(
         &mut self,
         server_id: Option<LanguageServerId>,
-        sender_id: proto::PeerId,
+        sender: LspQuerySender,
         lsp_request_id: LspRequestId,
         buffer: &Entity<Buffer>,
         buffer_version: Global,
@@ -14939,7 +15150,7 @@ impl LspStore {
         let key = LspKey {
             request_type: TypeId::of::<T>(),
             server_queried: server_id,
-            sender_id,
+            sender,
         };
         if T::ProtoRequest::stop_previous_requests() {
             if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
@@ -14960,7 +15171,7 @@ impl LspStore {
                                     T::response_to_proto(
                                         response,
                                         lsp_store,
-                                        sender_id,
+                                        sender.peer_id,
                                         &buffer_version,
                                         cx,
                                     )
@@ -14970,7 +15181,7 @@ impl LspStore {
                             .collect::<HashMap<_, _>>();
                         if let Err(e) = client.send_lsp_response::<T::ProtoRequest>(
                             project_id,
-                            sender_id,
+                            sender.peer_id,
                             lsp_request_id,
                             response,
                         ) {

@@ -1584,6 +1584,7 @@ impl Project {
                 )
             });
 
+            let remotely_created_models = Arc::<Mutex<RemotelyCreatedModels>>::default();
             let lsp_store = cx.new(|cx| {
                 LspStore::new_remote(
                     buffer_store.clone(),
@@ -1591,6 +1592,7 @@ impl Project {
                     languages.clone(),
                     remote_proto.clone(),
                     REMOTE_SERVER_PROJECT_ID,
+                    remotely_created_models.clone(),
                     cx,
                 )
             });
@@ -1719,7 +1721,7 @@ impl Project {
                 node: Some(node),
                 search_history: Self::new_search_history(),
                 environment,
-                remotely_created_models: Default::default(),
+                remotely_created_models,
 
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
@@ -1885,6 +1887,7 @@ impl Project {
             )
         });
 
+        let remotely_created_models = Arc::<Mutex<RemotelyCreatedModels>>::default();
         let lsp_store = cx.new(|cx| {
             LspStore::new_remote(
                 buffer_store.clone(),
@@ -1892,6 +1895,7 @@ impl Project {
                 languages.clone(),
                 client.clone().into(),
                 remote_id,
+                remotely_created_models.clone(),
                 cx,
             )
         });
@@ -2015,7 +2019,7 @@ impl Project {
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
                 environment,
-                remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
+                remotely_created_models,
                 toolchain_store: None,
                 agent_location: None,
                 downloading_files: Default::default(),
@@ -3792,7 +3796,7 @@ impl Project {
                 Event::SupplementaryLanguageServerAdded(*server_id, name.clone()),
             ),
             LspStoreEvent::LanguageServerRemoved(server_id) => {
-                if self.is_local()
+                if !self.is_via_collab()
                     && let Some(project_id) = self.remote_id()
                 {
                     self.collab_client
@@ -3880,7 +3884,7 @@ impl Project {
                 name,
                 message,
             } => {
-                if self.is_local()
+                if !self.is_via_collab()
                     && !matches!(
                         message,
                         proto::update_language_server::Variant::MetadataUpdated(_)
