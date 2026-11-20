@@ -1462,7 +1462,7 @@ fn appearance_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Cursor Animation",
-                description: "Whether the cursor smoothly animates when moving around the editor.",
+                description: "Whether the cursor smoothly animates when moving around the editor or terminal.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("cursor_animation.enabled"),

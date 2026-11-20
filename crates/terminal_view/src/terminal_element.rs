@@ -1,4 +1,7 @@
-use editor::{CursorLayout, EditorSettings, HighlightedRange, HighlightedRangeLine};
+use editor::{
+    CursorLayout, CursorViewport, EditorSettings, HighlightedRange, HighlightedRangeLine,
+    LogicalCursorPosition,
+};
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element,
     ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight, GlobalElementId,
@@ -38,6 +41,7 @@ pub struct LayoutState {
     rects: Vec<LayoutRect>,
     relative_highlighted_ranges: Vec<(Range, Hsla)>,
     cursor: Option<CursorLayout>,
+    cursor_logical_position: LogicalCursorPosition,
     ime_cursor_bounds: Option<Bounds<Pixels>>,
     background_color: Hsla,
     dimensions: TerminalBounds,
@@ -1460,6 +1464,14 @@ impl Element for TerminalElement {
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
                 let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+                // Uses the grid position rather than the displayed one, so scrolling the
+                // history snaps the cursor instead of animating it. The row is only compared
+                // for equality, so a bit-preserving cast keeps scrollback rows (negative in
+                // vi mode) distinct instead of collapsing them to 0.
+                let cursor_logical_position = LogicalCursorPosition {
+                    row: cursor.point.line.cast_unsigned(),
+                    column: u32::try_from(cursor.point.column).unwrap_or_default(),
+                };
                 let cursor_text = {
                     let str_trxt = cursor_char.to_string();
                     let len = str_trxt.len();
@@ -1555,6 +1567,7 @@ impl Element for TerminalElement {
                     batched_text_runs,
                     block_element_rects,
                     cursor,
+                    cursor_logical_position,
                     ime_cursor_bounds,
                     background_color,
                     dimensions,
@@ -1619,7 +1632,41 @@ impl Element for TerminalElement {
                 window.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
             }
 
-            let original_cursor = layout.cursor.take();
+            let mut original_cursor = layout.cursor.take();
+            let cursor_animation_enabled = self.cursor_visible
+                && marked_text_cloned.is_none()
+                && EditorSettings::get_global(cx).cursor_animation.enabled
+                && !cx.reduce_motion();
+            let cursor_animation_in_flight =
+                self.terminal_view
+                    .update(cx, |terminal_view, _| match original_cursor.as_mut() {
+                        Some(cursor) if cursor_animation_enabled => {
+                            let dimensions = &layout.dimensions;
+                            let viewport = CursorViewport::new(
+                                dimensions.bounds.origin,
+                                dimensions.bounds,
+                                GpuiPoint::default(),
+                                point(0.0, f64::from(scroll_top)),
+                                dimensions.line_height(),
+                                dimensions.cell_width(),
+                            );
+                            cursor.animate(
+                                &mut terminal_view.cursor_animation,
+                                layout.cursor_logical_position,
+                                origin,
+                                viewport,
+                                Instant::now(),
+                                window,
+                            )
+                        }
+                        _ => {
+                            terminal_view.cursor_animation.reset();
+                            false
+                        }
+                    });
+            if cursor_animation_in_flight {
+                window.request_animation_frame();
+            }
             let hyperlink_tooltip = layout.hyperlink_tooltip.take();
             let block_below_cursor_element = layout.block_below_cursor_element.take();
             self.interactivity.paint(
