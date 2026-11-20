@@ -3,6 +3,10 @@ mod workspace;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use tracing_subscriber::{
+    filter::{LevelFilter, Targets},
+    prelude::*,
+};
 
 #[derive(Parser)]
 #[command(name = "cargo xtask")]
@@ -36,6 +40,18 @@ enum CliCommand {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(
+                    Targets::new()
+                        .with_default(LevelFilter::WARN)
+                        .with_target("crates_io_client", LevelFilter::TRACE),
+                ),
+        )
+        .try_init()
+        .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
 
     match args.command {
         CliCommand::Clippy(args) => tasks::clippy::run_clippy(args),
