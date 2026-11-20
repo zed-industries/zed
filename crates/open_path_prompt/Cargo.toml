@@ -5,6 +5,9 @@ publish.workspace = true
 edition.workspace = true
 license = "GPL-3.0-or-later"
 
+[features]
+test-support = []
+
 [dependencies]
 file_icons.workspace = true
 futures.workspace = true

@@ -113,7 +113,7 @@ impl OpenPathDelegate {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn collect_match_candidates(&self) -> Vec<String> {
         match &self.directory_state {
             DirectoryState::List { entries, .. } => self
