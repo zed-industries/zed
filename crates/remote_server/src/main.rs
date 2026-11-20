@@ -46,7 +46,9 @@ fn main() -> anyhow::Result<()> {
         if let Err(e) = &res
             && let Some(e) = e.downcast_ref::<ExecuteProxyError>()
         {
-            std::io::stderr().write_fmt(format_args!("{e:#}\n")).ok();
+            // Logged rather than printed so the client can tell this fatal error apart from other
+            // stderr output (e.g. SSH warnings) and show it to the user.
+            log::error!("{e:#}");
             // It is important for us to report the proxy spawn exit code here
             // instead of the generic 1 that result returns
             // The client reads the exit code to determine if the server process has died when trying to reconnect

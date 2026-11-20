@@ -450,7 +450,7 @@ impl RemoteClient {
                     state: Some(State::Connecting),
                 });
 
-                let io_task = remote_connection.start_proxy(
+                let mut io_task = remote_connection.start_proxy(
                     unique_identifier,
                     false,
                     incoming_tx,
@@ -462,8 +462,20 @@ impl RemoteClient {
 
                 let ready = client
                     .wait_for_remote_started()
-                    .with_timeout(INITIAL_CONNECTION_TIMEOUT, cx.background_executor())
-                    .await;
+                    .with_timeout(INITIAL_CONNECTION_TIMEOUT, cx.background_executor());
+                // A proxy that exits before the server reports it started will never become
+                // ready, so fail right away instead of waiting out the timeout.
+                let ready = select_biased! {
+                    ready = ready.fuse() => ready,
+                    status = (&mut io_task).fuse() => {
+                        let error = match status {
+                            Ok(exit_code) => anyhow!("Client exited with exit_code {exit_code}"),
+                            Err(error) => error.context("Client exited"),
+                        };
+                        log::error!("failed to establish connection: {error:#}");
+                        return Err(error);
+                    }
+                };
                 match ready {
                     Ok(Some(_)) => {}
                     Ok(None) => {

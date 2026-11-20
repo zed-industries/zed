@@ -23,6 +23,10 @@ impl<'a> LogRecord<'a> {
         }
     }
 
+    pub fn is_error(&self) -> bool {
+        deserialize_level(self.level) == Some(Level::Error)
+    }
+
     pub fn log(&'a self, logger: &dyn Log) {
         if let Some(level) = deserialize_level(self.level) {
             logger.log(
