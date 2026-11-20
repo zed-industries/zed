@@ -1782,10 +1782,14 @@ impl LocalLspStore {
             })?;
         }
 
-        if settings.ensure_final_newline_on_save {
-            zlog::trace!(logger => "ensuring final newline");
+        if settings.ensure_final_newline_on_save || settings.trim_final_newlines_on_save {
+            zlog::trace!(logger => "normalizing final newlines");
             let diff = buffer.handle.read_with(cx, |buffer, _cx| {
-                buffer.ensure_final_newline(selection_row_ranges.as_deref())
+                buffer.normalize_final_newlines(
+                    selection_row_ranges.as_deref(),
+                    settings.ensure_final_newline_on_save,
+                    settings.trim_final_newlines_on_save,
+                )
             });
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.apply_diff(diff, cx);

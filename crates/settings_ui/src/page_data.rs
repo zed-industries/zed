@@ -10211,7 +10211,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn formatting_section() -> [SettingsPageItem; 8] {
+    fn formatting_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Formatting"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -10275,6 +10275,26 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.ensure_final_newline_on_save = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Trim Final Newlines On Save",
+                description: "Whether or not to remove extra blank lines at the end of a buffer when saving it, leaving a single final newline.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("languages.$(language).trim_final_newlines_on_save"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.trim_final_newlines_on_save.as_ref()
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.trim_final_newlines_on_save = value;
                         })
                     },
                 }),

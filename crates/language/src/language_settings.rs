@@ -87,6 +87,9 @@ pub struct LanguageSettings {
     /// Whether or not to ensure there's a single newline at the end of a buffer
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
+    /// Whether or not to remove extra blank lines at the end of a buffer when
+    /// saving it, leaving a single final newline.
+    pub trim_final_newlines_on_save: bool,
     /// How line endings are initialized for new files and normalized during
     /// format and save.
     pub line_ending: LineEndingSetting,
@@ -858,6 +861,7 @@ impl settings::Settings for AllLanguageSettings {
                     .remove_trailing_whitespace_on_save
                     .unwrap(),
                 ensure_final_newline_on_save: settings.ensure_final_newline_on_save.unwrap(),
+                trim_final_newlines_on_save: settings.trim_final_newlines_on_save.unwrap(),
                 line_ending: settings.line_ending.unwrap(),
                 formatter: settings.formatter.unwrap(),
                 prettier: PrettierSettings {
