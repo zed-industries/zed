@@ -1061,6 +1061,119 @@ async fn test_continue_thread_action_only_resumes_selected_thread(
 }
 
 #[gpui::test]
+async fn test_step_requests_resume_all_threads(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let step_requests = Arc::new(AtomicUsize::new(0));
+
+    let configure = {
+        let step_requests = step_requests.clone();
+        move |client: &Arc<dap::client::DebugAdapterClient>| {
+            client.on_request::<dap::requests::Initialize, _>(move |_, _| {
+                Ok(dap::Capabilities {
+                    supports_single_thread_execution_requests: Some(true),
+                    supports_step_back: Some(true),
+                    ..Default::default()
+                })
+            });
+            client.on_request::<Next, _>({
+                let step_requests = step_requests.clone();
+                move |_, args| {
+                    assert_eq!(args.single_thread, None);
+                    step_requests.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+            client.on_request::<StepIn, _>({
+                let step_requests = step_requests.clone();
+                move |_, args| {
+                    assert_eq!(args.single_thread, None);
+                    step_requests.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+            client.on_request::<StepOut, _>({
+                let step_requests = step_requests.clone();
+                move |_, args| {
+                    assert_eq!(args.single_thread, None);
+                    step_requests.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+            client.on_request::<StepBack, _>({
+                let step_requests = step_requests.clone();
+                move |_, args| {
+                    assert_eq!(args.single_thread, None);
+                    step_requests.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+        }
+    };
+
+    let session = start_debug_session(&workspace, cx, configure).unwrap();
+    let client = session.read_with(cx, |session, _| session.adapter_client().unwrap());
+
+    let stopped_event = dap::messages::Events::Stopped(dap::StoppedEvent {
+        reason: dap::StoppedEventReason::Breakpoint,
+        description: None,
+        thread_id: Some(1),
+        preserve_focus_hint: None,
+        text: None,
+        all_threads_stopped: Some(true),
+        hit_breakpoint_ids: None,
+    });
+
+    client.fake_event(stopped_event.clone()).await;
+    cx.run_until_parked();
+
+    let running_state = active_debug_session_panel(workspace, cx)
+        .read_with(cx, |debug_session_panel, _| {
+            debug_session_panel.running_state().clone()
+        });
+
+    #[derive(Debug)]
+    enum Op {
+        StepOver,
+        StepIn,
+        StepOut,
+        StepBack,
+    }
+
+    for (index, operation) in [Op::StepOver, Op::StepIn, Op::StepOut, Op::StepBack]
+        .into_iter()
+        .enumerate()
+    {
+        running_state.update(cx, |running_state, cx| match operation {
+            Op::StepOver => running_state.step_over(cx),
+            Op::StepIn => running_state.step_in(cx),
+            Op::StepOut => running_state.step_out(cx),
+            Op::StepBack => running_state.step_back(cx),
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            step_requests.load(Ordering::SeqCst),
+            index + 1,
+            "{operation:?} request was not sent"
+        );
+
+        client.fake_event(stopped_event.clone()).await;
+        cx.run_until_parked();
+    }
+}
+
+#[gpui::test]
 async fn test_debug_panel_item_thread_status_reset_on_failure(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
