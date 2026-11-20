@@ -18,13 +18,14 @@ use crate::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style, SubpixelSprite, Subscription,
-    SystemWindowTab, SystemWindowTabController, TabStopMap, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
-    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, SceneDamage, Shadow,
+    SharedString, Size, SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style,
+    SubpixelSprite, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1263,6 +1264,10 @@ pub struct Window {
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    /// Damage from draws since the last present.
+    render_damage: Option<SceneDamage>,
+    /// Where the animated sprites were in the last present.
+    presented_animation_bounds: Bounds<ScaledPixels>,
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
@@ -2418,6 +2423,8 @@ impl Window {
             focused_text_input: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            render_damage: None,
+            presented_animation_bounds: Bounds::default(),
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
@@ -3876,6 +3883,13 @@ impl Window {
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
+        if self.platform_window.wants_render_damage() {
+            let damage = SceneDamage::between(&self.rendered_frame.scene, &self.next_frame.scene);
+            self.render_damage = Some(
+                self.render_damage
+                    .map_or(damage, |pending| pending.union(damage)),
+            );
+        }
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -3976,7 +3990,21 @@ impl Window {
         let _foreground_turn = profiler::journal::foreground_turn();
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
-        self.platform_window.draw(&self.rendered_frame.scene);
+        // Animated sprites move between presents without the scene changing, so
+        // they damage both where they were and where they are now.
+        let damage = self.platform_window.wants_render_damage().then(|| {
+            let animated = self.rendered_frame.scene.animated_sprite_bounds();
+            let damage = self
+                .render_damage
+                .take()
+                .unwrap_or(SceneDamage::Unchanged)
+                .with_bounds(self.presented_animation_bounds)
+                .with_bounds(animated);
+            self.presented_animation_bounds = animated;
+            damage
+        });
+        self.platform_window
+            .draw_with_damage(&self.rendered_frame.scene, damage);
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(
             present_start,

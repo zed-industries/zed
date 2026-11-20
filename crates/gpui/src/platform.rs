@@ -1368,6 +1368,14 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
+    /// Whether GPUI should diff consecutive scenes and call [`Self::draw_with_damage`].
+    fn wants_render_damage(&self) -> bool {
+        false
+    }
+    /// Like [`Self::draw`], with the region that changed since the last present.
+    fn draw_with_damage(&self, scene: &Scene, _damage: Option<crate::SceneDamage>) {
+        self.draw(scene);
+    }
     fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;

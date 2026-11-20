@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use collections::FxHashMap;
 use gpui::{
     AtlasTextureId, Bounds, DevicePixels, GpuSpecs, PaintedPath, PrimitiveBatch, ScaledPixels,
-    Scene, Size, get_gamma_correction_ratios, quad_depth, quad_depth_scale,
+    Scene, SceneDamage, Size, get_gamma_correction_ratios, quad_depth, quad_depth_scale,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -44,6 +44,21 @@ const SUBPIXEL_SHADERS: &str = concat!(
     include_str!("shaders_subpixel.wgsl"),
 );
 
+/// Clears the scissored region of a partial frame, whose load op keeps the previous
+/// frame. Its blend state writes the blend constant, which holds the clear color.
+const CLEAR_SHADER: &str = "
+@vertex
+fn vs_clear(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f32> {
+    let corner = vec2<f32>(f32((vertex_index << 1u) & 2u), f32(vertex_index & 2u));
+    return vec4<f32>(corner * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs_clear() -> @location(0) vec4<f32> {
+    return vec4<f32>(1.0);
+}
+";
+
 fn least_common_multiple(left: u64, right: u64) -> u64 {
     let mut first = left;
     let mut second = right;
@@ -72,6 +87,45 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 struct DepthTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+}
+
+/// Holds the last complete frame, so a partial frame can redraw only its damaged
+/// region on top of it. The swapchain image can't be used for this, because its
+/// contents aren't preserved across presents.
+struct DamageTarget {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawOutcome {
+    Presented,
+    /// Nothing changed since the last present, so presenting was skipped.
+    Unchanged,
+    Failed,
+}
+
+/// The pixels covered by `damage`, clamped to a `width` x `height` target, or
+/// `None` when they cover the whole target. Padded by a pixel, since antialiased
+/// edges can reach slightly past a primitive's bounds.
+fn damage_scissor(
+    damage: Bounds<ScaledPixels>,
+    width: u32,
+    height: u32,
+) -> Option<wgpu::Rect<u32>> {
+    let left = ((damage.origin.x.0.floor() - 1.0).max(0.0) as u32).min(width);
+    let top = ((damage.origin.y.0.floor() - 1.0).max(0.0) as u32).min(height);
+    let right = ((damage.origin.x.0 + damage.size.width.0).ceil() + 1.0).max(0.0) as u32;
+    let bottom = ((damage.origin.y.0 + damage.size.height.0).ceil() + 1.0).max(0.0) as u32;
+    let right = right.min(width);
+    let bottom = bottom.min(height);
+    let scissor = wgpu::Rect {
+        x: left,
+        y: top,
+        w: right.saturating_sub(left),
+        h: bottom.saturating_sub(top),
+    };
+    (scissor.w != width || scissor.h != height).then_some(scissor)
 }
 
 #[repr(C)]
@@ -130,6 +184,7 @@ struct WgpuPipelines {
     poly_sprites: wgpu::RenderPipeline,
     #[allow(dead_code)]
     surfaces: wgpu::RenderPipeline,
+    clear: wgpu::RenderPipeline,
     premultiplied_alpha: bool,
 }
 
@@ -222,6 +277,7 @@ struct WgpuRendererCore {
     transient_attachments: bool,
     adapter_info: wgpu::AdapterInfo,
     depth_texture: Option<DepthTexture>,
+    damage_target: Option<DamageTarget>,
     /// Read by the headless renderer to create its render target.
     #[cfg(all(
         not(target_family = "wasm"),
@@ -266,6 +322,11 @@ pub struct WgpuRenderer {
     observed_error_generation: u64,
     last_surface_error: Option<String>,
     needs_redraw: bool,
+    /// Whether frames are rendered into a [`DamageTarget`] so that only damaged
+    /// regions are redrawn.
+    damage_enabled: bool,
+    /// Damage accumulated since the last present.
+    pending_damage: SceneDamage,
 }
 
 impl WgpuRenderer {
@@ -464,8 +525,16 @@ impl WgpuRenderer {
             );
         }
 
+        // Damage tracking copies each frame into the swapchain image, which needs
+        // COPY_DST. Without it, every frame is drawn into the swapchain in full.
+        let damage_supported = cfg!(not(target_family = "wasm"))
+            && surface_caps.usages.contains(wgpu::TextureUsages::COPY_DST);
         let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: if damage_supported {
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST
+            } else {
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+            },
             format: surface_format,
             color_space: wgpu::SurfaceColorSpace::Auto,
             width: clamped_width.max(1),
@@ -501,6 +570,7 @@ impl WgpuRenderer {
 
         let surface_format = surface_config.format;
         let alpha_mode = surface_config.alpha_mode;
+        let damage_enabled = surface_config.usage.contains(wgpu::TextureUsages::COPY_DST);
         let max_texture_size = context.device.limits().max_texture_dimension_2d;
         let core = WgpuRendererCore::new(context, atlas.clone(), surface_format, alpha_mode);
 
@@ -519,6 +589,8 @@ impl WgpuRenderer {
             observed_error_generation: 0,
             last_surface_error: None,
             needs_redraw: false,
+            damage_enabled,
+            pending_damage: SceneDamage::Full,
         })
     }
 }
@@ -706,6 +778,7 @@ impl WgpuRendererCore {
             format: wgpu::TextureFormat::Rgba32Uint,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
+            texture_binding_view_dimension: None,
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let capacity = u64::from(width) * u64::from(height) * INSTANCE_TEXTURE_TEXEL_SIZE;
@@ -980,6 +1053,58 @@ impl WgpuRendererCore {
             &shader_module,
         );
 
+        let clear_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("clear_shader"),
+            source: wgpu::ShaderSource::Wgsl(CLEAR_SHADER.into()),
+        });
+        let clear_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("clear_layout"),
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
+        let clear = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("clear"),
+            layout: Some(&clear_layout),
+            vertex: wgpu::VertexState {
+                module: &clear_module,
+                entry_point: Some("vs_clear"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &clear_module,
+                entry_point: Some("fs_clear"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Constant,
+                            dst_factor: wgpu::BlendFactor::Zero,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Constant,
+                            dst_factor: wgpu::BlendFactor::Zero,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         WgpuPipelines {
             quads,
             opaque_quads,
@@ -990,6 +1115,7 @@ impl WgpuRendererCore {
             subpixel_sprites,
             poly_sprites,
             surfaces,
+            clear,
             premultiplied_alpha,
         }
     }
@@ -1024,6 +1150,9 @@ impl WgpuRenderer {
     }
 
     pub fn set_subpixel_layout(&mut self, is_bgr: bool) {
+        if is_bgr != self.is_bgr {
+            self.pending_damage = SceneDamage::Full;
+        }
         self.is_bgr = is_bgr;
         if let Some(core) = self.core_mut() {
             core.is_bgr = is_bgr;
@@ -1039,6 +1168,7 @@ impl WgpuRenderer {
         if new_alpha_mode == self.surface_config.alpha_mode {
             return;
         }
+        self.pending_damage = SceneDamage::Full;
         self.surface_config.alpha_mode = new_alpha_mode;
         let format = self.surface_config.format;
 
@@ -1084,7 +1214,23 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
+    /// Whether this renderer uses the damage passed to [`Self::draw_with_damage`].
+    pub fn damage_enabled(&self) -> bool {
+        self.damage_enabled
+    }
+
     pub fn draw(&mut self, scene: &Scene) -> bool {
+        self.draw_with_damage(scene, None) == DrawOutcome::Presented
+    }
+
+    /// `damage` is the region that changed since the last present. `None` means
+    /// it wasn't computed, so the whole frame is redrawn.
+    pub fn draw_with_damage(&mut self, scene: &Scene, damage: Option<SceneDamage>) -> DrawOutcome {
+        // Accumulate before any early return, so a dropped frame's damage isn't lost.
+        self.pending_damage = self
+            .pending_damage
+            .union(damage.unwrap_or(SceneDamage::Full));
+
         #[cfg(target_family = "wasm")]
         if self.device_lost() {
             if matches!(self.state, RendererState::Ready { .. }) {
@@ -1093,7 +1239,7 @@ impl WgpuRenderer {
                 );
                 self.unconfigure_surface();
             }
-            return false;
+            return DrawOutcome::Failed;
         }
 
         // Bail out early if the surface has been unconfigured (e.g. during
@@ -1101,7 +1247,7 @@ impl WgpuRenderer {
         // a texture from an unconfigured surface can block indefinitely on
         // some drivers (Adreno).
         let RendererState::Ready { surface, core } = &mut self.state else {
-            return false;
+            return DrawOutcome::Failed;
         };
 
         if let Some(error) = self.last_surface_error.take().or_else(|| {
@@ -1121,10 +1267,15 @@ impl WgpuRenderer {
                 self.atlas.clear();
                 self.needs_redraw = true;
                 self.failed_frame_count = 0;
-                return false;
+                self.pending_damage = SceneDamage::Full;
+                return DrawOutcome::Failed;
             }
         } else {
             self.failed_frame_count = 0;
+        }
+
+        if self.pending_damage == SceneDamage::Unchanged {
+            return DrawOutcome::Unchanged;
         }
 
         let frame = match surface.get_current_texture() {
@@ -1133,18 +1284,20 @@ impl WgpuRenderer {
                 // Textures must be destroyed before the surface can be reconfigured.
                 drop(frame);
                 surface.configure(&core.resources.device, &self.surface_config);
-                return false;
+                self.pending_damage = SceneDamage::Full;
+                return DrawOutcome::Failed;
             }
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 surface.configure(&core.resources.device, &self.surface_config);
-                return false;
+                self.pending_damage = SceneDamage::Full;
+                return DrawOutcome::Failed;
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return false;
+                return DrawOutcome::Failed;
             }
             wgpu::CurrentSurfaceTexture::Validation => {
                 self.last_surface_error = Some("Surface texture validation error".to_string());
-                return false;
+                return DrawOutcome::Failed;
             }
         };
 
@@ -1154,16 +1307,73 @@ impl WgpuRenderer {
             width: DevicePixels(frame.texture.width() as i32),
             height: DevicePixels(frame.texture.height() as i32),
         };
-        let frame_view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        if let Err(error) = core.render_frame(scene, &frame_view, size, wgpu::Color::TRANSPARENT) {
-            log::error!("{error:#}");
-            return false;
+        if !self.damage_enabled {
+            let frame_view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            if let Err(error) =
+                core.render_frame(scene, &frame_view, size, wgpu::Color::TRANSPARENT, None)
+            {
+                log::error!("{error:#}");
+                return DrawOutcome::Failed;
+            }
+            core.resources.queue.present(frame);
+            self.pending_damage = SceneDamage::Unchanged;
+            return DrawOutcome::Presented;
         }
 
-        core.resources.queue.present(frame);
-        true
+        if core.ensure_damage_target(size, frame.texture.format()) {
+            self.pending_damage = SceneDamage::Full;
+        }
+        let width = size.width.0 as u32;
+        let height = size.height.0 as u32;
+        let scissor = match self.pending_damage {
+            SceneDamage::Rect(damage) => damage_scissor(damage, width, height),
+            SceneDamage::Full | SceneDamage::Unchanged => None,
+        };
+        if scissor.is_some_and(|scissor| scissor.w == 0 || scissor.h == 0) {
+            // The damage lies outside the window.
+            self.pending_damage = SceneDamage::Unchanged;
+            return DrawOutcome::Unchanged;
+        }
+
+        let Some(target) = &core.damage_target else {
+            return DrawOutcome::Failed;
+        };
+        let (target_texture, target_view) = (target.texture.clone(), target.view.clone());
+        if let Err(error) =
+            core.render_frame(scene, &target_view, size, wgpu::Color::TRANSPARENT, scissor)
+        {
+            log::error!("{error:#}");
+            return DrawOutcome::Failed;
+        }
+
+        // The swapchain image doesn't hold the previous frame, so copy all of it.
+        let mut encoder =
+            core.resources
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("damage_copy_encoder"),
+                });
+        encoder.copy_texture_to_texture(
+            target_texture.as_image_copy(),
+            frame.texture.as_image_copy(),
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        core.resources
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+
+        match scissor {
+            Some(scissor) => core.resources.queue.present_with_damage(frame, &[scissor]),
+            None => core.resources.queue.present(frame),
+        }
+        self.pending_damage = SceneDamage::Unchanged;
+        DrawOutcome::Presented
     }
 }
 
@@ -1292,6 +1502,7 @@ impl WgpuRendererCore {
             transient_attachments: context.supports_transient_attachments(),
             adapter_info: context.adapter.get_info(),
             depth_texture: None,
+            damage_target: None,
             #[cfg(all(
                 not(target_family = "wasm"),
                 any(test, feature = "bench-support", feature = "test-support")
@@ -1324,13 +1535,16 @@ impl WgpuRendererCore {
         &mut self.resources
     }
 
+    /// Renders `scene` into `target_view`. With a `scissor`, the target keeps its
+    /// previous contents and only that region is cleared and redrawn.
     fn render_frame(
         &mut self,
         scene: &Scene,
         target_view: &wgpu::TextureView,
         size: Size<DevicePixels>,
         clear_color: wgpu::Color,
-    ) -> Result<wgpu::SubmissionIndex> {
+        scissor: Option<wgpu::Rect<u32>>,
+    ) -> Result<Option<wgpu::SubmissionIndex>> {
         anyhow::ensure!(
             size.width.0 > 0 && size.height.0 > 0,
             "invalid render target size: {size:?}"
@@ -1357,7 +1571,7 @@ impl WgpuRendererCore {
             bytemuck::bytes_of(&gamma_params),
         );
 
-        self.record_frame(scene, target_view, size, clear_color)
+        self.record_frame(scene, target_view, size, clear_color, scissor)
             .inspect_err(|_| {
                 // Queue writes are staged before encoding; flush them even if the frame fails.
                 self.resources.queue.submit(std::iter::empty());
@@ -1370,7 +1584,8 @@ impl WgpuRendererCore {
         frame_view: &wgpu::TextureView,
         size: Size<DevicePixels>,
         clear_color: wgpu::Color,
-    ) -> Result<wgpu::SubmissionIndex> {
+        scissor: Option<wgpu::Rect<u32>>,
+    ) -> Result<Option<wgpu::SubmissionIndex>> {
         let mut instance_offset = 0;
         let instance_bindings = self
             .write_instances(scene, &mut instance_offset)
@@ -1427,7 +1642,11 @@ impl WgpuRendererCore {
                     view: frame_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear_color),
+                        load: if scissor.is_some() {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(clear_color)
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -1442,6 +1661,12 @@ impl WgpuRendererCore {
                 }),
                 ..Default::default()
             });
+            if let Some(scissor) = scissor {
+                pass.set_scissor_rect(scissor.x, scissor.y, scissor.w, scissor.h);
+                pass.set_pipeline(&self.resources().pipelines.clear);
+                pass.set_blend_constant(clear_color);
+                pass.draw(0..3, 0..1);
+            }
             pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
 
             self.draw_instances(
@@ -1554,6 +1779,45 @@ impl WgpuRendererCore {
         Ok(submission)
     }
 
+    /// Returns whether the damage target was (re)created, in which case it holds no
+    /// previous frame to draw on top of.
+    fn ensure_damage_target(
+        &mut self,
+        size: Size<DevicePixels>,
+        format: wgpu::TextureFormat,
+    ) -> bool {
+        let width = size.width.0 as u32;
+        let height = size.height.0 as u32;
+        if let Some(target) = &self.damage_target
+            && target.texture.width() == width
+            && target.texture.height() == height
+            && target.texture.format() == format
+        {
+            return false;
+        }
+        let texture = self
+            .resources()
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("damage_target"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+                texture_binding_view_dimension: None,
+            });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.damage_target = Some(DamageTarget { texture, view });
+        true
+    }
+
     fn ensure_depth_texture(&mut self, size: Size<DevicePixels>) {
         let width = size.width.0 as u32;
         let height = size.height.0 as u32;
@@ -1584,6 +1848,7 @@ impl WgpuRendererCore {
                 format: DEPTH_FORMAT,
                 usage,
                 view_formats: &[],
+                texture_binding_view_dimension: None,
             });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.depth_texture = Some(DepthTexture { texture, view });
@@ -2138,6 +2403,7 @@ impl WgpuRenderer {
         }
         surface.configure(&core.resources.device, &self.surface_config);
         self.state = RendererState::Ready { surface, core };
+        self.pending_damage = SceneDamage::Full;
 
         Ok(())
     }
@@ -2340,6 +2606,7 @@ impl WgpuHeadlessRenderer {
                 format: self.core.target_format,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
+                texture_binding_view_dimension: None,
             });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.render_target = Some(HeadlessRenderTarget { texture, view });
@@ -2371,7 +2638,7 @@ impl WgpuHeadlessRenderer {
             .view
             .clone();
         self.core
-            .render_frame(scene, &view, size, wgpu::Color::BLACK)?;
+            .render_frame(scene, &view, size, wgpu::Color::BLACK, None)?;
         Ok(())
     }
 
@@ -2453,7 +2720,7 @@ impl WgpuHeadlessRenderer {
             .resources
             .device
             .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission),
+                submission_index: submission,
                 timeout: Some(std::time::Duration::from_secs(30)),
             })
             .map_err(|error| anyhow::anyhow!("Failed to wait for headless rendering: {error}"))?;
@@ -2578,6 +2845,45 @@ mod tests {
     #[cfg(target_os = "linux")]
     use gpui::{DevicePixels, PlatformHeadlessRenderer, Scene};
 
+    #[test]
+    fn damage_scissor_pads_clamps_and_detects_full_damage() {
+        let damage = |x: f32, y: f32, width: f32, height: f32| Bounds {
+            origin: Point::new(ScaledPixels(x), ScaledPixels(y)),
+            size: Size::new(ScaledPixels(width), ScaledPixels(height)),
+        };
+        assert_eq!(
+            damage_scissor(damage(10.5, 20.2, 5.0, 4.6), 800, 600),
+            Some(wgpu::Rect {
+                x: 9,
+                y: 19,
+                w: 8,
+                h: 7,
+            })
+        );
+        assert_eq!(
+            damage_scissor(damage(-50.0, 590.0, 100.0, 100.0), 800, 600),
+            Some(wgpu::Rect {
+                x: 0,
+                y: 589,
+                w: 51,
+                h: 11,
+            })
+        );
+        assert_eq!(
+            damage_scissor(damage(0.0, 0.0, 800.0, 600.0), 800, 600),
+            None
+        );
+        assert_eq!(
+            damage_scissor(damage(900.0, 0.0, 10.0, 10.0), 800, 600),
+            Some(wgpu::Rect {
+                x: 800,
+                y: 0,
+                w: 0,
+                h: 11,
+            })
+        );
+    }
+
     #[cfg(target_os = "linux")]
     fn device_size(width: i32, height: i32) -> Size<DevicePixels> {
         Size {
@@ -2672,6 +2978,54 @@ mod tests {
         let image = renderer.render_scene_to_image(&Scene::default(), device_size(13, 7))?;
         assert_eq!(image.dimensions(), (13, 7));
         assert!(image.pixels().all(|pixel| pixel.0 == BLACK));
+        Ok(())
+    }
+
+    /// Redrawing only the damage of `after` on top of `before` must match rendering
+    /// `after` in full, including where translucent primitives are redrawn.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn partial_redraw_matches_full_redraw() -> anyhow::Result<()> {
+        let size = device_size(64, 32);
+        let scene_with = |overlay_x: f32| {
+            let mut scene = Scene::default();
+            scene.insert_primitive(solid_quad(0.0, 0.0, 64.0, 32.0, gpui::red().opacity(0.5)));
+            scene.insert_primitive(solid_quad(4.0, 4.0, 8.0, 8.0, gpui::blue()));
+            scene.insert_primitive(solid_quad(
+                overlay_x,
+                16.0,
+                8.0,
+                8.0,
+                gpui::white().opacity(0.5),
+            ));
+            scene.finish();
+            scene
+        };
+        let before = scene_with(8.0);
+        let after = scene_with(40.0);
+
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let expected = renderer.render_scene_to_image(&after, size)?;
+
+        renderer.render_scene(&before, size)?;
+        let SceneDamage::Rect(damage) = SceneDamage::between(&before, &after) else {
+            anyhow::bail!("expected rect damage");
+        };
+        let scissor = damage_scissor(damage, 64, 32).context("expected partial damage")?;
+        let view = renderer
+            .render_target
+            .as_ref()
+            .context("missing render target")?
+            .view
+            .clone();
+        renderer
+            .core
+            .render_frame(&after, &view, size, wgpu::Color::BLACK, Some(scissor))?;
+        let actual = renderer.read_image()?;
+
+        for (x, y, pixel) in expected.enumerate_pixels() {
+            assert_pixel(&actual, x, y, pixel.0);
+        }
         Ok(())
     }
 
