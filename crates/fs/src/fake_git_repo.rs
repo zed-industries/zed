@@ -4,6 +4,7 @@ use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
 use async_channel::Sender;
 use collections::{HashMap, HashSet};
+use encoding_rs::Encoding;
 use futures::FutureExt as _;
 use futures::channel::oneshot;
 use futures::future::{self, BoxFuture, join_all};
@@ -1158,6 +1159,8 @@ impl GitRepository for FakeGitRepository {
         path: RepoPath,
         _content: Rope,
         _line_ending: LineEnding,
+        _encoding: &'static Encoding,
+        _has_bom: bool,
     ) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state

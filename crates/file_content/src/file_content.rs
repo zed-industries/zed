@@ -5,7 +5,10 @@ use std::io::{self, Read};
 
 use anyhow::Result;
 use chardetng::EncodingDetector;
-use encoding_rs::{CoderResult, Decoder, Encoding, UTF_8, UTF_16BE, UTF_16LE};
+use encoding_rs::{
+    CoderResult, Decoder, DecoderResult, Encoder, EncoderResult, Encoding, UTF_8, UTF_16BE,
+    UTF_16LE,
+};
 use futures_lite::future::yield_now;
 
 /// Number of leading bytes that [`analyze_byte_content`] inspects.
@@ -141,6 +144,92 @@ pub fn encode_text(text: String, encoding: &'static Encoding, has_bom: bool) -> 
         bytes
     } else {
         encoded.into_owned()
+    }
+}
+
+pub struct ExactEncoder {
+    encoding: &'static Encoding,
+    encoder: Encoder,
+    decoder: Decoder,
+    bom: &'static [u8],
+    output: Vec<u8>,
+    decoded: String,
+}
+
+impl ExactEncoder {
+    pub fn new(encoding: &'static Encoding, has_bom: bool) -> Self {
+        let bom: &[u8] = if !has_bom {
+            &[]
+        } else if encoding == UTF_8 {
+            &[0xEF, 0xBB, 0xBF]
+        } else if encoding == UTF_16LE {
+            &[0xFF, 0xFE]
+        } else if encoding == UTF_16BE {
+            &[0xFE, 0xFF]
+        } else {
+            &[]
+        };
+        Self {
+            encoding,
+            encoder: encoding.new_encoder(),
+            decoder: encoding.new_decoder_without_bom_handling(),
+            bom,
+            output: Vec::new(),
+            decoded: String::new(),
+        }
+    }
+
+    /// Encodes the next piece of the text.
+    pub fn encode(&mut self, text: &str) -> Option<&[u8]> {
+        self.encode_piece(text, false)?;
+        Some(&self.output)
+    }
+
+    pub fn finish(mut self) -> Option<Vec<u8>> {
+        self.encode_piece("", true)?;
+        Some(self.output)
+    }
+
+    fn encode_piece(&mut self, text: &str, last: bool) -> Option<()> {
+        self.output.clear();
+        self.output.extend_from_slice(std::mem::take(&mut self.bom));
+        if self.encoding == UTF_8 {
+            self.output.extend_from_slice(text.as_bytes());
+            return Some(());
+        }
+        if self.encoding == UTF_16LE {
+            self.output
+                .extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+            return Some(());
+        }
+        if self.encoding == UTF_16BE {
+            self.output
+                .extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+            return Some(());
+        }
+
+        let capacity = self
+            .encoder
+            .max_buffer_length_from_utf8_without_replacement(text.len())?;
+        self.output.reserve(capacity);
+        let (result, _) =
+            self.encoder
+                .encode_from_utf8_to_vec_without_replacement(text, &mut self.output, last);
+        if result != EncoderResult::InputEmpty {
+            return None;
+        }
+
+        let capacity = self
+            .decoder
+            .max_utf8_buffer_length_without_replacement(self.output.len())?;
+        self.decoded.clear();
+        self.decoded.reserve(capacity);
+        let (result, _) = self.decoder.decode_to_string_without_replacement(
+            &self.output,
+            &mut self.decoded,
+            last,
+        );
+        (result == DecoderResult::InputEmpty && self.decoded == text).then_some(())
     }
 }
 
@@ -581,6 +670,87 @@ mod tests {
                 encode_text(decoded.text, decoded.encoding, decoded.has_bom),
                 bytes
             );
+        }
+    }
+
+    #[test]
+    fn exact_encoder_matches_whole_text_encoding() {
+        for (text, encoding, has_bom) in [
+            (
+                "x = \"café\"\r\ny = \"crème brûlée\"\r\n",
+                encoding_rs::WINDOWS_1252,
+                false,
+            ),
+            (
+                "int a; /* 日本語のコメント */\n",
+                encoding_rs::SHIFT_JIS,
+                false,
+            ),
+            ("这是一个中文句子。\n", encoding_rs::GBK, false),
+            // Stateful: escape sequences switch between character sets.
+            ("日本語 and ¥ and カタカナ", encoding_rs::ISO_2022_JP, false),
+            ("上の行\nplain 😀\n", UTF_8, true),
+            ("上の行\nplain 😀\n", UTF_16LE, true),
+            ("上の行\nplain 😀\n", UTF_16BE, false),
+            ("", UTF_8, true),
+            ("", UTF_16BE, true),
+            ("", encoding_rs::ISO_2022_JP, false),
+        ] {
+            let expected = encode_text(text.to_owned(), encoding, has_bom);
+            let characters = text.chars().collect::<Vec<_>>();
+            for piece_len in [1, 2, 7, usize::MAX] {
+                let mut encoder = ExactEncoder::new(encoding, has_bom);
+                let mut encoded = Vec::new();
+                for piece in characters.chunks(piece_len) {
+                    let piece = piece.iter().collect::<String>();
+                    encoded.extend_from_slice(encoder.encode(&piece).unwrap());
+                }
+                encoded.extend(encoder.finish().unwrap());
+                assert_eq!(
+                    encoded,
+                    expected,
+                    "{}, piece_len = {piece_len}",
+                    encoding.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn exact_encoder_rejects_text_that_does_not_round_trip() {
+        let encode = |text: &str, encoding| {
+            let mut encoder = ExactEncoder::new(encoding, false);
+            encoder.encode(text).map(<[u8]>::to_vec)
+        };
+
+        assert_eq!(
+            encode_text("😀".to_owned(), encoding_rs::WINDOWS_1252, false),
+            b"&#128512;"
+        );
+        assert_eq!(encode("😀", encoding_rs::WINDOWS_1252), None);
+
+        assert_eq!(encode("\\", encoding_rs::SHIFT_JIS), Some(vec![0x5C]));
+        assert_eq!(
+            encode_text("¥".to_owned(), encoding_rs::SHIFT_JIS, false),
+            [0x5C]
+        );
+        for (text, encoding) in [
+            ("¥", encoding_rs::SHIFT_JIS),
+            ("‾", encoding_rs::SHIFT_JIS),
+            ("−", encoding_rs::EUC_JP),
+            ("ｶ", encoding_rs::ISO_2022_JP),
+            ("\u{E78D}", encoding_rs::GBK),
+        ] {
+            assert_eq!(
+                encode(text, encoding),
+                None,
+                "{text} in {}",
+                encoding.name()
+            );
+        }
+
+        for encoding in [UTF_8, UTF_16LE, UTF_16BE] {
+            assert!(encode("¥ 😀", encoding).is_some(), "{}", encoding.name());
         }
     }
 
