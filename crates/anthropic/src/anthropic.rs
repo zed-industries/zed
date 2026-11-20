@@ -22,7 +22,18 @@ pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
+pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
+pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
 
+/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
+pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
+
+/// The smallest input-token trigger Anthropic accepts for compaction.
+pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
+
+/// Fast mode availability does not follow model version order.
+/// <https://platform.claude.com/docs/en/build-with-claude/fast-mode#feature-availability>
 pub fn supports_fast_mode(model_id: &str) -> bool {
     matches!(
         model_id,
@@ -34,37 +45,54 @@ pub fn supports_fast_mode(model_id: &str) -> bool {
     )
 }
 
-/// Model IDs where adaptive thinking runs by default when a request omits the
-/// `thinking` field, and where thinking must instead be turned off with an
-/// explicit `thinking: {"type": "disabled"}`.
+/// Explicit opt-out for models that think by default, used when the Models API
+/// doesn't advertise an off mode. Keep this model-specific: Opus 5 accepts
+/// `disabled`, but Opus 5.5 rejects it.
 ///
-/// On earlier Opus models omitting `thinking` means thinking is off; Claude
-/// Opus 5 flipped that default, as did Claude Haiku 5.5. Claude Fable 5 and
-/// Claude Mythos 5 also think by default, but they reject `{"type":
-/// "disabled"}` with a 400 error, so they are deliberately excluded here
-/// (thinking cannot be turned off for them at all).
-///
-/// <https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-5>
-pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
-    matches!(model_id, "claude-opus-5" | "claude-haiku-5-5")
+/// <https://platform.claude.com/docs/en/build-with-claude/thinking#turning-thinking-off>
+fn thinking_opt_out_fallback(model_id: &str) -> Option<Thinking> {
+    match model_id {
+        "claude-sonnet-5-5" => Some(Thinking::BetweenTools),
+        "claude-opus-5" | "claude-sonnet-5" | "claude-haiku-5-5" => Some(Thinking::Disabled),
+        _ => None,
+    }
 }
 
-pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
-pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
-pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
+fn requires_adaptive_thinking(model_id: &str) -> bool {
+    model_version_at_least(model_id, |family| match family {
+        "opus" => Some((4, 7)),
+        "sonnet" | "fable" | "mythos" => Some((5, 0)),
+        "haiku" => Some((5, 5)),
+        _ => None,
+    })
+}
 
+// Mythos Preview accepts manual thinking but still rejects non-default temperature.
+// <https://platform.claude.com/docs/en/build-with-claude/thinking#sampling-parameters>
+fn rejects_custom_temperature(model_id: &str) -> bool {
+    if model_id == "claude-mythos-preview" {
+        return true;
+    }
+    model_version_at_least(model_id, |family| match family {
+        "opus" => Some((4, 7)),
+        "sonnet" | "fable" | "mythos" => Some((5, 0)),
+        "haiku" => Some((5, 5)),
+        _ => None,
+    })
+}
+
+/// <https://platform.claude.com/docs/en/build-with-claude/preserved-thinking/prefix-checks#outcomes>
 pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "claude-fable-5-2"
-            | "claude-mythos-5-2"
-            | "claude-opus-5-5"
-            | "claude-fable-5-1"
-            | "claude-sonnet-5-5"
-            | "claude-haiku-5-5"
-    )
+    model_version_at_least(model_id, |family| match family {
+        "opus" | "sonnet" | "haiku" => Some((5, 5)),
+        "fable" | "mythos" => Some((5, 1)),
+        _ => None,
+    })
 }
 
+/// Checks for models that reject forced tool choice on every request, not
+/// request-specific restrictions such as manual extended thinking.
+/// <https://platform.claude.com/docs/en/build-with-claude/thinking#response-prefill-and-forced-tool-use>
 pub fn supports_forced_tool_use(model_id: &str) -> bool {
     !matches!(
         model_id,
@@ -79,29 +107,37 @@ pub fn supports_forced_tool_use(model_id: &str) -> bool {
 
 /// Whether this model accepts system messages inside conversation history.
 ///
-/// Older models retain the flattened system-prompt representation.
+/// Infer support for newer versions of known model families. The cutoff is
+/// family-specific: Sonnet 5 lacks support even though Opus 4.8 has it.
 /// <https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages>
 pub fn supports_mid_conversation_system_messages(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "claude-fable-5-1"
-            | "claude-mythos-5-1"
-            | "claude-fable-5"
-            | "claude-mythos-5"
-            | "claude-mythos-preview"
-            | "claude-opus-5-5"
-            | "claude-opus-5"
-            | "claude-opus-4-8"
-            | "claude-sonnet-5-5"
-            | "claude-haiku-5-5"
-    )
+    if model_id == "claude-mythos-preview" {
+        return true;
+    }
+    model_version_at_least(model_id, |family| match family {
+        "opus" => Some((4, 8)),
+        "sonnet" | "haiku" => Some((5, 5)),
+        "fable" | "mythos" => Some((5, 0)),
+        _ => None,
+    })
 }
 
-/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
-pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
+fn model_version_at_least(
+    model_id: &str,
+    minimum_version: impl FnOnce(&str) -> Option<(u8, u8)>,
+) -> bool {
+    let Some((family, major, minor)) = parse_claude_model_version(model_id) else {
+        return false;
+    };
+    minimum_version(family).is_some_and(|minimum| (major, minor) >= minimum)
+}
 
-/// The smallest input-token trigger Anthropic accepts for compaction.
-pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
+fn parse_claude_model_version(model_id: &str) -> Option<(&str, u8, u8)> {
+    let (family, version) = model_id.strip_prefix("claude-")?.split_once('-')?;
+    let (major, minor) = version.split_once('-').unwrap_or((version, "0"));
+    // Only infer from plain versions, not dated snapshots or custom aliases.
+    Some((family, major.parse().ok()?, minor.parse().ok()?))
+}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -118,6 +154,8 @@ pub enum AnthropicModelMode {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ModelCapabilities {
     #[serde(default)]
+    pub context_management: Option<ContextManagementCapability>,
+    #[serde(default)]
     pub thinking: Option<ThinkingCapability>,
     #[serde(default)]
     pub image_input: Option<SupportedCapability>,
@@ -125,10 +163,18 @@ pub struct ModelCapabilities {
     pub effort: Option<EffortCapability>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct SupportedCapability {
     #[serde(default)]
     pub supported: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ContextManagementCapability {
+    #[serde(default)]
+    pub supported: bool,
+    #[serde(default)]
+    pub compact_20260112: Option<SupportedCapability>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -139,12 +185,16 @@ pub struct ThinkingCapability {
     pub types: Option<ThinkingTypes>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct ThinkingTypes {
     #[serde(default)]
     pub adaptive: SupportedCapability,
     #[serde(default)]
     pub enabled: SupportedCapability,
+    #[serde(default)]
+    pub disabled: Option<SupportedCapability>,
+    #[serde(default)]
+    pub between_tools: Option<SupportedCapability>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -171,6 +221,7 @@ pub struct Model {
     pub max_output_tokens: u64,
     pub default_temperature: f32,
     pub mode: AnthropicModelMode,
+    pub thinking_types: Option<ThinkingTypes>,
     pub supports_thinking: bool,
     pub supports_adaptive_thinking: bool,
     pub supports_images: bool,
@@ -187,19 +238,15 @@ pub struct Model {
 impl Model {
     /// Construct a `Model` from an entry returned by the `/v1/models` listing endpoint.
     pub fn from_listed(entry: ListModelEntry) -> Self {
-        let supports_thinking = entry
+        let thinking = entry
             .capabilities
             .as_ref()
-            .and_then(|t| t.thinking.as_ref())
-            .map(|t| t.supported)
-            .unwrap_or(false);
-        let supports_adaptive_thinking = entry
-            .capabilities
+            .and_then(|capabilities| capabilities.thinking.as_ref());
+        let supports_thinking = thinking.is_some_and(|thinking| thinking.supported);
+        let thinking_types = thinking.and_then(|thinking| thinking.types.clone());
+        let supports_adaptive_thinking = thinking_types
             .as_ref()
-            .and_then(|t| t.thinking.as_ref())
-            .and_then(|t| t.types.as_ref())
-            .map(|types| types.adaptive.supported)
-            .unwrap_or(false);
+            .is_some_and(|types| types.adaptive.supported);
         let supports_images = entry
             .capabilities
             .as_ref()
@@ -224,7 +271,11 @@ impl Model {
 
         let mode = if supports_adaptive_thinking {
             AnthropicModelMode::AdaptiveThinking
-        } else if supports_thinking {
+        } else if supports_thinking
+            && thinking_types
+                .as_ref()
+                .is_none_or(|types| types.enabled.supported)
+        {
             AnthropicModelMode::Thinking {
                 budget_tokens: Some(4_096),
             }
@@ -234,26 +285,17 @@ impl Model {
 
         let supports_speed = supports_fast_mode(&entry.id);
 
-        // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
-        let supports_compaction = matches!(
-            entry.id.as_str(),
-            "claude-fable-5-2"
-                | "claude-mythos-5-2"
-                | "claude-opus-5-5"
-                | "claude-fable-5-1"
-                | "claude-fable-5"
-                | "claude-mythos-5-1"
-                | "claude-mythos-5"
-                | "claude-mythos-preview"
-                | "claude-opus-5"
-                | "claude-opus-4-8"
-                | "claude-opus-4-7"
-                | "claude-opus-4-6"
-                | "claude-sonnet-5-5"
-                | "claude-sonnet-5"
-                | "claude-sonnet-4-6"
-                | "claude-haiku-5-5"
-        );
+        let supports_compaction = entry
+            .capabilities
+            .as_ref()
+            .and_then(|capabilities| capabilities.context_management.as_ref())
+            .is_some_and(|management| {
+                management.supported
+                    && management
+                        .compact_20260112
+                        .as_ref()
+                        .is_some_and(|compaction| compaction.supported)
+            });
 
         let mut extra_beta_headers = Vec::new();
         if supports_speed {
@@ -273,6 +315,7 @@ impl Model {
             max_output_tokens: entry.max_tokens,
             default_temperature: 1.0,
             mode,
+            thinking_types,
             supports_thinking,
             supports_adaptive_thinking,
             supports_images,
@@ -940,9 +983,8 @@ pub enum Thinking {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         block_binding: Option<ThinkingBlockBinding>,
     },
-    /// Explicitly turns thinking off. Required by models where thinking runs
-    /// by default (see [`requires_explicit_thinking_opt_out`]); only accepted
-    /// at effort `high` or below.
+    /// Explicitly turns thinking off. Some models only accept it at effort
+    /// `high` or below.
     Disabled,
     /// The lowest thinking setting, for models that think by default but
     /// reject [`Thinking::Disabled`] (Claude Sonnet 5.5).
@@ -1855,6 +1897,7 @@ mod tests {
                     types: Some(ThinkingTypes {
                         adaptive: SupportedCapability { supported: true },
                         enabled: SupportedCapability { supported: true },
+                        ..Default::default()
                     }),
                 }),
                 ..Default::default()
@@ -1876,6 +1919,7 @@ mod tests {
                     types: Some(ThinkingTypes {
                         adaptive: SupportedCapability { supported: false },
                         enabled: SupportedCapability { supported: true },
+                        ..Default::default()
                     }),
                 }),
                 ..Default::default()
@@ -1897,9 +1941,73 @@ mod tests {
     }
 
     #[test]
+    fn thinking_prefix_binding_uses_family_specific_version_cutoffs() {
+        for (model_id, expected) in [
+            ("claude-opus-5-4", false),
+            ("claude-opus-5-5", true),
+            ("claude-opus-5-10", true),
+            ("claude-sonnet-5", false),
+            ("claude-sonnet-5-5", true),
+            ("claude-sonnet-6", true),
+            ("claude-haiku-5-4", false),
+            ("claude-haiku-5-5", true),
+            ("claude-haiku-6", true),
+            ("claude-fable-5", false),
+            ("claude-fable-5-1", true),
+            ("claude-fable-6", true),
+            ("claude-mythos-preview", false),
+            ("claude-mythos-5", false),
+            ("claude-mythos-5-1", true),
+            ("claude-mythos-6", true),
+            ("claude-opus-5-5-20260921", false),
+            ("claude-opus-latest", false),
+            ("claude-unknown-6", false),
+        ] {
+            assert_eq!(
+                binds_thinking_blocks_to_prefix(model_id),
+                expected,
+                "{model_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn system_message_support_uses_family_specific_version_cutoffs() {
+        for (model_id, expected) in [
+            ("claude-opus-4-7", false),
+            ("claude-opus-4-8", true),
+            ("claude-opus-4-10", true),
+            ("claude-opus-5", true),
+            ("claude-sonnet-5", false),
+            ("claude-sonnet-5-4", false),
+            ("claude-sonnet-5-5", true),
+            ("claude-sonnet-6", true),
+            ("claude-haiku-4-5-20251001", false),
+            ("claude-haiku-5-4", false),
+            ("claude-haiku-5-5", true),
+            ("claude-haiku-6", true),
+            ("claude-fable-5", true),
+            ("claude-fable-6", true),
+            ("claude-mythos-5", true),
+            ("claude-mythos-6", true),
+            ("claude-mythos-preview", true),
+            ("claude-opus-4-20250514", false),
+            ("claude-opus-latest", false),
+            ("claude-unknown-6", false),
+            ("custom-opus-6", false),
+        ] {
+            assert_eq!(
+                supports_mid_conversation_system_messages(model_id),
+                expected,
+                "{model_id}"
+            );
+        }
+    }
+
+    #[test]
     fn from_listed_enables_fast_mode_and_compaction_for_supported_opus_models() {
         for model_id in ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"] {
-            let model = Model::from_listed(listed_entry(model_id, ModelCapabilities::default()));
+            let model = Model::from_listed(listed_entry(model_id, compaction_capabilities()));
 
             assert!(model.supports_speed);
             let beta_headers = model
@@ -1911,34 +2019,24 @@ mod tests {
     }
 
     #[test]
-    fn from_listed_enables_compaction_and_binding_controls_for_fable_5_1() {
-        let model = Model::from_listed(listed_entry(
-            "claude-fable-5-1",
-            ModelCapabilities::default(),
-        ));
-        let beta_headers = model
-            .beta_headers()
-            .expect("model should have beta headers");
-        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
-        assert!(beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
-
-        // Mythos 5.1 supports compaction but doesn't run the prefix-binding
-        // check, so it must not get the binding-controls header.
-        let model = Model::from_listed(listed_entry(
-            "claude-mythos-5-1",
-            ModelCapabilities::default(),
-        ));
-        let beta_headers = model
-            .beta_headers()
-            .expect("model should have beta headers");
-        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
-        assert!(!beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
+    fn from_listed_enables_compaction_and_binding_controls_for_5_1_models() {
+        for model_id in ["claude-fable-5-1", "claude-mythos-5-1"] {
+            let model = Model::from_listed(listed_entry(model_id, compaction_capabilities()));
+            let beta_headers = model
+                .beta_headers()
+                .expect("model should have beta headers");
+            assert!(beta_headers.contains(COMPACTION_BETA_HEADER), "{model_id}");
+            assert!(
+                beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER),
+                "{model_id}"
+            );
+        }
     }
 
     #[test]
     fn from_listed_enables_fast_mode_compaction_and_binding_controls_for_5_2_models() {
         for model_id in ["claude-fable-5-2", "claude-mythos-5-2"] {
-            let model = Model::from_listed(listed_entry(model_id, ModelCapabilities::default()));
+            let model = Model::from_listed(listed_entry(model_id, compaction_capabilities()));
 
             assert!(model.supports_speed, "{model_id} supports fast mode");
             assert!(model.supports_compaction, "{model_id} supports compaction");
@@ -1952,6 +2050,51 @@ mod tests {
             assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
             assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
             assert!(beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
+        }
+    }
+
+    fn compaction_capabilities() -> ModelCapabilities {
+        serde_json::from_value(serde_json::json!({
+            "context_management": {
+                "supported": true,
+                "compact_20260112": { "supported": true }
+            }
+        }))
+        .expect("valid capabilities")
+    }
+
+    #[test]
+    fn compaction_uses_advertised_capabilities_not_model_names() {
+        let model = Model::from_listed(listed_entry("new-model", compaction_capabilities()));
+        assert!(model.supports_compaction);
+        assert_eq!(
+            model.beta_headers().as_deref(),
+            Some(COMPACTION_BETA_HEADER)
+        );
+
+        for capabilities in [
+            serde_json::json!({}),
+            serde_json::json!({"context_management": null}),
+            serde_json::json!({"context_management": {
+                "supported": true,
+                "compact_20260112": {"supported": false}
+            }}),
+            serde_json::json!({"context_management": {
+                "supported": false,
+                "compact_20260112": {"supported": true}
+            }}),
+        ] {
+            let model = Model::from_listed(listed_entry(
+                "claude-opus-5-5",
+                serde_json::from_value(capabilities).expect("valid capabilities"),
+            ));
+            assert!(!model.supports_compaction);
+            assert!(
+                !model
+                    .beta_headers()
+                    .unwrap_or_default()
+                    .contains(COMPACTION_BETA_HEADER)
+            );
         }
     }
 

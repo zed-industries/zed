@@ -352,6 +352,7 @@ fn anthropic_request(
         } else {
             AnthropicModelMode::Default
         },
+        None,
         AnthropicPromptCacheMode::Automatic,
         &ANTHROPIC_PROVIDER_ID,
     )?;
@@ -742,6 +743,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             1.0,
             config.max_output_tokens as u64,
             AnthropicModelMode::Default,
+            None,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         ) {
