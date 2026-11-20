@@ -51636,6 +51636,71 @@ async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAp
 }
 
 #[gpui::test]
+async fn test_soft_wrap_skips_tables(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
+        settings.defaults.preferred_line_length = Some(20);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+    cx.set_state(indoc! {"
+        ˇA paragraph that is too long to fit.
+
+        | first column | second column |
+        | --- | --- |
+        | a | b |
+    "});
+    cx.run_until_parked();
+    let table = "| first column | second column |\n| --- | --- |\n| a | b |\n";
+    assert_eq!(
+        cx.display_text(),
+        format!("A paragraph that is \ntoo long to fit.\n\n{table}")
+    );
+
+    // Removing the delimiter row turns the table into a paragraph, so its unedited header row
+    // wraps once the buffer is reparsed, even though the rows before it shifted.
+    cx.update_editor(|editor, _, cx| {
+        editor.edit(
+            [
+                (Point::new(0, 0)..Point::new(0, 0), "Intro.\n"),
+                (Point::new(3, 0)..Point::new(4, 0), ""),
+            ],
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.display_text(),
+        "Intro.\nA paragraph that is \ntoo long to fit.\n\n| first column | \nsecond column |\n| a | b |\n"
+    );
+
+    cx.update_editor(|editor, _, cx| {
+        editor.edit(
+            [
+                (Point::new(0, 0)..Point::new(1, 0), ""),
+                (Point::new(4, 0)..Point::new(4, 0), "| --- | --- |\n"),
+            ],
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.display_text(),
+        format!("A paragraph that is \ntoo long to fit.\n\n{table}")
+    );
+
+    update_test_language_settings(&mut cx, &|settings| {
+        settings.defaults.soft_wrap_tables = Some(true);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.display_text(),
+        "A paragraph that is \ntoo long to fit.\n\n| first column | \nsecond column |\n| --- | --- |\n| a | b |\n"
+    );
+}
+
+#[gpui::test]
 async fn test_soft_wrap_indent_updated_when_first_excerpt_changes(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);

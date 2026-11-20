@@ -585,6 +585,12 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: same
     pub soft_wrap_indent: Option<SoftWrapIndent>,
+    /// Whether to soft-wrap tables, such as Markdown tables, when soft wrap is
+    /// enabled. When disabled, table rows extend past the wrap width and can be
+    /// scrolled horizontally.
+    ///
+    /// Default: false
+    pub soft_wrap_tables: Option<bool>,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled. The `editor::Rewrap` action also wraps to this column by
     /// default, whether or not soft-wrap is enabled.

@@ -562,6 +562,7 @@ impl VsCodeSettings {
                 "deepIndent" => Some(SoftWrapIndent::ExtraTwo),
                 _ => None,
             }),
+            soft_wrap_tables: None,
             always_treat_brackets_as_autoclosed: None,
             auto_indent: None,
             auto_indent_on_paste: self.read_bool("editor.formatOnPaste"),

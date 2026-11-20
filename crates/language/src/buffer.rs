@@ -5315,6 +5315,38 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn table_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar.tables_config.as_ref().map(|config| &config.query)
+        });
+
+        let configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.tables_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            loop {
+                let mat = syntax_matches.peek()?;
+                let table_range = configs[mat.grammar_index].and_then(|config| {
+                    mat.captures
+                        .iter()
+                        .find(|capture| capture.index == config.table_capture_ix)
+                        .map(|capture| capture.node.byte_range())
+                });
+                syntax_matches.advance();
+                if table_range.is_some() {
+                    return table_range;
+                }
+            }
+        })
+    }
+
     pub fn injections_intersecting_range<T: ToOffset>(
         &self,
         range: Range<T>,
