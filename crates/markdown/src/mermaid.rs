@@ -15,13 +15,16 @@ use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 
-use super::{CopyButtonVisibility, Markdown, MarkdownStyle, MermaidZoomCallback, ParsedMarkdown};
+use super::{
+    CopyButtonVisibility, Markdown, MarkdownStyle, MermaidExpandCallback, MermaidZoomCallback,
+    ParsedMarkdown,
+};
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
 /// Per scroll tick, zoom changes by 10 percentage points, regardless of how
 /// large a delta the platform reports for the tick.
-const MERMAID_ZOOM_STEP: f32 = 0.1;
+pub const MERMAID_ZOOM_STEP: f32 = 0.1;
 /// How many pixels of precise (trackpad) scroll make up one zoom tick.
 const PIXELS_PER_ZOOM_TICK: f32 = 20.0;
 
@@ -35,6 +38,17 @@ pub(crate) struct ParsedMarkdownMermaidDiagram {
 pub(crate) struct ParsedMarkdownMermaidDiagramContents {
     pub(crate) contents: SharedString,
     pub(crate) scale: u32,
+}
+
+/// The most recent raster of a rendered mermaid diagram.
+#[derive(Clone)]
+pub struct MermaidDiagramImage {
+    pub image: Arc<RenderImage>,
+    /// The diagram's logical size at zoom 1.0.
+    pub natural_size: Size<Pixels>,
+    /// The zoom the diagram is rasterized at, or is being re-rasterized at.
+    /// While a re-raster is pending, `image` is the previous raster.
+    pub rasterized_zoom: f32,
 }
 
 #[derive(Default, Clone)]
@@ -146,14 +160,27 @@ impl MermaidState {
         &self,
         contents: &ParsedMarkdownMermaidDiagramContents,
     ) -> Option<Size<Pixels>> {
+        Some(self.diagram_image(contents)?.natural_size)
+    }
+
+    /// The most recent raster of a diagram: the finished render, or the
+    /// fallback shown while a re-render is pending.
+    pub(crate) fn diagram_image(
+        &self,
+        contents: &ParsedMarkdownMermaidDiagramContents,
+    ) -> Option<MermaidDiagramImage> {
         let cached = self.cache.get(contents)?;
-        let (image, rasterized_scale) = cached
+        let (image, image_scale) = cached
             .render_image
             .get()
             .and_then(|result| result.as_ref().ok())
             .map(|image| (image.clone(), cached.rasterized_scale))
             .or_else(|| cached.fallback_image.clone())?;
-        Some(mermaid_base_size(&image, rasterized_scale))
+        Some(MermaidDiagramImage {
+            natural_size: mermaid_base_size(&image, image_scale),
+            image,
+            rasterized_zoom: cached.rasterized_scale,
+        })
     }
 
     /// Re-rasterizes a single cached diagram at exactly the scale it is
@@ -524,7 +551,7 @@ fn mermaid_display_size(base_size: Size<Pixels>, display_scale: f32) -> Size<Pix
 /// clamped to a single tick: every notch is exactly one step. Precise (pixel)
 /// deltas from trackpads arrive as many small events, each contributing a
 /// fractional tick, so a gesture zooms smoothly at the same overall rate.
-fn mermaid_zoom_ticks(delta: ScrollDelta) -> f32 {
+pub fn mermaid_zoom_ticks(delta: ScrollDelta) -> f32 {
     match delta {
         ScrollDelta::Lines(lines) => lines.y,
         ScrollDelta::Pixels(pixels) => f32::from(pixels.y) / PIXELS_PER_ZOOM_TICK,
@@ -570,6 +597,7 @@ pub(crate) fn render_mermaid_diagram(
     zoom: f32,
     copy_button_visibility: CopyButtonVisibility,
     on_zoom: Option<MermaidZoomCallback>,
+    on_expand: Option<MermaidExpandCallback>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -624,6 +652,7 @@ pub(crate) fn render_mermaid_diagram(
                         (!showing_code && zoom != 1.0).then_some(zoom),
                         markdown,
                         on_zoom,
+                        on_expand.filter(|_| !showing_code),
                     ))
                 })
                 .into_any_element()
@@ -639,6 +668,7 @@ pub(crate) fn render_mermaid_diagram(
                         None,
                         markdown,
                         on_zoom,
+                        None,
                     ))
                 })
                 .into_any_element()
@@ -697,6 +727,7 @@ pub(crate) fn render_mermaid_diagram(
                             (zoom != 1.0).then_some(zoom),
                             markdown,
                             on_zoom,
+                            on_expand.filter(|_| !showing_code),
                         ))
                     })
                     .into_any_element()
@@ -725,6 +756,7 @@ pub(crate) fn render_mermaid_diagram(
                             None,
                             markdown,
                             on_zoom,
+                            None,
                         ))
                     })
                     .into_any_element()
@@ -844,13 +876,15 @@ fn render_mermaid_tab_header(
 
 /// The overlay controls anchored to the top-right corner of a diagram: an
 /// optional "Zoom NNN%" readout with a reset button (shown only while zoomed
-/// away from the natural size) followed by the hover-revealed copy button.
+/// away from the natural size), followed by the hover-revealed expand button
+/// (when the host handles expanding) and copy button.
 fn render_mermaid_overlay_controls(
     source_offset: usize,
     code: String,
     zoom: Option<f32>,
     markdown: Entity<Markdown>,
     on_zoom: Option<MermaidZoomCallback>,
+    on_expand: Option<MermaidExpandCallback>,
 ) -> impl IntoElement {
     h_flex()
         .absolute()
@@ -864,6 +898,19 @@ fn render_mermaid_overlay_controls(
                 markdown.clone(),
                 on_zoom,
             ))
+        })
+        .when_some(on_expand, |this, on_expand| {
+            this.child(
+                IconButton::new(
+                    ElementId::named_usize("mermaid-expand", source_offset),
+                    IconName::Maximize,
+                )
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .visible_on_hover("code_block")
+                .tooltip(Tooltip::text("Expand Diagram"))
+                .on_click(move |_event, window, cx| on_expand(source_offset, window, cx)),
+            )
         })
         .child(render_mermaid_copy_button(source_offset, code, markdown))
 }
@@ -1101,6 +1148,49 @@ mod tests {
             .position(|diagram| diagram == &new_content)?;
         MermaidState::get_fallback_image(idx, old_full_order, new_full_order.len(), cache)
             .map(|(image, _)| image)
+    }
+
+    /// Creates a markdown entity with one rendered mermaid diagram at source
+    /// offset 0, backed by an empty SVG with the given natural size and
+    /// rasterized at zoom 1.0. Returns the entity, the diagram's contents (its
+    /// cache key), and its raster.
+    fn markdown_with_rendered_diagram(
+        width: u32,
+        height: u32,
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Markdown>,
+        ParsedMarkdownMermaidDiagramContents,
+        Arc<RenderImage>,
+    ) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
+        let contents = mermaid_contents("graph A");
+        let image = markdown.update(cx, |markdown, cx| {
+            let svg_renderer = cx.svg_renderer();
+            let svg = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}"></svg>"#
+            );
+            let parsed_svg = Arc::new(svg_renderer.parse_svg(svg.as_bytes()).unwrap());
+            let image = svg_renderer.render_parsed(&parsed_svg, 1.0).unwrap();
+            markdown.parsed_markdown.mermaid_diagrams.insert(
+                0,
+                ParsedMarkdownMermaidDiagram {
+                    content_range: 0..contents.contents.len(),
+                    contents: contents.clone(),
+                },
+            );
+            markdown.mermaid_state.cache.insert(
+                contents.clone(),
+                Arc::new(CachedMermaidDiagram::new_for_test(
+                    Some(image.clone()),
+                    None,
+                    Some(parsed_svg),
+                )),
+            );
+            image
+        });
+        (markdown, contents, image)
     }
 
     #[test]
@@ -1379,43 +1469,63 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_mermaid_zoom_rerasterize_is_debounced(cx: &mut TestAppContext) {
-        ensure_theme_initialized(cx);
-
-        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
-
-        let (parsed_svg, original_image) = markdown.update(cx, |_, cx| {
-            let svg_renderer = cx.svg_renderer();
-            let parsed_svg = Arc::new(
-                svg_renderer
-                    .parse_svg(
-                        br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>"#,
-                    )
-                    .unwrap(),
-            );
-            let original_image = svg_renderer.render_parsed(&parsed_svg, 1.0).unwrap();
-            (parsed_svg, original_image)
-        });
-
-        let contents = mermaid_contents("graph A");
+    fn test_mermaid_rasterize_at_other_zoom_and_restore(cx: &mut TestAppContext) {
+        let (markdown, _, original_image) = markdown_with_rendered_diagram(10, 10, cx);
         let source_offset = 0;
-        markdown.update(cx, |markdown, _| {
-            markdown.parsed_markdown.mermaid_diagrams.insert(
-                source_offset,
-                ParsedMarkdownMermaidDiagram {
-                    content_range: 0..contents.contents.len(),
-                    contents: contents.clone(),
-                },
-            );
-            markdown.mermaid_state.cache.insert(
-                contents.clone(),
-                Arc::new(CachedMermaidDiagram::new_for_test(
-                    Some(original_image.clone()),
-                    None,
-                    Some(parsed_svg),
-                )),
+
+        let natural_size = size(px(10.), px(10.));
+        markdown.read_with(cx, |markdown, _| {
+            let image = markdown.mermaid_diagram_image(source_offset).unwrap();
+            assert_eq!(image.image.id, original_image.id);
+            assert_eq!(image.natural_size, natural_size);
+            assert_eq!(image.rasterized_zoom, 1.0);
+            assert!(
+                markdown.mermaid_diagram_image(source_offset + 1).is_none(),
+                "there is no diagram at another offset"
             );
         });
+
+        // An expanded view rasterizes the diagram at its own zoom. Until the
+        // new raster is ready, the previous one is returned, at the same
+        // natural size.
+        markdown.update(cx, |markdown, cx| {
+            markdown.rasterize_mermaid_diagram_at(source_offset, 2.0, cx)
+        });
+        markdown.read_with(cx, |markdown, _| {
+            let image = markdown.mermaid_diagram_image(source_offset).unwrap();
+            assert_eq!(image.image.id, original_image.id);
+            assert_eq!(image.natural_size, natural_size);
+            assert_eq!(image.rasterized_zoom, 2.0);
+        });
+
+        cx.run_until_parked();
+        markdown.read_with(cx, |markdown, _| {
+            let image = markdown.mermaid_diagram_image(source_offset).unwrap();
+            assert_ne!(image.image.id, original_image.id);
+            assert_eq!(image.natural_size, natural_size);
+            assert_eq!(
+                markdown.mermaid_zoom_level(source_offset),
+                1.0,
+                "the inline zoom is unaffected"
+            );
+        });
+
+        // Restoring re-rasterizes at the inline zoom.
+        markdown.update(cx, |markdown, cx| {
+            markdown.rerasterize_mermaid_diagram(source_offset, cx)
+        });
+        cx.run_until_parked();
+        markdown.read_with(cx, |markdown, _| {
+            let image = markdown.mermaid_diagram_image(source_offset).unwrap();
+            assert_eq!(image.rasterized_zoom, 1.0);
+            assert_eq!(image.natural_size, natural_size);
+        });
+    }
+
+    #[gpui::test]
+    fn test_mermaid_zoom_rerasterize_is_debounced(cx: &mut TestAppContext) {
+        let (markdown, contents, original_image) = markdown_with_rendered_diagram(10, 10, cx);
+        let source_offset = 0;
 
         let half_debounce = MERMAID_ZOOM_DEBOUNCE / 2;
 
@@ -1524,42 +1634,10 @@ mod tests {
 
     #[gpui::test]
     fn test_mermaid_zoom_to_fit_tracks_container_width(cx: &mut TestAppContext) {
-        ensure_theme_initialized(cx);
-
-        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
-
         // A raster whose natural (zoom 1.0) width is 200px.
-        let (parsed_svg, image) = markdown.update(cx, |_, cx| {
-            let svg_renderer = cx.svg_renderer();
-            let parsed_svg = Arc::new(
-                svg_renderer
-                    .parse_svg(
-                        br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"></svg>"#,
-                    )
-                    .unwrap(),
-            );
-            let image = svg_renderer.render_parsed(&parsed_svg, 1.0).unwrap();
-            (parsed_svg, image)
-        });
-
-        let contents = mermaid_contents("graph A");
+        let (markdown, _, _) = markdown_with_rendered_diagram(200, 100, cx);
         let source_offset = 0;
         markdown.update(cx, |markdown, _| {
-            markdown.parsed_markdown.mermaid_diagrams.insert(
-                source_offset,
-                ParsedMarkdownMermaidDiagram {
-                    content_range: 0..contents.contents.len(),
-                    contents: contents.clone(),
-                },
-            );
-            markdown.mermaid_state.cache.insert(
-                contents.clone(),
-                Arc::new(CachedMermaidDiagram::new_for_test(
-                    Some(image),
-                    None,
-                    Some(parsed_svg),
-                )),
-            );
             markdown
                 .mermaid_views
                 .entry(source_offset)

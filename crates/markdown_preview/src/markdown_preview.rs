@@ -3,6 +3,7 @@ use workspace::Workspace;
 
 pub mod markdown_preview_settings;
 pub mod markdown_preview_view;
+mod mermaid_diagram_modal;
 
 pub use zed_actions::preview::markdown::{OpenPreview, OpenPreviewToTheSide};
 
