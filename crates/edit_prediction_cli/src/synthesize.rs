@@ -44,14 +44,10 @@ struct RepoState {
 
 impl SynthesizeState {
     fn load() -> Self {
-        if SYNTHESIZE_STATE_FILE.exists() {
-            std::fs::read_to_string(&*SYNTHESIZE_STATE_FILE)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default()
-        } else {
-            Self::default()
-        }
+        std::fs::read_to_string(&*SYNTHESIZE_STATE_FILE)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
     }
 
     fn save(&self) -> Result<()> {

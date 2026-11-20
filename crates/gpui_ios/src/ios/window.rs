@@ -237,7 +237,6 @@ impl std::ops::Deref for IosWindow {
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub(crate) struct IosWindowState {
     platform: Weak<IosPlatformState>,
     keyboard_observers:

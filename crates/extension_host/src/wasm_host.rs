@@ -64,7 +64,6 @@ pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
     pub manifest: Arc<ExtensionManifest>,
     pub work_dir: Arc<Path>,
-    #[allow(unused)]
     pub zed_api_version: Version,
     _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
 }

@@ -63,7 +63,8 @@ struct GlobalParams {
     path_curve_base: u32,
     depth_scale: f32,
     quad_count: u32,
-    pad: [u32; 2],
+    premultiplied_alpha: u32,
+    pad: u32,
 }
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -129,6 +130,7 @@ struct WgpuPipelines {
     poly_sprites: wgpu::RenderPipeline,
     #[allow(dead_code)]
     surfaces: wgpu::RenderPipeline,
+    premultiplied_alpha: bool,
 }
 
 /// One frame allocation of instance data, ready to bind.
@@ -774,10 +776,6 @@ impl WgpuRendererCore {
         } else {
             wgpu::BlendState::ALPHA_BLENDING
         };
-        let compilation_options = wgpu::PipelineCompilationOptions {
-            constants: &[("PREMULTIPLIED_ALPHA", f64::from(premultiplied_alpha as u8))],
-            ..Default::default()
-        };
 
         let color_target = wgpu::ColorTargetState {
             format: surface_format,
@@ -810,13 +808,13 @@ impl WgpuRendererCore {
                     module,
                     entry_point: Some(vs_entry),
                     buffers: &[],
-                    compilation_options: compilation_options.clone(),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module,
                     entry_point: Some(fs_entry),
                     targets: color_targets,
-                    compilation_options: compilation_options.clone(),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology,
@@ -992,6 +990,7 @@ impl WgpuRendererCore {
             subpixel_sprites,
             poly_sprites,
             surfaces,
+            premultiplied_alpha,
         }
     }
 }
@@ -1394,7 +1393,8 @@ impl WgpuRendererCore {
             path_curve_base: instance_bindings.path_tiles.curve_base,
             depth_scale,
             quad_count: scene.quads.len() as u32,
-            pad: [0; 2],
+            premultiplied_alpha: self.resources().pipelines.premultiplied_alpha as u32,
+            pad: 0,
         };
         self.resources().queue.write_buffer(
             &self.resources().globals_buffer,

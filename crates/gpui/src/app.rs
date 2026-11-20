@@ -999,7 +999,6 @@ pub(crate) struct WindowUpdateEntry {
 }
 
 impl App {
-    #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
@@ -2085,8 +2084,11 @@ impl App {
     ///
     /// Best-effort: some platforms cannot retract a notification once shown,
     /// in which case it ages out of the notification center on its own.
-    pub fn dismiss_system_notification(&self, tag: &str) {
-        self.platform.dismiss_system_notification(tag);
+    /// The task completes after the platform calls return, not after any
+    /// asynchronous work inside the operating system. Dropping it does not
+    /// cancel dismissal.
+    pub fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
+        self.platform.dismiss_system_notification(tag)
     }
 
     /// Registers the handler invoked when the user activates a system

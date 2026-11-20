@@ -900,7 +900,7 @@
     //   "icon"
     // 2. A disclosure chevron:
     //   "chevron"
-    // 3. A disclosure chevron followed by a folder icon:
+    // 3. A disclosure chevron followed by a folder icon, with no chevron on empty folders in local projects:
     //   "both"
     "folder_indicator": "icon",
     // Whether to show the git status in the project panel.
@@ -1262,7 +1262,9 @@
       // Global default permission when no tool-specific rules match.
       // "allow" - Auto-approve without prompting
       // "deny" - Auto-reject
-      // "confirm" - Always prompt (default)
+      // "confirm" - Prompt for approval (default). The edit_file and
+      //   write_file tools don't prompt for files inside the project unless
+      //   an "always_confirm" pattern matches.
       "default": "confirm",
       // Per-tool permission rules. Regex patterns match against tool input text.
       // The per-tool "default" also applies to MCP tools.

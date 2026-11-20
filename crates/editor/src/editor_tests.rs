@@ -2390,6 +2390,372 @@ fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_fold_at_current_indentation_level(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &"
+        ˇclass Foo:
+            def a():
+                print(1)
+
+        class Bar:
+            def b():
+                print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        ˇclass Foo:⋯
+
+        class Bar:⋯
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.unfold_all(&actions::UnfoldAll, window, cx);
+    });
+
+    cx.set_selections_state(
+        &"
+        class Foo:
+            ˇdef a():
+                print(1)
+
+        class Bar:
+            def b():
+                print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        class Foo:
+            ˇdef a():⋯
+
+        class Bar:
+            def b():⋯
+        "
+        .unindent(),
+    );
+
+    let state = &"
+        class Foo:
+            def a():
+                if x:
+                    y()
+                ˇz()
+
+            def b():
+                if w:
+                    v()
+        "
+    .unindent();
+    cx.set_state(&state);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(&state);
+    assert_eq!(
+        cx.display_text(),
+        "
+        class Foo:
+            def a():
+                if x:⋯
+                z()
+
+            def b():
+                if w:⋯
+        "
+        .unindent(),
+    )
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_no_ops(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Nothing should be folded if cursor is at an empty line.
+    let state = "
+        ˇ
+        fn work() {
+            run();
+        }
+        "
+    .unindent();
+    cx.set_state(&state);
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+    cx.assert_display_state(&state);
+
+    // Nothing should be folded if cursor is on a blank line with only spaces.
+    let state = "
+        \x20\x20\x20\x20ˇ
+        fn work() {
+            run();
+        }
+        "
+    .unindent();
+    cx.set_state(&state);
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+    cx.assert_display_state(&state);
+
+    // Nothing should be folded if cursor is on a blank line with only tabs.
+    let state = "
+    fn work() {
+        run();
+    }
+    \tˇ"
+    .unindent();
+
+    cx.set_state(&state);
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(&state);
+    assert_eq!(
+        cx.display_text(),
+        "
+        fn work() {
+            run();
+        }
+        \x20\x20\x20\x20"
+            .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_with_multiple_cursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The newest cursor is on the `b()` method, with the older one on the `Foo`
+    // class definition. Ensure that folding at the current indentation level
+    // will use the newest selection.
+    cx.set_state(
+        &"
+        ˇclass Foo:
+            def a():
+                print(1)
+
+        class Bar:
+            ˇdef b():
+                print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    assert_eq!(
+        cx.display_text(),
+        "
+        class Foo:
+            def a():⋯
+
+        class Bar:
+            def b():⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_on_less_spaces_than_tab_size(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &"
+        class Foo:
+          ˇdef a():
+            print(1)
+
+        class Bar:
+          def b():
+            print(2)
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        class Foo:
+          ˇdef a():⋯
+
+        class Bar:
+          def b():⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_scans_past_single_row_crease(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let marked_text = "
+        fn first() «{}»
+
+        ˇfn second() «{
+            work();
+        }»
+        "
+    .unindent();
+
+    cx.set_state(&marked_text.replace(['«', '»'], ""));
+    let crease_ranges = cx.ranges(&marked_text.replace('ˇ', ""));
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        editor.insert_creases(
+            crease_ranges.iter().map(|range| {
+                let start = snapshot.anchor_before(MultiBufferOffset(range.start));
+                let end = snapshot.anchor_after(MultiBufferOffset(range.end));
+
+                Crease::simple(start..end, FoldPlaceholder::test())
+            }),
+            cx,
+        );
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    assert_eq!(
+        cx.display_text(),
+        "
+        fn first() ⋯
+
+        fn second() ⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_fold_at_current_indentation_level_with_crease_on_shared_boundary_row(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let marked_text = "
+        fn first() «{
+            work();
+        ˇ}» fn second() «{}»
+
+        fn third() «{
+            work();
+        }»
+        "
+    .unindent();
+
+    cx.set_state(&marked_text.replace(['«', '»'], ""));
+    let crease_ranges = cx.ranges(&marked_text.replace('ˇ', ""));
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        editor.insert_creases(
+            crease_ranges.iter().map(|range| {
+                let start = snapshot.anchor_before(MultiBufferOffset(range.start));
+                let end = snapshot.anchor_after(MultiBufferOffset(range.end));
+
+                Crease::simple(start..end, FoldPlaceholder::test())
+            }),
+            cx,
+        );
+        editor.fold_at_current_indentation_level(
+            &actions::FoldAtCurrentIndentationLevel,
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_display_state(
+        &"
+        fn first() {
+            work();
+        ˇ} fn second() ⋯
+
+        fn third() ⋯
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -10927,6 +11293,24 @@ async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext
     );
 }
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[gpui::test]
+async fn test_empty_selections_keep_primary_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let primary_text = |cx: &mut EditorTestContext| {
+        cx.update_editor(|_, _, cx| cx.read_from_primary())
+            .and_then(|item| item.text())
+    };
+
+    cx.set_state("«oneˇ» two");
+    assert_eq!(primary_text(&mut cx), Some("one".to_string()));
+
+    cx.set_selections_state("ˇone ˇtwo");
+    assert_eq!(primary_text(&mut cx), Some("one".to_string()));
+}
+
 #[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -18297,7 +18681,7 @@ async fn test_snippet_placeholder_choices(cx: &mut TestAppContext) {
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
-    _ = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
         let snippet = Snippet::parse("type ${1|,i32,u32|} = $2").unwrap();
 
         editor
@@ -18350,7 +18734,7 @@ async fn test_snippet_choices_menu_survives_completion_refresh(cx: &mut TestAppC
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
-    _ = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
         let snippet = Snippet::parse("type ${1|i32,u32|} = $2").unwrap();
 
         editor
@@ -18405,7 +18789,7 @@ async fn test_snippet_tabstop_navigation_with_placeholders(cx: &mut TestAppConte
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
-    _ = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
         let snippet = Snippet::parse("type ${1|,i32,u32|} = $2; $3").unwrap();
 
         editor
@@ -18469,7 +18853,7 @@ async fn test_snippet_tabstop_navigation_with_placeholders(cx: &mut TestAppConte
         );
     });
 
-    _ = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
         editor.select_all(&SelectAll, window, cx);
         editor.backspace(&Backspace, window, cx);
 
@@ -22284,9 +22668,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            signature_help_provider: Some(lsp::SignatureHelpOptions {
-                ..Default::default()
-            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -22604,9 +22986,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            signature_help_provider: Some(lsp::SignatureHelpOptions {
-                ..Default::default()
-            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -22816,9 +23196,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            signature_help_provider: Some(lsp::SignatureHelpOptions {
-                ..Default::default()
-            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -23074,9 +23452,7 @@ async fn test_signature_help_multiple_signatures(cx: &mut TestAppContext) {
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            signature_help_provider: Some(lsp::SignatureHelpOptions {
-                ..Default::default()
-            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -25813,9 +26189,7 @@ async fn test_as_is_completions(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                ..Default::default()
-            }),
+            completion_provider: Some(lsp::CompletionOptions::default()),
             ..Default::default()
         },
         cx,
@@ -25866,9 +26240,7 @@ async fn test_panic_during_c_completions(cx: &mut TestAppContext) {
     let mut cx = EditorLspTestContext::new(
         language,
         lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                ..lsp::CompletionOptions::default()
-            }),
+            completion_provider: Some(lsp::CompletionOptions::default()),
             ..lsp::ServerCapabilities::default()
         },
         cx,
@@ -41102,12 +41474,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     let project = Project::test(fs, [path!("/root/a").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let _fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            ..FakeLspAdapter::default()
-        },
-    );
+    let _fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
@@ -42220,9 +42587,7 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                ..Default::default()
-            }),
+            completion_provider: Some(lsp::CompletionOptions::default()),
             ..Default::default()
         },
         cx,
@@ -44583,12 +44948,7 @@ async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
     let language = rust_lang();
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(language.clone());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            ..FakeLspAdapter::default()
-        },
-    );
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer1 = project
         .update(cx, |project, cx| {

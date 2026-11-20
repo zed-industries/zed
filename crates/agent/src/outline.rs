@@ -30,7 +30,7 @@ pub async fn get_buffer_content_or_outline(
     path: Option<&str>,
     cx: &AsyncApp,
 ) -> Result<BufferContent> {
-    let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len());
+    let file_size = buffer.read_with(cx, |buffer, _| buffer.len());
 
     if file_size > AUTO_OUTLINE_SIZE {
         // For large files, use outline instead of full content

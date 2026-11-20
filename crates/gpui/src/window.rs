@@ -19,12 +19,12 @@ use crate::{
     Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, Task, TextInputConfiguration, TextInputStateChange,
-    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
-    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style, SubpixelSprite, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, Task, TextInputConfiguration,
+    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
+    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1287,6 +1287,9 @@ pub struct Window {
         SingleSubscriberSet<Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    /// The rendered scene's [`Scene::animation_frame_interval`]. While it is
+    /// `Some`, the scene must keep being presented even when nothing is redrawn.
+    scene_animation_interval: Rc<Cell<Option<Duration>>>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -1736,6 +1739,7 @@ impl Window {
         profiler::journal::record_window_visibility(handle.window_id(), visibility);
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
+        let scene_animation_interval = Rc::new(Cell::new(None::<Duration>));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
 
@@ -1901,6 +1905,7 @@ impl Window {
             let invalidator = invalidator.clone();
             let active = active.clone();
             let needs_present = needs_present.clone();
+            let scene_animation_interval = scene_animation_interval.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
             let mut deferred_force_render = false;
@@ -1960,12 +1965,14 @@ impl Window {
                 // underclocking, but subject to the same power limits as redraws.
                 let high_rate_input = input_rate_tracker.borrow_mut().is_high_rate();
                 let has_next_frame_callbacks = !next_frame_callbacks.borrow().is_empty();
-                let has_frame_demand = invalidator.is_dirty()
+                let has_demand_besides_animation = invalidator.is_dirty()
                     || force_render
                     || has_next_frame_callbacks
                     || request_frame_options.require_presentation
                     || needs_present.get()
                     || high_rate_input;
+                let has_frame_demand =
+                    has_demand_besides_animation || scene_animation_interval.get().is_some();
 
                 let should_throttle = !request_frame_options.require_presentation;
                 let inactive_without_high_rate_input =
@@ -1981,6 +1988,10 @@ impl Window {
                     thermal_state,
                     power_mode,
                 );
+                let animation_frame_interval = scene_animation_interval
+                    .get()
+                    .filter(|interval| !has_demand_besides_animation && !interval.is_zero());
+                let min_frame_interval = min_frame_interval.max(animation_frame_interval);
 
                 let now = Instant::now();
                 // Idle display-link ticks must neither consume a frame slot nor
@@ -2007,7 +2018,11 @@ impl Window {
                     profiler::journal::record_frame_skipped(
                         window_id,
                         Instant::now(),
-                        if inactive_without_high_rate_input
+                        if animation_frame_interval.is_some()
+                            && animation_frame_interval == min_frame_interval
+                        {
+                            profiler::journal::FrameSkipReason::AnimationFrameRateLimit
+                        } else if inactive_without_high_rate_input
                             && inactive_frame_interval == min_frame_interval
                         {
                             profiler::journal::FrameSkipReason::InactiveFrameRateLimit
@@ -2042,6 +2057,7 @@ impl Window {
                 let should_draw = invalidator.is_dirty() || force_render;
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
+                    || scene_animation_interval.get().is_some()
                     || high_rate_input;
                 if should_draw {
                     measure("frame duration", || {
@@ -2057,6 +2073,7 @@ impl Window {
                                     window.refresh();
                                 }
                                 let arena_clear_needed = window.draw(cx);
+                                window.advance_scene_animations(cx);
                                 window.present();
                                 arena_clear_needed.clear(cx);
                             })
@@ -2070,7 +2087,10 @@ impl Window {
                     })
                 } else if needs_present {
                     handle
-                        .update(&mut cx, |_, window, _| window.present())
+                        .update(&mut cx, |_, window, cx| {
+                            window.advance_scene_animations(cx);
+                            window.present();
+                        })
                         .with_context(|| {
                             format!("presenting frame for window {:?}", handle.window_id())
                         })
@@ -2081,6 +2101,7 @@ impl Window {
                     .update(&mut cx, |_, window, _| {
                         if window.invalidator.is_dirty()
                             || !window.next_frame_callbacks.borrow().is_empty()
+                            || window.scene_animation_interval.get().is_some()
                         {
                             window.platform_window.schedule_frame();
                         }
@@ -2098,7 +2119,10 @@ impl Window {
                 // after this frame (the window was re-invalidated mid-draw, or
                 // animations scheduled next-frame callbacks), re-arm the frame
                 // source explicitly.
-                if invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty() {
+                if invalidator.is_dirty()
+                    || !next_frame_callbacks.borrow().is_empty()
+                    || scene_animation_interval.get().is_some()
+                {
                     invalidator.wake_platform();
                 }
                 #[cfg(feature = "profiler")]
@@ -2417,6 +2441,7 @@ impl Window {
             visibility_observers: SingleSubscriberSet::new(),
             hovered,
             needs_present,
+            scene_animation_interval,
             input_rate_tracker,
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
@@ -3027,6 +3052,11 @@ impl Window {
     pub fn request_animation_frame(&self) {
         let entity = self.current_view();
         self.on_next_frame(move |_, cx| cx.notify(entity));
+    }
+
+    pub(crate) fn advance_scene_animations(&mut self, cx: &App) {
+        let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
+        self.rendered_frame.scene.advance_animations(elapsed);
     }
 
     /// Runs all callbacks scheduled via [`Self::on_next_frame`], returning how many ran.
@@ -3644,6 +3674,16 @@ impl Window {
         let scale_factor = self.scale_factor();
         let left = floor_to_device_pixel(bounds.left().0, scale_factor);
         let top = floor_to_device_pixel(bounds.top().0, scale_factor);
+        // Rounding outward would turn an empty region into a 1px strip at
+        // fractional positions, so return a zero size instead. Negative
+        // sizes become zero too, because the blurred shadow shader draws a
+        // negative-size hole the same as a positive one.
+        if bounds.is_empty() {
+            return Bounds::new(
+                point(ScaledPixels(left), ScaledPixels(top)),
+                Size::default(),
+            );
+        }
         let right = ceil_to_device_pixel(bounds.right().0, scale_factor).max(left);
         let bottom = ceil_to_device_pixel(bounds.bottom().0, scale_factor).max(top);
         Bounds::from_corners(
@@ -3841,6 +3881,8 @@ impl Window {
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.scene_animation_interval
+            .set(self.rendered_frame.scene.animation_frame_interval());
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
@@ -5268,7 +5310,7 @@ impl Window {
             } else {
                 self.next_frame.scene.insert_primitive(MonochromeSprite {
                     order: 0,
-                    pad: 0,
+                    animation: SpriteAnimationId::NONE,
                     bounds,
                     content_mask,
                     color: color.opacity(element_opacity),
@@ -5375,6 +5417,21 @@ impl Window {
         color: Hsla,
         cx: &App,
     ) -> Result<()> {
+        self.paint_animated_svg(bounds, path, data, transformation, None, color, cx)
+    }
+
+    /// Like [`Self::paint_svg`], with an `animation` the window applies before every
+    /// present, so the view isn't re-rendered to advance it.
+    pub(crate) fn paint_animated_svg(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        path: SharedString,
+        data: Option<&[u8]>,
+        transformation: TransformationMatrix,
+        animation: Option<SpriteAnimation>,
+        color: Hsla,
+        cx: &App,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
@@ -5415,15 +5472,22 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| size.ceil());
 
-        self.next_frame.scene.insert_primitive(MonochromeSprite {
+        let sprite = MonochromeSprite {
             order: 0,
-            pad: 0,
+            animation: SpriteAnimationId::NONE,
             bounds: final_bounds,
             content_mask,
             color: color.opacity(element_opacity),
             tile,
             transformation,
-        });
+        };
+        match animation {
+            Some(animation) => self
+                .next_frame
+                .scene
+                .insert_animated_sprite(sprite, animation),
+            None => self.next_frame.scene.insert_primitive(sprite),
+        }
 
         Ok(())
     }
@@ -5565,7 +5629,7 @@ impl Window {
                 frame_index,
             };
 
-            self.sprite_atlas.remove(&params.clone().into());
+            self.sprite_atlas.remove(&params.into());
         }
 
         Ok(())
@@ -7678,24 +7742,22 @@ impl Window {
                 .delta
                 .pixel_delta(px(SCROLL_PIXELS_PER_LAYER / SCROLL_LINES))
                 .y;
-            if let Some(inspector) = self.inspector.clone() {
-                inspector.update(cx, |inspector, _cx| {
-                    if let Some(depth) = inspector.pick_depth.as_mut() {
-                        *depth += f32::from(delta_y) / SCROLL_PIXELS_PER_LAYER;
-                        let max_depth = self.mouse_hit_test.ids.len() as f32 - 0.5;
-                        if *depth < 0.0 {
-                            *depth = 0.0;
-                        } else if *depth > max_depth {
-                            *depth = max_depth;
-                        }
-                        if let Some((_, inspector_id)) =
-                            self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
-                        {
-                            inspector.set_active_element_id(inspector_id, self);
-                        }
+            inspector.update(cx, |inspector, _cx| {
+                if let Some(depth) = inspector.pick_depth.as_mut() {
+                    *depth += f32::from(delta_y) / SCROLL_PIXELS_PER_LAYER;
+                    let max_depth = self.mouse_hit_test.ids.len() as f32 - 0.5;
+                    if *depth < 0.0 {
+                        *depth = 0.0;
+                    } else if *depth > max_depth {
+                        *depth = max_depth;
                     }
-                });
-            }
+                    if let Some((_, inspector_id)) =
+                        self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                    {
+                        inspector.set_active_element_id(inspector_id, self);
+                    }
+                }
+            });
         }
     }
 
@@ -10093,7 +10155,7 @@ mod tests {
 
     #[gpui::test]
     fn test_underline_exclusions_preserve_device_geometry(cx: &mut TestAppContext) {
-        test_underline_paint_at_scales(cx, |window| {
+        test_paint_at_scales(cx, |window| {
             let (numerator, denominator) = match window.scale_factor() {
                 1.0 => (1, 1),
                 1.25 => (5, 4),
@@ -10202,7 +10264,7 @@ mod tests {
 
     #[gpui::test]
     fn test_underline_exclusions_preserve_helvetica_warning_edge(cx: &mut TestAppContext) {
-        test_underline_paint_at_scales(cx, |window| {
+        test_paint_at_scales(cx, |window| {
             if window.scale_factor() != 2.0 {
                 return;
             }
@@ -10241,7 +10303,7 @@ mod tests {
 
     #[gpui::test]
     fn test_underline_exclusions_preserve_content_mask_and_opacity(cx: &mut TestAppContext) {
-        test_underline_paint_at_scales(cx, |window| {
+        test_paint_at_scales(cx, |window| {
             let scale = window.scale_factor();
             let original_mask = window.content_mask();
             let original_opacity = window.element_opacity();
@@ -10299,7 +10361,7 @@ mod tests {
 
     #[gpui::test]
     fn test_underline_exclusions_adversarial_permutations(cx: &mut TestAppContext) {
-        test_underline_paint_at_scales(cx, |window| {
+        test_paint_at_scales(cx, |window| {
             let style = UnderlineStyle {
                 thickness: px(1.),
                 color: None,
@@ -10343,6 +10405,169 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn test_empty_content_masks_remain_empty_when_snapped(cx: &mut TestAppContext) {
+        test_paint_at_scales(cx, |window| {
+            let viewport = ContentMask {
+                bounds: Bounds::from_corners(point(px(20.), px(20.)), point(px(100.), px(100.))),
+            };
+            for fraction in [0., 0.25, 0.5, 0.75] {
+                for bounds in [
+                    Bounds::new(point(px(30.), px(120. + fraction)), size(px(40.), px(20.))),
+                    Bounds::new(point(px(120. + fraction), px(30.)), size(px(20.), px(40.))),
+                    Bounds::new(
+                        point(px(120. + fraction), px(120. + fraction)),
+                        size(px(20.), px(20.)),
+                    ),
+                    Bounds::new(
+                        point(px(30. + fraction), px(40. + fraction)),
+                        size(px(0.), px(20.)),
+                    ),
+                    Bounds::new(
+                        point(px(30. + fraction), px(40. + fraction)),
+                        size(px(20.), px(0.)),
+                    ),
+                ] {
+                    window.with_content_mask(Some(viewport), |window| {
+                        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                            assert!(window.content_mask().bounds.is_empty());
+                            assert!(
+                                window.snapped_content_mask().bounds.is_empty(),
+                                "scale={}, bounds={bounds:?}",
+                                window.scale_factor(),
+                            );
+                            let count = window.next_frame.scene.len();
+                            window.paint_quad(crate::fill(bounds, crate::red()));
+                            window.paint_quad(crate::outline(
+                                bounds,
+                                crate::red(),
+                                Default::default(),
+                            ));
+                            assert_eq!(window.next_frame.scene.len(), count);
+                        });
+                    });
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_nonempty_content_masks_keep_covering_fractional_edges(cx: &mut TestAppContext) {
+        test_paint_at_scales(cx, |window| {
+            let bounds = Bounds::new(point(px(30.25), px(40.25)), size(px(0.125), px(0.125)));
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                let snapped = window.snapped_content_mask().bounds;
+                let scale = window.scale_factor();
+                assert_eq!(snapped, window.cover_bounds(bounds));
+                assert!(!snapped.is_empty());
+                assert_eq!(snapped.left().0, (30.25 * scale).floor());
+                assert_eq!(snapped.top().0, (40.25 * scale).floor());
+                assert_eq!(snapped.right().0, (30.375 * scale).ceil());
+                assert_eq!(snapped.bottom().0, (40.375 * scale).ceil());
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_empty_shadow_bounds_are_not_painted(cx: &mut TestAppContext) {
+        test_paint_at_scales(cx, |window| {
+            let shadow = crate::BoxShadow::new(px(0.25), px(0.5), crate::red()).blur_radius(px(4.));
+            for origin in [point(px(30.25), px(40.25)), point(px(-30.25), px(-40.25))] {
+                for size in [
+                    size(px(20.), px(0.)),
+                    size(px(0.), px(20.)),
+                    size(px(0.), px(0.)),
+                ] {
+                    let bounds = Bounds::new(origin, size);
+                    let count = window.next_frame.scene.len();
+                    window.paint_drop_shadows(
+                        bounds,
+                        Default::default(),
+                        std::slice::from_ref(&shadow),
+                    );
+                    assert_eq!(
+                        window.next_frame.scene.len(),
+                        count,
+                        "scale={}, bounds={bounds:?}",
+                        window.scale_factor()
+                    );
+                    assert!(window.cover_bounds(bounds).is_empty());
+                }
+            }
+            let bounds = Bounds::new(point(px(30.25), px(40.25)), size(px(20.), px(20.)));
+            let collapsed_shadow = shadow.clone().spread_radius(px(-10.));
+            let shape_bounds =
+                (bounds + collapsed_shadow.offset).dilate(collapsed_shadow.spread_radius);
+            let count = window.next_frame.scene.len();
+            window.paint_drop_shadows(bounds, Default::default(), &[collapsed_shadow]);
+            assert_eq!(window.next_frame.scene.len(), count);
+            assert!(window.cover_bounds(shape_bounds).is_empty());
+
+            window.paint_drop_shadows(bounds, Default::default(), &[shadow]);
+            assert_eq!(window.next_frame.scene.len(), count + 1);
+        });
+    }
+
+    #[gpui::test]
+    fn test_collapsed_inset_shadow_hole_is_an_empty_point_on_the_pixel_grid(
+        cx: &mut TestAppContext,
+    ) {
+        test_paint_at_scales(cx, |window| {
+            let bounds = Bounds::new(point(px(30.25), px(40.25)), size(px(20.), px(20.)));
+            for blur_radius in [px(0.), px(4.)] {
+                for spread_radius in [px(10.), px(12.3), px(15.), px(30.)] {
+                    let shadow = crate::BoxShadow::new(px(0.), px(0.), crate::red())
+                        .blur_radius(blur_radius)
+                        .spread_radius(spread_radius)
+                        .inset();
+                    window.next_frame.scene.clear();
+                    window.paint_inset_shadows(bounds, Default::default(), &[shadow]);
+                    let shadows = &window.next_frame.scene.shadows;
+                    assert_eq!(shadows.len(), 1);
+                    let hole = shadows[0].shape_bounds;
+                    let message = format!(
+                        "scale={}, blur={blur_radius:?}, spread={spread_radius:?}, hole={hole:?}",
+                        window.scale_factor()
+                    );
+                    assert_eq!(hole.size, crate::Size::default(), "{message}");
+                    assert_eq!(hole.origin.x.0.fract(), 0., "{message}");
+                    assert_eq!(hole.origin.y.0.fract(), 0., "{message}");
+                }
+            }
+        });
+    }
+
+    struct PaintTestView(Rc<dyn Fn(&mut Window)>);
+
+    impl Render for PaintTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let paint = self.0.clone();
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    window.content_mask_stack.push(ContentMask {
+                        bounds: Bounds::from_corners(
+                            point(px(-1000.), px(-1000.)),
+                            point(px(1000.), px(1000.)),
+                        ),
+                    });
+                    paint(window);
+                    window.content_mask_stack.pop();
+                },
+            )
+            .size_full()
+        }
+    }
+
+    fn test_paint_at_scales(cx: &mut TestAppContext, paint: impl Fn(&mut Window) + 'static) {
+        let window = cx.add_window(move |_, _| PaintTestView(Rc::new(paint)));
+        for scale in [1., 1.25, 1.5, 2., 3.] {
+            cx.simulate_window_scale_factor_change(window.into(), scale);
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        }
+    }
+
     #[derive(Clone, Copy, PartialEq)]
     enum LongPressResponse {
         PreventDefault,
@@ -10379,40 +10604,6 @@ mod tests {
                     });
                 },
             )
-        }
-    }
-
-    struct UnderlineTestView(Rc<dyn Fn(&mut Window)>);
-
-    impl Render for UnderlineTestView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let paint = self.0.clone();
-            canvas(
-                |_, _, _| {},
-                move |_, _, window, _| {
-                    window.content_mask_stack.push(ContentMask {
-                        bounds: Bounds::from_corners(
-                            point(px(-1000.), px(-1000.)),
-                            point(px(1000.), px(1000.)),
-                        ),
-                    });
-                    paint(window);
-                    window.content_mask_stack.pop();
-                },
-            )
-            .size_full()
-        }
-    }
-
-    fn test_underline_paint_at_scales(
-        cx: &mut TestAppContext,
-        paint: impl Fn(&mut Window) + 'static,
-    ) {
-        let window = cx.add_window(move |_, _| UnderlineTestView(Rc::new(paint)));
-        for scale in [1., 1.25, 1.5, 2., 3.] {
-            cx.simulate_window_scale_factor_change(window.into(), scale);
-            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-                .unwrap();
         }
     }
 

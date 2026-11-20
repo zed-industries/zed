@@ -312,14 +312,6 @@ impl ChannelStore {
         self.channel_index.by_id().len()
     }
 
-    /// Returns the index of a channel ID in the list of unique channels
-    pub fn index_of_channel(&self, channel_id: ChannelId) -> Option<usize> {
-        self.channel_index
-            .by_id()
-            .keys()
-            .position(|id| *id == channel_id)
-    }
-
     /// Returns an iterator over all unique channels
     pub fn channels(&self) -> impl '_ + Iterator<Item = &Arc<Channel>> {
         self.channel_index.by_id().values()
@@ -339,16 +331,6 @@ impl ChannelStore {
     pub fn channel_at_index(&self, ix: usize) -> Option<&Arc<Channel>> {
         let channel_id = self.channel_index.ordered_channels().get(ix)?;
         self.channel_index.by_id().get(channel_id)
-    }
-
-    pub fn channel_at(&self, ix: usize) -> Option<&Arc<Channel>> {
-        self.channel_index.by_id().values().nth(ix)
-    }
-
-    pub fn has_channel_invitation(&self, channel_id: ChannelId) -> bool {
-        self.channel_invitations
-            .iter()
-            .any(|channel| channel.id == channel_id)
     }
 
     pub fn channel_invitations(&self) -> &[Arc<Channel>] {

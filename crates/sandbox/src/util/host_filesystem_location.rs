@@ -142,6 +142,25 @@ impl HostFilesystemLocation {
         }
     }
 
+    /// Whether this location is the same file or directory as `ancestor`, or
+    /// lies somewhere beneath it.
+    ///
+    /// Both locations were resolved when they were captured, and this compares
+    /// what they resolved to then: the open directory handles on Linux, the
+    /// canonical paths on macOS. It does not look the paths up again, so a
+    /// symlink swapped in since capture cannot change the answer.
+    ///
+    /// On Windows, a location is not resolved when it is captured. There this
+    /// compares the two paths exactly as the caller wrote them, without
+    /// following symlinks in either one.
+    ///
+    /// This is the check [`crate::Sandbox::new`] uses to reject a writable path
+    /// inside a protected path, or a path disallowing reads inside a path
+    /// allowing reads, so callers can drop such entries up front.
+    pub fn is_within(&self, ancestor: &HostFilesystemLocation) -> bool {
+        crate::location_is_within(self, ancestor)
+    }
+
     /// The captured canonical path, falling back to the raw path only on
     /// platforms that do not resolve a separate canonical identity.
     ///

@@ -36,10 +36,6 @@ impl FakeSystemClock {
         }
     }
 
-    pub fn set_now(&self, now: Instant) {
-        self.state.lock().now = now;
-    }
-
     pub fn advance(&self, duration: std::time::Duration) {
         self.state.lock().now += duration;
     }

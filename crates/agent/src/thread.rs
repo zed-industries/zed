@@ -1244,7 +1244,7 @@ enum CompletionError {
     #[error("max tokens")]
     MaxTokens,
     #[error("refusal")]
-    Refusal,
+    Refusal(Option<language_model::RefusalDetails>),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -1332,7 +1332,6 @@ pub struct Thread {
     /// the start of each request.
     current_request_token_usage: TokenUsage,
     pending_compaction_telemetry: Option<CompactionTelemetry>,
-    #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
@@ -1544,7 +1543,7 @@ impl Thread {
 
         self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
         self.thinking_effort = selection.effort.clone();
-        self.speed = selection.speed.filter(|_| model.supports_fast_mode());
+        self.speed = selection.speed.filter(|speed| model.supports_speed(*speed));
         self.prompt_capabilities_tx
             .send(Self::prompt_capabilities(Some(&model)))
             .log_err();
@@ -1623,7 +1622,7 @@ impl Thread {
                                 compaction_id.clone(),
                                 acp_thread::ContextCompactionStatus::Completed,
                             );
-                            stream.send_context_compaction_update(compaction_id.clone(), summary);
+                            stream.send_context_compaction_update(compaction_id, summary);
                         }
                         CompactionInfo::ProviderNative { .. } => {
                             stream.send_context_compaction(
@@ -2916,7 +2915,7 @@ impl Thread {
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
                         match error.downcast::<CompletionError>() {
-                            Ok(CompletionError::Refusal) => {
+                            Ok(CompletionError::Refusal(_)) => {
                                 event_stream.send_stop(acp_v2::StopReason::Refusal);
                                 _ = this
                                     .update(cx, |this, _| this.remove_messages_from(message_ix));
@@ -3088,7 +3087,7 @@ impl Thread {
                 FuturesUnordered::new();
             let mut early_tool_results: Vec<(usize, LanguageModelToolResult)> = Vec::new();
             let mut cancelled = false;
-            let mut had_refusal = false;
+            let mut refusal_error = None;
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select_biased! {
@@ -3173,10 +3172,10 @@ impl Thread {
                 if let Some(err) = batch_result.1 {
                     let is_refusal = err
                         .downcast_ref::<CompletionError>()
-                        .is_some_and(|e| matches!(e, CompletionError::Refusal));
+                        .is_some_and(|e| matches!(e, CompletionError::Refusal(_)));
                     if is_refusal {
                         log::info!("Model refused request; checking for fallback model");
-                        had_refusal = true;
+                        refusal_error = Some(err);
                         break;
                     }
                     error = Some(err.downcast()?);
@@ -3207,7 +3206,7 @@ impl Thread {
                 }
             })?;
 
-            if had_refusal {
+            if let Some(refusal_error) = refusal_error {
                 let maybe_fallback = this.update(cx, |this, cx| -> Option<LanguageModel> {
                     let current_model = refusal_fallback_model
                         .as_ref()
@@ -3242,7 +3241,7 @@ impl Thread {
 
                 if let Some(fallback) = maybe_fallback {
                     log::info!("Refusal fallback: retrying with {}", fallback.id().0);
-                    let fallback_name = fallback.name().0.clone();
+                    let fallback_name = fallback.name().0;
                     this.update(cx, |this, cx| {
                         this.pending_message = None;
                         this.set_model(fallback.clone(), cx);
@@ -3259,7 +3258,7 @@ impl Thread {
                     continue;
                 }
                 log::info!("Request refused with no fallback model available");
-                return Err(CompletionError::Refusal.into());
+                return Err(refusal_error);
             }
 
             let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
@@ -3734,7 +3733,9 @@ impl Thread {
                 }
                 self.update_token_usage(usage, cx);
             }
-            Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
+            Stop(StopReason::Refusal(details)) => {
+                return Err(CompletionError::Refusal(details).into());
+            }
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
             Started | Queued { .. } | Compaction(_) | InputTransformations(_) => {}
@@ -4119,10 +4120,6 @@ impl Thread {
         self.title.clone()
     }
 
-    pub fn is_generating_summary(&self) -> bool {
-        self.pending_summary_generation.is_some()
-    }
-
     pub fn is_generating_title(&self) -> bool {
         self.pending_title_generation.is_some()
     }
@@ -4397,7 +4394,7 @@ impl Thread {
             thinking_allowed: self.thinking_enabled
                 || !model.supports_disabling_thinking_at_effort(self.thinking_effort.as_deref()),
             thinking_effort: self.thinking_effort.clone(),
-            speed: self.speed(),
+            speed: self.speed().filter(|speed| model.supports_speed(*speed)),
             compact_at_tokens: None,
             max_output_tokens: None,
         };
@@ -4484,7 +4481,7 @@ impl Thread {
                 let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
                 if available >= 2 {
                     let mut disambiguated =
-                        provider_compatible_tool_name(&server_id.0.to_snake_case()).to_string();
+                        provider_compatible_tool_name(&server_id.0.to_snake_case());
                     disambiguated.truncate(available - 1);
                     disambiguated.push('_');
                     disambiguated.push_str(&tool_name);
@@ -4509,12 +4506,6 @@ impl Thread {
 
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
         self.running_turn.as_ref()?.tools.get(name).cloned()
-    }
-
-    pub fn has_tool(&self, name: &str) -> bool {
-        self.running_turn
-            .as_ref()
-            .is_some_and(|turn| turn.tools.contains_key(name))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -4814,7 +4805,7 @@ impl Thread {
             thinking_allowed,
             thinking_effort,
             speed: if preserves_request_prefix {
-                self.speed()
+                self.speed().filter(|speed| model.supports_speed(*speed))
             } else {
                 None
             },
@@ -7156,18 +7147,6 @@ impl ToolCallEventStreamReceiver {
             panic!("Expected diff but got: {:?}", event);
         }
     }
-
-    pub async fn expect_terminal(&mut self) -> Entity<acp_thread::Terminal> {
-        let event = self.0.next().await;
-        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateTerminal(
-            update,
-        )))) = event
-        {
-            update.terminal
-        } else {
-            panic!("Expected terminal but got: {:?}", event);
-        }
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -8683,6 +8662,7 @@ mod tests {
         let model = fake.update_model("fake", |model| {
             supports_tools_and_tool_choice(model);
             model.supports_thinking = true;
+            model.supports_ultrafast_mode = true;
             model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
         });
 
@@ -8692,7 +8672,7 @@ mod tests {
                 thread.set_model(model.clone(), cx);
                 thread.set_thinking_enabled(true, cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
-                thread.set_speed(Speed::Fast, cx);
+                thread.set_speed(Speed::Ultrafast, cx);
             });
         });
 
@@ -8738,7 +8718,7 @@ mod tests {
             compaction_request.thinking_effort,
             completion_request.thinking_effort
         );
-        assert_eq!(completion_request.speed, Some(Speed::Fast));
+        assert_eq!(completion_request.speed, Some(Speed::Ultrafast));
         assert_eq!(compaction_request.speed, completion_request.speed);
         // The compaction request extends the previous request with the
         // assistant response and the compaction prompt.
@@ -9305,7 +9285,7 @@ mod tests {
 
         fake.send_last_event(
             &model,
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
         );
         fake.end_last(&model);
         cx.run_until_parked();

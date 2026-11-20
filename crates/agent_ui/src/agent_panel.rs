@@ -102,6 +102,7 @@ use workspace::{
     ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     item::{ItemEvent, ItemHandle},
+    notifications::NotifyTaskExt as _,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -154,6 +155,11 @@ fn terminal_program_to_report(
 pub struct TerminalId(uuid::Uuid);
 
 impl TerminalId {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new() -> Self {
+        Self::new()
+    }
+
     pub(crate) fn new() -> Self {
         Self(uuid::Uuid::new_v4())
     }
@@ -248,18 +254,59 @@ fn project_agents_md_path(
         })
 }
 
-fn open_global_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-    workspace
-        .open_abs_path(
-            paths::agents_file().clone(),
-            workspace::OpenOptions {
-                focus: Some(true),
-                ..Default::default()
-            },
-            window,
-            cx,
-        )
-        .detach_and_log_err(cx);
+pub(crate) fn open_global_rules(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let agents_file = paths::agents_file().clone();
+    if workspace.project().read(cx).is_local() {
+        workspace
+            .open_abs_path(
+                agents_file,
+                workspace::OpenOptions {
+                    focus: Some(true),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+        return;
+    }
+
+    // The global rules are on this machine, and `open_abs_path` would look for
+    // them on the project's machine, so show them read-only.
+    let fs = workspace.app_state().fs.clone();
+    cx.spawn_in(window, async move |workspace, cx| {
+        // A local project opens the missing file so it can be created, but a
+        // read-only buffer can't create it.
+        if !fs.is_file(&agents_file).await {
+            return workspace.update(cx, |workspace, cx| {
+                struct NoGlobalRulesToast;
+                workspace.show_toast(
+                    workspace::Toast::new(
+                        workspace::notifications::NotificationId::unique::<NoGlobalRulesToast>(),
+                        format!(
+                            "No global rules yet. Create {} on this machine to add them.",
+                            agents_file.display()
+                        ),
+                    )
+                    .autohide(),
+                    cx,
+                );
+            });
+        }
+        let content = fs.load(&agents_file).await?;
+        let title = agents_file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        workspace.update_in(cx, |workspace, window, cx| {
+            crate::ui::open_read_only_markdown_buffer(workspace, title, content, window, cx);
+        })
+    })
+    .detach_and_notify_err(workspace.weak_handle(), window, cx);
 }
 
 fn open_project_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
@@ -3269,33 +3316,6 @@ impl AgentPanel {
         thread_id
     }
 
-    pub fn activate_retained_thread(
-        &mut self,
-        id: ThreadId,
-        focus: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let conversation_view = if let Some(view) = self.remove_retained_thread(&id) {
-            self.try_make_empty_draft_ephemeral(view.clone(), cx);
-            view
-        } else if let Some(draft) = &self.draft_thread {
-            if draft.read(cx).thread_id == id {
-                draft.clone()
-            } else {
-                return;
-            }
-        } else {
-            return;
-        };
-        self.set_base_view(
-            BaseView::AgentThread { conversation_view },
-            focus,
-            window,
-            cx,
-        );
-    }
-
     pub fn active_thread_id(&self, cx: &App) -> Option<ThreadId> {
         match &self.base_view {
             BaseView::AgentThread { conversation_view } => {
@@ -3903,7 +3923,7 @@ impl AgentPanel {
 
         cx.spawn_in(window, async move |this, cx| {
             thread_store
-                .update(&mut cx.clone(), |store, cx| {
+                .update(cx, |store, cx| {
                     store.save_thread(session_id.clone(), db_thread, Default::default(), cx)
                 })
                 .await?;

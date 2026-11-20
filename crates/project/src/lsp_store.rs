@@ -96,8 +96,8 @@ use language::{
     row_chunk::RowChunk,
 };
 use lsp::{
-    AdapterServerCapabilities, CodeActionKind, CompletionContext, DEFAULT_LSP_REQUEST_TIMEOUT,
-    DiagnosticServerCapabilities, DiagnosticSeverity, DiagnosticTag,
+    AdapterServerCapabilities, CodeActionKind, CompletionContext, CompletionTriggerKind,
+    DEFAULT_LSP_REQUEST_TIMEOUT, DiagnosticServerCapabilities, DiagnosticSeverity, DiagnosticTag,
     DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
     FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LanguageServer,
     LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName,
@@ -3707,7 +3707,6 @@ impl LocalLspStore {
         Ok(transaction)
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn edits_from_lsp(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -6529,7 +6528,7 @@ impl LspStore {
                             worktree_path,
                             language.name(),
                             language.manifest(),
-                            delegate.clone(),
+                            delegate,
                             cx,
                         )
                         .collect::<Vec<_>>();
@@ -8051,6 +8050,12 @@ impl LspStore {
                 this.update(cx, |lsp_store, cx| {
                     for server_id in server_ids {
                         let lsp_adapter = lsp_store.language_server_adapter_for_id(server_id);
+                        let context = lsp_store.completion_context_for_server(
+                            buffer.read(cx),
+                            server_id,
+                            context.clone(),
+                            cx,
+                        );
                         let lsp_timeout = lsp_timeout
                             .map(|lsp_timeout| cx.background_executor().timer(lsp_timeout));
                         let mut timeout = cx.background_spawn(async move {
@@ -8067,7 +8072,7 @@ impl LspStore {
                             LanguageServerToQuery::Other(server_id),
                             GetCompletions {
                                 position,
-                                context: context.clone(),
+                                context,
                                 server_id: Some(server_id),
                             },
                             cx,
@@ -8112,6 +8117,36 @@ impl LspStore {
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))
         }
+    }
+
+    fn completion_context_for_server(
+        &self,
+        buffer: &Buffer,
+        server_id: LanguageServerId,
+        mut context: CompletionContext,
+        cx: &App,
+    ) -> CompletionContext {
+        if context.trigger_kind != CompletionTriggerKind::TRIGGER_CHARACTER {
+            return context;
+        }
+        let Some(local) = self.as_local() else {
+            return context;
+        };
+        let Some(adapter) = self.language_server_adapter_for_id(server_id) else {
+            return context;
+        };
+
+        let triggers =
+            completion_trigger_characters_for_buffer(local, server_id, &adapter, buffer, cx);
+        if !context
+            .trigger_character
+            .as_ref()
+            .is_some_and(|trigger| triggers.contains(trigger))
+        {
+            context.trigger_kind = CompletionTriggerKind::INVOKED;
+            context.trigger_character = None;
+        }
+        context
     }
 
     pub fn resolve_completions(
@@ -12227,9 +12262,7 @@ impl LspStore {
                         if progress.percentage.is_some() {
                             entry.percentage = progress.percentage;
                         }
-                        if progress.is_cancellable != entry.is_cancellable {
-                            entry.is_cancellable = progress.is_cancellable;
-                        }
+                        entry.is_cancellable = progress.is_cancellable;
                         did_update = true;
                     }
                 }
@@ -17185,14 +17218,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {
         let dir = self.language_registry.language_server_download_dir(name)?;
-
-        if !dir.exists() {
-            smol::fs::create_dir_all(&dir)
-                .await
-                .context("failed to create container directory")
-                .log_err()?;
-        }
-
+        smol::fs::create_dir_all(&dir)
+            .await
+            .context("failed to create container directory")
+            .log_err()?;
         Some(dir)
     }
 
