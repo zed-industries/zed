@@ -4,8 +4,8 @@ use crate::{
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
     ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    WriteFileTool, decide_permission_from_settings,
+    SystemPromptEnvironment, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri, ProcessOutput};
 use action_log::ActionLog;
@@ -4614,16 +4614,15 @@ impl Thread {
         log::trace!("Building request messages from {} thread messages", end_ix);
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
+        let project = self.project.read(cx);
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
+            environment: SystemPromptEnvironment::for_project(project, cx),
             available_tools,
             model_name: self.model().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
-            sandboxing: crate::sandboxing::sandboxing_enabled_for_project(
-                self.project.read(cx),
-                cx,
-            ),
+            sandboxing: crate::sandboxing::sandboxing_enabled_for_project(project, cx),
             is_linux: cfg!(target_os = "linux"),
             is_windows: cfg!(target_os = "windows"),
         }

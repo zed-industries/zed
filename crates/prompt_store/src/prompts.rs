@@ -15,9 +15,7 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::{
-    ResultExt, get_default_system_shell_preferring_bash, rel_path::RelPath, shell::ShellKind,
-};
+use util::{ResultExt, rel_path::RelPath};
 
 pub const RULES_FILE_NAMES: &[&str] = &[
     ".rules",
@@ -36,9 +34,6 @@ pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
     /// Whether any worktree has a rules_file. Provided as a field because handlebars can't do this.
     pub has_rules: bool,
-    pub os: String,
-    pub arch: String,
-    pub shell: String,
     // Similarly to `has_rules`, `has_skills` is a derived flag exposed
     // to the handlebars template (which can't do
     // `!skills.is_empty()`). These are `pub(crate)` so the only way to
@@ -56,10 +51,6 @@ impl ProjectContext {
         Self {
             worktrees,
             has_rules,
-            os: std::env::consts::OS.to_string(),
-            arch: std::env::consts::ARCH.to_string(),
-            shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
-                .to_string(),
             skills: Vec::new(),
             has_skills: false,
         }

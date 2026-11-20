@@ -71,6 +71,7 @@ pub struct MockRemoteConnection {
     server_cx: SendableCx,
     message_interceptors: parking_lot::Mutex<Option<MessageInterceptors>>,
     path_style: parking_lot::Mutex<PathStyle>,
+    default_system_shell: parking_lot::Mutex<String>,
     reported_options: parking_lot::Mutex<Option<RemoteConnectionOptions>>,
     pub(crate) proxy_tx: parking_lot::Mutex<
         Option<
@@ -154,6 +155,10 @@ impl MockConnection {
         *Self::pending(options, cx).path_style.lock() = path_style;
     }
 
+    pub fn set_default_system_shell(options: &RemoteConnectionOptions, shell: &str, cx: &mut App) {
+        *Self::pending(options, cx).default_system_shell.lock() = shell.to_owned();
+    }
+
     /// Makes the connection report `reported` as its options, as a real connection reports the
     /// options it was opened with, such as a saved SSH connection.
     pub fn report_connection_options(
@@ -227,6 +232,7 @@ impl MockConnection {
             server_cx: SendableCx::new(server_cx),
             message_interceptors: parking_lot::Mutex::new(None),
             path_style: parking_lot::Mutex::new(PathStyle::local()),
+            default_system_shell: parking_lot::Mutex::new("sh".to_owned()),
             reported_options: parking_lot::Mutex::new(None),
             proxy_tx: Default::default(),
         });
@@ -404,7 +410,7 @@ impl RemoteConnection for MockRemoteConnection {
     }
 
     fn default_system_shell(&self) -> String {
-        "sh".to_owned()
+        self.default_system_shell.lock().clone()
     }
 
     fn has_wsl_interop(&self) -> bool {

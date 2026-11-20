@@ -1,8 +1,10 @@
 use anyhow::Result;
-use gpui::SharedString;
+use gpui::{App, SharedString};
 use handlebars::Handlebars;
+use project::Project;
 use serde::Serialize;
 use std::sync::Arc;
+use util::{get_default_system_shell_preferring_bash, shell::ShellKind};
 
 // Dev builds read the checkout's templates at runtime instead of embedding
 // them; see the `assets` crate for the rationale.
@@ -40,6 +42,8 @@ pub trait Template: Sized {
 pub struct SystemPromptTemplate<'a> {
     #[serde(flatten)]
     pub project: &'a prompt_store::ProjectContext,
+    #[serde(flatten)]
+    pub environment: SystemPromptEnvironment,
     pub available_tools: Vec<SharedString>,
     pub model_name: Option<String>,
     pub date: String,
@@ -65,6 +69,40 @@ pub struct SystemPromptTemplate<'a> {
 
 impl Template for SystemPromptTemplate<'_> {
     const TEMPLATE_NAME: &'static str = "system_prompt.hbs";
+}
+
+#[derive(Serialize)]
+pub struct SystemPromptEnvironment {
+    os: &'static str,
+    arch: &'static str,
+    shell: String,
+}
+
+impl SystemPromptEnvironment {
+    pub fn for_project(project: &Project, cx: &App) -> Self {
+        let Some(remote_client) = project.remote_client() else {
+            return Self::local();
+        };
+        let remote_client = remote_client.read(cx);
+        let platform = remote_client.remote_platform();
+        Self {
+            os: platform.os.as_str(),
+            arch: platform.arch.as_str(),
+            // The terminal tool uses the command shell, which can differ from the login shell.
+            shell: remote_client
+                .default_system_shell()
+                .unwrap_or_else(|| "unknown".to_owned()),
+        }
+    }
+
+    pub fn local() -> Self {
+        Self {
+            os: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
+            shell: ShellKind::new(get_default_system_shell_preferring_bash(), cfg!(windows))
+                .to_string(),
+        }
+    }
 }
 
 /// Handlebars helper for checking if an item is in a list
@@ -101,6 +139,7 @@ mod tests {
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
@@ -134,6 +173,7 @@ mod tests {
         let project = ProjectContext::new(worktrees);
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
@@ -163,6 +203,7 @@ mod tests {
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
@@ -196,6 +237,7 @@ mod tests {
         let project = ProjectContext::new(worktrees);
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
@@ -239,6 +281,7 @@ mod tests {
         let project = ProjectContext::new(worktrees);
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
@@ -272,6 +315,7 @@ mod tests {
         let project = ProjectContext::new(worktrees);
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
@@ -302,6 +346,7 @@ mod tests {
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
@@ -324,6 +369,7 @@ mod tests {
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
@@ -344,6 +390,7 @@ mod tests {
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
@@ -362,6 +409,7 @@ mod tests {
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
+            environment: SystemPromptEnvironment::local(),
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
