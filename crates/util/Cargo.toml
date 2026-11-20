@@ -65,7 +65,7 @@ which.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 which.workspace = true
-windows = { workspace = true, features = ["Win32_System_JobObjects"] }
+windows = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_JobObjects"] }
 
 [dev-dependencies]
 rand.workspace = true

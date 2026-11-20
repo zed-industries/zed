@@ -2280,7 +2280,7 @@ impl ToString for IdType {
 }
 
 fn parse_url_arg(arg: &str, cx: &App) -> String {
-    match std::fs::canonicalize(Path::new(&arg)) {
+    match util::paths::canonicalize(Path::new(&arg)) {
         Ok(path) => format!("file://{}", path.display()),
         Err(_) => {
             if arg.starts_with("file://")
