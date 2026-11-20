@@ -8681,6 +8681,7 @@ impl ThreadView {
                 ThreadSearchBar::new(
                     thread,
                     self.entry_view_state.clone(),
+                    self.message_editor.read(cx).editor().clone(),
                     on_activate,
                     window,
                     cx,
