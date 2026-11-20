@@ -4424,6 +4424,7 @@ impl Thread {
         let mut tools = self
             .tools
             .iter()
+            .filter(|(tool_name, _)| !crate::tools::tool_is_fully_denied(tool_name, &AgentSettings::get_global(cx).tool_permissions))
             .filter(|(_, tool)| !is_restricted || tool.allow_in_restricted_mode())
             .filter_map(|(tool_name, tool)| {
                 let terminal_variant = matches!(
@@ -7548,6 +7549,48 @@ mod tests {
         assert_eq!(
             compaction_input_capacity(128_000, Some(128_000), None),
             128_000
+        );
+    }
+
+    #[gpui::test]
+    async fn test_enabled_tools_excludes_tools_denied_by_default_permission(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(fake.model("fake"), cx);
+            })
+        });
+        enable_echo_tool(&thread, cx);
+
+        // With no permission rules, the enabled tool is offered to the model.
+        let tools = thread.read_with(cx, |thread, cx| thread.enabled_tools(cx));
+        assert!(
+            tools.contains_key(EchoTool::NAME),
+            "echo tool should be offered when no permission rules are set"
+        );
+
+        // Configure `agent.tool_permissions.tools.echo.default = "deny"`.
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                EchoTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(ToolPermissionMode::Deny),
+                    ..Default::default()
+                },
+            );
+            AgentSettings::override_global(settings, cx);
+        });
+
+        // A tool whose default permission is deny must not be offered to the
+        // model, even when the active profile enables it.
+        let tools = thread.read_with(cx, |thread, cx| thread.enabled_tools(cx));
+        assert!(
+            !tools.contains_key(EchoTool::NAME),
+            "echo tool should not be offered when its default permission is deny"
         );
     }
 
