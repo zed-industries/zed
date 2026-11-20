@@ -289,9 +289,14 @@ mod tests {
         );
         update_crates(client.as_ref(), &checked).await?;
         let checked = check_crates(client.as_ref(), names(), team_id).await?;
-        assert!(
-            matches!(&checked[0].state, PublishState::RequiresCratesIoUpdates { missing_owners, missing_workflow: false, enable_trusted_only: false } if missing_owners.len() == 3)
-        );
+        assert!(matches!(
+            &checked[0].state,
+            PublishState::RequiresCratesIoUpdates {
+                missing_owners,
+                missing_workflow: false,
+                enable_trusted_only: false,
+            } if missing_owners.len() == 3
+        ));
         update_crates(client.as_ref(), &checked).await?;
         assert_eq!(client.list_github_configs(&name).await?.len(), 1);
         assert_eq!(client.invited_owners(&name)?.len(), 3);
