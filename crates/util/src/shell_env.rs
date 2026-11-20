@@ -38,6 +38,82 @@ pub async fn capture(
     return capture_unix(shell_path.as_ref(), args, directory.as_ref()).await;
 }
 
+/// The current `Path` as recorded in the Windows registry, or `None` when it can't be read
+/// (and on all other platforms).
+///
+/// A process keeps the environment block it was started with, so tools installed after Zed
+/// launched are missing from this process's `Path`, even though shells opened from Explorer
+/// find them. Reading the registry gives us the view such a shell would have.
+///
+/// See https://github.com/zed-industries/zed/issues/51349
+#[cfg(windows)]
+pub fn registry_path() -> Option<String> {
+    use windows_registry::{CURRENT_USER, LOCAL_MACHINE};
+
+    // `CURRENT_USER` and `LOCAL_MACHINE` are `&'static Key`, so they are passed by reference.
+    fn read(hive: &windows_registry::Key, subkey: &str) -> Option<String> {
+        match hive.open(subkey).and_then(|key| key.get_string("Path")) {
+            Ok(path) => Some(expand_env_vars(&path)),
+            Err(error) => {
+                log::debug!("failed to read Path from {subkey}: {error}");
+                None
+            }
+        }
+    }
+
+    let mut path = read(
+        LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+    )
+    .unwrap_or_default();
+    let user_path = read(CURRENT_USER, "Environment").unwrap_or_default();
+    if !user_path.is_empty() {
+        if !path.is_empty() {
+            path.push(';');
+        }
+        path.push_str(&user_path);
+    }
+
+    (!path.is_empty()).then_some(path)
+}
+
+#[cfg(not(windows))]
+pub fn registry_path() -> Option<String> {
+    None
+}
+
+/// Expands `%NAME%` references in a `REG_EXPAND_SZ` registry value.
+#[cfg(windows)]
+fn expand_env_vars(value: &str) -> String {
+    expand_env_vars_with(value, |name| std::env::var(name).ok())
+}
+
+/// Expands `%NAME%` references using `lookup`, leaving names it can't resolve intact.
+#[cfg(any(windows, test))]
+fn expand_env_vars_with(value: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
+    let mut expanded = String::with_capacity(value.len());
+    let mut rest = value;
+
+    while let Some(start) = rest.find('%') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('%') else {
+            break;
+        };
+        let name = &after_start[..end];
+        match lookup(name).filter(|_| !name.is_empty()) {
+            Some(replacement) => {
+                expanded.push_str(&rest[..start]);
+                expanded.push_str(&replacement);
+            }
+            None => expanded.push_str(&rest[..start + 1 + end + 1]),
+        }
+        rest = &after_start[end + 1..];
+    }
+
+    expanded.push_str(rest);
+    expanded
+}
+
 /// Try to parse the environment output before checking the exit status.
 /// The user's shell rc files may contain commands that fail (e.g. editor
 /// integrations that call posix_spawnp outside a real PTY), causing a
@@ -281,6 +357,14 @@ async fn capture_windows(
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
+    // Newly installed tools append themselves to `Path` in the registry and broadcast
+    // `WM_SETTINGCHANGE`, but that never reaches our own environment block, so a shell we
+    // spawn here would inherit a stale `Path`. Read it from the registry instead, so the
+    // captured environment matches what a shell launched from Explorer would see.
+    if let Some(path) = registry_path() {
+        cmd.env("PATH", path);
+    }
+
     let output = cmd
         .output()
         .await
@@ -353,6 +437,19 @@ mod tests {
             assert_eq!((descriptor, redirection), (0, String::from("> /dev/fd/0")));
         }
         Ok(())
+    }
+
+    #[test]
+    fn expand_env_vars_expands_registry_references() {
+        let lookup = |name: &str| match name {
+            "SystemRoot" => Some(r"C:\Windows".to_string()),
+            _ => None,
+        };
+
+        assert_eq!(
+            expand_env_vars_with(r"%SystemRoot%\system32;%UNKNOWN%;C:\tools", lookup),
+            r"C:\Windows\system32;%UNKNOWN%;C:\tools"
+        );
     }
 
     #[test]
