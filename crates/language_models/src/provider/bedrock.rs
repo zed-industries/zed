@@ -885,30 +885,26 @@ impl State {
     }
 
     fn listing_message(&self) -> Option<(String, bool)> {
-        let public_consequence = || {
-            if self
-                .capability_catalog
-                .models_for_region(&self.get_region(), self.get_allow_global())
-                .is_empty()
-            {
-                if self.capability_catalog.is_empty() {
-                    "Zed offers only the models in your settings because the models.dev catalog has not loaded."
-                } else {
-                    "Zed offers only the models in your settings because models.dev names no models for your Region."
-                }
-            } else {
-                "Zed offers the models that models.dev names for your Region instead."
-            }
-        };
         match &self.listing {
-            ModelListing::Unauthenticated => None,
-            ModelListing::Loading { previous: None } => Some(("Zed offers only the models in your settings while it lists the models in your account.".into(), false)),
-            ModelListing::Loading { previous: Some(_) } => Some(("Zed keeps the earlier account list while it refreshes the models.".into(), false)),
-            ModelListing::RetryingPublic => Some((format!("Zed is retrying the account listing. {}", public_consequence()), false)),
-            ModelListing::Listed(_) => Some(("Zed offers the models listed in your account and the models in your settings.".into(), false)),
-            ModelListing::Failed { previous: Some(_), error } => Some((format!("Zed keeps the earlier account list, which may be out of date. {error}"), true)),
-            ModelListing::Failed { previous: None, error } => Some((format!("{} {error}", public_consequence()), true)),
-            ModelListing::Gateway => Some((format!("{} A custom endpoint is configured, so Zed does not list models in your AWS account.", public_consequence()), false)),
+            ModelListing::Failed {
+                previous: Some(_),
+                error,
+            } => Some((
+                format!("Zed keeps the earlier account list, which may be out of date. {error}"),
+                true,
+            )),
+            listing if listing.uses_public_catalog() => {
+                let reason = match listing {
+                    ModelListing::Failed { error, .. } => error.as_str(),
+                    ModelListing::Gateway => "A custom endpoint is configured.",
+                    _ => "",
+                };
+                Some((
+                    format!("Zed shows the models that models.dev lists for your Region. {reason}"),
+                    matches!(listing, ModelListing::Failed { .. }),
+                ))
+            }
+            _ => None,
         }
     }
 }
@@ -5236,13 +5232,12 @@ mod tests {
                 );
                 let (message, warning) = provider
                     .state
-                    .read_with(cx, |state, _| state.listing_message())
+                    .read_with(cx, |state, _| {
+                        assert!(state.listing.catalog().is_some());
+                        state.listing_message()
+                    })
                     .context("refresh warning")?;
-                assert!(
-                    warning
-                        && message.contains("may be out of date")
-                        && !message.contains("models.dev")
-                );
+                assert!(warning);
                 assert!(
                     message.contains(&format!("bedrock:{operation}"))
                         && message.contains("test denial")
@@ -5306,7 +5301,7 @@ mod tests {
                     message.contains("ListFoundationModels")
                         && message.contains("required listing test error")
                 );
-                assert!(warning && message.contains("models.dev names for your Region instead"));
+                assert!(warning && state.listing.uses_public_catalog());
             });
             deny.store(false, std::sync::atomic::Ordering::SeqCst);
             cx.update(|cx| provider.refresh_models(cx));
@@ -5325,13 +5320,9 @@ mod tests {
             finish_listing(&provider, cx).await?;
             assert!(offered_ids(&provider, cx).is_empty());
             provider.state.read_with(cx, |state, _| {
-                assert!(
-                    state
-                        .listing_message()
-                        .expect("settings only message")
-                        .0
-                        .contains("names no models for your Region")
-                );
+                assert!(state.listing.uses_public_catalog());
+                let (message, warning) = state.listing_message().expect("public list message");
+                assert!(warning && message.contains("required listing test error"));
             });
             Ok::<_, anyhow::Error>(())
         };
