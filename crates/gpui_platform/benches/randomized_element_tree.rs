@@ -395,6 +395,16 @@ fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) 
     measure_in_window("full refresh", input, cx, |_, window, _| window.refresh());
 }
 
+/// Every element gets a new ID each frame and the whole tree renders again, as when a
+/// list's items are keyed by data that changes every frame: nothing retained between
+/// frames under an element's ID can be found again, so this is the price, on top of a full
+/// refresh, of every keyed cache missing.
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/id churn", fps = 120)]
+fn id_churn(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &family.sample(&mut rng);
+    measure("id churn", input, cx, |tree, cx| tree.churn_element_ids(cx));
+}
+
 /// The same tree as `family` draws, with elements painting no vector paths. Tessellating
 /// paths dominates the frames of trees that paint them, hiding everything else; without
 /// them the rest of the frame, layout especially, is most of what is measured.
@@ -418,6 +428,33 @@ fn pathless_full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchApp
 fn pathless_element_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &sample_without_paths(family, &mut rng);
     measure_element_style("pathless element style", input, cx);
+}
+
+/// [`leaf_bounds`] on trees that paint no paths.
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "PathlessTree/leaf bounds", fps = 120)]
+fn pathless_leaf_bounds(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &sample_without_paths(family, &mut rng);
+    measure("pathless leaf bounds", input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::ChildBounds, cx);
+    });
+}
+
+/// [`root_layout`] on trees that paint no paths.
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "PathlessTree/root layout", fps = 120)]
+fn pathless_root_layout(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &sample_without_paths(family, &mut rng);
+    measure("pathless root layout", input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::RootBounds, cx);
+    });
+}
+
+/// [`id_churn`] on trees that paint no paths.
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "PathlessTree/id churn", fps = 120)]
+fn pathless_id_churn(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &sample_without_paths(family, &mut rng);
+    measure("pathless id churn", input, cx, |tree, cx| {
+        tree.churn_element_ids(cx)
+    });
 }
 
 /// A frame in which the root is notified but nothing in the tree changed. On a renderer
@@ -1590,8 +1627,12 @@ gpui::bench_group!(
     reorder,
     hover,
     mixed,
+    id_churn,
     pathless_full_refresh,
     pathless_element_style,
+    pathless_leaf_bounds,
+    pathless_root_layout,
+    pathless_id_churn,
     changing_share,
     text_panel_updates,
     installed_font_panel_updates,
