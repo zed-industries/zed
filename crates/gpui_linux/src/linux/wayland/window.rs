@@ -138,6 +138,7 @@ pub struct WaylandWindowState {
     pending_frame_callback: Option<wl_callback::WlCallback>,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
+    resize_needs_present: bool,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
@@ -632,6 +633,7 @@ impl WaylandWindowState {
             window_bounds: options.bounds,
             in_progress_configure: None,
             resize_throttle: false,
+            resize_needs_present: false,
             client,
             appearance,
             handle,
@@ -949,10 +951,14 @@ impl WaylandWindowStatePtr {
         self.frame_loop.set(FrameLoop::Ticking);
         let mut state = self.state.borrow_mut();
         state.resize_throttle = false;
+        let resize_needs_present = std::mem::take(&mut state.resize_needs_present);
         // GPUI may throttle this tick without calling draw, so leave the request
         // latched until a draw actually reaches the renderer.
         let force_render = state.redraw_requested;
-        let require_presentation = state.presentation.requires_presentation();
+        // Compositor resize grabs can leave the window unfocused without input,
+        // but an applied size change still needs presentation at display rate.
+        let require_presentation =
+            state.presentation.requires_presentation() || resize_needs_present;
         drop(state);
 
         let mut callbacks = self.callbacks.borrow_mut();
@@ -1537,6 +1543,7 @@ impl WaylandWindowStatePtr {
                 return;
             }
             if let Some(size) = size {
+                state.resize_needs_present |= size != state.bounds.size;
                 state.bounds.size = size;
             }
             if let Some(scale) = scale {
