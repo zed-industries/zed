@@ -1226,7 +1226,7 @@ mod git_traversal {
 
 mod git_worktrees {
     use fs::{FakeFs, Fs};
-    use gpui::TestAppContext;
+    use gpui::{BorrowAppContext as _, TestAppContext};
     use project::worktrees_directory_for_repo;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1243,49 +1243,78 @@ mod git_worktrees {
     }
 
     #[test]
-    fn test_validate_worktree_directory() {
+    fn test_resolve_worktree_directory() {
         let work_dir = Path::new("/code/my-project");
 
-        // Valid: sibling
-        assert!(worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).is_ok());
-
-        // Valid: subdirectory
-        assert!(
-            worktrees_directory_for_repo(work_dir, ".git/zed-worktrees", PathStyle::Unix).is_ok()
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap(),
+            PathBuf::from("/code/worktrees/my-project")
         );
-        assert!(worktrees_directory_for_repo(work_dir, "my-worktrees", PathStyle::Unix).is_ok());
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, ".git/zed-worktrees", PathStyle::Unix).unwrap(),
+            PathBuf::from("/code/my-project/.git/zed-worktrees")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, "my-worktrees", PathStyle::Unix).unwrap(),
+            PathBuf::from("/code/my-project/my-worktrees")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(
+                work_dir,
+                "../../other-project/worktrees",
+                PathStyle::Unix
+            )
+            .unwrap(),
+            PathBuf::from("/other-project/worktrees/my-project")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, "/tmp/worktrees", PathStyle::Unix).unwrap(),
+            PathBuf::from("/tmp/worktrees/my-project")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, "/", PathStyle::Unix).unwrap(),
+            PathBuf::from("/my-project")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(
+                work_dir,
+                "/code/my-project/.git/zed-worktrees",
+                PathStyle::Unix
+            )
+            .unwrap(),
+            PathBuf::from("/code/my-project/.git/zed-worktrees")
+        );
 
-        // Invalid: just ".." would resolve back to the working directory itself
-        let err = worktrees_directory_for_repo(work_dir, "..", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("must not be \"..\""));
+        for setting in ["", "..", "../", "/code", "/code/my-project"] {
+            let error =
+                worktrees_directory_for_repo(work_dir, setting, PathStyle::Unix).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("must not resolve to the repository directory")
+            );
+        }
+    }
 
-        // Invalid: ".." with trailing separators
-        let err = worktrees_directory_for_repo(work_dir, "..\\", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("must not be \"..\""));
-        let err = worktrees_directory_for_repo(work_dir, "../", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("must not be \"..\""));
+    #[test]
+    fn test_resolve_absolute_windows_worktree_directory() {
+        let directory = worktrees_directory_for_repo(
+            Path::new("C:/code/my-project"),
+            r"D:\worktrees",
+            PathStyle::Windows,
+        )
+        .unwrap();
 
-        // Invalid: empty string would resolve to the working directory itself
-        let err = worktrees_directory_for_repo(work_dir, "", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("must not be empty"));
+        assert_eq!(directory.to_string_lossy(), r"D:\worktrees\my-project");
 
-        // Invalid: absolute path
-        let err =
-            worktrees_directory_for_repo(work_dir, "/tmp/worktrees", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("relative path"));
+        let directory = worktrees_directory_for_repo(
+            Path::new("C:/code/my-project"),
+            "D:\\",
+            PathStyle::Windows,
+        )
+        .unwrap();
 
-        // Invalid: "/" is absolute on Unix
-        let err = worktrees_directory_for_repo(work_dir, "/", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
-        // Invalid: "///" is absolute
-        let err = worktrees_directory_for_repo(work_dir, "///", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
-        // Invalid: escapes too far up
-        let err = worktrees_directory_for_repo(work_dir, "../../other-project/wt", PathStyle::Unix)
-            .unwrap_err();
-        assert!(err.to_string().contains("outside"));
+        assert_eq!(directory.to_string_lossy(), r"D:\my-project");
     }
 
     #[test]
@@ -1523,6 +1552,80 @@ mod git_worktrees {
         assert!(!Fs::is_dir(fs.as_ref(), &worktree_parent).await);
         assert!(!Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
         assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+    }
+
+    #[gpui::test]
+    async fn test_create_and_remove_worktree_with_custom_directories(cx: &mut TestAppContext) {
+        init_test(cx);
+        for setting in [
+            path!("/outside/worktrees"),
+            "~/zed-test-worktrees",
+            "../../outside/worktrees",
+        ] {
+            cx.update(|cx| {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.git.get_or_insert_default().worktree_directory =
+                            Some(setting.into());
+                    });
+                });
+            });
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                path!("/code/project"),
+                json!({".git": {}, "file.txt": "content"}),
+            )
+            .await;
+            let project = Project::test(fs.clone(), [path!("/code/project").as_ref()], cx).await;
+            project
+                .update(cx, |project, cx| project.git_scans_complete(cx))
+                .await;
+            let repository = project.read_with(cx, |project, cx| {
+                project.repositories(cx).values().next().unwrap().clone()
+            });
+            let expanded_setting = repository
+                .read_with(cx, |repository, cx| {
+                    repository.resolve_worktree_directory_setting(setting.into(), cx)
+                })
+                .await
+                .unwrap();
+            let worktree_path = repository.read_with(cx, |repository, _| {
+                repository
+                    .path_for_new_linked_worktree("feature/nested", &expanded_setting)
+                    .unwrap()
+            });
+            let base = worktrees_directory_for_repo(
+                Path::new(path!("/code/project")),
+                &expanded_setting,
+                PathStyle::local(),
+            )
+            .unwrap();
+            repository
+                .update(cx, |repository, _| {
+                    repository.create_worktree(
+                        git::repository::CreateWorktreeTarget::NewBranch {
+                            branch_name: "feature".into(),
+                            base_sha: Some("abc123".into()),
+                        },
+                        worktree_path.clone(),
+                    )
+                })
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(Fs::is_dir(fs.as_ref(), &worktree_path).await);
+
+            repository
+                .update(cx, |repository, _| {
+                    repository.remove_worktree(worktree_path.clone(), true)
+                })
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!Fs::is_dir(fs.as_ref(), &worktree_path).await);
+            assert!(!Fs::is_dir(fs.as_ref(), &base.join("feature")).await);
+            assert!(Fs::is_dir(fs.as_ref(), &base).await);
+        }
     }
 
     #[gpui::test]
