@@ -17092,6 +17092,7 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
         encoding: &'static encoding_rs::Encoding,
         has_bom: bool,
         text: &'static str,
+        stored_bytes: Option<&'static [u8]>,
         attributes: &'static str,
         replacement: &'static str,
         committed_rows: Vec<Range<u32>>,
@@ -17107,6 +17108,7 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
         encoding,
         has_bom,
         text,
+        stored_bytes: None,
         attributes,
         replacement: "changed",
         committed_rows: outer_rows.clone(),
@@ -17120,13 +17122,27 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
             windows_1252_text,
             "",
         ),
-        case(
-            "iso_2022_jp.txt",
-            encoding_rs::ISO_2022_JP,
-            false,
-            "上の行\nplain\n最後の行",
-            "",
-        ),
+        Case {
+            stored_bytes: Some(b"\x1b$B>e$N9T\x1b(B\nplain\n\x1b$B:G8e$N9T\x1b(B\n"),
+            ..case(
+                "iso_2022_jp.txt",
+                encoding_rs::ISO_2022_JP,
+                false,
+                unicode_text,
+                "",
+            )
+        },
+        Case {
+            stored_bytes: Some(b"\x1b(J\\\x1b(B\nmiddle\n\\\nplain\n\x1b$B:G8e$N9T\x1b(B\n"),
+            committed_rows: vec![2..4],
+            ..case(
+                "iso_2022_jp_roman.txt",
+                encoding_rs::ISO_2022_JP,
+                false,
+                "¥\nmiddle\n\\\nplain\n最後の行\n",
+                "",
+            )
+        },
         case("utf_8_bom.txt", encoding_rs::UTF_8, true, unicode_text, ""),
         // Git can't split raw UTF-16 into lines.
         Case {
@@ -17139,6 +17155,13 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
             false,
             windows_1252_text,
             "-text diff=windows_1252",
+        ),
+        case(
+            "latin_textconv_set.py",
+            encoding_rs::WINDOWS_1252,
+            false,
+            windows_1252_text,
+            "-text diff=set",
         ),
         case(
             "utf_16le_textconv.txt",
@@ -17211,6 +17234,11 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
         &work_dir,
     );
     git_config(
+        "diff.set.textconv",
+        "iconv -f WINDOWS-1252 -t UTF-8",
+        &work_dir,
+    );
+    git_config(
         "diff.utf_16.textconv",
         "iconv -f UTF-16 -t UTF-8",
         &work_dir,
@@ -17223,7 +17251,10 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
     std::fs::write(work_dir.join(".gitattributes"), attributes).unwrap();
     git_add(".gitattributes", &work_dir);
     for case in &cases {
-        let bytes = file_content::encode_text(case.text.to_owned(), case.encoding, case.has_bom);
+        let bytes = match case.stored_bytes {
+            Some(bytes) => bytes.to_vec(),
+            None => file_content::encode_text(case.text.to_owned(), case.encoding, case.has_bom),
+        };
         std::fs::write(work_dir.join(case.file_name), bytes).unwrap();
         git_add(case.file_name, &work_dir);
     }

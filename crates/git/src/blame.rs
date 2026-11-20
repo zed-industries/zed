@@ -3,7 +3,7 @@ use crate::commit::{get_messages, get_tag_names};
 use crate::repository::{GitBinary, RepoPath};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
+use encoding_rs::{Encoding, ISO_2022_JP, UTF_8, UTF_16BE, UTF_16LE};
 use file_content::ExactEncoder;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, TryFutureExt, try_join};
@@ -104,10 +104,13 @@ async fn stored_contents<'a>(
     if encoding == UTF_8 && !has_bom {
         return None;
     }
-    let compares_stored_bytes = git_compares_stored_bytes(git, path, encoding)
-        .await
-        .with_context(|| format!("reading git attributes of {:?}", path.as_unix_str()))
-        .log_err()?;
+    let lines_encode_independently =
+        encoding != ISO_2022_JP || !content.chars().any(|c| matches!(c, '¥' | '‾'));
+    let compares_stored_bytes =
+        git_compares_stored_bytes(git, path, encoding, lines_encode_independently)
+            .await
+            .with_context(|| format!("reading git attributes of {:?}", path.as_unix_str()))
+            .log_err()?;
     if !compares_stored_bytes {
         return None;
     }
@@ -123,12 +126,11 @@ async fn stored_contents<'a>(
     ))
 }
 
-/// Git applies textconv to history but not to stdin, and can't split raw UTF-16 into lines.
-/// With a `working-tree-encoding` it converts stdin itself.
 async fn git_compares_stored_bytes(
     git: &GitBinary,
     path: &RepoPath,
     encoding: &'static Encoding,
+    lines_encode_independently: bool,
 ) -> Result<bool> {
     let attributes = git
         .run_raw(&[
@@ -143,15 +145,13 @@ async fn git_compares_stored_bytes(
     let mut diff_driver = None;
     let mut has_working_tree_encoding = false;
     for (_path, attribute, value) in attributes.split('\0').tuples() {
-        if matches!(value, "unspecified" | "unset" | "set") {
-            continue;
-        }
         match attribute {
             "diff" => diff_driver = Some(value),
             // Git ignores a UTF-8 `working-tree-encoding`.
             "working-tree-encoding" => {
-                has_working_tree_encoding =
-                    !value.eq_ignore_ascii_case("utf-8") && !value.eq_ignore_ascii_case("utf8");
+                has_working_tree_encoding = !matches!(value, "unspecified" | "unset" | "set")
+                    && !value.eq_ignore_ascii_case("utf-8")
+                    && !value.eq_ignore_ascii_case("utf8");
             }
             _ => {}
         }
@@ -160,7 +160,7 @@ async fn git_compares_stored_bytes(
     if has_working_tree_encoding {
         return Ok(true);
     }
-    if encoding == UTF_16LE || encoding == UTF_16BE {
+    if encoding == UTF_16LE || encoding == UTF_16BE || !lines_encode_independently {
         return Ok(false);
     }
     let Some(diff_driver) = diff_driver else {
