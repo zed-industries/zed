@@ -36,8 +36,6 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-pub type ProjectSymbols = Entity<Picker<ProjectSymbolsDelegate>>;
-
 pub struct ProjectSymbolsDelegate {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,

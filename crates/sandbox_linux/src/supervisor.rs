@@ -20,7 +20,7 @@ use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd, RawFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 
@@ -38,7 +38,6 @@ use crate::sys;
 pub(crate) const SUPERVISOR_FLAG: &str = "--zed-sandbox-linux-supervisor";
 pub(crate) const CONTROL_FD: RawFd = 3;
 
-const PROMPT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Per execution.
 const MAX_RECEIVERS: usize = 64;
 /// Idle receivers beyond this many exit.
@@ -226,8 +225,9 @@ impl Shared {
     }
 
     /// Ask Zed's `handler` whether to allow `requests`, through the
-    /// handler's [`PromptQueue`]. Blocks until it answers, the prompt times
-    /// out (deny), or the syscall is abandoned (`still_valid` turns false).
+    /// handler's [`PromptQueue`]. Blocks until it answers, or the syscall is
+    /// abandoned (`still_valid` turns false). There is no time limit: the
+    /// handler may be waiting on a person.
     /// Rules the handler asks to remember are added to the sandbox's policy
     /// before any waiting request wakes up.
     pub fn ask(
@@ -304,12 +304,11 @@ impl Shared {
             pid: tid,
             executable: std::fs::read_link(format!("/proc/{tid}/exe")).ok(),
         }));
-        let start = Instant::now();
         let decision = loop {
             match receiver.recv_timeout(Duration::from_secs(1)) {
                 Ok(reply) => break Some(reply),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if !still_valid() || start.elapsed() > PROMPT_TIMEOUT {
+                    if !still_valid() {
                         break None;
                     }
                 }

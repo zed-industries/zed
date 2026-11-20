@@ -900,7 +900,7 @@
     //   "icon"
     // 2. A disclosure chevron:
     //   "chevron"
-    // 3. A disclosure chevron followed by a folder icon:
+    // 3. A disclosure chevron followed by a folder icon, with no chevron on empty folders in local projects:
     //   "both"
     "folder_indicator": "icon",
     // Whether to show the git status in the project panel.

@@ -2142,10 +2142,8 @@ impl WorkspaceDb {
             }
 
             if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                let identity_paths = resolve_local_workspace_identity(fs, &paths)
-                    .await
-                    .or(identity_paths_hint)
-                    .unwrap_or_else(|| paths.clone());
+                let identity_paths =
+                    local_workspace_identity(fs, &paths, identity_paths_hint).await;
                 result.push(RecentWorkspace {
                     workspace_id: id,
                     location: SerializedWorkspaceLocation::Local,
@@ -2172,6 +2170,7 @@ impl WorkspaceDb {
     pub async fn delete_recent_workspace_group(
         &self,
         target: &RecentWorkspace,
+        fs: &dyn Fs,
     ) -> Result<Vec<WorkspaceId>> {
         let target_paths = &target.identity_paths;
         let target_remote_connection = match &target.location {
@@ -2187,17 +2186,24 @@ impl WorkspaceDb {
         for (workspace_id, paths, identity_paths, remote_connection_id, _, _, _) in
             self.recent_workspaces()?
         {
-            let remote_connection = if let Some(id) = remote_connection_id {
+            let (remote_connection, identity_paths) = if let Some(id) = remote_connection_id {
                 let Some(connection_options) = remote_connections.get(&id) else {
                     continue;
                 };
-                Some(RemoteConnectionIdentity::from(connection_options))
+                (
+                    Some(RemoteConnectionIdentity::from(connection_options)),
+                    identity_paths.unwrap_or(paths),
+                )
             } else {
-                None
+                if target_remote_connection.is_some() {
+                    continue;
+                }
+                (
+                    None,
+                    local_workspace_identity(fs, &paths, identity_paths).await,
+                )
             };
-            if remote_connection == target_remote_connection
-                && &identity_paths.unwrap_or(paths) == target_paths
-            {
+            if remote_connection == target_remote_connection && &identity_paths == target_paths {
                 workspace_ids.push(workspace_id);
             }
         }
@@ -2910,34 +2916,58 @@ impl RecentWorkspace {
     }
 }
 
-async fn resolve_local_workspace_identity(fs: &dyn Fs, paths: &PathList) -> Option<PathList> {
-    let raw_paths = paths.paths();
-    let resolved_paths = futures::future::join_all(
-        raw_paths
-            .iter()
-            .map(|path| project::git_store::resolve_git_worktree_to_main_repo(fs, path)),
-    )
-    .await;
+async fn local_workspace_identity(
+    fs: &dyn Fs,
+    paths: &PathList,
+    identity_paths_hint: Option<PathList>,
+) -> PathList {
+    let resolved_identity_paths = if contains_wsl_path(paths) {
+        None
+    } else {
+        resolve_local_workspace_identity(fs, paths, identity_paths_hint.as_ref()).await
+    };
+    resolved_identity_paths
+        .or(identity_paths_hint)
+        .unwrap_or_else(|| paths.clone())
+}
 
-    if resolved_paths.iter().all(|resolved| resolved.is_none()) {
+async fn resolve_local_workspace_identity(
+    fs: &dyn Fs,
+    paths: &PathList,
+    identity_paths_hint: Option<&PathList>,
+) -> Option<PathList> {
+    let root_paths = paths.ordered_paths().collect::<Vec<_>>();
+    let discovered_paths =
+        futures::future::join_all(root_paths.iter().map(|root_path| {
+            project::git_store::discover_root_repository_group_path(root_path, fs)
+        }))
+        .await;
+
+    if discovered_paths
+        .iter()
+        .all(|discovered| discovered.is_none())
+    {
         return None;
     }
 
-    let resolved_paths: Vec<PathBuf> = raw_paths
-        .iter()
-        .zip(resolved_paths.iter())
-        .map(|(original, resolved)| {
-            resolved
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| original.clone())
+    let hinted_paths = identity_paths_hint
+        .filter(|hint| hint.paths().len() == root_paths.len())
+        .map(|hint| hint.ordered_paths().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let identity_paths = root_paths
+        .into_iter()
+        .zip(discovered_paths)
+        .enumerate()
+        .map(|(root_index, (root_path, discovered_path))| {
+            discovered_path
+                .or_else(|| hinted_paths.get(root_index).copied().cloned())
+                .unwrap_or_else(|| root_path.clone())
         })
-        .collect();
-    let resolved_path_refs: Vec<&Path> = resolved_paths.iter().map(PathBuf::as_path).collect();
-    Some(PathList::new(&resolved_path_refs))
+        .collect::<Vec<_>>();
+    Some(PathList::new(&identity_paths))
 }
 
-fn dedupe_recent_workspaces(
+pub fn dedupe_recent_workspaces(
     workspaces: impl IntoIterator<Item = RecentWorkspace>,
 ) -> Vec<RecentWorkspace> {
     let mut indices_by_key: HashMap<
@@ -4602,7 +4632,7 @@ mod tests {
         timestamp: DateTime<Utc>,
         fs: &dyn Fs,
     ) -> RecentWorkspace {
-        let identity_paths = resolve_local_workspace_identity(fs, &paths)
+        let identity_paths = resolve_local_workspace_identity(fs, &paths, None)
             .await
             .unwrap_or_else(|| paths.clone());
         RecentWorkspace {
@@ -4613,6 +4643,174 @@ mod tests {
             path_style: Some(PathStyle::local()),
             timestamp,
         }
+    }
+
+    #[gpui::test]
+    async fn test_resolve_local_workspace_identity_for_delta_checkout(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "repo": {
+                    ".git": { "HEAD": "ref: refs/heads/main\n" },
+                    ".delta": {
+                        "clones": {
+                            "abc": {
+                                "repo.git": {
+                                    "HEAD": "ref: refs/heads/feature\n",
+                                    "worktrees": { "linked": { "commondir": "../.." } },
+                                    "delta": { "copy-baseline": "" },
+                                    "objects": {
+                                        "info": {
+                                            "alternates": format!(
+                                                "{}\n",
+                                                path!("/root/repo/.git/objects")
+                                            ),
+                                        },
+                                    },
+                                },
+                            },
+                            "unmarked": {
+                                "repo.git": {
+                                    "HEAD": "ref: refs/heads/feature\n",
+                                    "objects": {
+                                        "info": {
+                                            "alternates": format!(
+                                                "{}\n",
+                                                path!("/root/repo/.git/objects")
+                                            ),
+                                        },
+                                    },
+                                },
+                            },
+                            "unreadable": {
+                                "repo.git": {
+                                    "HEAD": "ref: refs/heads/feature\n",
+                                    "delta": { "copy-baseline": "" },
+                                    "objects": { "info": { "alternates": {} } },
+                                },
+                            },
+                        },
+                        "worktrees": {
+                            "abc": {
+                                "repo": {
+                                    ".git": "gitdir: ../../../clones/abc/repo.git\n",
+                                },
+                            },
+                            "unmarked": {
+                                "repo": {
+                                    ".git": "gitdir: ../../../clones/unmarked/repo.git\n",
+                                },
+                            },
+                            "unreadable": {
+                                "repo": {
+                                    ".git": "gitdir: ../../../clones/unreadable/repo.git\n",
+                                },
+                            },
+                        },
+                    },
+                },
+                "independent": {
+                    ".git": format!("gitdir: {}\n", path!("/root/independent.git")),
+                },
+                "independent.git": { "HEAD": "ref: refs/heads/main\n" },
+                "dangling": {
+                    ".git": format!("gitdir: {}\n", path!("/root/missing.git")),
+                },
+                "detached": {
+                    ".git": format!(
+                        "gitdir: {}\n",
+                        path!("/root/other/.git/worktrees/detached")
+                    ),
+                },
+                "other": {
+                    ".git": {
+                        "HEAD": "ref: refs/heads/main\n",
+                        "worktrees": {
+                            "linked": { "commondir": "../.." },
+                            "detached": { "commondir": "../../../missing" },
+                        },
+                    },
+                    "linked": {
+                        ".git": format!(
+                            "gitdir: {}\n",
+                            path!("/root/other/.git/worktrees/linked")
+                        ),
+                        "src": {},
+                    },
+                },
+                "checkout-linked": {
+                    ".git": format!(
+                        "gitdir: {}\n",
+                        path!("/root/repo/.delta/clones/abc/repo.git/worktrees/linked")
+                    ),
+                },
+            }),
+        )
+        .await;
+        let checkout_path = Path::new(path!("/root/repo/.delta/worktrees/abc/repo"));
+        let linked_path = Path::new(path!("/root/other/linked"));
+        let linked_subfolder_path = Path::new(path!("/root/other/linked/src"));
+        let checkout_linked_path = Path::new(path!("/root/checkout-linked"));
+        let unmarked_checkout_path = Path::new(path!("/root/repo/.delta/worktrees/unmarked/repo"));
+        let unmarked_clone_path = Path::new(path!("/root/repo/.delta/clones/unmarked/repo.git"));
+        let unreadable_checkout_path =
+            Path::new(path!("/root/repo/.delta/worktrees/unreadable/repo"));
+        let independent_path = Path::new(path!("/root/independent"));
+        let independent_git_path = Path::new(path!("/root/independent.git"));
+        let dangling_path = Path::new(path!("/root/dangling"));
+        let detached_path = Path::new(path!("/root/detached"));
+        let source_path = Path::new(path!("/root/repo"));
+        let other_path = Path::new(path!("/root/other"));
+        let unrelated_path = Path::new(path!("/root/unrelated"));
+
+        let cases = [
+            (vec![checkout_path], None),
+            (vec![checkout_linked_path], None),
+            (vec![checkout_path, linked_path], None),
+            (
+                vec![checkout_linked_path, linked_subfolder_path],
+                Some(vec![source_path, other_path]),
+            ),
+            (
+                vec![linked_subfolder_path, checkout_path],
+                Some(vec![unrelated_path]),
+            ),
+            (vec![checkout_path, independent_path], None),
+            (vec![unmarked_checkout_path], Some(vec![source_path])),
+            (vec![unreadable_checkout_path], Some(vec![source_path])),
+            (vec![dangling_path], Some(vec![other_path])),
+            (vec![detached_path], Some(vec![other_path])),
+        ];
+        let mut identities = Vec::new();
+        for (root_paths, saved_identity_paths) in cases {
+            let identity_paths = local_workspace_identity(
+                fs.as_ref(),
+                &PathList::new(&root_paths),
+                saved_identity_paths.map(|paths| PathList::new(&paths)),
+            )
+            .await;
+            identities.push(identity_paths.ordered_paths().cloned().collect::<Vec<_>>());
+        }
+
+        assert_eq!(
+            identities,
+            [
+                vec![source_path],
+                vec![source_path],
+                vec![source_path, other_path],
+                vec![source_path, other_path],
+                vec![linked_subfolder_path, source_path],
+                vec![source_path, independent_git_path],
+                vec![unmarked_clone_path],
+                vec![source_path],
+                vec![other_path],
+                vec![other_path],
+            ]
+            .map(|paths| paths.into_iter().map(Path::to_path_buf).collect::<Vec<_>>())
+        );
     }
 
     #[gpui::test]
@@ -7068,11 +7266,129 @@ mod tests {
         let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
         assert_eq!(recents.len(), 1);
 
-        let deleted = db.delete_recent_workspace_group(&recents[0]).await.unwrap();
+        let deleted = db
+            .delete_recent_workspace_group(&recents[0], fs.as_ref())
+            .await
+            .unwrap();
         assert_eq!(deleted, vec![WorkspaceId(2), WorkspaceId(1)]);
 
         let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
         assert!(recents.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_delete_recent_workspace_group_removes_delta_checkouts_saved_by_older_builds(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db(
+            "test_delete_recent_workspace_group_removes_delta_checkouts_saved_by_older_builds",
+        )
+        .await;
+        let clone = || {
+            json!({
+                "HEAD": "ref: refs/heads/feature\n",
+                "delta": { "copy-baseline": "" },
+                "objects": {
+                    "info": { "alternates": format!("{}\n", path!("/repo/.git/objects")) },
+                },
+            })
+        };
+        fs.insert_tree(
+            path!("/repo"),
+            json!({
+                ".git": { "HEAD": "ref: refs/heads/main\n" },
+                ".delta": {
+                    "clones": { "a": { "repo.git": clone() }, "b": { "repo.git": clone() } },
+                    "worktrees": {
+                        "a": {
+                            "repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/repo/.delta/clones/a/repo.git")
+                                ),
+                            },
+                        },
+                        "b": {
+                            "repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/repo/.delta/clones/b/repo.git")
+                                ),
+                            },
+                        },
+                    },
+                },
+            }),
+        )
+        .await;
+
+        db.save_workspace(SerializedWorkspace {
+            identity_paths: Some(PathList::new(&[path!("/repo/.delta/clones/a/repo.git")])),
+            ..workspace_with(
+                1,
+                &[Path::new(path!("/repo/.delta/worktrees/a/repo"))],
+                empty_pane_group(),
+                None,
+            )
+        })
+        .await;
+        db.save_workspace(SerializedWorkspace {
+            identity_paths: Some(PathList::new(&[path!("/repo")])),
+            ..workspace_with(
+                2,
+                &[Path::new(path!("/repo/.delta/worktrees/b/repo"))],
+                empty_pane_group(),
+                None,
+            )
+        })
+        .await;
+        db.set_timestamp_for_tests(WorkspaceId(1), "2024-01-01 00:00:00".to_owned())
+            .await
+            .unwrap();
+        db.set_timestamp_for_tests(WorkspaceId(2), "2024-01-01 00:00:01".to_owned())
+            .await
+            .unwrap();
+
+        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let listed_identities = recents
+            .iter()
+            .map(|recent_workspace| recent_workspace.identity_paths.clone())
+            .collect::<Vec<_>>();
+        let remote_target = RecentWorkspace {
+            location: remote_workspace_with(3, "host", &[]).location,
+            ..recents[0].clone()
+        };
+        let metadata_call_count = fs.metadata_call_count();
+        let deleted_for_a_remote_target = db
+            .delete_recent_workspace_group(&remote_target, fs.as_ref())
+            .await
+            .unwrap();
+        let metadata_calls_for_a_remote_target = fs.metadata_call_count() - metadata_call_count;
+        let deleted = db
+            .delete_recent_workspace_group(&recents[0], fs.as_ref())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            (
+                listed_identities,
+                deleted_for_a_remote_target,
+                metadata_calls_for_a_remote_target,
+                deleted,
+                db.recent_project_workspaces(fs.as_ref())
+                    .await
+                    .unwrap()
+                    .len(),
+            ),
+            (
+                vec![PathList::new(&[path!("/repo")])],
+                Vec::new(),
+                0,
+                vec![WorkspaceId(2), WorkspaceId(1)],
+                0,
+            )
+        );
     }
 
     #[gpui::test]

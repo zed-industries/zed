@@ -410,9 +410,6 @@ impl Sub<OffsetUtf16> for MultiBufferOffsetUtf16 {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct BufferOffsetUtf16(pub OffsetUtf16);
-
 impl MultiBufferOffset {
     const ZERO: Self = Self(0);
     pub fn saturating_sub(self, other: MultiBufferOffset) -> usize {
@@ -1271,24 +1268,6 @@ pub enum ExpandExcerptDirection {
     UpAndDown,
 }
 
-impl ExpandExcerptDirection {
-    pub fn should_expand_up(&self) -> bool {
-        match self {
-            ExpandExcerptDirection::Up => true,
-            ExpandExcerptDirection::Down => false,
-            ExpandExcerptDirection::UpAndDown => true,
-        }
-    }
-
-    pub fn should_expand_down(&self) -> bool {
-        match self {
-            ExpandExcerptDirection::Up => false,
-            ExpandExcerptDirection::Down => true,
-            ExpandExcerptDirection::UpAndDown => true,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndentGuide {
     pub buffer_id: BufferId,
@@ -1461,8 +1440,6 @@ impl MultiBuffer {
         self.read(cx).has_conflict()
     }
 
-    // The `is_empty` signature doesn't match what clippy expects
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self, cx: &App) -> MultiBufferOffset {
         self.read(cx).len()
     }
@@ -6510,7 +6487,7 @@ impl MultiBufferSnapshot {
         self.lift_buffer_metadata::<MBD, _, _>(range, move |buffer, buffer_range| {
             Some(
                 buffer
-                    .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
+                    .diagnostics_in_range(buffer_range, false)
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
@@ -6537,7 +6514,7 @@ impl MultiBufferSnapshot {
         self.lift_buffer_metadata::<MBD, _, _>(range, move |buffer, buffer_range| {
             Some(
                 buffer
-                    .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
+                    .diagnostics_in_range(buffer_range, false)
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
@@ -6679,11 +6656,6 @@ impl MultiBufferSnapshot {
 
     fn try_path_for_anchor(&self, anchor: ExcerptAnchor) -> Option<&PathKey> {
         self.path_keys.get_index(anchor.path.0 as usize)
-    }
-
-    pub fn path_for_anchor(&self, anchor: ExcerptAnchor) -> &PathKey {
-        self.try_path_for_anchor(anchor)
-            .expect("invalid anchor: path was never added to multibuffer")
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
@@ -7056,7 +7028,6 @@ impl MultiBufferSnapshot {
         start..end
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     fn check_invariants(&self) {
         let excerpts = self.excerpts.items(());
 
@@ -8446,7 +8417,7 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 }
 
 impl ToOffset for Point {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         snapshot.point_to_offset(*self)
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
@@ -8456,7 +8427,7 @@ impl ToOffset for Point {
 
 impl ToOffset for MultiBufferOffset {
     #[track_caller]
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         assert!(
             *self <= snapshot.len(),
             "offset {} is greater than the snapshot.len() {}",
@@ -8471,7 +8442,7 @@ impl ToOffset for MultiBufferOffset {
 }
 
 impl ToOffset for MultiBufferOffsetUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         snapshot.offset_utf16_to_offset(*self)
     }
 
@@ -8481,7 +8452,7 @@ impl ToOffset for MultiBufferOffsetUtf16 {
 }
 
 impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         snapshot.point_utf16_to_offset(*self)
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
@@ -8490,28 +8461,28 @@ impl ToOffset for PointUtf16 {
 }
 
 impl ToPoint for MultiBufferOffset {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point {
         snapshot.offset_to_point(*self)
     }
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
         snapshot.offset_to_point_utf16(*self)
     }
 }
 
 impl ToPoint for Point {
-    fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, _: &MultiBufferSnapshot) -> Point {
         *self
     }
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
         snapshot.point_to_point_utf16(*self)
     }
 }
 
 impl ToPoint for PointUtf16 {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point {
         snapshot.point_utf16_to_point(*self)
     }
-    fn to_point_utf16<'a>(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
         *self
     }
 }

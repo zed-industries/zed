@@ -66,7 +66,7 @@ impl Azure {
 
         // HTTPS format: https://{organization}.visualstudio.com/{project}/_git/{repo}
         // or with DefaultCollection: https://{organization}.visualstudio.com/DefaultCollection/{project}/_git/{repo}
-        let mut path_segments = url.path_segments()?.peekable();
+        let mut path_segments = url.path_segments()?;
 
         let first_segment = path_segments.next()?;
         let project = if first_segment == "DefaultCollection" {

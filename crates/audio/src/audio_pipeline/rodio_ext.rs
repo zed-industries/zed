@@ -551,14 +551,6 @@ impl Replay {
         self.source_is_active.load(Ordering::Relaxed) && Arc::strong_count(&self.rx) < 2
     }
 
-    /// Duration of what is in the buffer and can be returned without blocking.
-    pub fn duration_ready(&self) -> Duration {
-        let samples_per_second = self.channels().get() as u32 * self.sample_rate().get();
-
-        let seconds_queued = self.samples_ready() as f64 / samples_per_second as f64;
-        Duration::from_secs_f64(seconds_queued)
-    }
-
     /// Number of samples in the buffer and can be returned without blocking.
     pub fn samples_ready(&self) -> usize {
         self.rx.len() + self.buffer.len()

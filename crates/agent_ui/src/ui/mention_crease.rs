@@ -265,7 +265,7 @@ pub(crate) fn open_migrated_rule(
         };
         let title = skill_content_buffer_title(&skill_file_path);
         workspace.update_in(cx, |workspace, window, cx| {
-            open_skill_content_buffer(workspace, title, content, window, cx);
+            open_read_only_markdown_buffer(workspace, title, content, window, cx);
         })
     })
     .detach_and_log_err(cx);
@@ -281,7 +281,7 @@ fn open_skill_file(
     // embedded content in a local buffer instead.
     if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
         let title = skill_content_buffer_title(&skill_file_path);
-        open_skill_content_buffer(workspace, title, content, window, cx);
+        open_read_only_markdown_buffer(workspace, title, content, window, cx);
         return;
     }
 
@@ -306,12 +306,12 @@ fn skill_content_buffer_title(skill_file_path: &std::path::Path) -> String {
         .unwrap_or_else(|| "skill".into())
 }
 
-/// Open `content` as a local, read-only Markdown buffer, for skills with no
-/// openable file in the active project (built-in skills, and migrated rules on
-/// remote/collab projects). It's deliberately not registered with the project's
-/// buffer store: that keeps it out of search and avoids
-/// `Project::create_local_buffer` panicking on remote projects.
-fn open_skill_content_buffer(
+/// Open `content` as a local, read-only Markdown buffer, for files with no
+/// openable path in the active project (built-in skills, and migrated rules and
+/// this machine's global rules on remote/collab projects). It's deliberately
+/// not registered with the project's buffer store: that keeps it out of search
+/// and avoids `Project::create_local_buffer` panicking on remote projects.
+pub(crate) fn open_read_only_markdown_buffer(
     workspace: &mut Workspace,
     title: String,
     content: impl Into<String>,

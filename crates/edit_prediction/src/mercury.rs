@@ -357,7 +357,6 @@ fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(
 
 pub const MERCURY_CREDENTIALS_URL: SharedString =
     SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
-pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]

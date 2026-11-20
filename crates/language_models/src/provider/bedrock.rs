@@ -1692,10 +1692,8 @@ impl MantleResponseEventMapper {
                     // suffix.
                     if snapshot.starts_with(&previous.text) && snapshot.len() > previous.text.len()
                     {
-                        if let Some(current_message) = self.current_message.as_mut() {
-                            current_message.kind = MantleMessageSnapshotKind::Cumulative;
-                            current_message.emitted_text_length = previous.text.len();
-                        }
+                        current_message.kind = MantleMessageSnapshotKind::Cumulative;
+                        current_message.emitted_text_length = previous.text.len();
                         let mut events = Vec::new();
                         self.flush_pending_message(&mut events, true);
                         events.extend(self.map_snapshot_suffix(output_index, content_index));
@@ -1713,9 +1711,7 @@ impl MantleResponseEventMapper {
 
                 // Diverged from the previous message, had a different phase, or there
                 // was no previous message: this is an independent message.
-                if let Some(current_message) = self.current_message.as_mut() {
-                    current_message.kind = MantleMessageSnapshotKind::Independent;
-                }
+                current_message.kind = MantleMessageSnapshotKind::Independent;
                 let mut events = Vec::new();
                 self.flush_pending_message(&mut events, false);
                 events.extend(self.map_text_event(item_id, output_index, content_index, snapshot));
@@ -2520,10 +2516,7 @@ pub fn into_bedrock(
         system: system_blocks,
         tools: tool_config,
         thinking,
-        metadata: None,
-        stop_sequences: Vec::new(),
         temperature,
-        top_k: None,
         top_p: None,
         guardrail_identifier,
         guardrail_version,
@@ -4098,7 +4091,6 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(request.top_k, None, "{model} must not send top_k");
             assert_eq!(request.top_p, None, "{model} must not send top_p");
             if expects_temperature {
                 assert_eq!(

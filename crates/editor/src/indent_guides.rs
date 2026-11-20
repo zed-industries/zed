@@ -160,7 +160,7 @@ pub fn indent_guides_in_range(
     let end_anchor = snapshot.buffer_snapshot().anchor_after(end_offset);
 
     let mut fold_ranges = Vec::<Range<Point>>::new();
-    let folds = snapshot.folds_in_range(start_offset..end_offset).peekable();
+    let folds = snapshot.folds_in_range(start_offset..end_offset);
     for fold in folds {
         let start = fold.range.start.to_point(&snapshot.buffer_snapshot());
         let end = fold.range.end.to_point(&snapshot.buffer_snapshot());
@@ -177,10 +177,6 @@ pub fn indent_guides_in_range(
         .buffer_snapshot()
         .indent_guides_in_range(start_anchor..end_anchor, ignore_disabled_for_language, cx)
         .filter(|indent_guide| {
-            if editor.has_indent_guides_disabled_for_buffer(indent_guide.buffer_id) {
-                return false;
-            }
-
             if editor.is_buffer_folded(indent_guide.buffer_id, cx) {
                 return false;
             }

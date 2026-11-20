@@ -25,7 +25,6 @@ pub struct SignatureHelpData {
 
 #[derive(Debug, Clone)]
 pub struct ParameterInfo {
-    pub label_range: Option<Range<usize>>,
     pub documentation: Option<Entity<Markdown>>,
 }
 
@@ -88,11 +87,11 @@ impl SignatureHelp {
                         }
                     };
 
-                    if let Some(label_range) = &label_range
+                    if let Some(label_range) = label_range
                         && index == active_parameter
                     {
                         highlights.push((
-                            label_range.clone(),
+                            label_range,
                             HighlightStyle {
                                 font_weight: Some(FontWeight::EXTRA_BOLD),
                                 ..HighlightStyle::default()
@@ -105,10 +104,7 @@ impl SignatureHelp {
                         .as_ref()
                         .map(|doc| documentation_to_markdown(doc, language_registry.clone(), cx));
 
-                    parameter_infos.push(ParameterInfo {
-                        label_range,
-                        documentation,
-                    });
+                    parameter_infos.push(ParameterInfo { documentation });
                 }
             }
 

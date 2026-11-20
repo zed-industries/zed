@@ -25,8 +25,7 @@ use buffer_diff::{
     BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
 };
 use collections::{BTreeSet, HashMap, HashSet};
-use encoding_rs;
-use fs::{FakeFs, PathEventKind, RealFs};
+use fs::{FakeFs, PathEventKind, RealFs, RenameOptions};
 use futures::{FutureExt as _, StreamExt, channel::oneshot, future};
 use git::{
     GitHostingProviderRegistry,
@@ -1719,9 +1718,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         "Python",
         FakeLspAdapter {
             name: "ty",
-            capabilities: lsp::ServerCapabilities {
-                ..Default::default()
-            },
+            capabilities: Default::default(),
             ..Default::default()
         },
     );
@@ -1815,7 +1812,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .await;
 
     assert!(currently_active_toolchain.is_none());
-    let _ = project
+    project
         .update(cx, |this, cx| {
             let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
             this.activate_toolchain(
@@ -17297,7 +17294,6 @@ async fn test_staging_random_hunks_with_edits(
         )
     }
 
-    #[allow(clippy::type_complexity)]
     fn capture_diff_state(
         diff: &Entity<BufferDiff>,
         cx: &mut gpui::TestAppContext,
@@ -19157,6 +19153,516 @@ async fn test_project_group_keys_match_for_bare_repo_linked_worktrees(
 }
 
 #[gpui::test]
+async fn test_project_group_keys_for_delta_checkouts(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    let source_objects = format!("{}\n", path!("/root/my-repo/.git/objects"));
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "objects": {},
+                },
+                ".delta": {
+                    "clones": {
+                        "aliased": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/aliased\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/alias/.git/objects")),
+                            },
+                        },
+                        "submodule-source": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/submodule\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/super/.git/modules/sub/objects")),
+                            },
+                        },
+                        "managed": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/managed\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/managed/zed.git/objects")),
+                            },
+                        },
+                        "nested": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/nested\n",
+                                "config": "[core]\n\tbare = false\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!(
+                                    "/root/my-repo/.delta/clones/abc/my-repo.git/objects"
+                                )),
+                            },
+                        },
+                        "orphan": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/orphan\n",
+                                "config": "[core]\n\tbare = false\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/my-repo/.git/objects")),
+                            },
+                        },
+                        "relinked": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/feature\n",
+                                "config": "[core]\n\tbare = false\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/my-repo/.git/objects")),
+                            },
+                        },
+                        "abc": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/feature\n",
+                                "config": "[core]\n\tbare = false\n",
+                                "worktrees": {
+                                    "linked": {
+                                        "HEAD": "ref: refs/heads/linked\n",
+                                        "commondir": "../..",
+                                        "gitdir": path!("/root/my-repo-linked/my-repo/.git"),
+                                    },
+                                },
+                                "delta": { "copy-baseline": "" },
+                                "objects": { "info": { "alternates": source_objects.clone() } },
+                            },
+                        },
+                    },
+                    "worktrees": {
+                        "aliased": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/aliased/my-repo.git")
+                                ),
+                            },
+                        },
+                        "submodule-source": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/submodule-source/my-repo.git")
+                                ),
+                            },
+                        },
+                        "nested": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/nested/my-repo.git")
+                                ),
+                            },
+                        },
+                        "managed": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/managed/my-repo.git")
+                                ),
+                                "file.txt": "managed",
+                            },
+                        },
+                        "relinked": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/relinked/my-repo.git")
+                                ),
+                                "file.txt": "relinked",
+                            },
+                        },
+                        "abc": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/abc/my-repo.git")
+                                ),
+                                "file.txt": "checkout",
+                                "src": { "main.rs": "" },
+                            },
+                        },
+                    },
+                },
+                "file.txt": "main",
+            },
+            "my-repo-linked": {
+                "my-repo": {
+                    ".git": format!(
+                        "gitdir: {}\n",
+                        path!("/root/my-repo/.delta/clones/abc/my-repo.git/worktrees/linked")
+                    ),
+                    "file.txt": "linked",
+                },
+            },
+            "managed": {
+                "zed.git": { "HEAD": "ref: refs/heads/main\n" },
+            },
+            "other": {
+                ".git": { "HEAD": "ref: refs/heads/main\n" },
+            },
+            "super": {
+                ".git": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "modules": { "sub": { "HEAD": "ref: refs/heads/main\n" } },
+                },
+            },
+            "independent-project.git": {
+                "HEAD": "ref: refs/heads/main\n",
+                "config": "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://example.com/independent-project.git\n",
+                "objects": { "info": { "alternates": source_objects } },
+            },
+            "independent-project": {
+                ".git": format!("gitdir: {}\n", path!("/root/independent-project.git")),
+                "file.txt": "independent",
+            },
+            "symlinked": {
+                ".git": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "objects": {},
+                },
+            },
+            "storage": {
+                "clones": {
+                    "abc": {
+                        "symlinked.git": {
+                            "HEAD": "ref: refs/heads/feature\n",
+                            "delta": { "copy-baseline": "" },
+                            "objects": alternates(path!("/root/symlinked/.git/objects")),
+                        },
+                    },
+                },
+                "worktrees": {
+                    "abc": {
+                        "symlinked": {
+                            ".git": format!(
+                                "gitdir: {}\n",
+                                path!("/root/symlinked/.delta/clones/abc/symlinked.git")
+                            ),
+                            "file.txt": "symlinked",
+                        },
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/root/symlinked/.delta"),
+        PathBuf::from(path!("/root/storage")),
+    )
+    .await;
+    fs.insert_symlink(path!("/root/alias"), PathBuf::from(path!("/root/my-repo")))
+        .await;
+
+    let project_main = Project::test(fs.clone(), [path!("/root/my-repo").as_ref()], cx).await;
+    let project_checkout = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/abc/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let subfolder_path = Path::new(path!("/root/my-repo/.delta/worktrees/abc/my-repo/src"));
+    let project_subfolder = Project::test(fs.clone(), [subfolder_path], cx).await;
+    let project_linked = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo-linked/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_aliased = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/aliased/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_submodule_source = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/submodule-source/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_nested = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/nested/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_managed = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/managed/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_relinked = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/relinked/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_independent = Project::test(
+        fs.clone(),
+        [path!("/root/independent-project").as_ref()],
+        cx,
+    )
+    .await;
+    let project_symlinked = Project::test(
+        fs.clone(),
+        [path!("/root/storage/worktrees/abc/symlinked").as_ref()],
+        cx,
+    )
+    .await;
+
+    let projects = [
+        &project_main,
+        &project_checkout,
+        &project_subfolder,
+        &project_aliased,
+        &project_submodule_source,
+        &project_nested,
+        &project_linked,
+        &project_managed,
+        &project_relinked,
+        &project_independent,
+        &project_symlinked,
+    ];
+    for project in projects {
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+    }
+    cx.run_until_parked();
+
+    let mut discovered_group_paths = Vec::new();
+    let mut live_group_paths = Vec::new();
+    for project in projects {
+        let (folder_paths, main_paths) = project_worktree_paths(project, cx);
+        for (folder_path, main_path) in folder_paths.into_iter().zip(main_paths) {
+            let has_dot_git = fs
+                .metadata(&folder_path.join(".git"))
+                .await
+                .unwrap()
+                .is_some();
+            discovered_group_paths.push(
+                project::git_store::discover_root_repository_group_path(&folder_path, fs.as_ref())
+                    .await,
+            );
+            live_group_paths.push(has_dot_git.then_some(main_path));
+        }
+    }
+    assert_eq!(discovered_group_paths, live_group_paths);
+
+    assert_eq!(
+        project_worktree_paths(&project_main, cx),
+        (
+            vec![PathBuf::from(path!("/root/my-repo"))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_checkout, cx),
+        (
+            vec![PathBuf::from(path!(
+                "/root/my-repo/.delta/worktrees/abc/my-repo"
+            ))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_subfolder, cx),
+        (
+            vec![subfolder_path.to_path_buf()],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_linked, cx),
+        (
+            vec![PathBuf::from(path!("/root/my-repo-linked/my-repo"))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_managed, cx).1,
+        vec![PathBuf::from(path!("/root/managed/zed.git"))]
+    );
+    assert_eq!(
+        project_worktree_paths(&project_relinked, cx),
+        (
+            vec![PathBuf::from(path!(
+                "/root/my-repo/.delta/worktrees/relinked/my-repo"
+            ))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_independent, cx),
+        (
+            vec![PathBuf::from(path!("/root/independent-project"))],
+            vec![PathBuf::from(path!("/root/independent-project.git"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_symlinked, cx).1,
+        vec![PathBuf::from(path!("/root/symlinked"))]
+    );
+
+    assert_eq!(
+        (
+            project_worktree_paths(&project_aliased, cx).1,
+            project_worktree_paths(&project_submodule_source, cx).1,
+            project_worktree_paths(&project_nested, cx).1,
+        ),
+        (
+            vec![PathBuf::from(path!("/root/my-repo"))],
+            vec![PathBuf::from(path!(
+                "/root/my-repo/.delta/clones/submodule-source/my-repo.git"
+            ))],
+            vec![PathBuf::from(path!(
+                "/root/my-repo/.delta/clones/nested/my-repo.git"
+            ))],
+        )
+    );
+
+    fs.insert_file(
+        path!("/root/my-repo/.delta/clones/orphan/my-repo.git/objects/info/alternates"),
+        format!("{}\n", path!("/root/my-repo/.git/objects")).into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    let mut main_project_repository_paths = project_main.read_with(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repository| repository.read(cx).work_directory_abs_path.to_path_buf())
+            .collect::<Vec<_>>()
+    });
+    main_project_repository_paths.sort();
+    assert_eq!(
+        main_project_repository_paths,
+        [
+            path!("/root/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/abc/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/aliased/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/managed/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/nested/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/relinked/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/submodule-source/my-repo"),
+        ]
+        .map(PathBuf::from)
+    );
+
+    let clone_path = Path::new(path!("/root/my-repo/.delta/clones/abc/my-repo.git"));
+    let mut main_paths_without_input = Vec::new();
+    for (input_path, contents) in [
+        (
+            "objects/info/alternates",
+            format!("{}\n", path!("/root/my-repo/.git/objects")),
+        ),
+        ("delta/copy-baseline", String::new()),
+    ] {
+        let input_path = clone_path.join(input_path);
+        fs.remove_file(&input_path, RemoveOptions::default())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        main_paths_without_input.push(project_worktree_paths(&project_checkout, cx).1);
+        fs.insert_file(&input_path, contents.into_bytes()).await;
+        cx.run_until_parked();
+    }
+    let objects_path = clone_path.join("objects");
+    let info_path = objects_path.join("info");
+    let old_info_path = objects_path.join("info.old");
+    let next_info_path = objects_path.join("info.next");
+    fs.insert_tree(
+        &next_info_path,
+        json!({ "alternates": format!("{}\n", path!("/root/other/.git/objects")) }),
+    )
+    .await;
+    cx.run_until_parked();
+    fs.pause_events();
+    fs.rename(&info_path, &old_info_path, RenameOptions::default())
+        .await
+        .unwrap();
+    fs.rename(&next_info_path, &info_path, RenameOptions::default())
+        .await
+        .unwrap();
+    fs.clear_buffered_events();
+    fs.emit_fs_event(info_path.clone(), Some(PathEventKind::Changed));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+    let main_paths_after_rename = project_worktree_paths(&project_checkout, cx).1;
+    fs.remove_dir(
+        &info_path,
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    fs.rename(&old_info_path, &info_path, RenameOptions::default())
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        (
+            main_paths_after_rename,
+            project_worktree_paths(&project_checkout, cx).1
+        ),
+        (
+            vec![PathBuf::from(path!("/root/other"))],
+            vec![PathBuf::from(path!("/root/my-repo"))]
+        )
+    );
+    assert_eq!(
+        main_paths_without_input,
+        vec![vec![clone_path.to_path_buf()]; 2]
+    );
+
+    fs.insert_tree(
+        path!("/root/independent-project.git/delta"),
+        json!({ "copy-baseline": "" }),
+    )
+    .await;
+    cx.run_until_parked();
+    assert_eq!(
+        project_worktree_paths(&project_independent, cx).1,
+        vec![PathBuf::from(path!("/root/my-repo"))]
+    );
+
+    let relinked_clone_path = Path::new(path!("/root/my-repo/.delta/clones/relinked/my-repo.git"));
+    fs.remove_file(
+        &relinked_clone_path.join("delta/copy-baseline"),
+        RemoveOptions::default(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    let main_paths_without_marker = project_worktree_paths(&project_relinked, cx).1;
+    fs.emit_fs_event(
+        path!("/root/my-repo/.delta/worktrees/relinked/my-repo"),
+        Some(PathEventKind::Rescan),
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        (
+            main_paths_without_marker,
+            project_worktree_paths(&project_relinked, cx).1
+        ),
+        (
+            vec![relinked_clone_path.to_path_buf()],
+            vec![relinked_clone_path.to_path_buf()]
+        )
+    );
+}
+
+#[gpui::test]
 async fn test_project_group_key_groups_nested_linked_worktree_under_main_repo(
     executor: gpui::BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
@@ -20980,9 +21486,6 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         fn meta(&self) -> ToolchainMetadata {
             ToolchainMetadata {
                 term: SharedString::new_static("Virtual Environment"),
-                new_toolchain_placeholder: SharedString::new_static(
-                    "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
-                ),
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }
@@ -21100,7 +21603,6 @@ fn assert_entry_git_state(
 #[cfg(any())]
 const GIT_STATUS_CONFLICTED: &str = "UU";
 
-#[allow(clippy::disallowed_methods)]
 fn git_cmd(work_dir: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(work_dir)
@@ -22468,4 +22970,8 @@ async fn code_action_project(
     cx.executor().run_until_parked();
 
     (project, buffer, handle, fake_servers)
+}
+
+fn alternates(object_dir: &str) -> serde_json::Value {
+    json!({ "info": { "alternates": format!("{object_dir}\n") } })
 }

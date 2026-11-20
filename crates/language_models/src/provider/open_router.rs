@@ -70,10 +70,10 @@ impl State {
         );
 
         cx.spawn(async move |this, cx| {
-            let result = task.await?;
+            task.await?;
             this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
                 .ok();
-            Ok(result)
+            Ok(())
         })
     }
 

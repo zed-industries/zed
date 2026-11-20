@@ -1,3 +1,4 @@
+use super::auth_status::ConnectionAuthStatus;
 use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions,
     ContextServerConfiguration, ForegroundWork, PendingSessionUpdates, ReadOnlyConfigOptions,
@@ -29,7 +30,7 @@ use futures::{
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use project::{
     AgentId, AgentServerStore, Project,
-    agent_server_store::{AgentServerCommand, AllAgentServersSettings},
+    agent_server_store::{AllAgentServersSettings, ResolvedAgentServerCommand},
 };
 use settings::{AgentConfigOptionValue, SettingsStore};
 use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
@@ -198,6 +199,7 @@ pub struct AcpV2Connection {
     connection: V2ConnectionTo<Agent>,
     initialize_request: acp::InitializeRequest,
     initialize_response: acp::InitializeResponse,
+    auth_status: Option<Rc<ConnectionAuthStatus>>,
     agent_server_store: WeakEntity<AgentServerStore>,
     request_elicitations: Entity<ElicitationStore>,
     debug_log: AcpDebugLog,
@@ -227,10 +229,14 @@ impl AcpV2Connection {
     pub async fn stdio(
         agent_id: AgentId,
         project: Entity<Project>,
-        command: AgentServerCommand,
+        command: ResolvedAgentServerCommand,
         agent_server_store: WeakEntity<AgentServerStore>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        let ResolvedAgentServerCommand {
+            command,
+            installation_lease,
+        } = command;
         let transport::StdioProcess {
             child,
             incoming,
@@ -239,13 +245,7 @@ impl AcpV2Connection {
             debug_log,
         } = transport::spawn_stdio(&project, command, cx)?;
         let mut child = transport::OwnedChild(child);
-        let status = child
-            .0
-            .status()
-            .map(|result| {
-                result.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
-            })
-            .boxed_local();
+        let status = child.exit_status(installation_lease);
         let stderr_task = cx
             .background_spawn(async move {
                 stderr.await.log_err();
@@ -340,7 +340,11 @@ impl AcpV2Connection {
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let sessions = Rc::new(RefCell::new(HashMap::default()));
         let pending_session_updates = Rc::new(RefCell::new(PendingSessionUpdates::default()));
+        let auth_status = cx
+            .update(|cx| cx.has_flag::<AcpBetaFeatureFlag>())
+            .then(ConnectionAuthStatus::new);
         let context = ClientContext {
+            auth_status: auth_status.as_ref().map(Rc::downgrade).unwrap_or_default(),
             sessions: sessions.clone(),
             pending_session_updates: Some(pending_session_updates.clone()),
             session_list: Rc::new(RefCell::new(None)),
@@ -443,11 +447,19 @@ impl AcpV2Connection {
             runtime.borrow().is_some(),
             "Agent connection shut down during startup"
         );
-        Ok(Self {
+        let auth_status = auth_status.filter(|_| {
+            initialize_response
+                .capabilities
+                .auth
+                .as_ref()
+                .is_some_and(|auth| auth.status.is_some())
+        });
+        let result = Self {
             id,
             connection,
             initialize_request,
             initialize_response,
+            auth_status,
             agent_server_store,
             request_elicitations,
             debug_log,
@@ -456,7 +468,9 @@ impl AcpV2Connection {
             pending_session_updates,
             session_owners: Rc::new(RefCell::new(HashMap::default())),
             runtime,
-        })
+        };
+        cx.update(|cx| result.refresh_auth_status(cx));
+        Ok(result)
     }
 
     pub fn initialize_request(&self) -> &acp::InitializeRequest {
@@ -1712,6 +1726,20 @@ impl AgentConnection for AcpV2Connection {
         &self.initialize_response.auth_methods
     }
 
+    fn auth_status(&self) -> Option<watch::Receiver<Option<acp::AuthStatusResponse>>> {
+        Some(self.auth_status.as_ref()?.receiver())
+    }
+
+    fn refresh_auth_status(&self, cx: &App) {
+        if let Some(status) = &self.auth_status {
+            let request = self
+                .connection
+                .send_request(acp::AuthStatusRequest::new())
+                .block_task();
+            status.query(async move { request.await.ok() }, cx);
+        }
+    }
+
     fn terminal_auth_task(
         &self,
         method: &acp::AuthMethodId,
@@ -2088,6 +2116,8 @@ mod tests {
         v2::Responder,
     };
     use gpui::TestAppContext;
+    #[cfg(unix)]
+    use project::agent_server_store::AgentServerCommand;
     use serde_json::json;
     use std::{
         sync::{Arc, Mutex},
@@ -4048,7 +4078,7 @@ mod tests {
         let project = Project::example([directory.path()], &mut cx.to_async()).await;
         let client = bounded(AcpV2Connection::stdio(
             AgentId::new("receipt-stdio"), project.clone(),
-            AgentServerCommand {
+            ResolvedAgentServerCommand::without_installation_lease(AgentServerCommand {
                 path: "/bin/sh".into(),
                 args: vec!["-c".into(), r#"
 while IFS= read -r request; do
@@ -4070,7 +4100,7 @@ while IFS= read -r request; do
 done
 "#.into()],
                 env: None,
-            },
+            }),
             WeakEntity::new_invalid(), &mut cx.to_async(),
         ), cx).await.expect("stdio connection");
         let client = Rc::new(client);
@@ -6250,7 +6280,7 @@ done
                 AcpV2Connection::stdio(
                     AgentId::new("early-stdio"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     WeakEntity::new_invalid(),
                     &mut cx.to_async(),
                 ),
@@ -6318,7 +6348,7 @@ done
                 AcpV2Connection::stdio(
                     AgentId::new("session-stdio"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     WeakEntity::new_invalid(),
                     &mut cx.to_async(),
                 ),
@@ -6419,7 +6449,7 @@ done
                 AcpV2Connection::stdio(
                     AgentId::new("close-stdio"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     WeakEntity::new_invalid(),
                     &mut cx.to_async(),
                 ),
@@ -8245,7 +8275,7 @@ done
             AcpV2Connection::stdio(
                 AgentId::new("shutdown-test"),
                 project.clone(),
-                AgentServerCommand {
+                ResolvedAgentServerCommand::without_installation_lease(AgentServerCommand {
                     path: "/bin/sh".into(),
                     args: vec![
                         "-c".into(),
@@ -8264,7 +8294,7 @@ exec sleep 60
                         .into(),
                     ],
                     env: None,
-                },
+                }),
                 WeakEntity::new_invalid(),
                 &mut cx.to_async(),
             ),
@@ -8395,11 +8425,12 @@ exec sleep 60
                     AcpV2Connection::stdio(
                         AgentId::new("startup-rejection"),
                         project,
-                        AgentServerCommand {
-                            path: "/bin/sh".into(),
-                            args: vec![
-                                "-c".into(),
-                                r#"
+                        ResolvedAgentServerCommand::without_installation_lease(
+                            AgentServerCommand {
+                                path: "/bin/sh".into(),
+                                args: vec![
+                                    "-c".into(),
+                                    r#"
 while IFS= read -r request; do
     case "$request" in
         *'"method":"initialize"'*)
@@ -8411,13 +8442,14 @@ while IFS= read -r request; do
 done
 exec sleep 60
 "#
-                                .into(),
-                            ],
-                            env: Some(HashMap::from_iter([(
-                                "ACP_STARTUP_RESPONSE".into(),
-                                response.into(),
-                            )])),
-                        },
+                                    .into(),
+                                ],
+                                env: Some(HashMap::from_iter([(
+                                    "ACP_STARTUP_RESPONSE".into(),
+                                    response.into(),
+                                )])),
+                            },
+                        ),
                         WeakEntity::new_invalid(),
                         &mut cx,
                     )
@@ -8487,7 +8519,7 @@ done
             AcpV2Connection::stdio(
                 AgentId::new("stdio-test"),
                 project.clone(),
-                command,
+                ResolvedAgentServerCommand::without_installation_lease(command),
                 WeakEntity::new_invalid(),
                 &mut cx.to_async(),
             ),
@@ -8530,7 +8562,7 @@ done
             AcpV2Connection::stdio(
                 AgentId::new("early-exit"),
                 project,
-                command,
+                ResolvedAgentServerCommand::without_installation_lease(command),
                 WeakEntity::new_invalid(),
                 &mut cx.to_async(),
             ),

@@ -1332,7 +1332,6 @@ pub struct Thread {
     /// the start of each request.
     current_request_token_usage: TokenUsage,
     pending_compaction_telemetry: Option<CompactionTelemetry>,
-    #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
@@ -1544,7 +1543,7 @@ impl Thread {
 
         self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
         self.thinking_effort = selection.effort.clone();
-        self.speed = selection.speed.filter(|_| model.supports_fast_mode());
+        self.speed = selection.speed.filter(|speed| model.supports_speed(*speed));
         self.prompt_capabilities_tx
             .send(Self::prompt_capabilities(Some(&model)))
             .log_err();
@@ -4121,10 +4120,6 @@ impl Thread {
         self.title.clone()
     }
 
-    pub fn is_generating_summary(&self) -> bool {
-        self.pending_summary_generation.is_some()
-    }
-
     pub fn is_generating_title(&self) -> bool {
         self.pending_title_generation.is_some()
     }
@@ -4399,7 +4394,7 @@ impl Thread {
             thinking_allowed: self.thinking_enabled
                 || !model.supports_disabling_thinking_at_effort(self.thinking_effort.as_deref()),
             thinking_effort: self.thinking_effort.clone(),
-            speed: self.speed(),
+            speed: self.speed().filter(|speed| model.supports_speed(*speed)),
             compact_at_tokens: None,
             max_output_tokens: None,
         };
@@ -4511,12 +4506,6 @@ impl Thread {
 
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
         self.running_turn.as_ref()?.tools.get(name).cloned()
-    }
-
-    pub fn has_tool(&self, name: &str) -> bool {
-        self.running_turn
-            .as_ref()
-            .is_some_and(|turn| turn.tools.contains_key(name))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -4816,7 +4805,7 @@ impl Thread {
             thinking_allowed,
             thinking_effort,
             speed: if preserves_request_prefix {
-                self.speed()
+                self.speed().filter(|speed| model.supports_speed(*speed))
             } else {
                 None
             },
@@ -7158,18 +7147,6 @@ impl ToolCallEventStreamReceiver {
             panic!("Expected diff but got: {:?}", event);
         }
     }
-
-    pub async fn expect_terminal(&mut self) -> Entity<acp_thread::Terminal> {
-        let event = self.0.next().await;
-        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateTerminal(
-            update,
-        )))) = event
-        {
-            update.terminal
-        } else {
-            panic!("Expected terminal but got: {:?}", event);
-        }
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -8685,6 +8662,7 @@ mod tests {
         let model = fake.update_model("fake", |model| {
             supports_tools_and_tool_choice(model);
             model.supports_thinking = true;
+            model.supports_ultrafast_mode = true;
             model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
         });
 
@@ -8694,7 +8672,7 @@ mod tests {
                 thread.set_model(model.clone(), cx);
                 thread.set_thinking_enabled(true, cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
-                thread.set_speed(Speed::Fast, cx);
+                thread.set_speed(Speed::Ultrafast, cx);
             });
         });
 
@@ -8740,7 +8718,7 @@ mod tests {
             compaction_request.thinking_effort,
             completion_request.thinking_effort
         );
-        assert_eq!(completion_request.speed, Some(Speed::Fast));
+        assert_eq!(completion_request.speed, Some(Speed::Ultrafast));
         assert_eq!(compaction_request.speed, completion_request.speed);
         // The compaction request extends the previous request with the
         // assistant response and the compaction prompt.

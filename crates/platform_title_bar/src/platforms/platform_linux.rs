@@ -104,7 +104,6 @@ impl WindowControlType {
     }
 }
 
-#[allow(unused)]
 pub struct WindowControlStyle {
     background: Hsla,
     background_hover: Hsla,
@@ -124,28 +123,24 @@ impl WindowControlStyle {
         }
     }
 
-    #[allow(unused)]
     /// Sets the background color of the control.
     pub fn background(mut self, color: impl Into<Hsla>) -> Self {
         self.background = color.into();
         self
     }
 
-    #[allow(unused)]
     /// Sets the background color of the control when hovered.
     pub fn background_hover(mut self, color: impl Into<Hsla>) -> Self {
         self.background_hover = color.into();
         self
     }
 
-    #[allow(unused)]
     /// Sets the color of the icon.
     pub fn icon(mut self, color: impl Into<Hsla>) -> Self {
         self.icon = color.into();
         self
     }
 
-    #[allow(unused)]
     /// Sets the color of the icon when hovered.
     pub fn icon_hover(mut self, color: impl Into<Hsla>) -> Self {
         self.icon_hover = color.into();
