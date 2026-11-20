@@ -19,6 +19,14 @@ use std::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NativeViewId(u64);
 
+#[cfg(any(test, feature = "test-support"))]
+impl NativeViewId {
+    /// Makes an ID for a test that needs one without a window to attach a view to.
+    pub fn for_test(id: u64) -> Self {
+        Self(id)
+    }
+}
+
 /// A view owned by the platform's UI toolkit, shown inside a GPUI window.
 ///
 /// The view is composited beneath the window's GPUI content and shows through

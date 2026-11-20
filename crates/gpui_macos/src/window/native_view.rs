@@ -125,13 +125,41 @@ impl NativeViews {
             .find(|attached| attached.id == id && attached.placement.is_some())
     }
 
+    fn focused(&self) -> Option<FocusedNativeView> {
+        self.focused.map(|id| FocusedNativeView {
+            id,
+            shown: self.shown(id).is_some(),
+        })
+    }
+
     fn is_showing_any(&self) -> bool {
         self.views
             .iter()
             .any(|attached| attached.placement.is_some())
     }
 
+    /// What `responder` is to the window whose own view is `gpui_view`.
+    fn holder(
+        &self,
+        responder: *mut AnyObject,
+        native_window: *mut AnyObject,
+        gpui_view: *mut AnyObject,
+    ) -> InputHolder {
+        if responder.is_null() || responder == native_window {
+            InputHolder::Window
+        } else if responder == gpui_view {
+            InputHolder::GpuiView
+        } else if let Some(id) = self.containing(responder) {
+            InputHolder::NativeView(id)
+        } else {
+            InputHolder::Other
+        }
+    }
+
     /// The attached view that contains `responder`, if it is a view inside one.
+    ///
+    /// Attached views are assumed not to contain one another, which holds
+    /// unless the app moves one after attaching it.
     fn containing(&self, responder: *mut AnyObject) -> Option<NativeViewId> {
         if responder.is_null() {
             return None;
@@ -466,6 +494,87 @@ unsafe extern "C-unwind" fn compare_stacking(
     }
 }
 
+/// What has, or is asking for, a window's keyboard input.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InputHolder {
+    /// The window itself, which has it when no view does.
+    Window,
+    /// The view GPUI draws its own content in.
+    GpuiView,
+    /// An attached native view, or a view inside it.
+    NativeView(NativeViewId),
+    /// A view GPUI didn't attach, such as a control the app or AppKit put in
+    /// the titlebar. GPUI's focus says nothing about those.
+    Other,
+}
+
+/// The native view GPUI has focused.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FocusedNativeView {
+    id: NativeViewId,
+    /// Whether it is on screen. A view can be focused before it is shown, and
+    /// stays focused when it is hidden.
+    shown: bool,
+}
+
+/// A view keyboard input is moved to so that it matches GPUI's focus.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InputTarget {
+    GpuiView,
+    NativeView(NativeViewId),
+}
+
+/// Where keyboard input should move so that it matches GPUI's focus, or `None`
+/// to leave it with `current`.
+fn input_target_for_focus(
+    focused: Option<FocusedNativeView>,
+    current: InputHolder,
+) -> Option<InputTarget> {
+    let (target, holder) = match focused {
+        Some(FocusedNativeView { id, shown: true }) => {
+            (InputTarget::NativeView(id), InputHolder::NativeView(id))
+        }
+        // A hidden view can't take keyboard input until it is shown.
+        Some(FocusedNativeView { shown: false, .. }) | None => {
+            (InputTarget::GpuiView, InputHolder::GpuiView)
+        }
+    };
+    (current != InputHolder::Other && current != holder).then_some(target)
+}
+
+/// Whether `requested` may take keyboard input from `current` when AppKit or
+/// the view itself asks.
+///
+/// `clicked` is the native view a mouse press is being delivered to.
+fn may_take_input(
+    requested: InputHolder,
+    current: InputHolder,
+    focused: Option<FocusedNativeView>,
+    clicked: Option<NativeViewId>,
+    voice_over_enabled: bool,
+) -> bool {
+    match requested {
+        // AppKit offers the GPUI view keyboard input on every press inside it.
+        // While GPUI's focus stays on a native view, taking it and handing it
+        // straight back would make the native view lose and regain keyboard
+        // input, so it is refused. A press that moves GPUI's focus does so
+        // first, and is accepted.
+        InputHolder::GpuiView => !matches!(
+            focused,
+            Some(FocusedNativeView { id, shown: true }) if current == InputHolder::NativeView(id)
+        ),
+        // Web views ask for keyboard input on their own, such as when a page
+        // script focuses its window. Only GPUI's focus, a click, or VoiceOver's
+        // cursor may move it.
+        InputHolder::NativeView(requested) => {
+            focused.is_some_and(|focused| focused.id == requested)
+                || clicked == Some(requested)
+                || voice_over_enabled
+        }
+        InputHolder::Window | InputHolder::Other => true,
+    }
+}
+
 /// Records the view GPUI has focused and gives it keyboard input.
 pub(super) fn set_focused(window_state: &Rc<Mutex<MacWindowState>>, id: Option<NativeViewId>) {
     window_state.lock().native_views.focused = id;
@@ -480,42 +589,29 @@ pub(super) fn set_focused(window_state: &Rc<Mutex<MacWindowState>>, id: Option<N
 pub(super) fn reconcile_first_responder(window_state: &Rc<Mutex<MacWindowState>>) {
     // SAFETY: The window and views are live, and this runs on the main thread. The
     // window state is unlocked for `makeFirstResponder:` because AppKit calls back
-    // into it synchronously.
+    // into it synchronously, and the target is retained in case that detaches it.
     unsafe {
-        let (native_window, gpui_view, focused_view, current) = {
+        let (native_window, target) = {
             let lock = window_state.lock();
             let native_window = lock.native_window;
             let gpui_view = lock.native_view.as_ptr();
             let current: *mut AnyObject = msg_send![native_window, firstResponder];
-            let is_gpui_responder = current.is_null()
-                || current == native_window
-                || current == gpui_view
-                || lock.native_views.containing(current).is_some();
-            if !is_gpui_responder {
-                return;
-            }
-            let focused_view = lock
-                .native_views
-                .focused
-                .and_then(|id| lock.native_views.shown(id))
-                .map(|attached| attached.view.clone());
-            (native_window, gpui_view, focused_view, current)
+            let views = &lock.native_views;
+            let current = views.holder(current, native_window, gpui_view);
+            let target = match input_target_for_focus(views.focused(), current) {
+                Some(InputTarget::NativeView(id)) => match views.shown(id) {
+                    Some(attached) => Some(attached.view.clone()),
+                    None => return,
+                },
+                Some(InputTarget::GpuiView) => None,
+                None => return,
+            };
+            (native_window, target.ok_or(gpui_view))
         };
-        match focused_view {
-            Some(view) => {
-                let is_view: bool =
-                    !current.is_null() && msg_send![current, isKindOfClass: class!(NSView)];
-                let inside: bool = is_view && msg_send![current, isDescendantOf: &*view];
-                if !inside {
-                    let _: Bool = msg_send![native_window, makeFirstResponder: &*view];
-                }
-            }
-            None => {
-                if current != gpui_view {
-                    let _: Bool = msg_send![native_window, makeFirstResponder: gpui_view];
-                }
-            }
-        }
+        let _: Bool = match &target {
+            Ok(view) => msg_send![native_window, makeFirstResponder: &**view],
+            Err(gpui_view) => msg_send![native_window, makeFirstResponder: *gpui_view],
+        };
     }
 }
 
@@ -724,38 +820,19 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
             drop(lock);
             return msg_send![super(this, superclass), makeFirstResponder: responder];
         }
-        let requested = lock.native_views.containing(responder);
-        let focused = lock.native_views.focused;
-        let clicked = lock.native_views.clicked;
-        let focused_view = focused
-            .and_then(|id| lock.native_views.shown(id))
-            .map(|attached| attached.view.clone());
-        let is_gpui_view = responder == lock.native_view.as_ptr();
+        let views = &lock.native_views;
+        let gpui_view = lock.native_view.as_ptr();
+        let native_window = lock.native_window;
+        let current: *mut AnyObject = msg_send![this, firstResponder];
+        let current = views.holder(current, native_window, gpui_view);
+        let requested = views.holder(responder, native_window, gpui_view);
+        let focused = views.focused();
+        let clicked = views.clicked;
         drop(lock);
 
-        // AppKit offers the GPUI view first responder on every press inside it. While
-        // GPUI's focus stays on a native view, taking it and handing it straight back
-        // would make the native view lose and regain keyboard input, so it is refused.
-        // A press that moves GPUI's focus clears `focused` first, and is accepted.
-        if is_gpui_view && let Some(focused_view) = focused_view {
-            let current: *mut AnyObject = msg_send![this, firstResponder];
-            let is_view: bool =
-                !current.is_null() && msg_send![current, isKindOfClass: class!(NSView)];
-            let inside: bool = is_view && msg_send![current, isDescendantOf: &*focused_view];
-            if inside {
-                return Bool::NO;
-            }
-        }
-
-        // Web views ask for first responder on their own, such as when a page script
-        // focuses its window. Only GPUI's focus, a click, or VoiceOver's cursor may move it.
         let voice_over_enabled: bool =
             msg_send![&*NSWorkspace::sharedWorkspace(), isVoiceOverEnabled];
-        if let Some(requested) = requested
-            && focused != Some(requested)
-            && clicked != Some(requested)
-            && !voice_over_enabled
-        {
+        if !may_take_input(requested, current, focused, clicked, voice_over_enabled) {
             return Bool::NO;
         }
 
@@ -764,23 +841,22 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
             return accepted;
         }
 
-        match requested {
-            Some(requested) if focused != Some(requested) => {
-                let callback = window_state.lock().native_views.focused_callback.take();
-                if let Some(mut callback) = callback {
-                    callback(requested);
-                    window_state.lock().native_views.focused_callback = Some(callback);
-                }
-                // GPUI records the view as focused when it follows. If it could not,
-                // such as while the window's focus is disabled, this takes first
-                // responder back so the two never disagree.
-                reconcile_first_responder(&window_state);
+        if let InputHolder::NativeView(requested) = requested
+            && focused.is_none_or(|focused| focused.id != requested)
+        {
+            let callback = window_state.lock().native_views.focused_callback.take();
+            if let Some(mut callback) = callback {
+                callback(requested);
+                window_state.lock().native_views.focused_callback = Some(callback);
             }
-            // Anything else that moved first responder away from the view GPUI has
-            // focused is undone, such as AppKit handing it to the window itself, or
-            // a full screen transition restoring it to the GPUI view.
-            _ => reconcile_first_responder(&window_state),
         }
+        // GPUI records a view that took keyboard input as focused when it follows.
+        // If it could not, such as while the window's focus is disabled, this takes
+        // first responder back so the two never disagree. Anything else that moved
+        // first responder away from the view GPUI has focused is undone too, such as
+        // AppKit handing it to the window itself, or a full screen transition
+        // restoring it to the GPUI view.
+        reconcile_first_responder(&window_state);
         accepted
     }
 }
@@ -1073,5 +1149,106 @@ mod tests {
 
         let hidden = Placement::new(bounds, scaled(0., 500., 800., 100.), 2., gpui_frame);
         assert_eq!(hidden, None);
+    }
+
+    #[test]
+    fn keyboard_input_follows_gpui_focus_except_from_views_gpui_did_not_attach() {
+        use InputHolder::{GpuiView, NativeView, Other, Window};
+        let shown = focused(1, true);
+        let hidden = focused(1, false);
+        let to_view = Some(InputTarget::NativeView(id(1)));
+        let to_gpui = Some(InputTarget::GpuiView);
+        for (focused, current, moves_to) in [
+            // Focusing a native view gives it keyboard input, wherever that was.
+            (shown, GpuiView, to_view),
+            (shown, Window, to_view),
+            (shown, NativeView(id(2)), to_view),
+            (shown, NativeView(id(1)), None),
+            // Focusing GPUI's own content takes it back.
+            (None, NativeView(id(1)), to_gpui),
+            (None, Window, to_gpui),
+            (None, GpuiView, None),
+            // So does hiding the focused view.
+            (hidden, NativeView(id(1)), to_gpui),
+            (hidden, GpuiView, None),
+            // A control GPUI knows nothing about keeps it either way.
+            (shown, Other, None),
+            (None, Other, None),
+        ] {
+            assert_eq!(
+                input_target_for_focus(focused, current),
+                moves_to,
+                "focused: {focused:?}, current: {current:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn views_take_keyboard_input_only_when_gpui_focus_a_click_or_voice_over_allows() {
+        use InputHolder::{GpuiView, NativeView, Other};
+        let (view, view_2) = (NativeView(id(1)), NativeView(id(2)));
+        let (shown, hidden) = (focused(1, true), focused(1, false));
+        let (click, click_2) = (Some(id(1)), Some(id(2)));
+
+        // A page asking on its own is refused, as is a view other than the one
+        // GPUI focused or the one being clicked.
+        assert!(!may_take_input(view, GpuiView, None, None, false));
+        assert!(!may_take_input(view_2, GpuiView, shown, None, false));
+        assert!(!may_take_input(view, GpuiView, None, click_2, false));
+        // GPUI's focus allows it, even before the view is shown. So do a click
+        // on the view and VoiceOver's cursor.
+        assert!(may_take_input(view, GpuiView, shown, None, false));
+        assert!(may_take_input(view, GpuiView, hidden, None, false));
+        assert!(may_take_input(view, GpuiView, None, click, false));
+        assert!(may_take_input(view, GpuiView, None, None, true));
+
+        // AppKit offers the GPUI view every press inside it, which is refused
+        // while the focused native view is shown and has keyboard input.
+        assert!(!may_take_input(GpuiView, view, shown, None, false));
+        // It is accepted once GPUI's focus has left the view, while the view is
+        // being hidden, and from a view that isn't the focused one.
+        assert!(may_take_input(GpuiView, view, None, None, false));
+        assert!(may_take_input(GpuiView, view, hidden, None, false));
+        assert!(may_take_input(GpuiView, view_2, shown, None, false));
+
+        // A control GPUI did not attach takes it freely.
+        assert!(may_take_input(Other, view, shown, None, false));
+    }
+
+    #[test]
+    fn stacking_puts_shown_views_between_the_gpui_view_and_everything_else() {
+        // The views are only compared by address.
+        let views = [0u8; 5];
+        let [gpui_view, front, back, hidden, unrelated] =
+            [0, 1, 2, 3, 4].map(|index| NonNull::from(&views[index]).cast::<NSView>());
+        let mut stacking = Stacking {
+            gpui_view: gpui_view.as_ptr(),
+            front_to_back: vec![front.as_ptr(), back.as_ptr()],
+            attached: vec![hidden.as_ptr(), back.as_ptr(), front.as_ptr()],
+        };
+
+        // AppKit draws later subviews in front, and sorts ascending.
+        let mut back_to_front = [front, gpui_view, hidden, unrelated, back];
+        back_to_front.sort_by(|first, second| {
+            // SAFETY: `stacking` outlives the call, which never reads the views.
+            let order = unsafe { compare_stacking(*first, *second, (&raw mut stacking).cast()) };
+            match order {
+                NSComparisonResult::Ascending => std::cmp::Ordering::Less,
+                NSComparisonResult::Same => std::cmp::Ordering::Equal,
+                NSComparisonResult::Descending => std::cmp::Ordering::Greater,
+            }
+        });
+        assert_eq!(back_to_front, [unrelated, hidden, back, front, gpui_view]);
+    }
+
+    fn focused(view: u64, shown: bool) -> Option<FocusedNativeView> {
+        Some(FocusedNativeView {
+            id: id(view),
+            shown,
+        })
+    }
+
+    fn id(id: u64) -> NativeViewId {
+        NativeViewId::for_test(id)
     }
 }
