@@ -164,6 +164,11 @@ impl WgpuAtlasTextures {
         size: Size<DevicePixels>,
         texture_kind: AtlasTextureKind,
     ) -> Option<AtlasTile> {
+        let max_texture_size = self.max_texture_size as i32;
+        if size.width.0 > max_texture_size || size.height.0 > max_texture_size {
+            return None;
+        }
+
         {
             let textures = &mut self.storage[texture_kind];
 
@@ -545,6 +550,32 @@ mod tests {
 
         assert_eq!(second_tile.texture_id, first_tile.texture_id);
         assert_ne!(second_generation, first_generation);
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_texture_does_not_allocate_atlas_storage() -> anyhow::Result<()> {
+        let (device, queue) = test_device_and_queue()?;
+        let atlas = WgpuAtlas::new(device, queue, wgpu::TextureFormat::Bgra8Unorm);
+        let mut state = atlas.0.lock();
+        let max_texture_size = state.backend.max_texture_size as i32;
+        let kind = AtlasTextureKind::Polychrome;
+        let before = state.backend.storage[kind].textures.len();
+
+        for oversized in [
+            Size {
+                width: DevicePixels(max_texture_size + 1),
+                height: DevicePixels(1),
+            },
+            Size {
+                width: DevicePixels(1),
+                height: DevicePixels(max_texture_size + 1),
+            },
+        ] {
+            assert!(state.backend.allocate(oversized, kind).is_none());
+            assert_eq!(state.backend.storage[kind].textures.len(), before);
+        }
+
         Ok(())
     }
 
