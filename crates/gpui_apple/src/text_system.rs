@@ -542,6 +542,9 @@ impl AppleTextSystemState {
         let mut string = CFMutableAttributedString::new();
         let mut max_ascent = 0.0f32;
         let mut max_descent = 0.0f32;
+        // The UTF-16 end of each run, with the size it is shaped at. CoreText reports the size of
+        // a glyph run's font with the ligature nudge below, so the run's own size is looked up here.
+        let mut run_font_sizes = SmallVec::<[(usize, Pixels); 4]>::new();
 
         {
             let mut text = text;
@@ -563,22 +566,26 @@ impl AppleTextSystemState {
                 let length = utf16_end - utf16_start;
                 let cf_range = CFRange::init(utf16_start, length);
                 let font = &self.fonts[run.font_id.0];
+                let run_font_size = run.font_size.unwrap_or(font_size);
+                run_font_sizes.push((utf16_end as usize, run_font_size));
 
                 let font_metrics = font.metrics();
-                let font_scale = f32::from(font_size) / font_metrics.units_per_em as f32;
+                let font_scale = f32::from(run_font_size) / font_metrics.units_per_em as f32;
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
-                let font_size = if break_ligature {
-                    px(f32::from(font_size).next_up())
+                let nudged_font_size = if break_ligature {
+                    px(f32::from(run_font_size).next_up())
                 } else {
-                    font_size
+                    run_font_size
                 };
                 unsafe {
                     string.set_attribute(
                         cf_range,
                         kCTFontAttributeName,
-                        &font.native_font().clone_with_font_size(font_size.into()),
+                        &font
+                            .native_font()
+                            .clone_with_font_size(nudged_font_size.into()),
                     );
                 }
                 if length > 0 {
@@ -600,12 +607,26 @@ impl AppleTextSystemState {
                     .unwrap()
             };
             let font_id = self.id_for_native_font(font);
+            // A CoreText run never spans two attribute ranges, so any of its glyphs tells which
+            // font run it belongs to.
+            let run_utf16_ix = run
+                .string_indices()
+                .first()
+                .and_then(|ix| usize::try_from(*ix).ok())
+                .unwrap_or(0);
+            let run_font_size = run_font_sizes
+                .iter()
+                .find(|(utf16_end, _)| *utf16_end > run_utf16_ix)
+                .map_or(font_size, |(_, run_font_size)| *run_font_size);
 
             let glyphs = match runs.last_mut() {
-                Some(run) if run.font_id == font_id => &mut run.glyphs,
+                Some(run) if run.font_id == font_id && run.font_size == run_font_size => {
+                    &mut run.glyphs
+                }
                 _ => {
                     runs.push(ShapedRun {
                         font_id,
+                        font_size: run_font_size,
                         glyphs: Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0)),
                     });
                     &mut runs.last_mut().unwrap().glyphs
@@ -804,6 +825,7 @@ mod tests {
             &[FontRun {
                 font_id: configured_id,
                 len: 6,
+                font_size: None,
             }],
         );
         assert_eq!(layout.len, 6);
@@ -840,6 +862,7 @@ mod tests {
                 &[FontRun {
                     font_id,
                     len: text.len(),
+                    font_size: None,
                 }],
             );
             assert_eq!(f32::from(layout.width), width, "{size} px");
@@ -852,10 +875,12 @@ mod tests {
                     FontRun {
                         font_id,
                         len: bom.len(),
+                        font_size: None,
                     },
                     FontRun {
                         font_id,
                         len: text.len(),
+                        font_size: None,
                     },
                 ],
             );
@@ -876,7 +901,11 @@ mod tests {
         let glyphs = |text: &str, runs: &[(FontId, usize)]| -> Vec<GlyphId> {
             let runs = runs
                 .iter()
-                .map(|&(font_id, len)| FontRun { font_id, len })
+                .map(|&(font_id, len)| FontRun {
+                    font_id,
+                    len,
+                    font_size: None,
+                })
                 .collect::<Vec<_>>();
             fonts
                 .layout_line(text, px(16.), &runs)
@@ -931,6 +960,48 @@ mod tests {
     }
 
     #[test]
+    fn test_layout_line_shapes_each_run_at_its_size() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let run = |len: usize, font_size: Option<f32>| FontRun {
+            font_id,
+            len,
+            font_size: font_size.map(px),
+        };
+        let alone =
+            |text: &str, size: f32| fonts.layout_line(text, px(size), &[run(text.len(), None)]);
+        let assert_close = |actual: gpui::Pixels, expected: gpui::Pixels| {
+            assert!(
+                (actual - expected).abs() < px(0.01),
+                "{actual:?} is not {expected:?}"
+            );
+        };
+
+        let line = fonts.layout_line("prose code", px(15.), &[run(6, None), run(4, Some(13.))]);
+        let sizes = line
+            .runs
+            .iter()
+            .map(|run| run.font_size)
+            .collect::<Vec<_>>();
+        assert_eq!(sizes, [px(15.), px(13.)]);
+        let code_x = line.x_for_index(6);
+        assert_close(code_x, alone("prose ", 15.).width);
+        assert_close(line.width - code_x, alone("code", 13.).width);
+        assert_eq!(line.ascent, alone("prose", 15.).ascent);
+        assert_eq!(line.descent, alone("prose", 15.).descent);
+
+        let small = fonts.layout_line("code", px(15.), &[run(4, Some(13.))]);
+        assert_eq!(small.ascent, alone("code", 13.).ascent);
+        let large = fonts.layout_line("prose code", px(15.), &[run(6, None), run(4, Some(20.))]);
+        assert_eq!(large.ascent, alone("code", 20.).ascent);
+
+        let unsized_line = alone("prose code", 15.);
+        let sized_line = fonts.layout_line("prose code", px(15.), &[run(10, Some(15.))]);
+        assert_eq!(sized_line.width, unsized_line.width);
+        assert_eq!(sized_line.ascent, unsized_line.ascent);
+    }
+
+    #[test]
     fn test_layout_line_bom_char() {
         let fonts = AppleTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
@@ -938,6 +1009,7 @@ mod tests {
         let mut style = FontRun {
             font_id,
             len: line.len(),
+            font_size: None,
         };
 
         let layout = fonts.layout_line(line, px(16.), &[style]);
@@ -959,10 +1031,12 @@ mod tests {
             FontRun {
                 len: "\u{feff}".len(),
                 font_id,
+                font_size: None,
             },
             FontRun {
                 len: "ab".len(),
                 font_id,
+                font_size: None,
             },
         ];
         let layout = fonts.layout_line(line, px(16.), font_runs);
@@ -981,8 +1055,16 @@ mod tests {
 
         let text = "hello world";
         let font_runs = &[
-            FontRun { font_id, len: 5 }, // "hello"
-            FontRun { font_id, len: 6 }, // " world"
+            FontRun {
+                font_id,
+                len: 5,
+                font_size: None,
+            }, // "hello"
+            FontRun {
+                font_id,
+                len: 6,
+                font_size: None,
+            }, // " world"
         ];
 
         let layout = fonts.layout_line(text, px(16.), font_runs);
@@ -1002,11 +1084,16 @@ mod tests {
         // Test with different font runs - should not insert ZWNJ
         let font_id2 = fonts.font_id(&font("Times")).unwrap_or(font_id);
         let font_runs_different = &[
-            FontRun { font_id, len: 5 }, // "hello"
+            FontRun {
+                font_id,
+                len: 5,
+                font_size: None,
+            }, // "hello"
             // " world"
             FontRun {
                 font_id: font_id2,
                 len: 6,
+                font_size: None,
             },
         ];
 
@@ -1031,15 +1118,31 @@ mod tests {
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
         let text = "hello";
-        let font_runs = &[FontRun { font_id, len: 5 }];
+        let font_runs = &[FontRun {
+            font_id,
+            len: 5,
+            font_size: None,
+        }];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());
 
         let text = "abc";
         let font_runs = &[
-            FontRun { font_id, len: 1 }, // "a"
-            FontRun { font_id, len: 1 }, // "b"
-            FontRun { font_id, len: 1 }, // "c"
+            FontRun {
+                font_id,
+                len: 1,
+                font_size: None,
+            }, // "a"
+            FontRun {
+                font_id,
+                len: 1,
+                font_size: None,
+            }, // "b"
+            FontRun {
+                font_id,
+                len: 1,
+                font_size: None,
+            }, // "c"
         ];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());

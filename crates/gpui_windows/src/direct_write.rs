@@ -443,6 +443,7 @@ impl DirectWriteState {
                     segment_runs.push(FontRun {
                         len,
                         font_id: run.font_id,
+                        font_size: run.font_size,
                     });
                 }
                 remaining_bytes -= len;
@@ -462,6 +463,7 @@ impl DirectWriteState {
                 }
                 if let Some(last) = layout.runs.last_mut()
                     && last.font_id == run.font_id
+                    && last.font_size == run.font_size
                 {
                     last.glyphs.append(&mut run.glyphs);
                 } else {
@@ -535,7 +537,7 @@ impl DirectWriteState {
                 layout
             };
 
-            let (ascent, descent) = {
+            let (mut ascent, mut descent) = {
                 let mut first_metrics = [DWRITE_LINE_METRICS::default(); 4];
                 let mut line_count = 0u32;
                 text_layout.GetLineMetrics(Some(&mut first_metrics), &mut line_count)?;
@@ -544,6 +546,28 @@ impl DirectWriteState {
                     px(first_metrics[0].height - first_metrics[0].baseline),
                 )
             };
+            // The line metrics above are those of the size the line is laid out at. A run with a
+            // size of its own raises them when it is larger.
+            let mut run_font_sizes = SmallVec::<[(u32, Pixels); 4]>::new();
+            let mut include_run_size = |font_id: FontId, run_font_size: Option<Pixels>| {
+                if let Some(run_font_size) = run_font_size {
+                    let metrics = self.font_metrics(font_id);
+                    let scale = run_font_size.as_f32() / metrics.units_per_em as f32;
+                    ascent = ascent.max(px(metrics.ascent * scale));
+                    descent = descent.max(px(-metrics.descent * scale));
+                }
+            };
+            include_run_size(font_runs[0].font_id, font_runs[0].font_size);
+            run_font_sizes.push((utf16_offset, font_runs[0].font_size.unwrap_or(font_size)));
+            if let Some(first_run_font_size) = font_runs[0].font_size {
+                text_layout.SetFontSize(
+                    first_run_font_size.as_f32(),
+                    DWRITE_TEXT_RANGE {
+                        startPosition: 0,
+                        length: utf16_offset,
+                    },
+                )?;
+            }
             let mut break_ligatures = true;
             for run in &font_runs[1..] {
                 let font_info = &self.fonts[run.font_id.0];
@@ -557,14 +581,17 @@ impl DirectWriteState {
                     length: current_text_utf16_length,
                 };
                 utf16_offset += current_text_utf16_length;
+                include_run_size(run.font_id, run.font_size);
+                let run_font_size = run.font_size.unwrap_or(font_size);
+                run_font_sizes.push((utf16_offset, run_font_size));
                 text_layout.SetFontCollection(collection, text_range)?;
                 text_layout.SetFontFamilyName(&font_info.font_family_h, text_range)?;
-                let font_size = if break_ligatures {
-                    font_size.as_f32().next_up()
+                let nudged_font_size = if break_ligatures {
+                    run_font_size.as_f32().next_up()
                 } else {
-                    font_size.as_f32()
+                    run_font_size.as_f32()
                 };
-                text_layout.SetFontSize(font_size, text_range)?;
+                text_layout.SetFontSize(nudged_font_size, text_range)?;
                 text_layout.SetFontStyle(font_info.font_face.GetStyle(), text_range)?;
                 text_layout.SetFontWeight(font_info.font_face.GetWeight(), text_range)?;
                 text_layout.SetTypography(&font_info.features, text_range)?;
@@ -580,6 +607,8 @@ impl DirectWriteState {
                 runs: &mut runs,
                 layout: &text_layout,
                 width: 0.0,
+                line_font_size: font_size,
+                run_font_sizes: &run_font_sizes,
             };
             text_layout.Draw(
                 Some((&raw mut renderer_context).cast::<c_void>().cast_const()),
@@ -1192,6 +1221,20 @@ struct RendererContext<'t, 'a, 'b> {
     runs: &'b mut Vec<ShapedRun>,
     layout: &'b IDWriteTextLayout,
     width: f32,
+    line_font_size: Pixels,
+    /// The UTF-16 end of each font run, with the size it is shaped at.
+    run_font_sizes: &'b [(u32, Pixels)],
+}
+
+impl RendererContext<'_, '_, '_> {
+    /// The size of the font run a glyph run starts in. DirectWrite reports the size with the
+    /// ligature nudge applied, so the run's own size is looked up instead.
+    fn font_size_at(&self, utf16_position: u32) -> Pixels {
+        self.run_font_sizes
+            .iter()
+            .find(|(utf16_end, _)| *utf16_end > utf16_position)
+            .map_or(self.line_font_size, |(_, font_size)| *font_size)
+    }
 }
 
 #[derive(Debug)]
@@ -1386,7 +1429,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 context.width += metrics.width;
             }
             if !glyphs.is_empty() {
-                context.runs.push(ShapedRun { font_id, glyphs });
+                context.runs.push(ShapedRun {
+                    font_id,
+                    font_size: context.font_size_at(desc.textPosition),
+                    glyphs,
+                });
             }
         } else {
             let color_font = unsafe { font_face.IsColorFont().as_bool() };
@@ -1449,7 +1496,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 }
                 glyph_idx += cluster_glyph_count;
             }
-            context.runs.push(ShapedRun { font_id, glyphs });
+            context.runs.push(ShapedRun {
+                font_id,
+                font_size: context.font_size_at(desc.textPosition),
+                glyphs,
+            });
         }
         Ok(())
     }

@@ -2,13 +2,14 @@ use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
     Attrs, AttrsList, Ellipsize, Family, Font as CosmicTextFont,
-    FontFeatures as CosmicFontFeatures, FontSystem, ShapeBuffer, ShapeLine, Stretch, Style, Weight,
+    FontFeatures as CosmicFontFeatures, FontSystem, Metrics, ShapeBuffer, ShapeLine, Stretch,
+    Style, Weight,
 };
 use gpui::{
     Bounds, DevicePixels, FallbackFontClass, Font, FontFallbacks, FontFeatures, FontId,
     FontMetrics, FontRun, GlyphId, IsZero as _, LineLayout, MissingGlyph, MissingGlyphSink, Pixels,
     PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ShapedGlyph,
-    ShapedRun, SharedString, Size, TextRenderingMode, point, size,
+    ShapedRun, SharedString, Size, TextRenderingMode, point, px, size,
 };
 
 use itertools::Itertools;
@@ -676,7 +677,7 @@ impl CosmicTextSystemState {
             if let Some(same_run) = layout
                 .runs
                 .last_mut()
-                .filter(|last| last.font_id == run.font_id)
+                .filter(|last| last.font_id == run.font_id && last.font_size == run.font_size)
             {
                 same_run.glyphs.append(&mut run.glyphs);
             } else {
@@ -705,11 +706,16 @@ impl CosmicTextSystemState {
                 continue;
             };
 
-            let primary_attrs = properties.attributes(run.font_id, &properties.primary_family_name);
+            let primary_attrs = with_font_size(
+                properties.attributes(run.font_id, &properties.primary_family_name),
+                run.font_size,
+            );
             let fallback_attrs: SmallVec<[Attrs<'_>; 4]> = properties
                 .fallback_chain
                 .iter()
-                .map(|(font_id, family_name)| properties.attributes(*font_id, family_name))
+                .map(|(font_id, family_name)| {
+                    with_font_size(properties.attributes(*font_id, family_name), run.font_size)
+                })
                 .collect();
 
             let spans = if properties.fallback_chain.is_empty() {
@@ -813,24 +819,27 @@ impl CosmicTextSystemState {
                 continue;
             }
 
+            // A run with a size of its own was given it through its attributes, and its glyphs
+            // are laid out at it.
+            let glyph_font_size = glyph.font_size;
             let shaped_glyph = ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
                 position: point(
-                    (glyph.x + glyph.x_offset * f32::from(font_size)).into(),
-                    (glyph.y - glyph.y_offset * f32::from(font_size)).into(),
+                    (glyph.x + glyph.x_offset * glyph_font_size).into(),
+                    (glyph.y - glyph.y_offset * glyph_font_size).into(),
                 ),
                 index: glyph.start,
                 is_emoji,
             };
 
-            if let Some(last_run) = runs
-                .last_mut()
-                .filter(|last_run| last_run.font_id == font_id)
-            {
+            if let Some(last_run) = runs.last_mut().filter(|last_run| {
+                last_run.font_id == font_id && f32::from(last_run.font_size) == glyph_font_size
+            }) {
                 last_run.glyphs.push(shaped_glyph);
             } else {
                 runs.push(ShapedRun {
                     font_id,
+                    font_size: px(glyph_font_size),
                     glyphs: vec![shaped_glyph],
                 });
             }
@@ -941,6 +950,17 @@ fn contains_paragraph_separator(text: &str) -> bool {
     !text.is_ascii() && text.chars().any(is_paragraph_separator)
 }
 
+/// Sets the size of a run that has one of its own. Others take the size the line is laid out at.
+fn with_font_size(attrs: Attrs<'_>, font_size: Option<Pixels>) -> Attrs<'_> {
+    match font_size {
+        Some(font_size) => {
+            let font_size = f32::from(font_size);
+            attrs.metrics(Metrics::new(font_size, font_size))
+        }
+        None => attrs,
+    }
+}
+
 fn clip_font_runs(font_runs: &[FontRun], range: Range<usize>) -> SmallVec<[FontRun; 4]> {
     let mut clipped = SmallVec::new();
     let mut offs = 0;
@@ -959,6 +979,7 @@ fn clip_font_runs(font_runs: &[FontRun], range: Range<usize>) -> SmallVec<[FontR
             clipped.push(FontRun {
                 len: end - start,
                 font_id: run.font_id,
+                font_size: run.font_size,
             });
         }
     }
@@ -1367,8 +1388,53 @@ mod tests {
         let runs = [FontRun {
             len: text.len(),
             font_id,
+            font_size: None,
         }];
         Ok(text_system.layout_line(text, gpui::px(14.0), &runs))
+    }
+
+    #[test]
+    fn each_run_is_shaped_at_its_size() -> Result<()> {
+        let text_system = text_system()?;
+        let font_id = text_system.font_id(&gpui::font("IBM Plex Sans"))?;
+        let run = |len: usize, font_size: Option<f32>| FontRun {
+            len,
+            font_id,
+            font_size: font_size.map(gpui::px),
+        };
+        let alone = |text: &str, size: f32| {
+            text_system.layout_line(text, gpui::px(size), &[run(text.len(), None)])
+        };
+        let assert_close = |actual: Pixels, expected: Pixels| {
+            assert!(
+                (actual - expected).abs() < gpui::px(0.01),
+                "{actual:?} is not {expected:?}"
+            );
+        };
+
+        let line = text_system.layout_line(
+            "prose code",
+            gpui::px(15.),
+            &[run(6, None), run(4, Some(13.))],
+        );
+        let sizes = line
+            .runs
+            .iter()
+            .map(|run| run.font_size)
+            .collect::<Vec<_>>();
+        assert_eq!(sizes, [gpui::px(15.), gpui::px(13.)]);
+        let code_x = line.x_for_index(6);
+        assert_close(code_x, alone("prose ", 15.).width);
+        assert_close(line.width - code_x, alone("code", 13.).width);
+        assert_close(line.ascent, alone("prose", 15.).ascent);
+
+        let large = text_system.layout_line(
+            "prose code",
+            gpui::px(15.),
+            &[run(6, None), run(4, Some(20.))],
+        );
+        assert_close(large.ascent, alone("code", 20.).ascent);
+        Ok(())
     }
 
     #[test]
@@ -1462,6 +1528,7 @@ mod tests {
         let runs = [FontRun {
             len: text.len(),
             font_id,
+            font_size: None,
         }];
 
         let missing_glyphs = text_system
@@ -1591,10 +1658,12 @@ mod tests {
             FontRun {
                 len: "ab\u{001c}\u{05d0}".len(),
                 font_id,
+                font_size: None,
             },
             FontRun {
                 len: "\u{05d1}".len(),
                 font_id,
+                font_size: None,
             },
         ];
         let layout = text_system.layout_line(text, gpui::px(14.0), &runs);
@@ -1692,10 +1761,12 @@ mod tests {
             FontRun {
                 len: 3,
                 font_id: fid(1),
+                font_size: None,
             },
             FontRun {
                 len: 4,
                 font_id: fid(2),
+                font_size: None,
             },
         ];
 
@@ -1705,11 +1776,13 @@ mod tests {
             &[
                 FontRun {
                     len: 1,
-                    font_id: fid(1)
+                    font_id: fid(1),
+                    font_size: None,
                 },
                 FontRun {
                     len: 2,
-                    font_id: fid(2)
+                    font_id: fid(2),
+                    font_size: None,
                 },
             ]
         );
@@ -1717,7 +1790,8 @@ mod tests {
             clip_font_runs(&runs, 3..7).as_slice(),
             &[FontRun {
                 len: 4,
-                font_id: fid(2)
+                font_id: fid(2),
+                font_size: None,
             }]
         );
         assert!(clip_font_runs(&runs, 5..5).is_empty());
