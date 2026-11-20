@@ -31697,7 +31697,67 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_open_excerpts_keeps_cursor_line_offset_from_top(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+    let result =
+        open_excerpts_with_cursors(cx, &[55], |newest_row, _| newest_row as ScrollOffset - 7.)
+            .await;
+    assert_eq!(result.newest_row, 55);
+    assert_eq!(
+        result.newest_row as ScrollOffset - result.scroll_top,
+        7.,
+        "the cursor's line should stay at the same height on screen"
+    );
+}
 
+#[gpui::test]
+async fn test_open_excerpts_keeps_newest_cursor_line_offset_with_multiple_cursors(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let result = open_excerpts_with_cursors(cx, &[45, 55], |newest_row, _| {
+        newest_row as ScrollOffset - 7.
+    })
+    .await;
+    assert_eq!(result.newest_row, 55);
+    assert_eq!(
+        result.newest_row as ScrollOffset - result.scroll_top,
+        7.,
+        "the newest cursor's line should stay at the same height on screen"
+    );
+}
+
+#[gpui::test]
+async fn test_open_excerpts_reveals_cursor_scrolled_out_of_view(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let result = open_excerpts_with_cursors(cx, &[95], |newest_row, visible_lines| {
+        assert!(
+            newest_row as ScrollOffset >= visible_lines,
+            "the cursor should start below the viewport"
+        );
+        0.
+    })
+    .await;
+    assert_eq!(result.newest_row, 95);
+    let newest_row = result.newest_row as ScrollOffset;
+    assert!(
+        newest_row >= result.scroll_top
+            && newest_row + 1. <= result.scroll_top + result.visible_lines,
+        "the cursor should be visible after opening, row {newest_row}, scroll top {}, visible lines {}",
+        result.scroll_top,
+        result.visible_lines,
+    );
+}
+
+struct OpenedExcerptScroll {
+    newest_row: u32,
+    scroll_top: ScrollOffset,
+    visible_lines: ScrollOffset,
+}
+
+async fn open_excerpts_with_cursors(
+    cx: &mut TestAppContext,
+    cursor_buffer_rows: &[u32],
+    scroll_top_for_newest_row: impl FnOnce(u32, ScrollOffset) -> ScrollOffset,
+) -> OpenedExcerptScroll {
     let text = (0..100)
         .map(|row| format!("line {row}"))
         .collect::<Vec<_>>()
@@ -31716,7 +31776,7 @@ async fn test_open_excerpts_keeps_cursor_line_offset_from_top(cx: &mut TestAppCo
         multibuffer.set_excerpts_for_path(
             PathKey::sorted(1),
             buffer.clone(),
-            [Point::new(40, 0)..Point::new(70, 0)],
+            [Point::new(40, 0)..Point::new(99, 0)],
             0,
             cx,
         );
@@ -31750,32 +31810,32 @@ async fn test_open_excerpts_keeps_cursor_line_offset_from_top(cx: &mut TestAppCo
     });
     cx.executor().run_until_parked();
 
-    let cursor_buffer_row = 55;
-    let expected_line_offset_from_top = 7;
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        let anchor = editor.buffer().update(cx, |multibuffer, cx| {
-            multibuffer
-                .buffer_point_to_anchor(&buffer, Point::new(cursor_buffer_row, 0), cx)
-                .expect("buffer row maps to a multibuffer anchor")
-        });
+        let anchors = cursor_buffer_rows
+            .iter()
+            .map(|row| {
+                editor.buffer().update(cx, |multibuffer, cx| {
+                    multibuffer
+                        .buffer_point_to_anchor(&buffer, Point::new(*row, 0), cx)
+                        .expect("buffer row maps to a multibuffer anchor")
+                })
+            })
+            .collect::<Vec<_>>();
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_anchor_ranges([anchor..anchor])
+            s.select_anchor_ranges(anchors.into_iter().map(|anchor| anchor..anchor))
         });
         let display_snapshot = editor.display_snapshot(cx);
-        let cursor_display_row = editor
+        let newest_display_row = editor
             .selections
             .newest_display(&display_snapshot)
             .head()
             .row()
             .0;
-        editor.set_scroll_position(
-            gpui::Point::new(
-                0.,
-                (cursor_display_row - expected_line_offset_from_top) as ScrollOffset,
-            ),
-            window,
-            cx,
-        );
+        let visible_lines = editor
+            .visible_line_count()
+            .expect("editor should have been laid out");
+        let scroll_top = scroll_top_for_newest_row(newest_display_row, visible_lines);
+        editor.set_scroll_position(gpui::Point::new(0., scroll_top), window, cx);
         editor.open_excerpts(&OpenExcerpts, window, cx);
     });
     cx.executor().run_until_parked();
@@ -31789,20 +31849,19 @@ async fn test_open_excerpts_keeps_cursor_line_offset_from_top(cx: &mut TestAppCo
     opened_editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), text);
         let display_snapshot = editor.display_snapshot(cx);
-        let cursor_display_row = editor
-            .selections
-            .newest_display(&display_snapshot)
-            .head()
-            .row()
-            .0;
-        assert_eq!(cursor_display_row, cursor_buffer_row);
-        let scroll_top = editor.scroll_position(cx).y;
-        assert_eq!(
-            cursor_display_row as ScrollOffset - scroll_top,
-            expected_line_offset_from_top as ScrollOffset,
-            "the cursor's line should stay at the same height on screen"
-        );
-    });
+        OpenedExcerptScroll {
+            newest_row: editor
+                .selections
+                .newest_display(&display_snapshot)
+                .head()
+                .row()
+                .0,
+            scroll_top: editor.scroll_position(cx).y,
+            visible_lines: editor
+                .visible_line_count()
+                .expect("opened editor should have been laid out"),
+        }
+    })
 }
 
 #[gpui::test]
