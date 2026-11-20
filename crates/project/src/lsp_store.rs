@@ -7946,60 +7946,57 @@ impl LspStore {
 
             let language = buffer.read(cx).language().cloned();
 
-            let buffer = buffer.clone();
+            // Serialize the requests synchronously: `position` is only valid for the current
+            // buffer snapshot, which may be edited before a spawned task runs.
+            let requests = capable_lsps
+                .into_iter()
+                .map(|(id, server_name)| {
+                    let request = GetCompletions {
+                        position,
+                        context: context.clone(),
+                        server_id: Some(id),
+                    };
+                    let language = language.clone();
+                    let lsp_adapter = language.as_ref().and_then(|language| {
+                        let adapters = language_registry.lsp_adapters(&language.name());
+                        adapters
+                            .iter()
+                            .find(|adapter| adapter.name() == server_name)
+                            .or_else(|| adapters.first())
+                            .cloned()
+                    });
+                    let response = self.send_lsp_proto_request(
+                        buffer.clone(),
+                        upstream_client.clone(),
+                        project_id,
+                        request,
+                        cx,
+                    );
+                    async move {
+                        let response = response.await.log_err()?;
 
-            cx.spawn(async move |this, cx| {
-                let requests = join_all(
-                    capable_lsps
-                        .into_iter()
-                        .map(|(id, server_name)| {
-                            let request = GetCompletions {
-                                position,
-                                context: context.clone(),
-                                server_id: Some(id),
-                            };
-                            let buffer = buffer.clone();
-                            let language = language.clone();
-                            let lsp_adapter = language.as_ref().and_then(|language| {
-                                let adapters = language_registry.lsp_adapters(&language.name());
-                                adapters
-                                    .iter()
-                                    .find(|adapter| adapter.name() == server_name)
-                                    .or_else(|| adapters.first())
-                                    .cloned()
-                            });
-                            let upstream_client = upstream_client.clone();
-                            let response = this
-                                .update(cx, |this, cx| {
-                                    this.send_lsp_proto_request(
-                                        buffer,
-                                        upstream_client,
-                                        project_id,
-                                        request,
-                                        cx,
-                                    )
-                                })
-                                .log_err();
-                            async move {
-                                let response = response?.await.log_err()?;
+                        let completions = populate_labels_for_completions(
+                            response.completions,
+                            language,
+                            lsp_adapter,
+                        )
+                        .await;
 
-                                let completions = populate_labels_for_completions(
-                                    response.completions,
-                                    language,
-                                    lsp_adapter,
-                                )
-                                .await;
-
-                                Some(CompletionResponse {
-                                    completions,
-                                    display_options: CompletionDisplayOptions::default(),
-                                    is_incomplete: response.is_incomplete,
-                                })
-                            }
+                        Some(CompletionResponse {
+                            completions,
+                            display_options: CompletionDisplayOptions::default(),
+                            is_incomplete: response.is_incomplete,
                         })
-                        .collect::<Vec<_>>(),
-                );
-                Ok(requests.await.into_iter().flatten().collect::<Vec<_>>())
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            cx.spawn(async move |_, _| {
+                Ok(join_all(requests)
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>())
             })
         } else if let Some(local) = self.as_local() {
             let snapshot = buffer.read(cx).snapshot();
