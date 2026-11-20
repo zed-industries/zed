@@ -2452,10 +2452,21 @@ fn find_matching_bracket_text_based(
 
     let (open, close, is_opening) = bracket_info?.0;
     let bracket_offset = bracket_info?.1;
+    let excerpt_range = map
+        .buffer_snapshot()
+        .map_excerpt_ranges(offset..offset, |_, excerpt_range, _| {
+            vec![(excerpt_range.context, ())]
+        })?
+        .into_iter()
+        .next()?
+        .0;
 
     let mut depth = 0i32;
     if is_opening {
-        for (ch, char_offset) in map.buffer_chars_at(bracket_offset) {
+        for (ch, char_offset) in map
+            .buffer_chars_at(bracket_offset)
+            .take_while(|(_, char_offset)| *char_offset < excerpt_range.end)
+        {
             if ch == open {
                 depth += 1;
             } else if ch == close {
@@ -2466,7 +2477,10 @@ fn find_matching_bracket_text_based(
             }
         }
     } else {
-        for (ch, char_offset) in map.reverse_buffer_chars_at(bracket_offset + close.len_utf8()) {
+        for (ch, char_offset) in map
+            .reverse_buffer_chars_at(bracket_offset + close.len_utf8())
+            .take_while(|(_, char_offset)| *char_offset >= excerpt_range.start)
+        {
             if ch == close {
                 depth += 1;
             } else if ch == open {
@@ -2696,6 +2710,17 @@ fn matching(
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
     let line_range = line_range.start.to_offset(&map.buffer_snapshot())
         ..line_range.end.to_offset(&map.buffer_snapshot());
+
+    if snapshot
+        .chars_at(offset)
+        .next()
+        .is_some_and(|character| get_bracket_pair(character).is_some())
+    {
+        return find_matching_bracket_text_based(map, offset, line_range)
+            .map(|offset| offset.to_display_point(map))
+            .unwrap_or(display_point);
+    }
+
     let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
     if let Some(ranges) = ranges {
         let mut closest_pair_destination = None;
@@ -3554,6 +3579,32 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_matching_brackets_in_strings(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_tsx(cx).await;
+
+        for (before, after) in [
+            (
+                r#"const class_name = "ˇ[this]";"#,
+                r#"const class_name = "[thisˇ]";"#,
+            ),
+            (
+                r#"const component = () => <div className="ˇ[this]"></div>;"#,
+                r#"const component = () => <div className="[thisˇ]"></div>;"#,
+            ),
+            (
+                r#"const value = "ˇ[outer [inner] tail]";"#,
+                r#"const value = "[outer [inner] tailˇ]";"#,
+            ),
+        ] {
+            cx.set_state(before, Mode::Normal);
+            cx.simulate_keystrokes("%");
+            cx.assert_state(after, Mode::Normal);
+            cx.simulate_keystrokes("%");
+            cx.assert_state(before, Mode::Normal);
+        }
+    }
+
+    #[gpui::test]
     async fn test_matching_in_multibuffer(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
@@ -3561,11 +3612,11 @@ mod test {
             let multi_buffer = MultiBuffer::build_multi(
                 [
                     (
-                        "fn a() {\n    let x = 1;\n}\n",
+                        "fn a() {\n    let x = \"[\";\n}\n",
                         vec![Point::row_range(0..3)],
                     ),
                     (
-                        "fn b() {\n    let y = 2;\n}\n",
+                        "fn b() {\n    let y = \"]\";\n}\n",
                         vec![Point::row_range(0..3)],
                     ),
                 ],
@@ -3593,43 +3644,59 @@ mod test {
         let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
 
         cx.simulate_keystrokes("j j j j f {");
-        cx.assert_excerpts_with_selections(indoc! {"
+        cx.assert_excerpts_with_selections(indoc! {r#"
             [EXCERPT]
             fn a() {
-                let x = 1;
+                let x = "[";
             }
             [EXCERPT]
             fn b() ˇ{
-                let y = 2;
+                let y = "]";
             }
-            "
+            "#
         });
 
         cx.simulate_keystrokes("%");
-        cx.assert_excerpts_with_selections(indoc! {"
+        cx.assert_excerpts_with_selections(indoc! {r#"
             [EXCERPT]
             fn a() {
-                let x = 1;
+                let x = "[";
             }
             [EXCERPT]
             fn b() {
-                let y = 2;
+                let y = "]";
             ˇ}
-            "
+            "#
         });
 
         cx.simulate_keystrokes("%");
-        cx.assert_excerpts_with_selections(indoc! {"
+        cx.assert_excerpts_with_selections(indoc! {r#"
             [EXCERPT]
             fn a() {
-                let x = 1;
+                let x = "[";
             }
             [EXCERPT]
             fn b() ˇ{
-                let y = 2;
+                let y = "]";
             }
-            "
+            "#
         });
+
+        cx.simulate_keystrokes("g g j f [");
+        let unmatched_bracket_state = indoc! {r#"
+            [EXCERPT]
+            fn a() {
+                let x = "ˇ[";
+            }
+            [EXCERPT]
+            fn b() {
+                let y = "]";
+            }
+            "#};
+        cx.assert_excerpts_with_selections(unmatched_bracket_state);
+
+        cx.simulate_keystrokes("%");
+        cx.assert_excerpts_with_selections(unmatched_bracket_state);
     }
 
     #[gpui::test]
