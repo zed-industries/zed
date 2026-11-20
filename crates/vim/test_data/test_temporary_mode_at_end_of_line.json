@@ -1,0 +1,15 @@
+{"Put":{"state":"hellˇo"}}
+{"Key":"a"}
+{"Key":"ctrl-o"}
+{"Key":"h"}
+{"Get":{"state":"helˇlo","mode":"Insert"}}
+{"Put":{"state":"hellˇo"}}
+{"Key":"a"}
+{"Key":"ctrl-o"}
+{"Key":"x"}
+{"Get":{"state":"hellˇ","mode":"Insert"}}
+{"Put":{"state":"hellˇo"}}
+{"Key":"a"}
+{"Key":"ctrl-o"}
+{"Key":"~"}
+{"Get":{"state":"hellOˇ","mode":"Insert"}}

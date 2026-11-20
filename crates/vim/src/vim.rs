@@ -36,7 +36,7 @@ use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
-use multi_buffer::ToPoint as _;
+use multi_buffer::{MultiBufferRow, ToPoint as _};
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
@@ -511,6 +511,8 @@ pub(crate) struct Vim {
     pub(crate) mode: Mode,
     pub last_mode: Mode,
     pub temp_mode: bool,
+    /// Line ends that cursors stepped back from when entering temporary normal mode.
+    pub(crate) temp_mode_line_ends: Vec<Anchor>,
     pub status_label: Option<SharedString>,
     pub exit_temporary_mode: bool,
 
@@ -582,6 +584,7 @@ impl Vim {
             mode,
             last_mode,
             temp_mode: false,
+            temp_mode_line_ends: Vec::new(),
             exit_temporary_mode: false,
             operator_stack: Vec::new(),
             replacements: Vec::new(),
@@ -1246,6 +1249,12 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(window, cx);
 
+        if mode == Mode::Insert {
+            self.restore_temp_mode_line_ends(window, cx);
+        } else if mode != Mode::Normal && !mode.is_visual() {
+            self.temp_mode_line_ends.clear();
+        }
+
         if VimSettings::get_global(cx).toggle_relative_line_numbers
             && self.mode != self.last_mode
             && (self.mode == Mode::Insert || self.last_mode == Mode::Insert)
@@ -1463,6 +1472,33 @@ impl Vim {
 
     pub fn should_autoindent(&self) -> bool {
         !(self.mode == Mode::Insert && self.last_mode == Mode::VisualBlock)
+    }
+
+    fn restore_temp_mode_line_ends(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let line_ends = mem::take(&mut self.temp_mode_line_ends);
+        if line_ends.is_empty() {
+            return;
+        }
+        self.update_editor(cx, |_, editor, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(&mut |map, selection| {
+                    let head = selection.head();
+                    let row = head.to_point(map).row;
+                    let was_at_line_end = line_ends
+                        .iter()
+                        .any(|line_end| line_end.to_point(map.buffer_snapshot()).row == row);
+                    if !selection.is_empty() || !was_at_line_end {
+                        return;
+                    }
+                    let end_of_line =
+                        Point::new(row, map.buffer_snapshot().line_len(MultiBufferRow(row)))
+                            .to_display_point(map);
+                    if head != end_of_line && map.clip_at_line_end(end_of_line) == head {
+                        selection.collapse_to(end_of_line, SelectionGoal::None);
+                    }
+                });
+            });
+        });
     }
 
     pub fn clip_at_line_ends(&self) -> bool {

@@ -2513,6 +2513,34 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_temporary_mode_cursor_at_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("hellˇo", Mode::Normal);
+        cx.simulate_keystrokes("a ctrl-o");
+        cx.assert_state("hellˇo", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_temporary_mode_at_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // The cursor steps back onto the last character for the command.
+        cx.set_shared_state("hellˇo").await;
+        cx.simulate_shared_keystrokes("a ctrl-o h").await;
+        cx.shared_state().await.assert_eq("helˇlo");
+
+        // It returns past the end of the line if it's still on the last character.
+        cx.set_shared_state("hellˇo").await;
+        cx.simulate_shared_keystrokes("a ctrl-o x").await;
+        cx.shared_state().await.assert_eq("hellˇ");
+
+        cx.set_shared_state("hellˇo").await;
+        cx.simulate_shared_keystrokes("a ctrl-o ~").await;
+        cx.shared_state().await.assert_eq("hellOˇ");
+    }
+
+    #[gpui::test]
     async fn test_temporary_mode(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
