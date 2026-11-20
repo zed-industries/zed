@@ -2265,6 +2265,7 @@ impl ThreadView {
                             server_view.clone(),
                             AuthRequired::new(),
                             connection,
+                            None,
                             window,
                             cx,
                         );
@@ -13322,6 +13323,7 @@ impl ThreadView {
                             server_view,
                             AuthRequired::new(),
                             connection,
+                            None,
                             window,
                             cx,
                         );

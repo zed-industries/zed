@@ -195,6 +195,13 @@ pub trait AgentConnection {
 
     fn auth_methods(&self) -> &[acp_v2::AuthMethod];
 
+    /// A snapshot belongs to the live process, not to a session or a saved agent configuration.
+    fn auth_status(&self) -> Option<watch::Receiver<Option<acp_v2::AuthStatusResponse>>> {
+        None
+    }
+
+    fn refresh_auth_status(&self, _cx: &App) {}
+
     fn terminal_auth_task(
         &self,
         _method: &acp_v2::AuthMethodId,
