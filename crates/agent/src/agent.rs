@@ -945,6 +945,27 @@ impl NativeAgent {
                     this.cancel_session(thread.read(cx).id());
                 },
             ),
+            cx.subscribe(&thread_handle, {
+                let acp_thread = acp_thread.downgrade();
+                move |_, _, event: &crate::thread::BackgroundNoticesAdded, cx| {
+                    let Some(acp_thread) = acp_thread.upgrade() else {
+                        return;
+                    };
+                    acp_thread.update(cx, |acp_thread, cx| {
+                        for notice in &event.0 {
+                            let content = notice
+                                .content
+                                .iter()
+                                .cloned()
+                                .map(acp_v2::ContentBlock::from)
+                                .collect::<Vec<_>>();
+                            acp_thread
+                                .upsert_local_user_message(notice.id.clone(), content, cx)
+                                .log_err();
+                        }
+                    });
+                }
+            }),
             cx.observe(&thread_handle, move |this, thread, cx| {
                 this.save_thread(thread, cx)
             }),
@@ -3926,6 +3947,144 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         host.create_sibling_thread(request, cx)
     }
 
+    fn run_subagent_in_background(
+        &self,
+        subagent: Rc<dyn SubagentHandle>,
+        message: String,
+        cx: &mut App,
+    ) -> Result<()> {
+        let parent_thread = self.thread.clone();
+        let parent_acp_thread = self.acp_thread.clone();
+        cx.spawn(async move |cx| {
+            let subagent_session_id = subagent.id();
+            let result = subagent.send_in_background(message, cx).await;
+            // The call that stopped the agent already returned its outcome.
+            if result
+                .as_ref()
+                .is_err_and(|error| error.is::<StoppedByParent>())
+            {
+                return;
+            }
+            let stopped = cx.update(|cx| subagent.stopped_after_current_step(cx));
+            let message = background_agent_result_message(&subagent_session_id, result, stopped);
+            deliver_message_when_idle(parent_thread, parent_acp_thread, message, cx)
+                .await
+                .log_err();
+        })
+        .detach();
+        Ok(())
+    }
+
+    fn stop_background_subagent(
+        &self,
+        session_id: acp_v2::SessionId,
+        immediately: bool,
+        cx: &mut App,
+    ) -> Task<Result<String>> {
+        let subagent = match self
+            .thread
+            .read_with(cx, |thread, cx| thread.background_subagent(&session_id, cx))
+        {
+            Ok(Some(subagent)) => subagent,
+            Ok(None) => {
+                return Task::ready(Err(anyhow!(
+                    "No agent with session_id {session_id} is running in the background. \
+                     It may have finished already."
+                )));
+            }
+            Err(error) => return Task::ready(Err(error)),
+        };
+        if !immediately {
+            subagent.update(cx, |thread, _| thread.stop_at_next_boundary());
+            return Task::ready(Ok(
+                "The agent will stop once it finishes the step it is on. Its last message \
+                 will be delivered to you as a new message, with status \"stopped\" unless \
+                 the agent finishes its work first."
+                    .to_string(),
+            ));
+        }
+        let stopped = subagent.update(cx, |thread, cx| thread.stop_for_parent(cx));
+        cx.spawn(async move |cx| {
+            stopped.await;
+            let partial_output =
+                subagent.read_with(cx, |thread, _| thread.subagent_partial_output());
+            anyhow::Ok(if partial_output.is_empty() {
+                "The agent was stopped before it produced any output.".to_string()
+            } else {
+                format!(
+                    "The agent was stopped. What it had produced (last 3 messages, up to \
+                     4096 characters each):\n\n{partial_output}"
+                )
+            })
+        })
+    }
+
+    fn register_background_command(
+        &self,
+        id: acp_v2::TerminalId,
+        command: String,
+        terminal: Rc<dyn TerminalHandle>,
+        cx: &mut App,
+    ) {
+        self.thread
+            .update(cx, |thread, cx| {
+                thread.register_background_command(id, command.into(), terminal, cx)
+            })
+            .log_err();
+    }
+
+    fn background_command_finished(&self, id: &acp_v2::TerminalId, cx: &mut App) -> bool {
+        self.thread
+            .update(cx, |thread, cx| thread.background_command_finished(id, cx))
+            .unwrap_or(false)
+    }
+
+    fn stop_background_command(
+        &self,
+        id: acp_v2::TerminalId,
+        cx: &mut App,
+    ) -> Task<Result<String>> {
+        let terminal = match self
+            .thread
+            .update(cx, |thread, _| thread.stop_background_command(&id))
+        {
+            Ok(Some(terminal)) => terminal,
+            Ok(None) => {
+                return Task::ready(Err(anyhow!(
+                    "No command with terminal_id {} is running in the background. \
+                     It may have finished already.",
+                    id.0
+                )));
+            }
+            Err(error) => return Task::ready(Err(error)),
+        };
+        cx.spawn(async move |cx| {
+            terminal.kill(cx)?;
+            terminal.wait_for_exit(cx)?.await;
+            let output = terminal.current_output(cx)?;
+            anyhow::Ok(if output.output.trim().is_empty() {
+                "The command was stopped. It had not printed anything.".to_string()
+            } else {
+                format!(
+                    "The command was stopped. Its output:\n\n```\n{}\n```",
+                    output.output.trim()
+                )
+            })
+        })
+    }
+
+    fn deliver_background_message(&self, message: String, cx: &mut App) -> Result<()> {
+        let thread = self.thread.clone();
+        let acp_thread = self.acp_thread.clone();
+        cx.spawn(async move |cx| {
+            deliver_message_when_idle(thread, acp_thread, message, cx)
+                .await
+                .log_err();
+        })
+        .detach();
+        Ok(())
+    }
+
     fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents> {
         let host = self
             .agent
@@ -3937,6 +4096,221 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 agents: vec![available_native_agent(cx)],
             })
         }
+    }
+}
+
+/// The error a background subagent's run ends with when the agent that started
+/// it stopped it.
+#[derive(Debug)]
+struct StoppedByParent;
+
+impl std::fmt::Display for StoppedByParent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Stopped by the agent that started it")
+    }
+}
+
+impl std::error::Error for StoppedByParent {}
+
+const BACKGROUND_AGENT_RESULT_PREFIX: &str = "<background_agent_result session_id=\"";
+
+const BACKGROUND_COMMAND_RESULT_PREFIX: &str = "<background_command_result";
+
+/// What finished in the background and reported back to a thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BackgroundResultSource {
+    /// A subagent started with `spawn_agent`, by session id.
+    Agent(acp_v2::SessionId),
+    /// A command started with the terminal tool, by terminal id. Results
+    /// delivered before they carried the id have none.
+    Command(Option<acp_v2::TerminalId>),
+}
+
+/// What `text` reports, when `text` is one of the messages that deliver the
+/// result of background work to a thread.
+pub fn background_result_source(text: &str) -> Option<BackgroundResultSource> {
+    if let Some(rest) = text.strip_prefix(BACKGROUND_AGENT_RESULT_PREFIX) {
+        let (session_id, _) = rest.split_once('"')?;
+        Some(BackgroundResultSource::Agent(acp_v2::SessionId::new(
+            session_id,
+        )))
+    } else if let Some(rest) = text.strip_prefix(BACKGROUND_COMMAND_RESULT_PREFIX) {
+        let terminal_id = rest
+            .strip_prefix(" terminal_id=\"")
+            .and_then(|rest| rest.split_once('"'))
+            .map(|(terminal_id, _)| acp_v2::TerminalId::new(terminal_id));
+        Some(BackgroundResultSource::Command(terminal_id))
+    } else {
+        None
+    }
+}
+
+// These results reach the model as a user message, the only role a new turn
+// can start from, so they have to say that the user didn't write them.
+
+fn background_agent_result_message(
+    subagent_session_id: &acp_v2::SessionId,
+    result: Result<String>,
+    stopped_after_current_step: bool,
+) -> String {
+    // A run that was asked to stop can end on a step that has no text, which
+    // reads as an error but is the outcome that was asked for.
+    let (status, body) = match result {
+        Ok(output) if stopped_after_current_step => ("stopped", output),
+        Ok(output) => ("completed", output),
+        Err(error) if stopped_after_current_step => ("stopped", format!("{error:#}")),
+        Err(error) => ("error", format!("{error:#}")),
+    };
+    format!(
+        "{BACKGROUND_AGENT_RESULT_PREFIX}{subagent_session_id}\" status=\"{status}\">\n\
+         {body}\n\
+         </background_agent_result>\n\n\
+         This message was generated automatically when a background agent you started \
+         with `spawn_agent` stopped. It was not written by the user."
+    )
+}
+
+pub(crate) fn background_command_result_message(
+    terminal_id: &acp_v2::TerminalId,
+    command: &str,
+    outcome: &str,
+) -> String {
+    format!(
+        "{BACKGROUND_COMMAND_RESULT_PREFIX} terminal_id=\"{}\">\n\
+         Command: {command}\n\n\
+         {outcome}\n\
+         </background_command_result>\n\n\
+         This message was generated automatically when a command you started in the \
+         background finished. It was not written by the user.",
+        terminal_id.0
+    )
+}
+
+// Background work doesn't survive Zed quitting. When a thread that had some
+// running is reopened, these messages say what will never report back.
+
+pub(crate) fn interrupted_background_agent_message(
+    subagent_session_id: &acp_v2::SessionId,
+    title: &str,
+) -> String {
+    format!(
+        "{BACKGROUND_AGENT_RESULT_PREFIX}{subagent_session_id}\" status=\"interrupted\">\n\
+         Zed was closed while the agent \"{title}\" was working, so its run ended without \
+         reporting back. What it did until then is kept in its own thread. Check its \
+         effects before relying on them.\n\
+         </background_agent_result>\n\n\
+         This message was generated automatically when Zed reopened this thread. It was \
+         not written by the user."
+    )
+}
+
+pub(crate) fn interrupted_background_command_message(
+    terminal_id: &acp_v2::TerminalId,
+    command: &str,
+) -> String {
+    format!(
+        "{BACKGROUND_COMMAND_RESULT_PREFIX} terminal_id=\"{}\" status=\"interrupted\">\n\
+         Command: {command}\n\n\
+         Zed was closed while this command was running, so it never reported back and \
+         its output was not kept. Check its effects before relying on them.\n\
+         </background_command_result>\n\n\
+         This message was generated automatically when Zed reopened this thread. It was \
+         not written by the user.",
+        terminal_id.0
+    )
+}
+
+// Stopping a thread from the sidebar also stops the work it started in the
+// background. These messages say what will never report back.
+
+pub(crate) fn stopped_background_agent_message(
+    subagent_session_id: &acp_v2::SessionId,
+    title: &str,
+) -> String {
+    format!(
+        "{BACKGROUND_AGENT_RESULT_PREFIX}{subagent_session_id}\" status=\"stopped\">\n\
+         The user stopped this thread, which also stopped the agent \"{title}\" before it \
+         reported back. What it did until then is kept in its own thread. Check its \
+         effects before relying on them.\n\
+         </background_agent_result>\n\n\
+         This message was generated automatically when the user stopped this thread. It \
+         was not written by the user."
+    )
+}
+
+pub(crate) fn stopped_background_command_message(
+    terminal_id: &acp_v2::TerminalId,
+    command: &str,
+) -> String {
+    format!(
+        "{BACKGROUND_COMMAND_RESULT_PREFIX} terminal_id=\"{}\" status=\"stopped\">\n\
+         Command: {command}\n\n\
+         The user stopped this thread, which also killed this command before it finished. \
+         Its output was not kept. Check its effects before relying on them.\n\
+         </background_command_result>\n\n\
+         This message was generated automatically when the user stopped this thread. It \
+         was not written by the user.",
+        terminal_id.0
+    )
+}
+
+/// Delivers `message` to a thread as a new message. A thread that is mid-turn
+/// is steered: its turn ends at the next message boundary and the message
+/// follows, the way a steering message from the user does. An idle thread
+/// starts a new turn right away.
+async fn deliver_message_when_idle(
+    parent_thread: WeakEntity<Thread>,
+    parent_acp_thread: WeakEntity<AcpThread>,
+    message: String,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    parent_thread.update(cx, |thread, _| thread.begin_background_result_delivery())?;
+    let idle = wait_until_not_generating(&parent_acp_thread, cx).await;
+    parent_thread.update(cx, |thread, _| thread.finish_background_result_delivery())?;
+    idle?;
+
+    let acp_thread = parent_acp_thread
+        .upgrade()
+        .context("Parent thread no longer exists")?;
+    cx.update(|cx| {
+        let connection = acp_thread
+            .read(cx)
+            .connection()
+            .clone()
+            .into_any()
+            .downcast::<NativeAgentConnection>()
+            .map_err(|_| anyhow!("Parent connection is not native"))?;
+        connection
+            .send_and_wait_for_completion(acp_thread.clone(), vec![message.into()], cx)
+            .detach();
+        anyhow::Ok(())
+    })
+}
+
+async fn wait_until_not_generating(
+    thread: &WeakEntity<AcpThread>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let (changed_tx, mut changed_rx) = mpsc::unbounded();
+    let _subscription = cx.update(|cx| {
+        let thread = thread.upgrade().context("Parent thread no longer exists")?;
+        anyhow::Ok(
+            cx.subscribe(&thread, move |_, _: &acp_thread::AcpThreadEvent, _| {
+                changed_tx.unbounded_send(()).ok();
+            }),
+        )
+    })?;
+    loop {
+        let generating = thread.read_with(cx, |thread, _| {
+            thread.status() == acp_thread::ThreadStatus::Generating
+        })?;
+        if !generating {
+            return Ok(());
+        }
+        changed_rx
+            .next()
+            .await
+            .context("Parent thread no longer exists")?;
     }
 }
 
@@ -3973,6 +4347,20 @@ impl SubagentHandle for NativeSubagentHandle {
     }
 
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+        self.run(message, false, cx)
+    }
+
+    fn send_in_background(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+        self.run(message, true, cx)
+    }
+
+    fn stopped_after_current_step(&self, cx: &App) -> bool {
+        self.subagent_thread.read(cx).was_stopped_at_boundary()
+    }
+}
+
+impl NativeSubagentHandle {
+    fn run(&self, message: String, in_background: bool, cx: &AsyncApp) -> Task<Result<String>> {
         let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();
         let subagent_session_id = self.session_id.clone();
@@ -3981,10 +4369,15 @@ impl SubagentHandle for NativeSubagentHandle {
         cx.spawn(async move |cx| {
             let (task, token_limit_rx, _subscription) = cx.update(|cx| {
                 parent_thread
-                    .update(cx, |parent_thread, _cx| {
-                        parent_thread.register_running_subagent(thread.downgrade())
+                    .update(cx, |parent_thread, cx| {
+                        if in_background {
+                            parent_thread.register_background_subagent(thread.downgrade(), cx)
+                        } else {
+                            parent_thread.register_running_subagent(thread.downgrade())
+                        }
                     })
                     .ok();
+                thread.update(cx, |thread, _| thread.clear_stop_request());
 
                 let ratio_before_prompt = thread
                     .read(cx)
@@ -4040,7 +4433,13 @@ impl SubagentHandle for NativeSubagentHandle {
             let response_stop_reason = response.as_ref().ok().cloned();
             let result = match response {
                 Ok(reason) => match reason {
-                    acp_v2::StopReason::Cancelled => Err(anyhow!("User canceled")),
+                    acp_v2::StopReason::Cancelled => {
+                        if thread.read_with(cx, |thread, _| thread.was_stopped_by_parent()) {
+                            Err(anyhow::Error::new(StoppedByParent))
+                        } else {
+                            Err(anyhow!("User canceled"))
+                        }
+                    }
                     acp_v2::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
                     acp_v2::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
                     acp_v2::StopReason::Refusal => Err(anyhow!("The agent refused to process that prompt. Try again.")),
@@ -4075,7 +4474,11 @@ impl SubagentHandle for NativeSubagentHandle {
 
             parent_thread
                 .update(cx, |parent_thread, cx| {
-                    parent_thread.unregister_running_subagent(&subagent_session_id, cx)
+                    if in_background {
+                        parent_thread.unregister_background_subagent(&subagent_session_id, cx)
+                    } else {
+                        parent_thread.unregister_running_subagent(&subagent_session_id, cx)
+                    }
                 })
                 .ok();
 

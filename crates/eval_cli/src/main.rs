@@ -688,6 +688,8 @@ async fn run_agent(
                     "grep",
                     "skill",
                     "spawn_agent",
+                    "stop_agent",
+                    "stop_command",
                     "terminal",
                     "search_web",
                 ];

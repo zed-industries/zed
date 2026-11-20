@@ -89,6 +89,26 @@ pub struct DbThread {
     /// [`crate::sandboxing::ThreadSandboxGrants`].
     #[serde(default)]
     pub sandbox_grants: DbSandboxGrants,
+    /// Work the thread had left running in the background when it was saved.
+    /// None of it survives Zed quitting, so reopening the thread reports each
+    /// item as interrupted.
+    #[serde(default)]
+    pub background_work: Vec<DbBackgroundWork>,
+}
+
+/// A subagent or command that a thread started in the background and that was
+/// still running when the thread was saved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DbBackgroundWork {
+    Agent {
+        session_id: acp_v2::SessionId,
+        title: SharedString,
+    },
+    Command {
+        terminal_id: acp_v2::TerminalId,
+        command: SharedString,
+    },
 }
 
 /// Serialized form of the sandbox permissions the user granted "for the rest of
@@ -172,6 +192,7 @@ impl SharedThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            background_work: Vec::new(),
         }
     }
 
@@ -358,6 +379,7 @@ impl DbThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            background_work: Vec::new(),
         })
     }
 }
@@ -982,6 +1004,7 @@ mod tests {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            background_work: Vec::new(),
         }
     }
 

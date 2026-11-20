@@ -647,6 +647,8 @@ fn agent_profile_tools_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sc
         "search_web",
         "skill",
         "spawn_agent",
+        "stop_agent",
+        "stop_command",
         "terminal",
         "write_file",
     ];

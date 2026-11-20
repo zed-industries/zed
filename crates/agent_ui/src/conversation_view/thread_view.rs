@@ -1619,9 +1619,18 @@ impl ThreadView {
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                self.entry_view_state.update(cx, |state, _cx| {
-                    state.collapse_tool_call(tool_call_id);
-                });
+                // A command that the agent left running on purpose is still
+                // of interest, so its output stays visible.
+                let left_running_on_purpose = matches!(
+                    self.thread.read(cx).entries().get(event.entry_index),
+                    Some(AgentThreadEntry::ToolCall(tool_call))
+                        if Self::runs_in_background(tool_call)
+                );
+                if !left_running_on_purpose {
+                    self.entry_view_state.update(cx, |state, _cx| {
+                        state.collapse_tool_call(tool_call_id);
+                    });
+                }
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if self.can_edit_user_message(event.entry_index, cx) {
@@ -2742,6 +2751,26 @@ impl ThreadView {
         self._cancel_task = Some(self.cancel_thread(&self.thread, cx));
         self.sync_generating_indicator(cx);
         cx.notify();
+    }
+
+    /// Cancels the turn like `cancel_generation`, then stops the subagents and
+    /// commands the thread started in the background, which outlive its turn.
+    /// This is what stopping a thread from the sidebar means: the sidebar shows
+    /// a thread with background work as running even while it is idle.
+    pub fn stop_all_work(&mut self, cx: &mut Context<Self>) {
+        self.cancel_generation(cx);
+        let Some(native_thread) = self.as_native_thread(cx) else {
+            return;
+        };
+        let Some(turn_cancelled) = self._cancel_task.take() else {
+            return;
+        };
+        self._cancel_task = Some(cx.spawn(async move |_, cx| {
+            turn_cancelled.await;
+            native_thread
+                .update(cx, |thread, cx| thread.stop_background_work(cx))
+                .await;
+        }));
     }
 
     fn cancel_tool_call(&self, tool_call_id: acp_v2::ToolCallId, cx: &mut Context<Self>) {
@@ -5715,6 +5744,8 @@ impl ThreadView {
                                     .min_w_0()
                                     .flex_wrap()
                                     .gap_1()
+                                    .children(self.render_running_agents(cx))
+                                    .children(self.render_background_commands(cx))
                                     .children(self.render_activity_status_label(cx))
                                     .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
@@ -5730,6 +5761,113 @@ impl ThreadView {
                     ),
             )
             .into_any()
+    }
+
+    /// Lists the agents working for this thread; picking one opens its thread,
+    /// like the "expand" button of a subagent card does.
+    fn render_running_agents(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let agents = self.as_native_thread(cx)?.read(cx).active_subagents(cx);
+        if agents.is_empty() {
+            return None;
+        }
+        let label: SharedString = if agents.len() == 1 {
+            "1 agent running".into()
+        } else {
+            format!("{} agents running", agents.len()).into()
+        };
+        let server_view = self.server_view.clone();
+        Some(
+            PopoverMenu::new("running-agents")
+                .trigger_with_tooltip(
+                    ButtonLike::new("running-agents-trigger")
+                        .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
+                    Tooltip::text("Agents working for this thread"),
+                )
+                .menu(move |window, cx| {
+                    let agents = agents.clone();
+                    let server_view = server_view.clone();
+                    Some(ContextMenu::build(
+                        window,
+                        cx,
+                        move |mut menu, _window, _cx| {
+                            menu = menu.header("Running Agents");
+                            for (session_id, title) in agents {
+                                let server_view = server_view.clone();
+                                menu = menu.entry(title, None, move |window, cx| {
+                                    server_view
+                                        .update(cx, |view, cx| {
+                                            view.navigate_to_thread(session_id.clone(), window, cx)
+                                        })
+                                        .ok();
+                                });
+                            }
+                            menu
+                        },
+                    ))
+                }),
+        )
+    }
+
+    /// Lists the commands this thread left running in the background; picking
+    /// one scrolls to its terminal.
+    fn render_background_commands(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let commands = self.as_native_thread(cx)?.read(cx).background_commands();
+        if commands.is_empty() {
+            return None;
+        }
+        let label: SharedString = if commands.len() == 1 {
+            "1 command running".into()
+        } else {
+            format!("{} commands running", commands.len()).into()
+        };
+        let thread = self.thread.read(cx);
+        let commands = commands
+            .into_iter()
+            .map(|(terminal_id, command)| {
+                let entry_ix = thread.entries().iter().position(|entry| {
+                    matches!(entry, AgentThreadEntry::ToolCall(tool_call)
+                        if tool_call
+                            .terminals()
+                            .any(|terminal| terminal.read(cx).id() == &terminal_id))
+                });
+                let title: SharedString =
+                    util::truncate_and_trailoff(command.lines().next().unwrap_or_default(), 60)
+                        .into();
+                (title, entry_ix)
+            })
+            .collect::<Vec<_>>();
+        let this = cx.weak_entity();
+        Some(
+            PopoverMenu::new("background-commands")
+                .trigger_with_tooltip(
+                    ButtonLike::new("background-commands-trigger")
+                        .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
+                    Tooltip::text("Commands running in the background"),
+                )
+                .menu(move |window, cx| {
+                    let commands = commands.clone();
+                    let this = this.clone();
+                    Some(ContextMenu::build(
+                        window,
+                        cx,
+                        move |mut menu, _window, _cx| {
+                            menu = menu.header("Background Commands");
+                            for (title, entry_ix) in commands {
+                                let this = this.clone();
+                                menu = menu.entry(title, None, move |_window, cx| {
+                                    if let Some(entry_ix) = entry_ix {
+                                        this.update(cx, |this, cx| {
+                                            this.scroll_to_entry(entry_ix, cx)
+                                        })
+                                        .ok();
+                                    }
+                                });
+                            }
+                            menu
+                        },
+                    ))
+                }),
+        )
     }
 
     fn render_activity_status_label(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
@@ -7588,6 +7726,25 @@ impl ThreadView {
                 if message.content.source_blocks().is_empty() {
                     return Empty.into_any_element();
                 }
+                if let Some(source) = Self::background_result_source(message) {
+                    return self
+                        .render_background_result(entry_ix, &source, message, window, cx)
+                        .into_any_element();
+                }
+                // Nobody types into a subagent's thread: what it receives comes from
+                // the agent that started it.
+                if let Some(parent_session_id) = self.parent_session_id.as_ref() {
+                    return self
+                        .render_message_from_session(
+                            entry_ix,
+                            "Message from",
+                            Some(parent_session_id),
+                            message,
+                            window,
+                            cx,
+                        )
+                        .into_any_element();
+                }
                 let Some(editor) = self
                     .entry_view_state
                     .read(cx)
@@ -9263,6 +9420,163 @@ impl ThreadView {
         has_running_terminal_call
     }
 
+    /// What this user message reports, when it is one of the automated
+    /// messages that deliver the result of background work.
+    fn background_result_source(
+        message: &acp_thread::UserMessage,
+    ) -> Option<agent::BackgroundResultSource> {
+        match message.content.source_blocks().first()? {
+            acp_v2::ContentBlock::Text(text) => agent::background_result_source(&text.text),
+            _ => None,
+        }
+    }
+
+    /// The result of background work starts a turn as a user message. Show it
+    /// as a message from what produced it, not as something the user typed.
+    fn render_background_result(
+        &self,
+        entry_ix: usize,
+        source: &agent::BackgroundResultSource,
+        message: &acp_thread::UserMessage,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let (heading, sender) = match source {
+            agent::BackgroundResultSource::Command(terminal_id) => {
+                if let Some(terminal_id) = terminal_id
+                    && let Some(terminal) =
+                        self.render_finished_background_command(terminal_id, window, cx)
+                {
+                    return terminal;
+                }
+                ("Background command finished", None)
+            }
+            agent::BackgroundResultSource::Agent(sender) => ("Result from", Some(sender)),
+        };
+        self.render_message_from_session(entry_ix, heading, sender, message, window, cx)
+    }
+
+    /// The model receives a background command's output as text. The user is better
+    /// served by the terminal it came from, so draw that again where the command
+    /// finished. `None` when this thread no longer has that terminal.
+    fn render_finished_background_command(
+        &self,
+        terminal_id: &acp_v2::TerminalId,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<Div> {
+        let thread = self.thread.read(cx);
+        let (tool_call_ix, tool_call, terminal) =
+            thread
+                .entries()
+                .iter()
+                .enumerate()
+                .find_map(|(ix, entry)| {
+                    let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                        return None;
+                    };
+                    let terminal = tool_call
+                        .terminals()
+                        .find(|terminal| terminal.read(cx).id() == terminal_id)?;
+                    Some((ix, tool_call, terminal))
+                })?;
+        Some(
+            v_flex()
+                .w_full()
+                .child(
+                    h_flex()
+                        .px_5()
+                        .pt_1p5()
+                        .gap_1p5()
+                        .child(
+                            Icon::new(IconName::ToolTerminal)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new("Background command finished")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                // Same layout as the command's own card: the two share one terminal
+                // view, which sizes the terminal to the width it is drawn at.
+                .child(self.render_terminal_tool_call(
+                    thread.session_id(),
+                    tool_call_ix,
+                    terminal,
+                    tool_call,
+                    &self.focus_handle(cx),
+                    ToolCallLayout::Standalone,
+                    window,
+                    cx,
+                )),
+        )
+    }
+
+    /// Draws a user message that another session of this conversation sent, or that Zed
+    /// generated, under a heading that says where it came from.
+    fn render_message_from_session(
+        &self,
+        entry_ix: usize,
+        heading: &'static str,
+        sender: Option<&acp_v2::SessionId>,
+        message: &acp_thread::UserMessage,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let participant = sender.map(|sender| match self.session_participant_label(sender, cx) {
+            Some(label) => Button::new(("message-sender", entry_ix), label)
+                .label_size(LabelSize::Small)
+                .tooltip(Tooltip::text("Open Session"))
+                .on_click({
+                    let server_view = self.server_view.clone();
+                    let sender = sender.clone();
+                    move |_, window, cx| {
+                        server_view
+                            .update(cx, |view, cx| {
+                                view.navigate_to_thread(sender.clone(), window, cx)
+                            })
+                            .ok();
+                    }
+                })
+                .into_any_element(),
+            None => Label::new("Unavailable Session")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+        });
+
+        v_flex()
+            .px_5()
+            .py_1p5()
+            .w_full()
+            .gap_1p5()
+            .text_ui(cx)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Envelope)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(heading)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .children(participant),
+            )
+            .child(
+                div()
+                    .pl_3()
+                    .border_l_2()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.render_message_content(entry_ix, 0, &message.content, window, cx)),
+            )
+    }
+
     fn render_session_message(
         &self,
         entry_ix: usize,
@@ -9417,10 +9731,20 @@ impl ThreadView {
         })
     }
 
+    /// Whether this terminal tool call asked for its command to be left running.
+    fn runs_in_background(tool_call: &ToolCall) -> bool {
+        tool_call
+            .raw_input
+            .as_ref()
+            .and_then(|input| input.get("run_in_background"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    }
+
     fn render_collapsible_command(
         &self,
         group: SharedString,
-        is_preview: bool,
+        preview_label: Option<&'static str>,
         command: Entity<Markdown>,
         window: &Window,
         cx: &Context<Self>,
@@ -9446,18 +9770,14 @@ impl ThreadView {
         // line (wrapped or not) is padded consistently.
         style.code_block_overflow_x_scroll = false;
 
-        let run_command_label = if is_preview {
-            Some(
-                h_flex().h_6().child(
-                    Label::new("Run Command")
-                        .buffer_font(cx)
-                        .size(LabelSize::XSmall)
-                        .color(Color::Muted),
-                ),
+        let run_command_label = preview_label.map(|label| {
+            h_flex().h_6().child(
+                Label::new(label)
+                    .buffer_font(cx)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
             )
-        } else {
-            None
-        };
+        });
         // Suppress the code block's built-in copy button so we don't stack two
         // copy buttons on top of each other; the outer button below is the one
         // we want, because it copies the unfenced command text.
@@ -9477,7 +9797,7 @@ impl ThreadView {
             .group(group)
             .relative()
             .p_1p5()
-            .when(is_preview, |this| this.pt_1().children(run_command_label))
+            .when_some(run_command_label, |this, label| this.pt_1().child(label))
             .child(markdown_element)
             .child(div().absolute().top_1().right_1().child(copy_button))
     }
@@ -9547,7 +9867,7 @@ impl ThreadView {
 
         let command_element = self.render_collapsible_command(
             header_group.clone(),
-            false,
+            None,
             tool_call.label.clone(),
             window,
             cx,
@@ -10159,7 +10479,11 @@ impl ThreadView {
                     this.child(
                         self.render_collapsible_command(
                             card_header_id.clone(),
-                            true,
+                            Some(if Self::runs_in_background(tool_call) {
+                                "Run Background Command"
+                            } else {
+                                "Run Command"
+                            }),
                             tool_call.label.clone(),
                             window,
                             cx,
@@ -12452,6 +12776,17 @@ impl ThreadView {
             subagent_thread_view.map(|view| view.read(cx).thread.read(cx)),
             cx,
         );
+        if state.is_follow_up() {
+            return self.render_subagent_follow_up(
+                active_session_id,
+                entry_ix,
+                &state,
+                subagent_thread_view,
+                focus_handle,
+                window,
+                cx,
+            );
+        }
         let content = self.render_subagent_card(
             active_session_id,
             entry_ix,
@@ -12464,6 +12799,163 @@ impl ThreadView {
         );
 
         v_flex().mx_5().my_1p5().gap_3().child(content)
+    }
+
+    /// A later message to a subagent that already has a card in this thread. Another card
+    /// would read as another subagent, so it is drawn as a message to that subagent, the
+    /// way the subagent's results are drawn as messages from it.
+    fn render_subagent_follow_up(
+        &self,
+        active_session_id: &acp_v2::SessionId,
+        entry_ix: usize,
+        state: &SubagentCardState,
+        subagent_view: Option<&Entity<ThreadView>>,
+        focus_handle: &FocusHandle,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let message_ix = state.entries.map_or(0, |entries| entries.start);
+        let is_running = state.status == SubagentStatus::Running;
+
+        let recipient = match subagent_view {
+            Some(subagent_view) => {
+                let subagent_thread = subagent_view.read(cx).thread.read(cx);
+                let session_id = subagent_thread.session_id().clone();
+                // While the subagent works, its view keeps following its latest entries.
+                let open_at = state.fullscreen_entry();
+                let subagent_view = subagent_view.clone();
+                Button::new(
+                    ("subagent-follow-up-recipient", entry_ix),
+                    subagent_label(subagent_thread),
+                )
+                .label_size(LabelSize::Small)
+                .tooltip(Tooltip::text("Open Session"))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.server_view
+                        .update(cx, |server_view, cx| {
+                            server_view.navigate_to_thread(session_id.clone(), window, cx);
+                        })
+                        .ok();
+                    if let Some(open_at) = open_at {
+                        subagent_view.update(cx, |view, cx| view.scroll_to_entry(open_at, cx));
+                    }
+                }))
+                .into_any_element()
+            }
+            None => Label::new(
+                state
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| "Unavailable Session".into()),
+            )
+            .size(LabelSize::Small)
+            .color(Color::Muted)
+            .into_any_element(),
+        };
+
+        let status = match state.status {
+            SubagentStatus::Running => Some(
+                SpinnerLabel::new()
+                    .size(LabelSize::Small)
+                    .into_any_element(),
+            ),
+            SubagentStatus::Failed => Some(
+                Icon::new(IconName::Close)
+                    .size(IconSize::Small)
+                    .color(Color::Error)
+                    .into_any_element(),
+            ),
+            SubagentStatus::Canceled => Some(
+                Label::new("Canceled")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .into_any_element(),
+            ),
+            SubagentStatus::Completed | SubagentStatus::Unknown => None,
+        };
+
+        let message = subagent_view.and_then(|subagent_view| {
+            let subagent_view = subagent_view.read(cx);
+            match subagent_view.thread.read(cx).entries().get(message_ix)? {
+                AgentThreadEntry::UserMessage(message) => {
+                    Some(subagent_view.render_message_content(
+                        message_ix,
+                        0,
+                        &message.content,
+                        window,
+                        cx,
+                    ))
+                }
+                _ => None,
+            }
+        });
+
+        // The subagent asks for permission in its own thread; offer the request
+        // here too, as its card does.
+        let permission_request = subagent_view
+            .filter(|_| is_running)
+            .and_then(|subagent_view| {
+                let subagent_view = subagent_view.read(cx);
+                let subagent_thread = subagent_view.thread.read(cx);
+                let (_, tool_call_id, _) = self
+                    .conversation
+                    .read(cx)
+                    .pending_tool_call(subagent_thread.session_id(), cx)?;
+                let (tool_call_ix, tool_call) = subagent_thread.tool_call(&tool_call_id)?;
+                Some(
+                    div()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .overflow_hidden()
+                        .child(subagent_view.render_any_tool_call(
+                            active_session_id,
+                            tool_call_ix,
+                            tool_call,
+                            focus_handle,
+                            ToolCallLayout::Embedded,
+                            window,
+                            cx,
+                        )),
+                )
+            });
+
+        v_flex()
+            .px_5()
+            .py_1p5()
+            .w_full()
+            .gap_1p5()
+            .text_ui(cx)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Send)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new("Message to")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(recipient)
+                    .children(status),
+            )
+            .children(message.map(|message| {
+                div()
+                    .pl_3()
+                    .border_l_2()
+                    .border_color(cx.theme().colors().border)
+                    .child(message)
+            }))
+            .children(permission_request)
+            .children(state.error.clone().map(|error| {
+                Callout::new()
+                    .severity(Severity::Error)
+                    .icon(IconName::XCircle)
+                    .title(error)
+            }))
     }
 
     fn render_subagent_card(
