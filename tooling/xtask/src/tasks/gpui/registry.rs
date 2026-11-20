@@ -97,7 +97,7 @@ async fn check_crates(
                 .list_owners(&name)
                 .await
                 .with_context(|| format!("failed to list owners of {name}"))?;
-            ResolvedCrate::Published {
+            PublishTarget::ExistingCrate {
                 krate: krate.clone(),
                 owners,
             }
@@ -105,14 +105,14 @@ async fn check_crates(
             resolve_target_crate_name(client, &name).await?
         };
         let (krate, owners) = match resolved {
-            ResolvedCrate::NotPublished(target_crate_name) => {
+            PublishTarget::NewCrate(target_crate_name) => {
                 checked.push(CheckedCrate {
                     name,
                     state: PublishState::NotPublished { target_crate_name },
                 });
                 continue;
             }
-            ResolvedCrate::Published { krate, owners } => (krate, owners),
+            PublishTarget::ExistingCrate { krate, owners } => (krate, owners),
         };
         let name = krate.name.clone();
         let missing_owners: Vec<_> = REQUIRED_OWNERS
@@ -156,15 +156,15 @@ async fn check_crates(
     Ok(checked)
 }
 
-enum ResolvedCrate {
-    NotPublished(CrateName),
-    Published { krate: Crate, owners: Vec<Owner> },
+enum PublishTarget {
+    NewCrate(CrateName),
+    ExistingCrate { krate: Crate, owners: Vec<Owner> },
 }
 
 async fn resolve_target_crate_name(
     client: &dyn CratesIoClient,
     planned_name: &CrateName,
-) -> Result<ResolvedCrate> {
+) -> Result<PublishTarget> {
     if let Some(resolved) = check_crate_name(client, planned_name).await? {
         return Ok(resolved);
     }
@@ -183,7 +183,7 @@ async fn resolve_target_crate_name(
 async fn check_crate_name(
     client: &dyn CratesIoClient,
     name: &CrateName,
-) -> Result<Option<ResolvedCrate>> {
+) -> Result<Option<PublishTarget>> {
     match client.get_crate(name).await {
         Ok(details) => {
             let owners = client
@@ -195,7 +195,7 @@ async fn check_crate_name(
                     .iter()
                     .any(|required| owner_matches(required, owner))
             }) {
-                Ok(Some(ResolvedCrate::Published {
+                Ok(Some(PublishTarget::ExistingCrate {
                     krate: details.krate,
                     owners,
                 }))
@@ -203,7 +203,7 @@ async fn check_crate_name(
                 Ok(None)
             }
         }
-        Err(CratesIoError::NotFound { .. }) => Ok(Some(ResolvedCrate::NotPublished(name.clone()))),
+        Err(CratesIoError::NotFound { .. }) => Ok(Some(PublishTarget::NewCrate(name.clone()))),
         Err(error) => Err(error)
             .with_context(|| format!("failed to check crates.io name availability for {name}")),
     }

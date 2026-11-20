@@ -65,7 +65,7 @@ pub fn run_gpui(command: GpuiCommand) -> Result<()> {
             validation::validate(&plan)?;
             let checked = runtime.block_on(async {
                 let checked = registry::check_plan(&client, &plan).await?;
-                if args.mutate_crates_io {
+                if !args.dry_run {
                     registry::update_crates(&client, &checked).await?;
                     registry::check_plan(&client, &plan).await
                 } else {
