@@ -3364,7 +3364,7 @@ impl ImageFormat {
     pub const fn extension(self) -> &'static str {
         match self {
             ImageFormat::Png => "png",
-            ImageFormat::Jpeg => "jpg",
+            ImageFormat::Jpeg => "jpeg",
             ImageFormat::Webp => "webp",
             ImageFormat::Gif => "gif",
             ImageFormat::Svg => "svg",
@@ -3372,6 +3372,22 @@ impl ImageFormat {
             ImageFormat::Tiff => "tiff",
             ImageFormat::Ico => "ico",
             ImageFormat::Pnm => "pnm",
+        }
+    }
+
+    /// Returns the ImageFormat for the given file extension
+    pub fn from_file_extension(file_extension: &str) -> Option<Self> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+            .find(|format| format.extension() == file_extension)
+            .or_else(|| Self::from_file_extension_alias(file_extension))
+    }
+
+    fn from_file_extension_alias(file_extension: &str) -> Option<Self> {
+        match file_extension {
+            "jpg" => Some(Self::Jpeg),
+            "tif" => Some(Self::Tiff),
+            _ => None,
         }
     }
 
