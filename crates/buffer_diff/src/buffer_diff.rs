@@ -1325,9 +1325,10 @@ impl HunkSink<'_> {
         let buffer_line_count = new_end - new_start;
 
         let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = self.diff_options
-            && !buffer_row_range.is_empty()
-            && base_line_count == buffer_line_count
+            && base_line_count > 0
+            && buffer_line_count > 0
             && diff_options.max_word_diff_line_count >= base_line_count
+            && diff_options.max_word_diff_line_count >= buffer_line_count
         {
             let base_text: String = self
                 .diff_base_rope
@@ -3197,7 +3198,7 @@ mod tests {
             three
             four
             five
-            six
+            the six
             seven
             eight
             nine
@@ -3209,7 +3210,7 @@ mod tests {
             three
             four
             five
-            SIX
+            the SIX
             seven
             eight
             NINE
@@ -3248,7 +3249,7 @@ mod tests {
                 three
                 four
                 five
-                «SIX.5»
+                the «SIX.5»
                 seven
                 eight
                 NINE
@@ -3287,7 +3288,7 @@ mod tests {
                 «THREE»
                 four
                 five
-                SIX.5
+                the SIX.5
                 seven
                 eight
                 NINE
@@ -3812,7 +3813,7 @@ mod tests {
             two
             three
             four
-            five
+            the five apples
             six
             seven
             eight
@@ -3824,7 +3825,7 @@ mod tests {
             two
             THREE
             four
-            FIVE
+            the FIVE apples
             six
             SEVEN
             eight
@@ -3835,7 +3836,7 @@ mod tests {
         let old_buffer_2 = buffer_2.snapshot().clone();
         let diff_2a = BufferDiffSnapshot::new_sync(&buffer_2, base_text_2.clone(), cx);
 
-        buffer_2.edit([(Point::new(4, 0)..Point::new(4, 4), "FIVE_CHANGED")]);
+        buffer_2.edit([(Point::new(4, 4)..Point::new(4, 8), "FIVE_CHANGED")]);
         let diff_2b = BufferDiffSnapshot::new_sync(&buffer_2, base_text_2, cx);
 
         let DiffChanged {
