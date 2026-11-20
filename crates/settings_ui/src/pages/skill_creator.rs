@@ -119,11 +119,8 @@ pub struct SkillCreatorPage {
     name_editor: Entity<InputField>,
     description_editor: Entity<InputField>,
     body_editor: Entity<Editor>,
-    description_length: usize,
     settings_window: WeakEntity<SettingsWindow>,
     disable_model_invocation: bool,
-    name_error: Option<&'static str>,
-    description_error: Option<&'static str>,
     body_error: Option<&'static str>,
     save_error: Option<SharedString>,
     url_import_status: UrlImportStatus,
@@ -271,11 +268,8 @@ impl SkillCreatorPage {
             name_editor,
             description_editor,
             body_editor,
-            description_length: 0,
             settings_window,
             disable_model_invocation: false,
-            name_error: None,
-            description_error: None,
             body_error: None,
             save_error: None,
             url_import_status: UrlImportStatus::Idle,
@@ -374,16 +368,13 @@ impl SkillCreatorPage {
     fn recompute_name_error(&mut self, cx: &mut Context<Self>) {
         let name = self.current_name(cx);
         let error = validate_name(&name).err();
-        self.name_error = error;
         self.name_editor
             .update(cx, |field, cx| field.set_error(error, cx));
     }
 
     fn recompute_description_error(&mut self, cx: &mut Context<Self>) {
         let description = self.current_description(cx);
-        self.description_length = description.chars().count();
         let error = validate_description(&description).err();
-        self.description_error = error;
         self.description_editor
             .update(cx, |field, cx| field.set_error(error, cx));
     }

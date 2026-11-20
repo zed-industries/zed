@@ -6363,9 +6363,7 @@ impl ReferenceMultibuffer {
                 let base_buffer = diff.base_text();
 
                 let mut offset = buffer_range.start;
-                let hunks = diff
-                    .hunks_intersecting_range(excerpt.range.clone(), buffer)
-                    .peekable();
+                let hunks = diff.hunks_intersecting_range(excerpt.range.clone(), buffer);
 
                 for hunk in hunks {
                     // Ignore hunks that are outside the excerpt range.

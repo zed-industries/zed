@@ -480,7 +480,7 @@ fn find_available_model(selected: &SelectedModel, cx: &gpui::App) -> Option<Lang
             model.provider_id() == selected.provider
                 && model_id_matches_selected(&model.provider_id(), &model.id(), &selected.model)
         })
-        .max_by(|left, right| left.id().0.to_string().cmp(&right.id().0.to_string()))
+        .max_by_key(|model| model.id())
 }
 
 fn model_id_matches_selected(

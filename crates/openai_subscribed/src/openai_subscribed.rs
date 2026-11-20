@@ -541,7 +541,7 @@ fn codex_responses_request(
         Speed::Fast => model.supports_priority(),
         Speed::Ultrafast => model.supports_ultrafast(),
     });
-    let mut responses_request = into_open_ai_response(
+    into_open_ai_response(
         request,
         model.id(),
         model.supports_parallel_tool_calls(),
@@ -552,10 +552,7 @@ fn codex_responses_request(
             .supported_reasoning_efforts()
             .contains(&ReasoningEffort::None),
         &PROVIDER_ID,
-    )?;
-    responses_request.store = Some(false);
-    responses_request.instructions.get_or_insert_default();
-    Ok(responses_request)
+    )
 }
 
 fn codex_extra_headers(

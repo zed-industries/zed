@@ -87,7 +87,7 @@ pub use pane_group::{
     SplitDirection,
 };
 pub use persistence::{
-    RecentWorkspace, WorkspaceDb, delete_unloaded_items,
+    RecentWorkspace, WorkspaceDb, dedupe_recent_workspaces, delete_unloaded_items,
     model::{
         DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
         SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
@@ -443,8 +443,6 @@ actions!(
         OpenInTerminal,
         /// Opens the component preview.
         OpenComponentPreview,
-        /// Reloads the active item.
-        ReloadActiveItem,
         /// Reopens the most recently dismissed picker in the current window.
         ReopenLastPicker,
         /// Resets the active dock to its default size.
@@ -2049,8 +2047,7 @@ impl Workspace {
             .flatten()
             .map(|mw| mw.downgrade());
         let status_bar = cx.new(|cx| {
-            let mut status_bar =
-                StatusBar::new(&center_pane.clone(), multi_workspace.clone(), window, cx);
+            let mut status_bar = StatusBar::new(&center_pane, multi_workspace.clone(), window, cx);
             status_bar.add_left_item(left_dock_buttons, window, cx);
             status_bar.add_right_item(right_dock_buttons, window, cx);
             status_bar.add_right_item(bottom_dock_buttons, window, cx);
@@ -2152,9 +2149,7 @@ impl Workspace {
             this.show_initial_notifications(cx);
         });
 
-        let mut center = PaneGroup::new(center_pane.clone());
-        center.set_is_center(true);
-        center.mark_positions(cx);
+        let center = PaneGroup::new(center_pane.clone());
 
         Workspace {
             weak_self: weak_handle.clone(),
@@ -2302,7 +2297,7 @@ impl Workspace {
             let toolchains = db.toolchains(workspace_id).await?;
 
             for (toolchain, worktree_path, path) in toolchains {
-                let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
+                let toolchain_path = PathBuf::from(toolchain.path.to_string());
                 let Some(worktree_id) = project_handle.read_with(cx, |this, cx| {
                     this.find_worktree(&worktree_path, cx)
                         .and_then(|(worktree, rel_path)| {
@@ -2552,21 +2547,6 @@ impl Workspace {
         &self.bottom_dock
     }
 
-    pub fn set_bottom_dock_layout(
-        &mut self,
-        layout: BottomDockLayout,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let fs = self.project().read(cx).fs();
-        settings::update_settings_file(fs.clone(), cx, move |content, _cx| {
-            content.workspace.bottom_dock_layout = Some(layout);
-        });
-
-        cx.notify();
-        self.serialize_workspace(window, cx);
-    }
-
     pub fn right_dock(&self) -> &Entity<Dock> {
         &self.right_dock
     }
@@ -2716,13 +2696,6 @@ impl Workspace {
             DockPosition::Bottom => &self.bottom_dock,
             DockPosition::Right => &self.right_dock,
         }
-    }
-
-    pub fn agent_panel_position(&self, cx: &App) -> Option<DockPosition> {
-        self.all_docks().into_iter().find_map(|dock| {
-            let dock = dock.read(cx);
-            dock.has_agent_panel(cx).then_some(dock.position())
-        })
     }
 
     pub fn panel_size_state<T: Panel>(&self, cx: &App) -> Option<dock::PanelSizeState> {
@@ -4066,18 +4039,6 @@ impl Workspace {
         state.task.clone().unwrap()
     }
 
-    /// Prompts the user to save or discard each dirty item, returning
-    /// `true` if they confirmed (saved/discarded everything) or `false`
-    /// if they cancelled. Used before removing worktree roots during
-    /// thread archival.
-    pub fn prompt_to_save_or_discard_dirty_items(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<bool>> {
-        self.save_all_internal(SaveIntent::Close, true, window, cx)
-    }
-
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
@@ -4224,7 +4185,6 @@ impl Workspace {
         })
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
@@ -5683,19 +5643,6 @@ impl Workspace {
         item.and_then(|item| item.downcast::<T>())
     }
 
-    pub fn is_project_item_open<T>(
-        &self,
-        pane: &Entity<Pane>,
-        project_item: &Entity<T::Item>,
-        cx: &App,
-    ) -> bool
-    where
-        T: ProjectItem,
-    {
-        self.find_project_item::<T>(pane, project_item, cx)
-            .is_some()
-    }
-
     /// Passing `None` for `pane` uses the active pane as the default destination
     /// and honors `reveal_if_open`. Passing a pane explicitly limits reuse and
     /// opening to that pane.
@@ -5943,7 +5890,7 @@ impl Workspace {
                     .find_pane_in_direction(direction, cx)
                     .unwrap_or_else(|| self.active_pane.clone());
                 let new_pane = self.add_pane(window, cx);
-                self.center.split(&split_off_pane, &new_pane, direction, cx);
+                self.center.split(&split_off_pane, &new_pane, direction);
                 new_pane
             }
         };
@@ -6215,7 +6162,7 @@ impl Workspace {
                 }
                 let new_pane = self.add_pane(window, cx);
                 self.center
-                    .split(&self.active_pane, &new_pane, action.direction, cx);
+                    .split(&self.active_pane, &new_pane, action.direction);
                 new_pane
             }
         };
@@ -6264,7 +6211,7 @@ impl Workspace {
 
     pub fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
-            self.center.swap(&self.active_pane, &to, cx);
+            self.center.swap(&self.active_pane, &to);
             cx.notify();
         }
     }
@@ -6272,7 +6219,7 @@ impl Workspace {
     pub fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if self
             .center
-            .move_to_border(&self.active_pane, direction, cx)
+            .move_to_border(&self.active_pane, direction)
             .unwrap()
         {
             cx.notify();
@@ -6303,13 +6250,13 @@ impl Workspace {
             }
         } else {
             self.center
-                .resize(&self.active_pane, axis, amount, &self.bounds, cx);
+                .resize(&self.active_pane, axis, amount, &self.bounds);
         }
         cx.notify();
     }
 
     pub fn reset_pane_sizes(&mut self, cx: &mut Context<Self>) {
-        self.center.reset_pane_sizes(cx);
+        self.center.reset_pane_sizes();
         cx.notify();
     }
 
@@ -6553,7 +6500,7 @@ impl Workspace {
     ) -> Entity<Pane> {
         let new_pane = self.add_pane(window, cx);
         self.center
-            .split(&pane_to_split, &new_pane, split_direction, cx);
+            .split(&pane_to_split, &new_pane, split_direction);
         cx.notify();
         new_pane
     }
@@ -6572,7 +6519,7 @@ impl Workspace {
         new_pane.update(cx, |pane, cx| {
             pane.add_item(item, true, true, None, window, cx)
         });
-        self.center.split(&pane, &new_pane, direction, cx);
+        self.center.split(&pane, &new_pane, direction);
         cx.notify();
     }
 
@@ -6599,7 +6546,7 @@ impl Workspace {
                         pane.set_nav_history(nav_history, cx);
                         pane.add_item(clone, true, true, None, window, cx)
                     });
-                    this.center.split(&pane, &new_pane, direction, cx);
+                    this.center.split(&pane, &new_pane, direction);
                     cx.notify();
                     new_pane
                 })
@@ -6646,7 +6593,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.center.remove(&pane, cx).unwrap() {
+        if self.center.remove(&pane).unwrap() {
             if self
                 .maximized_pane
                 .as_ref()
@@ -8326,8 +8273,6 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
-                    workspace.center.set_is_center(true);
-                    workspace.center.mark_positions(cx);
 
                     if let Some(active_pane) = active_pane {
                         workspace.set_active_pane(&active_pane, window, cx);
@@ -11862,7 +11807,6 @@ pub fn open_workspace_by_id(
     })
 }
 
-#[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,

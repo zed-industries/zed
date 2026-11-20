@@ -55,6 +55,7 @@ pub async fn stream_completion(
                 1.0,
                 model.max_output_tokens().unwrap_or(8192),
                 mode,
+                None,
                 AnthropicPromptCacheMode::Automatic,
                 &config.provider_id,
             )?;

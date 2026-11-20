@@ -20,7 +20,6 @@ pub enum RedirectPolicy {
     FollowLimit(u32),
     FollowAll,
 }
-pub struct FollowRedirects(pub bool);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestTimeout(pub Duration);

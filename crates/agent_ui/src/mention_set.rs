@@ -808,13 +808,10 @@ mod tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
     use project::Project;
-    use prompt_store;
-    use release_channel;
     use semver::Version;
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::Path;
-    use theme;
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {

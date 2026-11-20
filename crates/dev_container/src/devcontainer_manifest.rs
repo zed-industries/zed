@@ -464,8 +464,7 @@ impl DevContainerManifest {
         })?;
 
         let dockerfile_path = features_content_dir.join("Dockerfile.extended");
-        let image_tag =
-            self.generate_features_image_tag(dockerfile_path.clone().display().to_string());
+        let image_tag = self.generate_features_image_tag(dockerfile_path.display().to_string());
 
         let build_info = FeaturesBuildInfo {
             dockerfile_path,
@@ -4220,12 +4219,7 @@ mod test {
         let given_docker_compose_config = DockerComposeResources {
             config: DockerComposeConfig {
                 name: Some("devcontainers".to_string()),
-                services: HashMap::from([(
-                    "found_service".to_string(),
-                    DockerComposeService {
-                        ..Default::default()
-                    },
-                )]),
+                services: HashMap::from([("found_service".to_string(), Default::default())]),
                 ..Default::default()
             },
             ..Default::default()

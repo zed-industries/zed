@@ -1547,6 +1547,15 @@ fn anthropic_model_id(model: &ConverseModel) -> Option<&str> {
         .map(|(_, model_id)| model_id)
 }
 
+/// Claude models that think when a request has no `thinking` field, so that
+/// turning thinking off takes an explicit `disabled`. Neither listing source
+/// records this.
+const THINKS_BY_DEFAULT: &[&str] = &["claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5"];
+
+fn thinks_by_default(model: &ConverseModel) -> bool {
+    anthropic_model_id(model).is_some_and(|model_id| THINKS_BY_DEFAULT.contains(&model_id))
+}
+
 /// Whether `model` is driven through OpenAI's request conventions.
 fn is_openai_model(model: &ConverseModel) -> bool {
     model.base_model_id.starts_with("openai.")
@@ -2234,10 +2243,8 @@ impl MantleResponseEventMapper {
                     // suffix.
                     if snapshot.starts_with(&previous.text) && snapshot.len() > previous.text.len()
                     {
-                        if let Some(current_message) = self.current_message.as_mut() {
-                            current_message.kind = MantleMessageSnapshotKind::Cumulative;
-                            current_message.emitted_text_length = previous.text.len();
-                        }
+                        current_message.kind = MantleMessageSnapshotKind::Cumulative;
+                        current_message.emitted_text_length = previous.text.len();
                         let mut events = Vec::new();
                         self.flush_pending_message(&mut events, true);
                         events.extend(self.map_snapshot_suffix(output_index, content_index));
@@ -2255,9 +2262,7 @@ impl MantleResponseEventMapper {
 
                 // Diverged from the previous message, had a different phase, or there
                 // was no previous message: this is an independent message.
-                if let Some(current_message) = self.current_message.as_mut() {
-                    current_message.kind = MantleMessageSnapshotKind::Independent;
-                }
+                current_message.kind = MantleMessageSnapshotKind::Independent;
                 let mut events = Vec::new();
                 self.flush_pending_message(&mut events, false);
                 events.extend(self.map_text_event(item_id, output_index, content_index, snapshot));
@@ -3064,13 +3069,7 @@ pub fn into_bedrock(
                 budget_tokens: Some(budget_tokens),
             })
         }
-        _ if !thinking_allowed
-            && anthropic_model_id.is_some_and(anthropic::requires_explicit_thinking_opt_out) =>
-        {
-            // These models default to adaptive thinking, so turning it off requires `disabled`.
-            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
-            Some(bedrock::Thinking::Disabled)
-        }
+        _ if !thinking_allowed && thinks_by_default(model) => Some(bedrock::Thinking::Disabled),
         _ => None,
     };
     // Thinking and sampling controls are incompatible on Anthropic requests.
@@ -3099,10 +3098,7 @@ pub fn into_bedrock(
         system: system_blocks,
         tools: tool_config,
         thinking,
-        metadata: None,
-        stop_sequences: Vec::new(),
         temperature,
-        top_k: None,
         top_p: None,
         guardrail_identifier,
         guardrail_version,
@@ -7004,8 +7000,7 @@ mod tests {
             )?;
 
             assert_eq!(request.max_tokens, Some(expected_output));
-            if anthropic_model_id(&model).is_some_and(anthropic::requires_explicit_thinking_opt_out)
-            {
+            if thinks_by_default(&model) {
                 assert!(
                     matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
                     "{base_model_id} should send an explicit thinking opt-out"
@@ -7058,7 +7053,6 @@ mod tests {
                 None,
             )
             .unwrap();
-            assert_eq!(request.top_k, None, "{} must not send top_k", model.id);
             assert_eq!(request.top_p, None, "{} must not send top_p", model.id);
             request.temperature
         };

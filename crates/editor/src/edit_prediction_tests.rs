@@ -1815,7 +1815,7 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         self.completion.take();
     }
 
-    fn suggest<'a>(
+    fn suggest(
         &mut self,
         _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
@@ -1893,7 +1893,7 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
         self.completion.take();
     }
 
-    fn suggest<'a>(
+    fn suggest(
         &mut self,
         _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,

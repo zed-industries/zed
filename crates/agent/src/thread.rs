@@ -1332,7 +1332,6 @@ pub struct Thread {
     /// the start of each request.
     current_request_token_usage: TokenUsage,
     pending_compaction_telemetry: Option<CompactionTelemetry>,
-    #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
@@ -4121,10 +4120,6 @@ impl Thread {
         self.title.clone()
     }
 
-    pub fn is_generating_summary(&self) -> bool {
-        self.pending_summary_generation.is_some()
-    }
-
     pub fn is_generating_title(&self) -> bool {
         self.pending_title_generation.is_some()
     }
@@ -4511,12 +4506,6 @@ impl Thread {
 
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
         self.running_turn.as_ref()?.tools.get(name).cloned()
-    }
-
-    pub fn has_tool(&self, name: &str) -> bool {
-        self.running_turn
-            .as_ref()
-            .is_some_and(|turn| turn.tools.contains_key(name))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -7156,18 +7145,6 @@ impl ToolCallEventStreamReceiver {
             update.diff
         } else {
             panic!("Expected diff but got: {:?}", event);
-        }
-    }
-
-    pub async fn expect_terminal(&mut self) -> Entity<acp_thread::Terminal> {
-        let event = self.0.next().await;
-        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateTerminal(
-            update,
-        )))) = event
-        {
-            update.terminal
-        } else {
-            panic!("Expected terminal but got: {:?}", event);
         }
     }
 }

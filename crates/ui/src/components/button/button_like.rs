@@ -189,7 +189,6 @@ impl ButtonLikeRounding {
 #[derive(Debug, Clone)]
 pub(crate) struct ButtonLikeStyles {
     pub background: Hsla,
-    #[allow(unused)]
     pub border_color: Hsla,
     #[allow(unused)]
     pub label_color: Hsla,

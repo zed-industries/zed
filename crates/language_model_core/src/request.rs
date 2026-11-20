@@ -547,12 +547,6 @@ impl Speed {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct LanguageModelResponseMessage {
-    pub role: Option<Role>,
-    pub content: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

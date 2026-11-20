@@ -206,10 +206,6 @@ impl Workspace {
         self.suppressed_notifications.contains(&notification_id)
     }
 
-    pub fn unsuppress(&mut self, notification_id: NotificationId) {
-        self.suppressed_notifications.remove(&notification_id);
-    }
-
     pub fn show_initial_notifications(&mut self, cx: &mut Context<Self>) {
         // Allow absence of the global so that tests don't need to initialize it.
         let app_notifications = GLOBAL_APP_NOTIFICATIONS
@@ -829,14 +825,6 @@ pub mod simple_message_notification {
             self
         }
 
-        pub fn secondary_on_click_arc<F>(mut self, on_click: Arc<F>) -> Self
-        where
-            F: 'static + Fn(&mut Window, &mut Context<Self>),
-        {
-            self.secondary_on_click = Some(on_click);
-            self
-        }
-
         /// Adds an entry to a dropdown attached to the secondary action button,
         /// turning it into a split button. Like the buttons themselves, choosing
         /// an entry dismisses the notification.
@@ -1214,7 +1202,7 @@ pub mod simple_message_notification {
                                                 .id("message-notification-content")
                                                 .max_h(vh(0.6, window))
                                                 .overflow_y_scroll()
-                                                .track_scroll(&self.scroll_handle.clone())
+                                                .track_scroll(&self.scroll_handle)
                                                 .child(main_content),
                                         )
                                         .vertical_scrollbar_for(&self.scroll_handle, window, cx),

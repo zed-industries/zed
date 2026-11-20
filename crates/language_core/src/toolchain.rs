@@ -89,8 +89,6 @@ impl ToolchainScope {
 pub struct ToolchainMetadata {
     /// Returns a term which we should use in UI to refer to toolchains produced by a given `ToolchainLister`.
     pub term: SharedString,
-    /// A user-facing placeholder describing the semantic meaning of a path to a new toolchain.
-    pub new_toolchain_placeholder: SharedString,
     /// The name of the manifest file for this toolchain.
     pub manifest_name: ManifestName,
 }

@@ -4160,6 +4160,7 @@ dependencies = [
  "futures 0.3.34",
  "http_client",
  "itertools 0.14.0",
+ "log",
  "parking_lot",
  "semver",
  "serde",
@@ -5574,7 +5575,6 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-html",
  "tree-sitter-md",
- "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
@@ -9686,7 +9686,6 @@ dependencies = [
  "language_model_core",
  "log",
  "parking_lot",
- "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -18162,11 +18161,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "futures 0.3.34",
  "gpui",
  "hex",
  "log",
- "parking_lot",
  "pretty_assertions",
  "proto",
  "schemars 1.0.4",

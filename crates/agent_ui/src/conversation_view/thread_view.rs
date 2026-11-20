@@ -2265,6 +2265,7 @@ impl ThreadView {
                             server_view.clone(),
                             AuthRequired::new(),
                             connection,
+                            None,
                             window,
                             cx,
                         );
@@ -2917,7 +2918,6 @@ impl ThreadView {
                 message_editor.update(cx, |message_editor, cx| {
                     message_editor.clear(window, cx);
                 });
-                cx.notify();
             })?;
             Ok(())
         })
@@ -3298,7 +3298,6 @@ impl ThreadView {
         }
         self.set_editor_is_expanded(!self.editor_expanded, cx);
         cx.stop_propagation();
-        cx.notify();
     }
 
     pub fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
@@ -5422,7 +5421,7 @@ impl ThreadView {
                                 this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
                             })
                             .key_binding(
-                                KeyBinding::for_action_in(&RejectAll, &focus_handle.clone(), cx)
+                                KeyBinding::for_action_in(&RejectAll, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -5979,7 +5978,7 @@ impl ThreadView {
                                         this.key_binding(
                                             KeyBinding::for_action_in(
                                                 action.as_ref(),
-                                                &focus_handle.clone(),
+                                                &focus_handle,
                                                 cx,
                                             )
                                             .map(|kb| kb.size(keybinding_size)),
@@ -8657,7 +8656,9 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.thread_search_bar.is_none() {
+        let search_bar = if let Some(search_bar) = self.thread_search_bar.clone() {
+            search_bar
+        } else {
             let thread = self.thread.clone();
             let view = cx.entity().downgrade();
             let on_activate =
@@ -8696,27 +8697,21 @@ impl ThreadView {
                     }
                 },
             ));
-            self.thread_search_bar = Some(search_bar);
-        }
+            self.thread_search_bar = Some(search_bar.clone());
+            search_bar
+        };
 
         // Re-focus an open bar unless it already owns focus.
-        let search_bar_focused = self
-            .thread_search_bar
-            .as_ref()
-            .is_some_and(|bar| bar.focus_handle(cx).contains_focused(window, cx));
+        let search_bar_focused = search_bar.focus_handle(cx).contains_focused(window, cx);
 
         if self.thread_search_visible && search_bar_focused {
-            if let Some(bar) = &self.thread_search_bar {
-                bar.update(cx, |bar, cx| bar.clear_highlights(cx));
-            }
+            search_bar.update(cx, |bar, cx| bar.clear_highlights(cx));
             self.thread_search_visible = false;
             self.message_editor.focus_handle(cx).focus(window, cx);
             cx.notify();
         } else {
             self.thread_search_visible = true;
-            if let Some(bar) = self.thread_search_bar.clone() {
-                bar.update(cx, |bar, cx| bar.focus_and_refresh(window, cx));
-            }
+            search_bar.update(cx, |bar, cx| bar.focus_and_refresh(window, cx));
             cx.notify();
         }
     }
@@ -13328,6 +13323,7 @@ impl ThreadView {
                             server_view,
                             AuthRequired::new(),
                             connection,
+                            None,
                             window,
                             cx,
                         );
@@ -13437,7 +13433,6 @@ impl ThreadView {
             .on_click(cx.listener({
                 move |this, _, _, cx| {
                     this.clear_thread_error(cx);
-                    cx.notify();
                 }
             }))
     }

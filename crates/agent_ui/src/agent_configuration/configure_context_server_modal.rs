@@ -1148,17 +1148,17 @@ impl Render for ConfigureContextServerModal {
                                                 self.render_loading("Connecting Server…")
                                             }
                                             State::AuthRequired { server_id } => {
-                                                self.render_auth_required(&server_id.clone(), cx)
+                                                self.render_auth_required(server_id, cx)
                                             }
                                             State::ClientSecretRequired { server_id, error } => {
                                                 self.render_client_secret_required(
-                                                    &server_id.clone(),
+                                                    server_id,
                                                     error.clone(),
                                                     cx,
                                                 )
                                             }
                                             State::Authenticating { server_id } => {
-                                                self.render_authenticating(&server_id.clone(), cx)
+                                                self.render_authenticating(server_id, cx)
                                             }
                                             State::Error(error) => {
                                                 Self::render_modal_error(error.clone())

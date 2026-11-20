@@ -3,7 +3,6 @@ pub mod agent_server_store;
 pub mod bookmark_store;
 pub mod buffer_store;
 pub mod color_extractor;
-pub mod connection_manager;
 pub mod context_server_store;
 pub mod debounced_delay;
 pub mod debugger;
@@ -47,14 +46,14 @@ use crate::{
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
-    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate, delta_checkout_short_name,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
     worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
-pub use worktree_store::WorktreePaths;
+pub use worktree_store::{DeltaClone, WorktreePaths};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -63,10 +62,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{
-    VariableReference,
-    client::{DebugAdapterClient, SessionId},
-};
+use dap::{VariableReference, client::SessionId};
 
 use collections::{BTreeSet, HashMap, HashSet, IndexSet};
 use debounced_delay::DebouncedDelay;
@@ -203,13 +199,6 @@ pub trait ProjectItem: 'static {
     fn entry_id(&self, cx: &App) -> Option<ProjectEntryId>;
     fn project_path(&self, cx: &App) -> Option<ProjectPath>;
     fn is_dirty(&self) -> bool;
-}
-
-#[derive(Clone)]
-pub enum OpenedBufferEvent {
-    Disconnected,
-    Ok(BufferId),
-    Err(BufferId, Arc<anyhow::Error>),
 }
 
 #[derive(Debug, Clone)]
@@ -455,11 +444,6 @@ pub enum Event {
 }
 
 pub struct AgentLocationChanged;
-
-pub enum DebugAdapterClientState {
-    Starting(Task<Option<Arc<DebugAdapterClient>>>),
-    Running(Arc<DebugAdapterClient>),
-}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ProjectPath {
@@ -1267,8 +1251,6 @@ impl DisableAiSettings {
 
 impl Project {
     pub fn init(client: &Arc<Client>, cx: &mut App) {
-        connection_manager::init(client.clone(), cx);
-
         let client: AnyProtoClient = client.clone().into();
         client.add_entity_message_handler(Self::handle_add_collaborator);
         client.add_entity_message_handler(Self::handle_update_project_collaborator);
@@ -5487,19 +5469,6 @@ impl Project {
         });
     }
 
-    pub fn remove_worktree_for_main_worktree_path(
-        &mut self,
-        path: impl AsRef<Path>,
-        cx: &mut Context<Self>,
-    ) {
-        let path = path.as_ref();
-        self.worktree_store.update(cx, |worktree_store, cx| {
-            if let Some(worktree) = worktree_store.worktree_for_main_worktree_path(path, cx) {
-                worktree_store.remove_worktree(worktree.read(cx).id(), cx);
-            }
-        });
-    }
-
     fn add_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
@@ -5682,15 +5651,6 @@ impl Project {
         self.worktree_store
             .read(cx)
             .project_path_for_absolute_path(abs_path, cx)
-    }
-
-    pub fn get_workspace_root(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
-        Some(
-            self.worktree_for_id(project_path.worktree_id, cx)?
-                .read(cx)
-                .abs_path()
-                .to_path_buf(),
-        )
     }
 
     pub fn blame_buffer(
@@ -6880,20 +6840,12 @@ impl Project {
         self.worktree_store.read(cx).path_style()
     }
 
-    pub fn contains_local_settings_file(
-        &self,
-        worktree_id: WorktreeId,
-        rel_path: &RelPath,
-        cx: &App,
-    ) -> bool {
-        self.worktree_for_id(worktree_id, cx)
-            .map_or(false, |worktree| {
-                worktree.read(cx).entry_for_path(rel_path).is_some()
-            })
-    }
-
     pub fn worktree_paths(&self, cx: &App) -> WorktreePaths {
         self.worktree_store.read(cx).paths(cx)
+    }
+
+    pub fn git_worktree_paths(&self, cx: &App) -> WorktreePaths {
+        self.worktree_store.read(cx).git_paths(cx)
     }
 
     pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
@@ -7348,7 +7300,7 @@ fn hovered_debug_identifier_expression(
 ) -> Option<(String, Range<Anchor>)> {
     let offset = snapshot.point_utf16_to_offset(position);
     let (range, _) = snapshot.surrounding_word(offset, None);
-    if range.is_empty() || !(range.start..range.end).contains(&offset) {
+    if range.is_empty() || !range.contains(&offset) {
         return None;
     }
     let node = snapshot.syntax_ancestor(offset..offset)?;

@@ -172,10 +172,6 @@ impl<T: AsRef<Path>> PathExt for T {
     }
 }
 
-pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
-    strip_path_suffix(base, suffix).is_some()
-}
-
 /// Case-insensitive ASCII comparison of a path component to a literal
 /// folder name. macOS and Windows use case-insensitive filesystems by
 /// default, so a path like `.ZED/settings.json` resolves to the same
@@ -1208,18 +1204,6 @@ fn compare_strings_no_tiebreak(a: &str, b: &str, order: SortOrder) -> Ordering {
         SortOrder::Unicode => a.cmp(b),
         _ => natural_sort_no_tiebreak(a, b),
     }
-}
-
-pub fn compare_rel_paths(
-    (path_a, a_is_file): (&RelPath, bool),
-    (path_b, b_is_file): (&RelPath, bool),
-) -> Ordering {
-    compare_rel_paths_by(
-        (path_a, a_is_file),
-        (path_b, b_is_file),
-        SortMode::DirectoriesFirst,
-        SortOrder::Default,
-    )
 }
 
 pub fn compare_rel_paths_by(

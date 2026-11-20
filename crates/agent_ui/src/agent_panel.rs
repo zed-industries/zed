@@ -105,6 +105,68 @@ use workspace::{
     notifications::NotifyTaskExt as _,
 };
 
+struct AgentAccountLabels {
+    status: watch::Receiver<Option<acp_v2::AuthStatusResponse>>,
+    _updates: Task<()>,
+}
+
+impl AgentAccountLabels {
+    fn new(
+        status: watch::Receiver<Option<acp_v2::AuthStatusResponse>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut updates = status.clone();
+        Self {
+            status,
+            _updates: cx.spawn(async move |this, cx| {
+                while updates.changed().await.is_ok() {
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            }),
+        }
+    }
+}
+
+impl Render for AgentAccountLabels {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let status = self.status.borrow();
+        let mut rows = v_flex().px_2();
+        if let Some(status) = status.as_ref() {
+            let has_active = status
+                .accounts
+                .iter()
+                .any(|account| account.active == Some(true));
+            for account in &status.accounts {
+                if has_active && account.active != Some(true) {
+                    continue;
+                }
+                let detail = [
+                    &account.organization,
+                    &account.name,
+                    &account.email,
+                    &account.description,
+                ]
+                .into_iter()
+                .filter_map(|field| field.as_deref())
+                .find(|text| !text.is_empty());
+                let label = match detail {
+                    Some(detail) => format!("{} · {detail}", account.label),
+                    None => account.label.clone(),
+                };
+                rows = rows.child(
+                    Label::new(label)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .truncate(),
+                );
+            }
+        }
+        rows
+    }
+}
+
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
@@ -155,6 +217,11 @@ fn terminal_program_to_report(
 pub struct TerminalId(uuid::Uuid);
 
 impl TerminalId {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new() -> Self {
+        Self::new()
+    }
+
     pub(crate) fn new() -> Self {
         Self(uuid::Uuid::new_v4())
     }
@@ -3311,33 +3378,6 @@ impl AgentPanel {
         thread_id
     }
 
-    pub fn activate_retained_thread(
-        &mut self,
-        id: ThreadId,
-        focus: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let conversation_view = if let Some(view) = self.remove_retained_thread(&id) {
-            self.try_make_empty_draft_ephemeral(view.clone(), cx);
-            view
-        } else if let Some(draft) = &self.draft_thread {
-            if draft.read(cx).thread_id == id {
-                draft.clone()
-            } else {
-                return;
-            }
-        } else {
-            return;
-        };
-        self.set_base_view(
-            BaseView::AgentThread { conversation_view },
-            focus,
-            window,
-            cx,
-        );
-    }
-
     pub fn active_thread_id(&self, cx: &App) -> Option<ThreadId> {
         match &self.base_view {
             BaseView::AgentThread { conversation_view } => {
@@ -3945,7 +3985,7 @@ impl AgentPanel {
 
         cx.spawn_in(window, async move |this, cx| {
             thread_store
-                .update(&mut cx.clone(), |store, cx| {
+                .update(cx, |store, cx| {
                     store.save_thread(session_id.clone(), db_thread, Default::default(), cx)
                 })
                 .await?;
@@ -5196,10 +5236,6 @@ impl Panel for AgentPanel {
         AgentSettings::get_global(cx).enabled(cx)
     }
 
-    fn is_agent_panel(&self) -> bool {
-        true
-    }
-
     fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
         Some(workspace::HideStatusItem::new(|settings| {
             settings.agent.get_or_insert_default().button = Some(false);
@@ -5890,8 +5926,15 @@ impl AgentPanel {
                             .separator()
                             .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
 
-                        if has_auth_methods || supports_logout {
+                        let auth_status = conversation_view
+                            .as_ref()
+                            .and_then(|view| view.read(cx).agent_auth_status());
+                        if has_auth_methods || supports_logout || auth_status.is_some() {
                             menu = menu.separator()
+                        }
+                        if let Some(status) = auth_status {
+                            menu = menu
+                                .embedded_view(cx.new(|cx| AgentAccountLabels::new(status, cx)));
                         }
                         if has_auth_methods {
                             menu = menu.action("Reauthenticate", Box::new(ReauthenticateAgent))
