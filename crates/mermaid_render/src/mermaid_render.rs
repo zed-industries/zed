@@ -190,6 +190,91 @@ mod tests {
     use super::*;
 
     #[test]
+    fn flowchart_preserves_explicit_node_colors() {
+        let theme = MermaidTheme {
+            accent_colors: vec![AccentColor {
+                foreground: gpui::rgb(0).into(),
+                background: gpui::rgb(0).into(),
+            }],
+            ..MermaidTheme::default()
+        };
+        let source = "flowchart LR\n\
+            A[Class color]:::red --> B[Inline color] --> C[Theme color]\n\
+            classDef red fill:#ff8a80,stroke:#a00000\n\
+            style B fill:#82b1ff,stroke:#0000a0";
+        let svg = render_to_svg(source, &theme).expect("render failed");
+        let tree =
+            usvg::Tree::from_str(&svg, &usvg::Options::default()).expect("SVG parsing failed");
+
+        let mut fills = Vec::new();
+        let mut strokes = Vec::new();
+        collect_path_colors(tree.root(), &mut fills, &mut strokes);
+        for expected in [
+            usvg::Color::new_rgb(0xff, 0x8a, 0x80),
+            usvg::Color::new_rgb(0x82, 0xb1, 0xff),
+            usvg::Color::new_rgb(0xd9, 0xd9, 0xd9),
+        ] {
+            assert!(fills.contains(&expected), "missing fill {expected:?}");
+        }
+        for expected in [
+            usvg::Color::new_rgb(0xa0, 0, 0),
+            usvg::Color::new_rgb(0, 0, 0xa0),
+        ] {
+            assert!(strokes.contains(&expected), "missing stroke {expected:?}");
+        }
+    }
+
+    #[test]
+    fn state_diagram_start_keeps_accent_color() {
+        let theme = MermaidTheme {
+            accent_colors: vec![
+                AccentColor {
+                    foreground: gpui::rgb(0).into(),
+                    background: gpui::rgb(0).into(),
+                },
+                AccentColor {
+                    foreground: gpui::rgb(0xff0000).into(),
+                    background: gpui::rgb(0xff0000).into(),
+                },
+            ],
+            ..MermaidTheme::default()
+        };
+        let svg = render_to_svg("stateDiagram-v2\n[*] --> Ready", &theme).expect("render failed");
+        let tree =
+            usvg::Tree::from_str(&svg, &usvg::Options::default()).expect("SVG parsing failed");
+        let mut fills = Vec::new();
+        let mut strokes = Vec::new();
+        collect_path_colors(tree.root(), &mut fills, &mut strokes);
+        assert!(fills.contains(&usvg::Color::new_rgb(0xd9, 0xd9, 0xd9)));
+        assert!(strokes.contains(&usvg::Color::new_rgb(0, 0, 0)));
+    }
+
+    fn collect_path_colors(
+        group: &usvg::Group,
+        fills: &mut Vec<usvg::Color>,
+        strokes: &mut Vec<usvg::Color>,
+    ) {
+        for node in group.children() {
+            match node {
+                usvg::Node::Group(group) => collect_path_colors(group, fills, strokes),
+                usvg::Node::Path(path) => {
+                    if let Some(fill) = path.fill()
+                        && let usvg::Paint::Color(color) = fill.paint()
+                    {
+                        fills.push(*color);
+                    }
+                    if let Some(stroke) = path.stroke()
+                        && let usvg::Paint::Color(color) = stroke.paint()
+                    {
+                        strokes.push(*color);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
     fn mermaid_diagram_with_mixed_weight_combining_marks_does_not_panic() {
         const IBM_PLEX_REGULAR: &[u8] =
             include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
