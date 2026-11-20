@@ -64,6 +64,8 @@ actions!(
         DeleteRight,
         /// Deletes using Helix-style behavior.
         HelixDelete,
+        /// Deletes using Helix-style behavior without yanking.
+        HelixDeleteNoYank,
         /// Collapse the current selection
         HelixCollapseSelection,
         /// Changes from cursor to end of line.
@@ -144,7 +146,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.delete_motion(Motion::Right, times, forced_motion, window, cx);
     });
 
-    Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
+    fn helix_delete_action(vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>, with_yank: bool) {
         vim.record_current_action(cx);
         let original_selections =
             vim.update_editor(cx, |_, editor, _| editor.selections.disjoint_anchors_arc());
@@ -157,7 +159,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 })
             })
         });
-        let transaction_id = vim.visual_delete(false, window, cx);
+        let transaction_id = vim.visual_delete_with_optional_yank(false, window, cx, with_yank);
         if let (Some(original_selections), Some(transaction_id)) =
             (original_selections, transaction_id)
             && !original_selections.is_empty()
@@ -170,6 +172,14 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             debug_assert_ne!(updated, Some(false));
         }
         vim.switch_mode(Mode::HelixNormal, true, window, cx);
+    }
+
+    Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
+        helix_delete_action(vim, window, cx, true);
+    });
+
+    Vim::action(editor, cx, |vim, _: &HelixDeleteNoYank, window, cx| {
+        helix_delete_action(vim, window, cx, false);
     });
 
     Vim::action(editor, cx, |vim, _: &HelixCollapseSelection, window, cx| {
