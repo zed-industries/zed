@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use crate::{
     real_crates_io_client::{MIN_REQUEST_INTERVAL, RequestThrottle},
+    simulated_crates_io_client::SimulatedCratesIoClient,
     *,
 };
 
@@ -175,6 +176,145 @@ fn test_list_crates_requests_next_page_only_after_full_page() {
 }
 
 #[test]
+fn test_team_identity_is_shared_across_ownership_assignments() -> anyhow::Result<()> {
+    let client = SimulatedCratesIoClient::new();
+    let owner = client.token_user();
+    let crates: Vec<_> = ["alpha", "beta", "delta", "gamma"]
+        .into_iter()
+        .map(|name| client.test_crate(name, owner))
+        .collect();
+    let login = OwnerLogin::GitHubTeam {
+        organization: "zed-industries".into(),
+        team: "crates-io".into(),
+    };
+    let mut team_id = None;
+    for (index, name) in crates.iter().enumerate() {
+        if index % 2 == 0 {
+            let id = client.test_team_owner(name, &login.to_string())?;
+            if let Some(previous_id) = team_id {
+                assert_eq!(id, previous_id);
+            }
+            team_id = Some(id);
+        } else {
+            smol::block_on(client.add_owners(name, std::slice::from_ref(&login)))?;
+        }
+    }
+    let listed = smol::block_on(client.list_crates(&CrateListQuery {
+        team_id,
+        ..Default::default()
+    }))?;
+    assert_eq!(
+        listed
+            .into_iter()
+            .map(|krate| krate.name)
+            .collect::<Vec<_>>(),
+        crates
+    );
+    Ok(())
+}
+
+#[test]
+fn test_list_crates_filter_precedence() -> anyhow::Result<()> {
+    let client = SimulatedCratesIoClient::new();
+    let user_owned = client.test_crate("user-owned", client.token_user());
+    let other_user = client.test_user();
+    let keyword_match = client.test_crate("keyword-match", other_user);
+    let team_owned = client.test_crate("team-owned", other_user);
+    client.update_test_crate(&keyword_match, |krate| {
+        krate.keywords = Some(vec!["keyword".into()]);
+    })?;
+    let team_id = client.test_team_owner(&team_owned, "github:zed-industries:crates-io")?;
+    for (keyword, user_id, expected) in [
+        (None, Some(client.token_user()), &user_owned),
+        (Some(""), Some(client.token_user()), &user_owned),
+        (Some(""), None, &team_owned),
+        (Some("keyword"), Some(client.token_user()), &keyword_match),
+        (Some("keyword"), None, &keyword_match),
+    ] {
+        let listed = smol::block_on(client.list_crates(&CrateListQuery {
+            keyword: keyword.map(str::to_owned),
+            user_id,
+            team_id: Some(team_id),
+            ..Default::default()
+        }))?;
+        assert_eq!(
+            listed.iter().map(|krate| &krate.name).collect::<Vec<_>>(),
+            [expected]
+        );
+    }
+    let listed = smol::block_on(client.list_crates(&CrateListQuery {
+        keyword: Some(" ".into()),
+        user_id: Some(client.token_user()),
+        team_id: Some(team_id),
+        ..Default::default()
+    }))?;
+    assert!(listed.is_empty());
+    Ok(())
+}
+
+#[test]
+fn test_list_crates_filters_by_team_id() -> anyhow::Result<()> {
+    let simulated_client = SimulatedCratesIoClient::new();
+    let owner = simulated_client.token_user();
+    let matching = simulated_client.test_crate("matching", owner);
+    let other = simulated_client.test_crate("other", owner);
+    simulated_client.test_crate("unowned-by-team", owner);
+    let team_id = simulated_client.test_team_owner(&matching, "github:zed-industries:crates-io")?;
+    let other_team_id = simulated_client.test_team_owner(&other, "github:zed-industries:other")?;
+    let query = CrateListQuery {
+        team_id: Some(team_id),
+        ..Default::default()
+    };
+
+    let crates = smol::block_on(simulated_client.list_crates(&query))?;
+    assert_eq!(
+        crates.iter().map(|krate| &krate.name).collect::<Vec<_>>(),
+        [&matching]
+    );
+    let crates = smol::block_on(simulated_client.list_crates(&CrateListQuery {
+        team_id: Some(other_team_id),
+        ..Default::default()
+    }))?;
+    assert_eq!(
+        crates.iter().map(|krate| &krate.name).collect::<Vec<_>>(),
+        [&other]
+    );
+    assert_eq!(
+        smol::block_on(simulated_client.list_crates(&CrateListQuery::default()))?.len(),
+        3
+    );
+
+    let (fake_http_client, requests) = recording_fake_http_client(|_| {
+        (
+            StatusCode::OK,
+            json!({
+                "crates": [crate_json("matching")],
+                "meta": { "next_page": null },
+            }),
+        )
+    });
+    let real_client = RealCratesIoClient::new(fake_http_client, ApiToken::new("secret"));
+    let crates = smol::block_on(real_client.list_crates(&query))?;
+    assert_eq!(
+        crates.iter().map(|krate| &krate.name).collect::<Vec<_>>(),
+        [&matching]
+    );
+    let requests = requests.lock();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests.first().map(|request| request.uri.as_str()),
+        Some(
+            format!(
+                "https://crates.io/api/v1/crates?per_page=100&team_id={}",
+                team_id.0
+            )
+            .as_str()
+        )
+    );
+    Ok(())
+}
+
+#[test]
 fn test_update_crate_sends_settings_wrapped_in_crate_object() {
     let (fake_http_client, requests) =
         recording_fake_http_client(|_| (StatusCode::OK, json!({ "crate": crate_json("gpui") })));
@@ -316,12 +456,12 @@ fn test_owner_endpoints_match_crates_io_api() {
     let client = || RealCratesIoClient::new(fake_http_client.clone(), ApiToken::new("secret"));
     let gpui = CrateName::new("gpui");
     let owner_logins = [
-        OwnerLogin::Username("maxbrunsfeld".to_owned()),
-        OwnerLogin::CratesIoUser("maxbrunsfeld".to_owned()),
-        OwnerLogin::GitHubUser("maxbrunsfeld".to_owned()),
+        OwnerLogin::Username("maxbrunsfeld".into()),
+        OwnerLogin::CratesIoUser("maxbrunsfeld".to_owned().into()),
+        OwnerLogin::GitHubUser("maxbrunsfeld".into()),
         OwnerLogin::GitHubTeam {
-            organization: "zed-industries".to_owned(),
-            team: "crates-io".to_owned(),
+            organization: "zed-industries".into(),
+            team: "crates-io".into(),
         },
     ];
 
