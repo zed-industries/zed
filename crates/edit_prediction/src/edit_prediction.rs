@@ -87,6 +87,7 @@ pub mod ollama;
 mod onboarding_modal;
 pub mod open_ai_response;
 mod prediction;
+mod qwen;
 pub mod sweep_prompt;
 
 pub mod udiff;
