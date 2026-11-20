@@ -90,6 +90,10 @@ pub(crate) fn windows_credentials_target_name(url: &str) -> String {
     format!("zed:url={}", url)
 }
 
+pub(crate) fn windows_credentials_chunk_target_name(url: &str, part_index: usize) -> String {
+    format!("zed:url={}:part:{}", url, part_index)
+}
+
 pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {
     static ARROW: OnceLock<SafeCursor> = OnceLock::new();
     static IBEAM: OnceLock<SafeCursor> = OnceLock::new();
