@@ -21,6 +21,19 @@ pub enum TerminalCommandValidation {
 }
 
 pub fn extract_commands(command: &str) -> Option<Vec<String>> {
+    Some(collect_commands(command)?.commands)
+}
+
+/// Returns the prefix of every simple command in `command`, read from the parse tree.
+///
+/// Calling `extract_terminal_command_prefix` on each string from `extract_commands` is not
+/// equivalent: those strings have their quotes stripped, so an argument such as
+/// `'%(refname:short)'` or `"don't"` makes them fail to parse on their own.
+pub fn extract_command_prefixes(command: &str) -> Option<Vec<TerminalCommandPrefix>> {
+    Some(collect_commands(command)?.prefixes)
+}
+
+fn collect_commands(command: &str) -> Option<CommandCollector> {
     let reader = BufReader::new(command.as_bytes());
     let options = ParserOptions::default();
     let source_info = SourceInfo::default();
@@ -28,10 +41,35 @@ pub fn extract_commands(command: &str) -> Option<Vec<String>> {
 
     let program = parser.parse_program().ok()?;
 
-    let mut commands = Vec::new();
+    let mut commands = CommandCollector::default();
     extract_commands_from_program(&program, &mut commands)?;
 
     Some(commands)
+}
+
+#[derive(Default)]
+struct CommandCollector {
+    commands: Vec<String>,
+    prefixes: Vec<TerminalCommandPrefix>,
+}
+
+impl CommandCollector {
+    fn len(&self) -> usize {
+        self.commands.len()
+    }
+
+    fn push(&mut self, command: String) {
+        self.commands.push(command);
+    }
+
+    fn extend(&mut self, commands: impl IntoIterator<Item = String>) {
+        self.commands.extend(commands);
+    }
+
+    fn append(&mut self, other: CommandCollector) {
+        self.commands.extend(other.commands);
+        self.prefixes.extend(other.prefixes);
+    }
 }
 
 pub fn extract_terminal_command_prefix(command: &str) -> Option<TerminalCommandPrefix> {
@@ -42,7 +80,36 @@ pub fn extract_terminal_command_prefix(command: &str) -> Option<TerminalCommandP
 
     let program = parser.parse_program().ok()?;
     let simple_command = first_simple_command(&program)?;
+    let prefix_words = command_prefix_words(simple_command)?;
 
+    let start = prefix_words.display_start?;
+    let end = prefix_words.display_end?;
+    let display = command.get(start..end)?.to_string();
+
+    Some(prefix_words.into_prefix(display))
+}
+
+struct CommandPrefixWords {
+    tokens: Vec<String>,
+    command: String,
+    subcommand: Option<String>,
+    display_start: Option<usize>,
+    display_end: Option<usize>,
+}
+
+impl CommandPrefixWords {
+    fn into_prefix(self, display: String) -> TerminalCommandPrefix {
+        TerminalCommandPrefix {
+            normalized: self.tokens.join(" "),
+            display,
+            tokens: self.tokens,
+            command: self.command,
+            subcommand: self.subcommand,
+        }
+    }
+}
+
+fn command_prefix_words(simple_command: &ast::SimpleCommand) -> Option<CommandPrefixWords> {
     let mut normalized_tokens = Vec::new();
     let mut display_start = None;
     let mut display_end = None;
@@ -85,16 +152,12 @@ pub fn extract_terminal_command_prefix(command: &str) -> Option<TerminalCommandP
         }
     }
 
-    let start = display_start?;
-    let end = display_end?;
-    let display = command.get(start..end)?.to_string();
-
-    Some(TerminalCommandPrefix {
-        normalized: normalized_tokens.join(" "),
-        display,
+    Some(CommandPrefixWords {
         tokens: normalized_tokens,
         command: command_name,
         subcommand,
+        display_start,
+        display_end,
     })
 }
 
@@ -472,7 +535,10 @@ fn combine_validations(
     }
 }
 
-fn extract_commands_from_program(program: &ast::Program, commands: &mut Vec<String>) -> Option<()> {
+fn extract_commands_from_program(
+    program: &ast::Program,
+    commands: &mut CommandCollector,
+) -> Option<()> {
     for complete_command in &program.complete_commands {
         extract_commands_from_compound_list(complete_command, commands)?;
     }
@@ -481,7 +547,7 @@ fn extract_commands_from_program(program: &ast::Program, commands: &mut Vec<Stri
 
 fn extract_commands_from_compound_list(
     compound_list: &ast::CompoundList,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     for item in &compound_list.0 {
         extract_commands_from_and_or_list(&item.0, commands)?;
@@ -491,7 +557,7 @@ fn extract_commands_from_compound_list(
 
 fn extract_commands_from_and_or_list(
     and_or_list: &ast::AndOrList,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     extract_commands_from_pipeline(&and_or_list.first, commands)?;
 
@@ -507,7 +573,7 @@ fn extract_commands_from_and_or_list(
 
 fn extract_commands_from_pipeline(
     pipeline: &ast::Pipeline,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     for command in &pipeline.seq {
         extract_commands_from_command(command, commands)?;
@@ -515,7 +581,10 @@ fn extract_commands_from_pipeline(
     Some(())
 }
 
-fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<String>) -> Option<()> {
+fn extract_commands_from_command(
+    command: &ast::Command,
+    commands: &mut CommandCollector,
+) -> Option<()> {
     match command {
         ast::Command::Simple(simple_command) => {
             extract_commands_from_simple_command(simple_command, commands)?;
@@ -558,7 +627,7 @@ enum RedirectNormalization {
 
 fn extract_commands_from_simple_command(
     simple_command: &ast::SimpleCommand,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     // Build a normalized command string from individual words, stripping shell
     // quotes so that security patterns match regardless of quoting style.
@@ -631,6 +700,11 @@ fn extract_commands_from_simple_command(
     let command_str = words.join(" ");
     if !command_str.is_empty() {
         commands.push(command_str);
+        if let Some(prefix_words) = command_prefix_words(simple_command) {
+            // Shown without quotes, like the normalized command it belongs to.
+            let display = prefix_words.tokens.join(" ");
+            commands.prefixes.push(prefix_words.into_prefix(display));
+        }
     }
     commands.extend(redirects);
 
@@ -765,7 +839,7 @@ fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormaliza
 
 fn extract_commands_from_command_prefix(
     prefix: &ast::CommandPrefix,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     for item in &prefix.0 {
         extract_commands_from_prefix_or_suffix_item(item, commands)?;
@@ -775,7 +849,7 @@ fn extract_commands_from_command_prefix(
 
 fn extract_commands_from_command_suffix(
     suffix: &ast::CommandSuffix,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     for item in &suffix.0 {
         extract_commands_from_prefix_or_suffix_item(item, commands)?;
@@ -785,7 +859,7 @@ fn extract_commands_from_command_suffix(
 
 fn extract_commands_from_prefix_or_suffix_item(
     item: &ast::CommandPrefixOrSuffixItem,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     match item {
         ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) => {
@@ -806,7 +880,7 @@ fn extract_commands_from_prefix_or_suffix_item(
 
 fn extract_commands_from_io_redirect(
     redirect: &ast::IoRedirect,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     match redirect {
         ast::IoRedirect::File(_fd, _kind, target) => match target {
@@ -835,7 +909,7 @@ fn extract_commands_from_io_redirect(
 
 fn extract_commands_from_assignment(
     assignment: &ast::Assignment,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     match &assignment.value {
         ast::AssignmentValue::Scalar(word) => {
@@ -853,7 +927,7 @@ fn extract_commands_from_assignment(
     Some(())
 }
 
-fn extract_commands_from_word(word: &ast::Word, commands: &mut Vec<String>) -> Option<()> {
+fn extract_commands_from_word(word: &ast::Word, commands: &mut CommandCollector) -> Option<()> {
     let options = ParserOptions::default();
     let pieces = brush_parser::word::parse(&word.value, &options).ok()?;
     for piece_with_source in pieces {
@@ -862,12 +936,14 @@ fn extract_commands_from_word(word: &ast::Word, commands: &mut Vec<String>) -> O
     Some(())
 }
 
-fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String>) -> Option<()> {
+fn extract_commands_from_word_piece(
+    piece: &WordPiece,
+    commands: &mut CommandCollector,
+) -> Option<()> {
     match piece {
         WordPiece::CommandSubstitution(cmd_str)
         | WordPiece::BackquotedCommandSubstitution(cmd_str) => {
-            let nested_commands = extract_commands(cmd_str)?;
-            commands.extend(nested_commands);
+            commands.append(collect_commands(cmd_str)?);
         }
         WordPiece::DoubleQuotedSequence(pieces)
         | WordPiece::GettextDoubleQuotedSequence(pieces) => {
@@ -899,7 +975,7 @@ fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String
 /// any nested command substitutions. Returns `None` (failing closed) if brush
 /// cannot tokenize the input, so callers treat allowlist decisions about this
 /// input as untrusted.
-fn extract_commands_from_word_string(s: &str, commands: &mut Vec<String>) -> Option<()> {
+fn extract_commands_from_word_string(s: &str, commands: &mut CommandCollector) -> Option<()> {
     let options = ParserOptions::default();
     let pieces = brush_parser::word::parse(s, &options).ok()?;
     for inner_piece in pieces {
@@ -915,7 +991,7 @@ fn extract_commands_from_word_string(s: &str, commands: &mut Vec<String>) -> Opt
 /// `${V:-$(curl evil)}`, `${V/pat/$(curl evil)}`, `${V:$(($(curl))):1}`.
 fn extract_commands_from_parameter_expr(
     expr: &brush_parser::word::ParameterExpr,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     use brush_parser::word::ParameterExpr;
     match expr {
@@ -976,7 +1052,7 @@ fn extract_commands_from_parameter_expr(
 
 fn extract_commands_from_compound_command(
     compound_command: &ast::CompoundCommand,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<usize> {
     match compound_command {
         ast::CompoundCommand::BraceGroup(brace_group) => {
@@ -1041,14 +1117,14 @@ fn extract_commands_from_compound_command(
 
 fn extract_commands_from_do_group(
     do_group: &ast::DoGroupCommand,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     extract_commands_from_compound_list(&do_group.list, commands)
 }
 
 fn extract_commands_from_function_body(
     func_body: &ast::FunctionBody,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     let body_start = extract_commands_from_compound_command(&func_body.0, commands)?;
     if let Some(redirect_list) = &func_body.1 {
@@ -1074,14 +1150,14 @@ fn extract_commands_from_function_body(
 
 fn extract_commands_from_extended_test_expr(
     test_expr: &ast::ExtendedTestExprCommand,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     extract_commands_from_extended_test_expr_inner(&test_expr.expr, commands)
 }
 
 fn extract_commands_from_extended_test_expr_inner(
     expr: &ast::ExtendedTestExpr,
-    commands: &mut Vec<String>,
+    commands: &mut CommandCollector,
 ) -> Option<()> {
     match expr {
         ast::ExtendedTestExpr::Not(inner) => {
@@ -1721,6 +1797,49 @@ mod tests {
                 subcommand: Some("log".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn test_extract_command_prefixes_keeps_commands_with_quoted_parentheses() {
+        let prefixes = extract_command_prefixes(
+            "git for-each-ref --format='%(refname:short)' refs/ | head -5",
+        )
+        .expect("parse failed");
+        let normalized: Vec<_> = prefixes
+            .iter()
+            .map(|prefix| prefix.normalized.as_str())
+            .collect();
+        let display: Vec<_> = prefixes
+            .iter()
+            .map(|prefix| prefix.display.as_str())
+            .collect();
+
+        assert_eq!(normalized, vec!["git for-each-ref", "head"]);
+        assert_eq!(display, vec!["git for-each-ref", "head"]);
+    }
+
+    #[test]
+    fn test_extract_command_prefixes_keeps_commands_with_apostrophe_in_double_quotes() {
+        let prefixes = extract_command_prefixes(r#"git commit -m "don't panic" && git push"#)
+            .expect("parse failed");
+        let normalized: Vec<_> = prefixes
+            .iter()
+            .map(|prefix| prefix.normalized.as_str())
+            .collect();
+
+        assert_eq!(normalized, vec!["git commit", "git push"]);
+    }
+
+    #[test]
+    fn test_extract_command_prefixes_includes_command_substitutions() {
+        let prefixes =
+            extract_command_prefixes("echo \"$(git rev-parse HEAD)\"").expect("parse failed");
+        let command_names: Vec<_> = prefixes
+            .iter()
+            .map(|prefix| prefix.command.as_str())
+            .collect();
+
+        assert_eq!(command_names, vec!["echo", "git"]);
     }
 
     #[test]
