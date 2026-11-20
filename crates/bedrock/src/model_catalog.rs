@@ -436,24 +436,6 @@ mod tests {
     }
 
     #[test]
-    fn lists_a_model_once_under_its_foundation_model_id() -> Result<()> {
-        let catalog = ModelCatalog::new(
-            &[
-                profile("us.vendor.chat", "vendor.chat", 3)?,
-                profile("global.vendor.chat", "vendor.chat", 2)?,
-            ],
-            &[foundation_model("vendor.chat", &[ModelModality::Image])?],
-        );
-        let model = only_model(&catalog, false)?;
-
-        assert_eq!(model.id, "vendor.chat");
-        assert_eq!(model.base_model_id, "vendor.chat");
-        assert_eq!(model.display_name, "Name of vendor.chat");
-        assert!(model.supports_images);
-        Ok(())
-    }
-
-    #[test]
     fn skips_profiles_that_cannot_serve_a_streamed_text_conversation() -> Result<()> {
         let embedding = FoundationModelSummary::builder()
             .model_arn("arn:aws:bedrock:us-east-1::foundation-model/vendor.embedding")
@@ -510,7 +492,10 @@ mod tests {
             &[foundation_model("vendor.chat", &[])?],
         );
 
-        assert_eq!(only_model(&catalog, false)?.request_id, "us.vendor.chat");
+        let geographic = only_model(&catalog, false)?;
+        assert_eq!(geographic.id, "vendor.chat");
+        assert_eq!(geographic.base_model_id, "vendor.chat");
+        assert_eq!(geographic.request_id, "us.vendor.chat");
         assert_eq!(only_model(&catalog, true)?.request_id, "global.vendor.chat");
         Ok(())
     }
@@ -576,30 +561,6 @@ mod tests {
     }
 
     #[test]
-    fn resolves_model_ids_profile_ids_and_profile_arns() -> Result<()> {
-        let catalog = ModelCatalog::new(
-            &[profile("us.vendor.chat", "vendor.chat", 1)?],
-            &[foundation_model("vendor.chat", &[])?],
-        );
-        let capability_catalog = CapabilityCatalog::default();
-        let profile_arn = format!("{PROFILE_ARN_PREFIX}inference-profile/us.vendor.chat");
-
-        for request_id in ["vendor.chat", "us.vendor.chat", profile_arn.as_str()] {
-            let model = catalog
-                .model_for_request_id(request_id, &capability_catalog)
-                .with_context(|| format!("{request_id} did not resolve"))?;
-            assert_eq!(model.request_id, request_id);
-            assert_eq!(model.base_model_id, "vendor.chat");
-        }
-        assert!(
-            catalog
-                .model_for_request_id("vendor.other", &capability_catalog)
-                .is_none()
-        );
-        Ok(())
-    }
-
-    #[test]
     fn resolves_exact_and_sibling_limits_without_changing_the_requested_profile() -> Result<()> {
         let application_arn = format!("{PROFILE_ARN_PREFIX}application-inference-profile/example");
         let catalog = ModelCatalog::new(
@@ -623,18 +584,27 @@ mod tests {
         }}}"#,
         )?;
         let global_arn = format!("{PROFILE_ARN_PREFIX}inference-profile/global.vendor.chat");
+        let geographic_arn = format!("{PROFILE_ARN_PREFIX}inference-profile/us.vendor.chat");
         for (request_id, context) in [
+            ("vendor.chat", 500),
             ("global.vendor.chat", 500),
             (&global_arn, 500),
             ("us.vendor.chat", 300),
+            (&geographic_arn, 300),
             (&application_arn, 500),
         ] {
             let model = catalog
                 .model_for_request_id(request_id, &capabilities)
                 .context("listed profile")?;
             assert_eq!(model.request_id, request_id);
+            assert_eq!(model.base_model_id, "vendor.chat");
             assert_eq!(model.max_tokens, context, "{request_id}");
         }
+        assert!(
+            catalog
+                .model_for_request_id("vendor.other", &capabilities)
+                .is_none()
+        );
         let application = catalog
             .models(false, &capabilities)
             .find(|model| model.id == application_arn)

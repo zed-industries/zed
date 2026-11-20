@@ -412,13 +412,16 @@ mod tests {
 
     #[test]
     fn test_reasoning_serializes_effort() {
-        let fields = thinking_request_fields(&Thinking::Reasoning {
-            effort: Some(BedrockAdaptiveThinkingEffort::High),
-        });
-        assert_eq!(
-            aws_document_to_value(&Document::Object(fields)),
-            serde_json::json!({"reasoning": {"effort": "high"}})
-        );
+        for (effort, value) in [
+            (Some(BedrockAdaptiveThinkingEffort::High), "high"),
+            (None, "none"),
+        ] {
+            let fields = thinking_request_fields(&Thinking::Reasoning { effort });
+            assert_eq!(
+                aws_document_to_value(&Document::Object(fields)),
+                serde_json::json!({"reasoning": {"effort": value}})
+            );
+        }
     }
 
     #[test]

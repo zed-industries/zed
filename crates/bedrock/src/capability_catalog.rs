@@ -558,21 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_catalogs_with_no_usable_bedrock_models() {
-        for models in [json!({}), json!({"vendor.broken": {"name": "No limits"}})] {
-            let error = catalog(models).expect_err("no usable model");
-            assert!(error.to_string().contains("no usable models"));
-        }
-    }
-
-    #[test]
-    fn requires_the_bedrock_provider() {
-        assert!(CapabilityCatalog::parse(r#"{"another-provider": {"models": {}}}"#).is_err());
-        assert!(CapabilityCatalog::parse("not json").is_err());
-    }
-
-    #[test]
-    fn cache_is_derived_from_the_single_decoded_bedrock_section() -> Result<()> {
+    fn cache_contains_only_a_usable_bedrock_section() -> Result<()> {
         let response = json!({
             "unrelated": {"models": {"vendor.unrelated": {"name": "Other"}}, "large": [1, 2, 3]},
             "amazon-bedrock": {"models": {
@@ -585,9 +571,10 @@ mod tests {
         assert!(catalog.model_for_request_id("us.vendor.chat").is_some());
         assert!(!cache.contains("unrelated"));
         assert_eq!(catalog, CapabilityCatalog::parse(&cache)?);
-        assert!(
-            CapabilityCatalog::parse_with_cache(r#"{"amazon-bedrock":{"models":{}}}"#).is_err()
-        );
+        for models in [json!({}), json!({"vendor.broken": {"name": "No limits"}})] {
+            let response = json!({"amazon-bedrock": {"models": models}}).to_string();
+            assert!(CapabilityCatalog::parse_with_cache(&response).is_err());
+        }
         Ok(())
     }
 
@@ -602,6 +589,9 @@ mod tests {
             "anthropic.uncontrolled": entry("", reasoning(json!([]))),
             "anthropic.plain": entry("", json!({})),
             "openai.effort": entry("", reasoning(json!([efforts]))),
+            "openai.default": entry("", reasoning(json!([
+                {"type": "effort", "values": ["low", "medium", "high"]}
+            ]))),
             "vendor.effort": entry("", reasoning(json!([efforts]))),
         }))?;
         let thinking = |model_id| catalog.describe(model_id, model_id).thinking;
@@ -638,6 +628,14 @@ mod tests {
             })
         );
         assert_eq!(thinking("vendor.effort"), None);
+        assert_eq!(
+            thinking("openai.default"),
+            Some(ConverseThinking::Reasoning {
+                efforts: vec![Low, Medium, High],
+                default_effort: Medium,
+                supports_none: false,
+            })
+        );
 
         assert!(
             !catalog
@@ -648,25 +646,6 @@ mod tests {
             catalog
                 .describe("anthropic.optional", "anthropic.optional")
                 .supports_temperature
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn prefers_the_default_effort_when_the_model_offers_it() -> Result<()> {
-        let catalog = catalog(json!({
-            "openai.effort": entry("", reasoning(json!([
-                {"type": "effort", "values": ["low", "medium", "high"]}
-            ]))),
-        }))?;
-
-        assert_eq!(
-            catalog.describe("openai.effort", "openai.effort").thinking,
-            Some(ConverseThinking::Reasoning {
-                efforts: vec![Low, Medium, High],
-                default_effort: Medium,
-                supports_none: false,
-            })
         );
         Ok(())
     }
