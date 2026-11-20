@@ -3,6 +3,141 @@ use super::*;
 const ORDERED_LIST_MAX_MARKER_LEN: usize = 16;
 
 impl Editor {
+    pub(super) fn renumber_ordered_lists(
+        &mut self,
+        old_buffer: &MultiBufferSnapshot,
+        buffer: &MultiBufferSnapshot,
+        edits: Vec<text::Edit<MultiBufferOffset>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut starts = Vec::new();
+        for edit in edits {
+            // Replacing a document (for example when restoring a chat draft) must
+            // preserve its numbering rather than treating it as a list edit.
+            if edit.old == (MultiBufferOffset(0)..old_buffer.len())
+                && edit.new == (MultiBufferOffset(0)..buffer.len())
+            {
+                continue;
+            }
+
+            let old_items = OrderedListItem::in_range(old_buffer, edit.old.clone(), cx);
+            let new_items = OrderedListItem::in_range(buffer, edit.new.clone(), cx);
+            if old_items
+                .iter()
+                .map(OrderedListItem::signature)
+                .eq(new_items.iter().map(OrderedListItem::signature))
+            {
+                continue;
+            }
+
+            let old_start = edit.old.start.to_point(old_buffer);
+            let old_end = edit.old.end.to_point(old_buffer);
+            for item in &old_items {
+                if old_start < old_end && old_end == Point::new(item.row(), 0) {
+                    continue;
+                }
+                let start = old_buffer
+                    .anchor_before(item.number_range.start)
+                    .to_point(buffer);
+                let end_row = item.end_row(old_buffer);
+                let end = old_buffer
+                    .anchor_after(Point::new(
+                        end_row,
+                        old_buffer.line_len(MultiBufferRow(end_row)),
+                    ))
+                    .to_point(buffer);
+                let deleted_line = old_start <= Point::new(item.row(), 0)
+                    && old_end
+                        > Point::new(item.row(), old_buffer.line_len(MultiBufferRow(item.row())));
+                let number = if deleted_line {
+                    item.number
+                } else {
+                    item.at_row(buffer, start.row)
+                        .filter(|current| current.indent == item.indent)
+                        .map_or(item.number, |current| current.number)
+                };
+                starts.push((start.row, end.row, number, item.clone()));
+            }
+            for item in new_items {
+                if old_items.iter().any(|old_item| {
+                    old_item.signature() == item.signature()
+                        && old_buffer
+                            .anchor_before(old_item.number_range.start)
+                            .to_point(buffer)
+                            == item.number_range.start
+                }) {
+                    continue;
+                }
+                let number = item
+                    .previous_number(buffer)
+                    .and_then(|number| number.checked_add(1))
+                    .unwrap_or(item.number);
+                starts.push((item.row(), item.end_row(buffer), number, item));
+            }
+        }
+
+        starts.sort_by_key(|(row, _, _, _)| *row);
+        let mut numbers = BTreeMap::new();
+        for (start_row, end_row, mut number, item) in starts {
+            for row in start_row..=end_row {
+                let Some(current) = item.at_row(buffer, row) else {
+                    continue;
+                };
+                if current.indent != item.indent {
+                    continue;
+                }
+                if numbers.contains_key(&current.number_range.start) {
+                    break;
+                }
+                numbers.insert(
+                    current.number_range.start,
+                    (current.number_range, current.number, number),
+                );
+                let Some(next_number) = number.checked_add(1) else {
+                    break;
+                };
+                number = next_number;
+            }
+        }
+        let edits = numbers
+            .into_values()
+            .filter_map(|(range, old, new)| (old != new).then(|| (range, new.to_string())))
+            .collect::<Vec<_>>();
+        if edits.is_empty() {
+            return;
+        }
+        let selections = self
+            .selections
+            .all::<Point>(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| {
+                selection.map(|mut point| {
+                    if let Some((range, text)) =
+                        edits.iter().find(|(range, _)| range.start.row == point.row)
+                        && point.column >= range.start.column
+                    {
+                        point.column = if point.column <= range.end.column {
+                            range.start.column
+                                + (point.column - range.start.column).min(text.len() as u32)
+                        } else {
+                            point.column - (range.end.column - range.start.column)
+                                + text.len() as u32
+                        };
+                    }
+                    point
+                })
+            })
+            .collect();
+        self.edit(edits, cx);
+        self.change_selections(
+            SelectionEffects::no_scroll().completions(false),
+            window,
+            cx,
+            |selections_mut| selections_mut.select(selections),
+        );
+    }
+
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
         self.input_enabled = input_enabled;
     }
@@ -2773,7 +2908,7 @@ fn list_delimiter_for_newline(
                 let number: u32 = captures.get(1)?.as_str().parse().ok()?;
                 let continuation = ordered_config
                     .format
-                    .replace("{1}", &(number + 1).to_string());
+                    .replace("{1}", &number.checked_add(1)?.to_string());
                 return Some(continuation.into());
             }
 
@@ -2793,6 +2928,110 @@ fn list_delimiter_for_newline(
     }
 
     None
+}
+
+#[derive(Clone)]
+struct OrderedListItem {
+    indent: u32,
+    number_range: Range<Point>,
+    number: u32,
+    pattern: Regex,
+}
+
+impl OrderedListItem {
+    fn row(&self) -> u32 {
+        self.number_range.start.row
+    }
+
+    fn signature(&self) -> (u32, u32, &str) {
+        (self.indent, self.number, self.pattern.as_str())
+    }
+
+    fn in_range(
+        buffer: &MultiBufferSnapshot,
+        range: Range<MultiBufferOffset>,
+        cx: &App,
+    ) -> Vec<Self> {
+        let start = range.start.to_point(buffer);
+        let end = range.end.to_point(buffer);
+        (start.row..=end.row)
+            .filter_map(|row| {
+                let position = Point::new(row, 0);
+                if !buffer
+                    .language_settings_at(position, cx)
+                    .extend_list_on_newline
+                {
+                    return None;
+                }
+                let language = buffer.language_scope_at(position)?;
+                language.ordered_list().iter().find_map(|config| {
+                    let pattern = Regex::new(&config.pattern).ok()?;
+                    Self::parse(buffer, row, pattern)
+                })
+            })
+            .collect()
+    }
+
+    fn parse(buffer: &MultiBufferSnapshot, row: u32, pattern: Regex) -> Option<Self> {
+        let indent = buffer.indent_size_for_line(MultiBufferRow(row)).len;
+        let candidate: String = buffer
+            .chars_at(Point::new(row, indent))
+            .take_while(|character| *character != '\n')
+            .take(ORDERED_LIST_MAX_MARKER_LEN)
+            .collect();
+        let captures = pattern.captures(&candidate)?;
+        if captures.get(0)?.start() != 0 {
+            return None;
+        }
+        let number = captures.get(1)?;
+        Some(Self {
+            indent,
+            number_range: Point::new(row, indent + number.start() as u32)
+                ..Point::new(row, indent + number.end() as u32),
+            number: number.as_str().parse().ok()?,
+            pattern,
+        })
+    }
+
+    fn at_row(&self, buffer: &MultiBufferSnapshot, row: u32) -> Option<Self> {
+        Self::parse(buffer, row, self.pattern.clone())
+    }
+
+    fn end_row(&self, buffer: &MultiBufferSnapshot) -> u32 {
+        let mut end_row = self.row();
+        for row in self.row() + 1..=buffer.max_point().row {
+            if buffer
+                .excerpt_containing(Point::new(self.row(), 0)..Point::new(row, 0))
+                .is_none()
+            {
+                break;
+            }
+            let indent = buffer.indent_size_for_line(MultiBufferRow(row)).len;
+            if buffer.is_line_blank(MultiBufferRow(row)) || indent > self.indent {
+                continue;
+            }
+            if indent < self.indent || self.at_row(buffer, row).is_none() {
+                break;
+            }
+            end_row = row;
+        }
+        end_row
+    }
+
+    fn previous_number(&self, buffer: &MultiBufferSnapshot) -> Option<u32> {
+        for row in (0..self.row()).rev() {
+            buffer.excerpt_containing(Point::new(row, 0)..Point::new(self.row(), 0))?;
+            let indent = buffer.indent_size_for_line(MultiBufferRow(row)).len;
+            if buffer.is_line_blank(MultiBufferRow(row)) || indent > self.indent {
+                continue;
+            }
+            return self
+                .at_row(buffer, row)
+                .filter(|item| item.indent == self.indent)
+                .map(|item| item.number);
+        }
+        None
+    }
 }
 
 impl EntityInputHandler for Editor {

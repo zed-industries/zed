@@ -48,16 +48,24 @@ Zed automatically continues lists when you press Enter at the end of a list item
 - Ordered lists (numbers are auto-incremented)
 - Task lists (`- [ ]` and `- [x]`)
 
+When you insert or delete an ordered list item or change its number, Zed renumbers the following items in that list. Nested lists are renumbered at their own level, without changing parent lists or separate lists in the same file.
+
+List continuation and renumbering also apply when you compose messages in the [Agent Panel](../ai/agent-panel.md).
+
 Pressing Enter on an empty list item removes the marker and exits the list.
 
-To disable this behavior, configure in Settings ({#kb zed::OpenSettings}) under Languages > Markdown, or add to your settings file:
+To disable both list continuation and automatic renumbering, configure `extend_list_on_newline` in the Settings Editor ({#kb zed::OpenSettings}) under Languages > Markdown.
+
+Or add this to your settings.json:
 
 ```json [settings]
+{
   "languages": {
     "Markdown": {
       "extend_list_on_newline": false
     }
-  },
+  }
+}
 ```
 
 ### List Indentation
