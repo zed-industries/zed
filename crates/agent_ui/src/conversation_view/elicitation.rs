@@ -1430,7 +1430,6 @@ impl Component for ElicitationCardPreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
                 example_group_with_title(
                     "URL Requests",
@@ -1442,7 +1441,6 @@ impl Component for ElicitationCardPreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
                 example_group_with_title(
                     "Terminal States",
@@ -1459,7 +1457,6 @@ impl Component for ElicitationCardPreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
             ])
             .into_any_element()
