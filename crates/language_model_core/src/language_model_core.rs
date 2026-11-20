@@ -288,6 +288,11 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         model: LanguageModelId,
     },
+    /// The provider's response was structurally invalid, for example a
+    /// streamed `tool_calls` entry that never received an id or a name.
+    /// Retrying the same request is not expected to help.
+    #[error("{message}")]
+    InvalidProviderOutput { message: String },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -443,6 +448,7 @@ impl LanguageModelCompletionError {
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
             | Self::ModelUnavailable { .. }
+            | Self::InvalidProviderOutput { .. }
             | Self::Other(_) => false,
         }
     }
@@ -473,6 +479,7 @@ impl LanguageModelCompletionError {
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
             | Self::ModelUnavailable { .. }
+            | Self::InvalidProviderOutput { .. }
             | Self::Other(_) => None,
         }
     }
