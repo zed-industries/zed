@@ -59,7 +59,6 @@ pub enum FakeCommitDataEntry {
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
     pub commit_history: Vec<FakeCommitSnapshot>,
-    pub event_emitter: async_channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, Vec<u8>>,
     pub index_contents: HashMap<RepoPath, Vec<u8>>,
@@ -92,9 +91,8 @@ pub struct FakeGitRepositoryState {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(event_emitter: async_channel::Sender<PathBuf>) -> Self {
+    pub fn new() -> Self {
         FakeGitRepositoryState {
-            event_emitter,
             blob_read_gate: None,
             head_contents: Default::default(),
             index_contents: Default::default(),

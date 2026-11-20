@@ -1362,7 +1362,6 @@ mod tests {
             next_valid: point,
             nearest_valid: point,
             exact_unclipped: point,
-            column_overshoot_after_line_end: 0,
         };
 
         let buffer = cx.editor(|editor, _, cx| {

@@ -2516,10 +2516,7 @@ pub fn into_bedrock(
         system: system_blocks,
         tools: tool_config,
         thinking,
-        metadata: None,
-        stop_sequences: Vec::new(),
         temperature,
-        top_k: None,
         top_p: None,
         guardrail_identifier,
         guardrail_version,
@@ -4094,7 +4091,6 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(request.top_k, None, "{model} must not send top_k");
             assert_eq!(request.top_p, None, "{model} must not send top_p");
             if expects_temperature {
                 assert_eq!(

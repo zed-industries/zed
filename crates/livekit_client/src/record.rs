@@ -14,7 +14,6 @@ use util::ResultExt;
 
 pub struct CaptureInput {
     pub name: String,
-    pub input_device: Option<DeviceId>,
     config: cpal::SupportedStreamConfig,
     samples: Arc<Mutex<Vec<i16>>>,
     _stream: cpal::Stream,
@@ -34,7 +33,6 @@ impl CaptureInput {
 
         Ok(Self {
             name,
-            input_device,
             _stream: stream,
             config,
             samples,
