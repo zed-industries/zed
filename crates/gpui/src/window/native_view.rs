@@ -1,4 +1,4 @@
-use crate::{Action, KeyDownEvent, PlatformInput};
+use crate::{Action, KeyBinding, KeyDownEvent, PlatformInput};
 use crate::{
     AnyWindowHandle, App, Bounds, Element, ElementId, FocusHandle, FocusId, Focusable,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, InteractiveElement,
@@ -38,6 +38,8 @@ pub struct NativeViewId(u64);
 /// from the view's element like any other key press, so key bindings apply
 /// to what the view leaves. Bindings for actions passed to
 /// [`reserve_action`](Self::reserve_action) apply before the view sees the key.
+/// The view may take a moment to leave a key, so the keys of any other
+/// multi-key binding can reach the view when they are typed quickly.
 ///
 /// The view stays attached to the window it was created in, hidden when it
 /// isn't painted, until the last clone of this handle is dropped. Painted more
@@ -117,6 +119,8 @@ impl NativeView {
     ///
     /// The view otherwise sees every key first and can keep any of them, so
     /// this is for the few bindings that must work whatever the view shows.
+    /// The view never sees a key that such a binding starts with, even when the
+    /// rest of the binding's keys don't follow.
     pub fn reserve_action<A: Action>(&self) {
         self.0
             .reserved_actions
@@ -282,15 +286,21 @@ impl Window {
         if !self.has_pending_keystrokes() {
             let node_id = self.focus_node_id_in_rendered_frame(self.focus);
             let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
-            let (bindings, _, _) = self
-                .rendered_frame
-                .dispatch_tree
-                .bindings_for_input(std::slice::from_ref(&event.keystroke), &dispatch_path);
-            let is_reserved = bindings.first().is_some_and(|binding| {
-                view.reserved_actions
-                    .borrow()
-                    .contains(&binding.action.as_any().type_id())
-            });
+            let input = std::slice::from_ref(&event.keystroke);
+            let dispatch_tree = &self.rendered_frame.dispatch_tree;
+            let (bindings, _, context_stack) =
+                dispatch_tree.bindings_for_input(input, &dispatch_path);
+            let reserved_actions = view.reserved_actions.borrow();
+            let is_reserved = |binding: &KeyBinding| {
+                reserved_actions.contains(&binding.action.as_any().type_id())
+            };
+            // The first key of a longer binding is reserved too, or the view
+            // could keep that key and the binding would never begin.
+            let is_reserved = bindings.first().is_some_and(is_reserved)
+                || dispatch_tree
+                    .possible_next_bindings_for_input(input, &context_stack)
+                    .iter()
+                    .any(is_reserved);
             if !is_reserved {
                 return false;
             }
@@ -378,6 +388,7 @@ mod tests {
                 KeyBinding::new("cmd-r", Reserved, None),
                 KeyBinding::new("cmd-o", Ordinary, None),
                 KeyBinding::new("cmd-k o", Ordinary, None),
+                KeyBinding::new("cmd-j r", Reserved, None),
             ]);
         });
         let window = open_window(cx);
@@ -413,6 +424,12 @@ mod tests {
         cx.simulate_keystrokes(window.into(), "cmd-k");
         assert!(platform_window.simulate_key_down_before_native_view(press("o")));
         assert_eq!(actions(cx), ["ordinary"]);
+
+        // The view never sees the first key of a reserved binding, which it
+        // could otherwise keep.
+        assert!(platform_window.simulate_key_down_before_native_view(press("cmd-j")));
+        assert!(platform_window.simulate_key_down_before_native_view(press("r")));
+        assert_eq!(actions(cx), ["reserved"]);
 
         // Nothing applies ahead of the window's own content.
         window
