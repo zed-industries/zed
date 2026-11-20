@@ -381,6 +381,19 @@ impl Editor {
                     } else {
                         selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
                     }
+                    // An empty last line has no trailing newline to consume, so
+                    // the line selection above is empty. Include the preceding
+                    // newline so that cutting the line removes it. Line-mode
+                    // selections are left alone because the edit re-expands them
+                    // to their line, which would swallow the previous line.
+                    if !self.selections.line_mode()
+                        && selection.is_empty()
+                        && selection.start.row > 0
+                    {
+                        let previous_row = selection.start.row - 1;
+                        selection.start =
+                            Point::new(previous_row, buffer.line_len(MultiBufferRow(previous_row)));
+                    }
                     selection.goal = SelectionGoal::None;
                 }
                 if is_first {

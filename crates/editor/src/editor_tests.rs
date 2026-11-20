@@ -11049,6 +11049,33 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_cut_last_empty_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The buffer ends with a newline, so the cursor is on its final, empty line.
+    cx.set_state("one\ntwo\nˇ");
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+    cx.assert_editor_state("one\ntwoˇ");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("\n".to_string())
+    );
+
+    // Only one trailing empty line is removed per cut.
+    cx.set_state("one\n\nˇ");
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+    cx.assert_editor_state("one\nˇ");
+
+    // A buffer containing only an empty line has no preceding newline to cut.
+    cx.set_state("ˇ");
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+    cx.assert_editor_state("ˇ");
+}
+
+#[gpui::test]
 async fn test_kill_ring_cut_accumulates_multi_line_kills(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
