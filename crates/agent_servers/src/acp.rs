@@ -1,3 +1,4 @@
+mod auth_status;
 mod debug_log;
 mod runtime;
 mod session_updates;
@@ -242,6 +243,7 @@ where
 
 /// Holds state needed by foreground work dispatched from background handler closures.
 struct ClientContext {
+    auth_status: std::rc::Weak<auth_status::ConnectionAuthStatus>,
     sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     pending_session_updates: Option<Rc<RefCell<PendingSessionUpdates>>>,
     session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
@@ -287,6 +289,9 @@ struct ClientDisconnectWork {
 
 impl ForegroundWorkItem for ClientDisconnectWork {
     fn run(self: Box<Self>, cx: &mut AsyncApp, context: &ClientContext) {
+        if let Some(status) = context.auth_status.upgrade() {
+            status.disconnect();
+        }
         if let Some(scopes) = &context.active_request_scopes {
             scopes.borrow_mut().clear();
         }
@@ -634,6 +639,16 @@ fn with_v2_client_ingress<Handler: HandleDispatchFrom<Agent>>(
         move |notification, encoded_bytes| dispatch(notification.into(), encoded_bytes)
     });
     with_v2_session_notifications(builder, dispatch)
+        .on_receive_notification(
+            {
+                let dispatch_sender = dispatch_sender.clone();
+                async move |update: acp_v2::AuthStatusUpdateNotification, _connection| {
+                    enqueue_notification(&dispatch_sender, update, auth_status::update_v2);
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
         .on_receive_request(
             {
                 let dispatch_sender = dispatch_sender.clone();

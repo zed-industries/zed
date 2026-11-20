@@ -852,6 +852,12 @@ impl ConversationView {
         })
     }
 
+    pub(crate) fn agent_auth_status(
+        &self,
+    ) -> Option<watch::Receiver<Option<acp_v2::AuthStatusResponse>>> {
+        self.as_connected()?.connection.auth_status()
+    }
+
     pub fn active_thread(&self) -> Option<&Entity<ThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => connected.active_view(),
@@ -966,6 +972,7 @@ enum ServerState {
 // hashmap of threads, current becomes session_id
 pub struct ConnectedServerState {
     auth_state: AuthState,
+    deferred_start: Option<DeferredSessionStart>,
     active_id: Option<acp_v2::SessionId>,
     pub(crate) threads: HashMap<acp_v2::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
@@ -990,6 +997,13 @@ impl AuthState {
 
 struct LoadingView {
     _load_task: Task<()>,
+}
+
+/// Keep the original startup task (including its working directories and initial input)
+/// alive while the sign-in callout occupies the panel.
+struct DeferredSessionStart {
+    loading: Entity<LoadingView>,
+    signed_in: Option<futures::channel::oneshot::Sender<()>>,
 }
 
 #[derive(Debug)]
@@ -1144,6 +1158,7 @@ impl ConversationView {
                 project,
                 initial_content,
                 source,
+                true,
                 window,
                 cx,
             ),
@@ -1299,6 +1314,9 @@ impl ConversationView {
             self.project.clone(),
             None,
             AgentThreadSource::AgentPanel,
+            // Explicit retries, including after a successful login, must reach the agent
+            // even if its last reported snapshot still says signed out.
+            false,
             window,
             cx,
         );
@@ -1323,6 +1341,7 @@ impl ConversationView {
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
         source: AgentThreadSource,
+        preflight_new_session: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -1399,6 +1418,14 @@ impl ConversationView {
                 thread_location = thread_location
             );
 
+            if preflight_new_session
+                && resume_session_id.is_none()
+                && Self::preflight_auth(&this, &connection, cx).await.is_err()
+            {
+                // The view or its pending startup was replaced.
+                return;
+            }
+
             let mut resumed_without_history = false;
             let Some(recovering) = this
                 .read_with(cx, |this, _| this.recovery.is_some())
@@ -1453,7 +1480,14 @@ impl ConversationView {
                 Err(error) => {
                     if let Some(auth_required) = AuthRequired::from_error(&error) {
                         cx.update(|window, cx| {
-                            Self::handle_auth_required(this, auth_required, connection, window, cx)
+                            Self::handle_auth_required(
+                                this,
+                                auth_required,
+                                connection,
+                                None,
+                                window,
+                                cx,
+                            )
                         })
                         .log_err();
                         return;
@@ -1520,6 +1554,7 @@ impl ConversationView {
                             ServerState::Connected(ConnectedServerState {
                                 connection,
                                 auth_state: AuthState::Ok,
+                                deferred_start: None,
                                 active_id: Some(root_session_id.clone()),
                                 threads: HashMap::from_iter([(root_session_id, current)]),
                                 conversation,
@@ -1553,6 +1588,85 @@ impl ConversationView {
             connection: None,
             _request_elicitation_subscription: None,
         }
+    }
+
+    async fn preflight_auth(
+        this: &WeakEntity<Self>,
+        connection: &Rc<dyn AgentConnection>,
+        cx: &mut gpui::AsyncWindowContext,
+    ) -> Result<()> {
+        use gpui::FutureExt as _;
+
+        let Some(mut status) = connection.auth_status() else {
+            return Ok(());
+        };
+        if !connection
+            .auth_methods()
+            .iter()
+            .any(acp_thread::auth_methods::is_supported)
+        {
+            return Ok(());
+        }
+        // The query is shared by all views. A slow agent must not hold up session/new.
+        if status.borrow().is_none()
+            && !matches!(
+                status
+                    .changed()
+                    .with_timeout(Duration::from_millis(200), cx.background_executor())
+                    .await,
+                Ok(Ok(()))
+            )
+        {
+            return Ok(());
+        }
+        if !status
+            .borrow()
+            .as_ref()
+            .is_some_and(|s| s.state == acp_v2::AuthState::Unauthenticated)
+        {
+            return Ok(());
+        }
+
+        let (signed_in, wait) = futures::channel::oneshot::channel();
+        cx.update(|window, cx| {
+            Self::handle_auth_required(
+                this.clone(),
+                AuthRequired::new(),
+                connection.clone(),
+                Some(signed_in),
+                window,
+                cx,
+            )
+        })?;
+        let mut wait = wait.fuse();
+        loop {
+            futures::select_biased! {
+                result = wait => { result?; break; },
+                update = status.recv().fuse() => {
+                    if !update?.is_some_and(|snapshot| snapshot.state == acp_v2::AuthState::Unauthenticated)
+                        && this.read_with(cx, |view, _| view.auth_task.is_none())? {
+                        break;
+                    }
+                }
+            }
+        }
+
+        this.update(cx, |view, cx| -> Result<()> {
+            let deferred = view
+                .as_connected_mut()
+                .and_then(|s| s.deferred_start.take())
+                .context("Session startup was replaced")?;
+            let subscription = Self::request_elicitation_subscription(connection, cx);
+            view.set_server_state(
+                ServerState::Loading {
+                    _loading: deferred.loading,
+                    connection: Some(connection.clone()),
+                    _request_elicitation_subscription: subscription,
+                },
+                cx,
+            );
+            Ok(())
+        })?
     }
 
     fn new_thread_view(
@@ -1765,6 +1879,7 @@ impl ConversationView {
         this: WeakEntity<Self>,
         err: AuthRequired,
         connection: Rc<dyn AgentConnection>,
+        resume_start: Option<futures::channel::oneshot::Sender<()>>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -1797,9 +1912,19 @@ impl ConversationView {
             } else {
                 let request_elicitation_subscription =
                     Self::request_elicitation_subscription(&connection, cx);
+                let deferred_start = match (&this.server_state, resume_start) {
+                    (ServerState::Loading { _loading, .. }, Some(signed_in)) => {
+                        Some(DeferredSessionStart {
+                            loading: _loading.clone(),
+                            signed_in: Some(signed_in),
+                        })
+                    }
+                    _ => None,
+                };
                 this.set_server_state(
                     ServerState::Connected(ConnectedServerState {
                         auth_state,
+                        deferred_start,
                         active_id: None,
                         threads: HashMap::default(),
                         connection,
@@ -2522,6 +2647,15 @@ impl ConversationView {
     }
 
     fn authentication_succeeded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(connected) = self.as_connected_mut() {
+            connected.connection.refresh_auth_status(cx);
+            if let Some(deferred) = &mut connected.deferred_start {
+                if let Some(signed_in) = deferred.signed_in.take() {
+                    signed_in.send(()).ok();
+                }
+                return;
+            }
+        }
         // Rebuilding the view can drop receipt records and unsent input.
         // Refreshing credentials must not act as a retry.
         if let Some(view) = self
@@ -3823,7 +3957,7 @@ impl ConversationView {
             return;
         };
         window.defer(cx, |window, cx| {
-            Self::handle_auth_required(this, AuthRequired::new(), connection, window, cx);
+            Self::handle_auth_required(this, AuthRequired::new(), connection, None, window, cx);
         })
     }
 
@@ -3853,6 +3987,7 @@ impl ConversationView {
                     } else {
                         this.cancel_request_elicitations(cx);
                         if let Some(connected) = this.as_connected_mut() {
+                            connected.connection.refresh_auth_status(cx);
                             connected.auth_state = AuthState::Unauthenticated {
                                 description: None,
                                 pending_auth_method: None,
@@ -8500,6 +8635,104 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn auth_preflight_preserves_pending_start_and_leaves_open_thread_alone(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for sign_in_in_zed in [false, true] {
+            let mut connection = AuthGatedAgentConnection::new();
+            let signed_out = acp_v2::AuthStatusResponse::new(acp_v2::AuthState::Unauthenticated);
+            let (mut reports, receiver) = watch::channel(Some(signed_out.clone()));
+            connection.auth_status = Some(receiver);
+            let initial_content = AgentInitialContent::ContentBlock {
+                blocks: vec!["keep my draft".into()],
+                auto_submit: false,
+            };
+            let (view, cx) = setup_conversation_view_with_initial_content(
+                StubAgentServer::new(connection.clone()),
+                initial_content,
+                cx,
+            )
+            .await;
+            assert_eq!(*connection.new_session_calls.lock(), 0);
+            assert!(view.read_with(cx, |view, _| view.has_auth_methods()));
+
+            if sign_in_in_zed {
+                // A terminal login need not result in a notification.
+                view.update_in(cx, |view, window, cx| {
+                    view.authenticate(AuthGatedAgentConnection::AUTH_METHOD_ID.into(), window, cx)
+                });
+            } else {
+                *connection.authenticated.lock() = true;
+                reports
+                    .send(Some(acp_v2::AuthStatusResponse::new(
+                        acp_v2::AuthState::Authenticated,
+                    )))
+                    .expect("report login");
+            }
+            cx.run_until_parked();
+            let thread = active_thread(&view, cx);
+            reports.send(Some(signed_out)).expect("report sign-out");
+            cx.run_until_parked();
+            assert_eq!(active_thread(&view, cx), thread);
+            assert_eq!(
+                message_editor(&view, cx).read_with(cx, |editor, cx| editor.text(cx)),
+                "keep my draft"
+            );
+            assert!(view.read_with(cx, |view, _| {
+                view.as_connected().expect("open thread").auth_state.is_ok()
+            }));
+            assert_eq!(*connection.new_session_calls.lock(), 1);
+        }
+    }
+
+    #[gpui::test]
+    async fn auth_preflight_times_out_and_does_not_override_auth_required(cx: &mut TestAppContext) {
+        init_test(cx);
+        let mut connection = AuthGatedAgentConnection::new();
+        let (mut reports, receiver) = watch::channel(None);
+        connection.auth_status = Some(receiver);
+        let (view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        assert_eq!(*connection.new_session_calls.lock(), 0);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        // session/new, not the optional probe, knows whether it was allowed.
+        reports
+            .send(Some(acp_v2::AuthStatusResponse::new(
+                acp_v2::AuthState::Authenticated,
+            )))
+            .expect("late reply");
+        cx.run_until_parked();
+        assert_eq!(*connection.new_session_calls.lock(), 1);
+        view.read_with(cx, |view, cx| {
+            let AuthState::Unauthenticated {
+                description: Some(description),
+                ..
+            } = &view.as_connected().expect("auth callout").auth_state
+            else {
+                panic!("expected sign-in")
+            };
+            assert_eq!(description.read(cx).source(), "Sign in to continue");
+        });
+        reports
+            .send(Some(acp_v2::AuthStatusResponse::new(
+                acp_v2::AuthState::Unauthenticated,
+            )))
+            .expect("previous login expired");
+        view.update_in(cx, |view, window, cx| {
+            view.authenticate(AuthGatedAgentConnection::AUTH_METHOD_ID.into(), window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            *connection.new_session_calls.lock(),
+            2,
+            "a stale snapshot must not prevent retry after sign-in"
+        );
+        assert!(view.read_with(cx, |view, _| view.active_thread().is_some()));
+    }
+
+    #[gpui::test]
     async fn test_auth_required_on_initial_connect(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -10745,6 +10978,8 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct AuthGatedAgentConnection {
         authenticated: Arc<Mutex<bool>>,
+        auth_status: Option<watch::Receiver<Option<acp_v2::AuthStatusResponse>>>,
+        new_session_calls: Arc<Mutex<usize>>,
         error_source: AuthErrorSource,
         auth_methods: Vec<acp_v2::AuthMethod>,
         authenticate_calls: Arc<Mutex<Vec<acp_v2::AuthMethodId>>>,
@@ -10759,6 +10994,8 @@ pub(crate) mod tests {
         fn new() -> Self {
             Self {
                 authenticated: Arc::new(Mutex::new(false)),
+                auth_status: None,
+                new_session_calls: Default::default(),
                 error_source: AuthErrorSource::Marker,
                 auth_methods: vec![
                     acp_v2::AuthMethod::Other(acp_v2::OtherAuthMethod::new(
@@ -10817,6 +11054,7 @@ pub(crate) mod tests {
             work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            *self.new_session_calls.lock() += 1;
             if !*self.authenticated.lock() {
                 let error = match self.error_source {
                     AuthErrorSource::Marker => anyhow!(
@@ -10856,6 +11094,10 @@ pub(crate) mod tests {
                     cx,
                 )
             })))
+        }
+
+        fn auth_status(&self) -> Option<watch::Receiver<Option<acp_v2::AuthStatusResponse>>> {
+            self.auth_status.clone()
         }
 
         fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
