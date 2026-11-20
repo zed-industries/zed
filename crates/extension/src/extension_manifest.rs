@@ -193,7 +193,8 @@ impl ExtensionManifest {
     pub fn remote_load(&self) -> Option<RemoteLoad<'_>> {
         (!self.language_servers.is_empty()
             || !self.debug_adapters.is_empty()
-            || !self.debug_locators.is_empty())
+            || !self.debug_locators.is_empty()
+            || !self.context_servers.is_empty())
         .then_some(RemoteLoad { manifest: self })
     }
 }
@@ -557,6 +558,29 @@ mod tests {
             debug_locators: Default::default(),
             language_model_providers: BTreeMap::default(),
         }
+    }
+
+    #[test]
+    fn test_remote_load_eligibility() {
+        let manifest = extension_manifest();
+        assert!(
+            manifest.remote_load().is_none(),
+            "an extension with no remote-capable contributions should not be loaded remotely"
+        );
+
+        // An extension whose only contribution is a context server still has to
+        // reach the remote host, otherwise its MCP server can never run there.
+        let mut manifest = extension_manifest();
+        manifest
+            .context_servers
+            .insert("my-context-server".into(), ContextServerManifestEntry {});
+        assert!(manifest.remote_load().is_some());
+
+        let mut manifest = extension_manifest();
+        manifest
+            .language_servers
+            .insert("my-language-server".into(), Default::default());
+        assert!(manifest.remote_load().is_some());
     }
 
     #[test]
