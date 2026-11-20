@@ -122,15 +122,19 @@ impl AgentTool for CopyPathTool {
                 });
 
             let sensitive_kind = sensitive_settings_kind(
+                &project,
                 Path::new(&input.source_path),
                 &canonical_roots,
                 fs.as_ref(),
+                cx,
             )
             .await
             .or(sensitive_settings_kind(
+                &project,
                 Path::new(&input.destination_path),
                 &canonical_roots,
                 fs.as_ref(),
+                cx,
             )
             .await)
             .or(global_skill_settings_kind(
