@@ -5,8 +5,9 @@ use crate::{
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkStatus;
 use editor::{
-    DiffHunkRenderer, Editor, EditorEvent, SplittableEditor,
+    DiffHunkRenderer, Editor, EditorEvent, HunkControlButton, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk},
+    diff_hunk_controls_container,
 };
 use git::{StageAll, StageAndNext};
 use gpui::{
@@ -43,6 +44,7 @@ impl DiffHunkRenderer for UnstagedDiffHunkRenderer {
         hunk_range: Range<editor::Anchor>,
         is_created_file: bool,
         line_height: Pixels,
+        row_count: u32,
         editor: &Entity<Editor>,
         _window: &mut Window,
         cx: &mut App,
@@ -55,21 +57,9 @@ impl DiffHunkRenderer for UnstagedDiffHunkRenderer {
         }
         let hunk_range_for_restore = hunk_range.clone();
         let hunk_range = hunk_range.start..hunk_range.start;
-        h_flex()
-            .h(line_height)
-            .mr_1()
-            .gap_1()
-            .px_0p5()
-            .pb_1()
-            .border_x_1()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .rounded_b_lg()
-            .bg(cx.theme().colors().editor_background)
-            .block_mouse_except_scroll()
-            .shadow_md()
+        diff_hunk_controls_container(row_count, line_height, cx)
             .child(
-                Button::new(("stage", row as u64), "Stage")
+                HunkControlButton::new(("stage", row as u64), "Stage", IconName::Plus, cx)
                     .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                     .tooltip(Tooltip::text("Stage Hunk"))
                     .on_click({
@@ -87,7 +77,7 @@ impl DiffHunkRenderer for UnstagedDiffHunkRenderer {
                     }),
             )
             .child(
-                Button::new(("restore", row as u64), "Restore")
+                HunkControlButton::new(("restore", row as u64), "Restore", IconName::Undo, cx)
                     .tooltip(Tooltip::text("Restore Hunk"))
                     .on_click({
                         let editor = editor.clone();
