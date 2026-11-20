@@ -933,13 +933,8 @@ impl X11Client {
                             &state.atoms,
                             state.xdnd_state.other_window,
                         );
-                    } else {
-                        if let Some(atom) = [arg2, arg3, arg4]
-                            .into_iter()
-                            .find(|atom| xdnd_is_atom_supported(*atom, &state.atoms))
-                        {
-                            state.xdnd_state.drag_type = atom;
-                        }
+                    } else if let Some(atom) = xdnd_pick_atom([arg2, arg3, arg4], &state.atoms) {
+                        state.xdnd_state.drag_type = atom;
                     }
                 } else if event.type_ == state.atoms.XdndLeave {
                     let position = state.xdnd_state.position;
@@ -2398,14 +2393,26 @@ fn xdnd_get_supported_atom(
     )
     .log_with_level(Level::Warn)
         && let Some(atoms) = reply.value32()
+        && let Some(atom) = xdnd_pick_atom(atoms, supported_atoms)
     {
-        for atom in atoms {
-            if xdnd_is_atom_supported(atom, supported_atoms) {
-                return atom;
-            }
-        }
+        return atom;
     }
     0
+}
+
+/// Prefers `text/uri-list`, since some file managers offer `text/plain` with
+/// bare paths first.
+fn xdnd_pick_atom(offered: impl IntoIterator<Item = u32>, atoms: &XcbAtoms) -> Option<u32> {
+    let mut fallback = None;
+    for atom in offered {
+        if atom == atoms.TextUriList {
+            return Some(atom);
+        }
+        if fallback.is_none() && xdnd_is_atom_supported(atom, atoms) {
+            fallback = Some(atom);
+        }
+    }
+    fallback
 }
 
 fn xdnd_send_finished(
@@ -2897,6 +2904,42 @@ fn xkb_state_for_key_event(xkb: &xkbc::State, event_state: xproto::KeyButMask) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xdnd_prefers_uri_list() {
+        // File managers like Nautilus offer `text/plain;charset=utf-8`,
+        // `text/uri-list`, and some other formats. `xdnd_pick_atom` should
+        // prefer URI lists if offered.
+        let atoms = XcbAtoms {
+            TEXT: 1,
+            STRING: 2,
+            UTF8_STRING: 3,
+            TEXT_PLAIN: 4,
+            TEXT_PLAIN_UTF8: 5,
+            TextUriList: 6,
+            ..Default::default()
+        };
+        let other1 = 100;
+        let other2 = 101;
+        assert_eq!(xdnd_pick_atom([
+            atoms.TEXT,
+            atoms.STRING,
+            atoms.UTF8_STRING,
+            atoms.TEXT_PLAIN,
+            atoms.TEXT_PLAIN_UTF8,
+            atoms.TextUriList,
+            other1,
+            other2,
+        ], &atoms), Some(atoms.TextUriList));
+        assert_eq!(
+            xdnd_pick_atom([other1, atoms.TEXT_PLAIN_UTF8, atoms.TEXT], &atoms),
+            Some(atoms.TEXT_PLAIN_UTF8)
+        );
+        assert_eq!(
+            xdnd_pick_atom([other1, other2], &atoms),
+            None
+        );
+    }
 
     fn test_keymap(layouts: &str) -> xkbc::Keymap {
         test_keymap_with_variant(layouts, "")
