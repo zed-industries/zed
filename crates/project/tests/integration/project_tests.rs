@@ -17301,6 +17301,73 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let text = "x = \"café\"\ny = \"crème brûlée\"\nz = \"déjà vu\"\n";
+    let file_names = ["unspecified.py", "unknown_driver.py"];
+
+    let root = TempTree::new(json!({ "project": {} }));
+    let work_dir = root.path().join("project");
+    git_init(&work_dir);
+    git_config(
+        "diff.default.textconv",
+        "iconv -f WINDOWS-1252 -t UTF-8",
+        &work_dir,
+    );
+    std::fs::write(
+        work_dir.join(".gitattributes"),
+        "unknown_driver.py diff=unknown\n",
+    )
+    .unwrap();
+    git_add(".gitattributes", &work_dir);
+    for file_name in file_names {
+        let bytes = file_content::encode_text(text.to_owned(), encoding_rs::WINDOWS_1252, false);
+        std::fs::write(work_dir.join(file_name), bytes).unwrap();
+        git_add(file_name, &work_dir);
+    }
+    git_commit("Initial commit", &work_dir);
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    for file_name in file_names {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(work_dir.join(file_name), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            assert_eq!(buffer.encoding(), encoding_rs::WINDOWS_1252);
+            let middle_line = Point::new(1, 0)..Point::new(1, buffer.line_len(1));
+            buffer.edit([(middle_line, "changed")], None, cx);
+        });
+
+        let blame = project
+            .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            blame
+                .entries
+                .iter()
+                .map(|entry| entry.range.clone())
+                .collect::<Vec<_>>(),
+            vec![0..1, 2..3],
+            "blame of {file_name}"
+        );
+    }
+}
+
 #[gpui::test(iterations = 25)]
 async fn test_staging_random_hunks(
     mut rng: StdRng,

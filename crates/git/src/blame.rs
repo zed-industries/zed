@@ -84,6 +84,7 @@ impl Blame {
 const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
+const EXACT_ENCODING_YIELD_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy)]
 enum BlameSource<'a> {
@@ -104,21 +105,30 @@ async fn stored_contents<'a>(
     if encoding == UTF_8 && !has_bom {
         return None;
     }
-    let lines_encode_independently =
-        encoding != ISO_2022_JP || !content.chars().any(|c| matches!(c, '¥' | '‾'));
-    let compares_stored_bytes =
-        git_compares_stored_bytes(git, path, encoding, lines_encode_independently)
-            .await
-            .with_context(|| format!("reading git attributes of {:?}", path.as_unix_str()))
-            .log_err()?;
-    if !compares_stored_bytes {
+    let stdin_encoding = git_stdin_encoding(git, path, encoding)
+        .await
+        .with_context(|| format!("reading git attributes of {:?}", path.as_unix_str()))
+        .log_err()?;
+    if stdin_encoding == StdinEncoding::Utf8 {
         return None;
     }
+    let lines_encode_independently =
+        encoding != ISO_2022_JP || stdin_encoding == StdinEncoding::WorkingTree;
     let mut encoder = ExactEncoder::new(encoding, has_bom);
-    let is_exact = text::chunks_with_line_ending(content, line_ending)
-        .all(|chunk| encoder.encode(chunk).is_some())
-        && encoder.finish().is_some();
-    is_exact.then_some(BlameSource::StoredContents(
+    let mut bytes_since_yield = 0;
+    for chunk in text::chunks_with_line_ending(content, line_ending) {
+        if !lines_encode_independently && chunk.contains(['¥', '‾']) {
+            return None;
+        }
+        encoder.encode(chunk)?;
+        bytes_since_yield += chunk.len();
+        if bytes_since_yield >= EXACT_ENCODING_YIELD_BYTES {
+            bytes_since_yield = 0;
+            smol::future::yield_now().await;
+        }
+    }
+    encoder.finish()?;
+    Some(BlameSource::StoredContents(
         content,
         line_ending,
         encoding,
@@ -126,12 +136,18 @@ async fn stored_contents<'a>(
     ))
 }
 
-async fn git_compares_stored_bytes(
+#[derive(PartialEq)]
+enum StdinEncoding {
+    Utf8,
+    Stored,
+    WorkingTree,
+}
+
+async fn git_stdin_encoding(
     git: &GitBinary,
     path: &RepoPath,
     encoding: &'static Encoding,
-    lines_encode_independently: bool,
-) -> Result<bool> {
+) -> Result<StdinEncoding> {
     let attributes = git
         .run_raw(&[
             "check-attr",
@@ -158,19 +174,21 @@ async fn git_compares_stored_bytes(
     }
 
     if has_working_tree_encoding {
-        return Ok(true);
+        return Ok(StdinEncoding::WorkingTree);
     }
-    if encoding == UTF_16LE || encoding == UTF_16BE || !lines_encode_independently {
-        return Ok(false);
+    if encoding == UTF_16LE || encoding == UTF_16BE {
+        return Ok(StdinEncoding::Utf8);
     }
-    let Some(diff_driver) = diff_driver else {
-        return Ok(true);
-    };
-    let textconv_key = format!("diff.{diff_driver}.textconv");
-    let textconv = git
-        .run(&["config", "--default", "", "--get", &textconv_key])
-        .await?;
-    Ok(textconv.is_empty())
+    for diff_driver in diff_driver.into_iter().chain(["default"]) {
+        let textconv_key = format!("diff.{diff_driver}.textconv");
+        let textconv = git
+            .run(&["config", "--default", "", "--get", &textconv_key])
+            .await?;
+        if !textconv.is_empty() {
+            return Ok(StdinEncoding::Utf8);
+        }
+    }
+    Ok(StdinEncoding::Stored)
 }
 
 async fn run_git_blame(
