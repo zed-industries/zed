@@ -171,6 +171,8 @@ pub struct TrustedWorktreesStore {
     trusted_paths: TrustedPaths,
     restricted: HashMap<WeakEntity<WorktreeStore>, HashSet<WorktreeId>>,
     worktree_trust_serialization: Task<()>,
+    #[cfg(feature = "test-support")]
+    casing_resolution_hold: Option<futures::channel::oneshot::Receiver<()>>,
 }
 
 #[derive(Debug, Default)]
@@ -239,7 +241,19 @@ impl TrustedWorktreesStore {
             worktree_stores: HashMap::default(),
             restricted: HashMap::default(),
             worktree_trust_serialization: Task::ready(()),
+            #[cfg(feature = "test-support")]
+            casing_resolution_hold: None,
         }
+    }
+
+    /// Holds the next casing resolution until the returned sender is used or dropped,
+    /// so that tests can let everything else run first.
+    /// Only a resolution with persisted paths to resolve takes the hold.
+    #[cfg(feature = "test-support")]
+    pub fn hold_next_casing_resolution(&mut self) -> futures::channel::oneshot::Sender<()> {
+        let (release, hold) = futures::channel::oneshot::channel();
+        self.casing_resolution_hold = Some(hold);
+        release
     }
 
     /// Whether a particular worktree store has associated worktrees that are restricted, or an associated host is restricted.
@@ -493,7 +507,13 @@ impl TrustedWorktreesStore {
             return Task::ready(());
         }
 
+        #[cfg(feature = "test-support")]
+        let hold = self.casing_resolution_hold.take();
         cx.spawn(async move |this, cx| {
+            #[cfg(feature = "test-support")]
+            if let Some(hold) = hold {
+                hold.await.ok();
+            }
             let respelled_paths = cx
                 .background_spawn(async move {
                     mismatched_paths

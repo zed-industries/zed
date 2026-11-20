@@ -1456,30 +1456,45 @@ async fn test_debug_scenarios_load_with_differently_cased_db_trusted_path(
     use util::paths::SanitizedPath;
 
     init_test(cx);
-    cx.executor().allow_parking();
     TaskStore::init(None);
 
-    let dir = TempTree::new(json!({
-        "Project": {
+    // The casing gets resolved on the real file system, while the worktree is scanned on a fake
+    // one, so that the test scheduler controls when the scan happens.
+    let dir = TempTree::new(json!({ "Project": {} }));
+    let root = SanitizedPath::new(dir.path()).as_path().to_path_buf();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        root.join("Project"),
+        json!({
             ".zed": {
                 "debug.json": r#"[{ "label": "debug", "adapter": "Debugpy", "request": "launch" }]"#,
             },
-        },
-    }));
-    let root = SanitizedPath::new(dir.path()).as_path().to_path_buf();
+        }),
+    )
+    .await;
     let db_trusted_paths =
         DbTrustedPaths::from_iter([(None, HashSet::from_iter([root.join("project")]))]);
     cx.update(|cx| trusted_worktrees::init(db_trusted_paths, cx));
-
-    let project = Project::test_with_worktree_trust(
-        RealFs::new(None, cx.executor()),
-        [root.join("Project").as_path()],
-        cx,
-    )
-    .await;
-    cx.run_until_parked();
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
     let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
+
+    let no_paths: [&Path; 0] = [];
+    let project = Project::test_with_worktree_trust(fs, no_paths, cx).await;
+    let release_casing_resolution =
+        trusted_worktrees.update(cx, |store, _| store.hold_next_casing_resolution());
+    let create_worktree = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(root.join("Project"), true, cx)
+    });
+    // Let everything else run first: had the worktree started scanning, the scan would finish here.
+    cx.run_until_parked();
+    assert!(
+        project.read_with(cx, |project, cx| project.worktrees(cx).next().is_none()),
+        "the casing resolution should hold the worktree creation"
+    );
+    release_casing_resolution.send(()).unwrap();
+    create_worktree.await.unwrap();
+    cx.run_until_parked();
+
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
     assert!(
         !trusted_worktrees.read_with(cx, |store, cx| store
             .has_restricted_worktrees(&worktree_store, cx)),
