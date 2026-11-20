@@ -11,9 +11,28 @@ use crate::{
 use super::Window;
 
 /// The event emitted when a prompt's option is selected.
-/// The usize is the index of the selected option, from the actions
-/// passed to the prompt.
-pub struct PromptResponse(pub usize);
+/// The first field is the index of the selected option, from the actions
+/// passed to the prompt. The second field indicates whether the verification
+/// checkbox was checked.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct PromptResponse(pub usize, pub bool);
+
+impl PromptResponse {
+    /// Creates a new prompt response with the selected button index and verification checkbox state.
+    pub fn new(button: usize, checkbox_checked: bool) -> Self {
+        Self(button, checkbox_checked)
+    }
+
+    /// Returns the index of the selected action button.
+    pub fn button(&self) -> usize {
+        self.0
+    }
+
+    /// Returns whether the verification checkbox was checked.
+    pub fn checkbox_checked(&self) -> bool {
+        self.1
+    }
+}
 
 /// A prompt that can be rendered in the window.
 pub trait Prompt: EventEmitter<PromptResponse> + Focusable {}
@@ -22,11 +41,11 @@ impl<V: EventEmitter<PromptResponse> + Focusable> Prompt for V {}
 
 /// A handle to a prompt that can be used to interact with it.
 pub struct PromptHandle {
-    sender: oneshot::Sender<usize>,
+    sender: oneshot::Sender<(usize, bool)>,
 }
 
 impl PromptHandle {
-    pub(crate) fn new(sender: oneshot::Sender<usize>) -> Self {
+    pub(crate) fn new(sender: oneshot::Sender<(usize, bool)>) -> Self {
         Self { sender }
     }
 
@@ -42,7 +61,7 @@ impl PromptHandle {
         let window_handle = window.window_handle();
         cx.subscribe(&view, move |_: Entity<V>, e: &PromptResponse, cx| {
             if let Some(sender) = sender.take() {
-                sender.send(e.0).ok();
+                sender.send((e.0, e.1)).ok();
                 window_handle
                     .update(cx, |_, window, cx| {
                         window.prompt.take();
@@ -74,6 +93,7 @@ pub fn fallback_prompt_renderer(
     level: PromptLevel,
     message: &str,
     detail: Option<&str>,
+    checkbox_label: Option<&str>,
     actions: &[PromptButton],
     handle: PromptHandle,
     window: &mut Window,
@@ -83,6 +103,8 @@ pub fn fallback_prompt_renderer(
         _level: level,
         message: message.to_string(),
         detail: detail.map(ToString::to_string),
+        checkbox_label: checkbox_label.map(ToString::to_string),
+        checkbox_checked: false,
         actions: actions.to_vec(),
         focus: cx.focus_handle(),
     });
@@ -95,6 +117,8 @@ pub struct FallbackPromptRenderer {
     _level: PromptLevel,
     message: String,
     detail: Option<String>,
+    checkbox_label: Option<String>,
+    checkbox_checked: bool,
     actions: Vec<PromptButton>,
     focus: FocusHandle,
 }
@@ -127,6 +151,24 @@ impl Render for FallbackPromptRenderer {
                     .mb_2()
                     .child(div().child(detail))
             }))
+            .children(self.checkbox_label.clone().map(|label| {
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .text_sm()
+                    .mb_2()
+                    .child(if self.checkbox_checked { "[x]" } else { "[ ]" })
+                    .child(label)
+                    .id("fallback-prompt-checkbox")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.checkbox_checked = !this.checkbox_checked;
+                        cx.notify();
+                    }))
+            }))
             .children(self.actions.iter().enumerate().map(|(ix, action)| {
                 div()
                     .flex()
@@ -138,10 +180,10 @@ impl Render for FallbackPromptRenderer {
                     .rounded_xs()
                     .cursor_pointer()
                     .text_sm()
-                    .child(action.label().clone())
+                    .child(action.display_label())
                     .id(ix)
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.emit(PromptResponse(ix));
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.emit(PromptResponse::new(ix, this.checkbox_checked));
                         cx.stop_propagation();
                     }))
             }));
@@ -203,6 +245,7 @@ pub(crate) enum PromptBuilder {
                 PromptLevel,
                 &str,
                 Option<&str>,
+                Option<&str>,
                 &[PromptButton],
                 PromptHandle,
                 &mut Window,
@@ -216,6 +259,7 @@ impl Deref for PromptBuilder {
     type Target = dyn Fn(
         PromptLevel,
         &str,
+        Option<&str>,
         Option<&str>,
         &[PromptButton],
         PromptHandle,
