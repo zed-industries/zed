@@ -1484,6 +1484,24 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn remove_placeholder_workspace(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace() != workspace {
+            let is_placeholder = {
+                let workspace = workspace.read(cx);
+                workspace.database_id().is_none()
+                    && workspace.root_paths(cx).is_empty()
+                    && workspace.items(cx).next().is_none()
+            };
+            if is_placeholder && self.held_index(workspace).is_some() {
+                self.detach_workspace(workspace, cx);
+            }
+        }
+    }
+
     /// Promotes the currently active workspace to persistent if it is
     /// transient, so it is retained across workspace switches even when
     /// the sidebar is closed. No-op if the workspace is already persistent.

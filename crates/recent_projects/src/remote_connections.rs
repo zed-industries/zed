@@ -128,6 +128,7 @@ pub async fn open_remote_project(
     cx: &mut AsyncApp,
 ) -> Result<WindowHandle<MultiWorkspace>> {
     let created_new_window = open_options.requesting_window.is_none();
+    let focus = open_options.focus.unwrap_or(true);
 
     let existing = find_existing_workspace(
         &paths,
@@ -155,7 +156,9 @@ pub async fn open_remote_project(
 
             let open_results = existing_window
                 .update(cx, |multi_workspace, window, cx| {
-                    window.activate_window();
+                    if focus {
+                        window.activate_window();
+                    }
                     multi_workspace.activate(existing_workspace.clone(), None, window, cx);
                     existing_workspace.update(cx, |workspace, cx| {
                         workspace.open_paths(
@@ -214,6 +217,7 @@ pub async fn open_remote_project(
         let mut options =
             cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
         options.window_bounds = workspace_position.window_bounds;
+        options.focus &= focus;
 
         let window = cx.open_window(options, |window, cx| {
             let project = project::Project::local(
@@ -249,7 +253,9 @@ pub async fn open_remote_project(
             let connection_options = connection_options.clone();
             let initial_workspace = initial_workspace.clone();
             move |_multi_workspace: &mut MultiWorkspace, window, cx| {
-                window.activate_window();
+                if focus {
+                    window.activate_window();
+                }
                 initial_workspace.update(cx, |workspace, cx| {
                     workspace.hide_modal(window, cx);
                     workspace.toggle_modal(window, cx, |window, cx| {
@@ -353,6 +359,7 @@ pub async fn open_remote_project(
                     delegate.clone(),
                     app_state.clone(),
                     paths.clone(),
+                    focus,
                     cx,
                 )
             })
@@ -881,6 +888,55 @@ mod tests {
         drop(connect_guard);
 
         (opts, headless)
+    }
+
+    #[gpui::test]
+    async fn test_open_remote_project_without_refocusing(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let (connection_options, _headless) = init_remote_server(cx, server_cx).await;
+        let window = cx.add_window(|window, _| {
+            window.activate_window();
+            gpui::Empty
+        });
+        cx.run_until_parked();
+
+        let mut async_cx = cx.to_async();
+        let mut remote_window = None;
+        for _ in 0..2 {
+            let opened_window = open_remote_project(
+                connection_options.clone(),
+                vec![PathBuf::from(path!("/project"))],
+                app_state.clone(),
+                OpenOptions {
+                    focus: Some(false),
+                    ..Default::default()
+                },
+                &mut async_cx,
+            )
+            .await
+            .expect("remote workspace should open");
+            cx.run_until_parked();
+            assert_eq!(cx.read(|cx| cx.active_window()), Some(window.into()));
+            if let Some(previous_window) = remote_window {
+                assert_eq!(opened_window, previous_window);
+            }
+            opened_window
+                .read_with(cx, |multi_workspace, cx| {
+                    assert!(
+                        multi_workspace
+                            .workspace()
+                            .read(cx)
+                            .project()
+                            .read(cx)
+                            .is_remote()
+                    );
+                })
+                .expect("remote window should exist");
+            remote_window = Some(opened_window);
+        }
     }
 
     #[gpui::test]
