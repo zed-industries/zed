@@ -1064,25 +1064,19 @@ impl BedrockLanguageModelProvider {
     }
 
     fn preferred_model(&self, fast: bool, cx: &App) -> Option<LanguageModel> {
-        let models = self.bedrock_models(cx);
-        if fast && let Some(model) = newest_converse_model(&models, DEFAULT_FAST_MODEL_ID_PREFIX) {
-            return Some(self.offered_language_model(model, &models));
-        }
         if matches!(
             self.state.read(cx).listing,
             ModelListing::Loading { previous: None }
         ) {
             return None;
         }
-        newest_converse_model(&models, DEFAULT_MODEL_ID_PREFIX)
-            .or_else(|| newest_converse_model(&models, "anthropic."))
-            .or_else(|| {
-                models.values().find(|config| match config {
-                    BedrockModelConfig::Converse(model) => model.supports_tool_use,
-                    BedrockModelConfig::Mantle(model) => model.supports_tools(),
-                })
-            })
-            .or_else(|| models.values().next())
+        let models = self.bedrock_models(cx);
+        let prefix = if fast {
+            DEFAULT_FAST_MODEL_ID_PREFIX
+        } else {
+            DEFAULT_MODEL_ID_PREFIX
+        };
+        newest_converse_model(&models, prefix)
             .map(|model| self.offered_language_model(model, &models))
     }
 
@@ -1133,25 +1127,6 @@ fn model_version(model_id: &str) -> Vec<u64> {
         .collect()
 }
 
-fn model_snapshot(model_id: &str) -> (Option<u32>, Option<(u32, u32)>) {
-    let (model_id, minor) = model_id
-        .rsplit_once(':')
-        .map_or((model_id, None), |(id, revision)| {
-            (id, revision.parse().ok())
-        });
-    let date = model_id
-        .split('-')
-        .find_map(|part| (part.len() == 8).then(|| part.parse().ok()).flatten());
-    let major = model_id
-        .rsplit('-')
-        .next()
-        .and_then(|part| part.strip_prefix('v')?.parse().ok());
-    let revision = major
-        .or(minor)
-        .map(|_| (major.unwrap_or_default(), minor.unwrap_or_default()));
-    (date, revision)
-}
-
 fn newest_converse_model<'a>(
     models: &'a IndexMap<String, BedrockModelConfig>,
     prefix: &str,
@@ -1167,9 +1142,6 @@ fn newest_converse_model<'a>(
         .max_by(|(_, left), (_, right)| {
             model_version(&left.base_model_id)
                 .cmp(&model_version(&right.base_model_id))
-                .then_with(|| {
-                    model_snapshot(&left.base_model_id).cmp(&model_snapshot(&right.base_model_id))
-                })
                 .then_with(|| {
                     (left.route == ConverseModelRoute::Automatic)
                         .cmp(&(right.route == ConverseModelRoute::Automatic))
@@ -3841,19 +3813,6 @@ mod tests {
         let selected =
             newest_converse_model(&models, DEFAULT_MODEL_ID_PREFIX).context("family model")?;
         assert_eq!(language_model(selected).id.0.as_ref(), "b-automatic");
-        for (id, suffix) in [
-            ("old", "20260101-v10:0"),
-            ("new", "20261201-v2:9"),
-            ("latest", "20261201-v10:1"),
-        ] {
-            let mut model = converse_model(&format!("anthropic.claude-sonnet-8-{suffix}"), None);
-            model.route = ConverseModelRoute::Pinned;
-            model.id = id.into();
-            models.insert(id.into(), BedrockModelConfig::Converse(model));
-        }
-        let selected =
-            newest_converse_model(&models, DEFAULT_MODEL_ID_PREFIX).context("dated model")?;
-        assert_eq!(language_model(selected).id.0.as_ref(), "latest");
         Ok(())
     }
 
@@ -4038,7 +3997,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn defaults_use_foundation_versions_and_always_find_an_offered_model(
+    fn defaults_use_only_the_highest_foundation_version_in_their_family(
         cx: &mut gpui::TestAppContext,
     ) {
         init_provider_test(cx);
@@ -4051,32 +4010,18 @@ mod tests {
                         "anthropic.claude-sonnet-10",
                         "anthropic.claude-haiku-7",
                     ],
-                    "anthropic.claude-sonnet-10",
-                    "anthropic.claude-haiku-7",
+                    Some("anthropic.claude-sonnet-10"),
+                    Some("anthropic.claude-haiku-7"),
                 ),
                 (
                     vec![
                         "anthropic.claude-sonnet-4-9-20261201-v1:0",
                         "anthropic.claude-sonnet-4-10-20260101-v1:0",
                     ],
-                    "anthropic.claude-sonnet-4-10-20260101-v1:0",
-                    "anthropic.claude-sonnet-4-10-20260101-v1:0",
+                    Some("anthropic.claude-sonnet-4-10-20260101-v1:0"),
+                    None,
                 ),
-                (
-                    vec!["anthropic.claude-opus-8", "vendor.chat"],
-                    "anthropic.claude-opus-8",
-                    "anthropic.claude-opus-8",
-                ),
-                (
-                    vec!["vendor.a-no-tools", "vendor.z-tools"],
-                    "vendor.z-tools",
-                    "vendor.z-tools",
-                ),
-                (
-                    vec!["vendor.a-no-tools", "vendor.b-no-tools"],
-                    "vendor.a-no-tools",
-                    "vendor.a-no-tools",
-                ),
+                (vec!["anthropic.claude-opus-8", "vendor.chat"], None, None),
             ] {
                 let profiles = bases
                     .iter()
@@ -4086,37 +4031,21 @@ mod tests {
                     .iter()
                     .map(|base| listed_foundation_model(base))
                     .collect::<Vec<_>>();
-                let entries = bases
-                    .iter()
-                    .map(|base| {
-                        (
-                            format!("us.{base}"),
-                            capability_entry(
-                                base,
-                                serde_json::json!({"tool_call": !base.ends_with("no-tools")}),
-                            ),
-                        )
-                    })
-                    .collect::<serde_json::Map<_, _>>();
-                let capabilities =
-                    CapabilityCatalog::parse(&capability_catalog_json(Value::Object(entries)))?;
                 provider.state.update(cx, |state, _| {
                     state.listing =
                         ModelListing::Listed(ModelCatalog::new(&profiles, &foundations));
-                    state.capability_catalog = capabilities;
                 });
                 assert_eq!(
-                    provider.default_model(cx).context("default")?.id.0.as_ref(),
-                    expected_default
+                    provider
+                        .default_model(cx)
+                        .map(|model| model.id.0.to_string()),
+                    expected_default.map(str::to_string)
                 );
                 assert_eq!(
                     provider
                         .default_fast_model(cx)
-                        .context("fast")?
-                        .id
-                        .0
-                        .as_ref(),
-                    expected_fast
+                        .map(|model| model.id.0.to_string()),
+                    expected_fast.map(str::to_string)
                 );
             }
             let base = "anthropic.claude-sonnet-10";
@@ -4136,46 +4065,6 @@ mod tests {
                     .0
                     .as_ref(),
                 application.inference_profile_arn()
-            );
-            provider.state.update(cx, |state, _| {
-                state.listing = ModelListing::Listed(ModelCatalog::new(
-                    &[
-                        application,
-                        listed_inference_profile(&format!("us.{base}"), base),
-                    ],
-                    &[listed_foundation_model(base)],
-                ));
-            });
-            assert_eq!(
-                provider
-                    .default_model(cx)
-                    .context("automatic wins tie")?
-                    .id
-                    .0
-                    .as_ref(),
-                base
-            );
-            provider.state.update(cx, |state, _| {
-                state.listing = ModelListing::Gateway;
-                state.settings.available_models = vec![settings_entry("private gateway", None)];
-            });
-            assert_eq!(
-                provider
-                    .default_model(cx)
-                    .context("settings-only gateway")?
-                    .id
-                    .0
-                    .as_ref(),
-                "private gateway"
-            );
-            assert_eq!(
-                provider
-                    .default_fast_model(cx)
-                    .context("settings-only fast")?
-                    .id
-                    .0
-                    .as_ref(),
-                "private gateway"
             );
             Ok(())
         });
@@ -5419,21 +5308,14 @@ mod tests {
                 );
                 assert!(warning && message.contains("models.dev names for your Region instead"));
             });
-            assert_eq!(
-                cx.update(|cx| provider.default_model(cx))
-                    .context("public default")?
-                    .id
-                    .0
-                    .as_ref(),
-                "vendor.public"
-            );
             deny.store(false, std::sync::atomic::Ordering::SeqCst);
             cx.update(|cx| provider.refresh_models(cx));
             assert_eq!(offered_ids(&provider, cx), ["vendor.public"]);
             finish_listing(&provider, cx).await?;
             let current = cx
-                .update(|cx| provider.default_model(cx))
-                .context("account default")?;
+                .update(|cx| provider.provided_models(cx))
+                .pop()
+                .context("account model")?;
             assert_eq!(current.id.0.as_ref(), "vendor.listed");
             assert_eq!(offered_ids(&provider, cx), ["vendor.listed"]);
             cx.update(|cx| provider.config(&current, cx))?;
@@ -5464,7 +5346,7 @@ mod tests {
             init_provider_test(cx);
             set_bedrock_settings(
                 cx,
-                serde_json::json!({"available_models": [{"name": "vendor.manual", "max_tokens": 10000}]}),
+                serde_json::json!({"available_models": [{"name": "anthropic.claude-haiku-98", "max_tokens": 10000}]}),
             )?;
             let (release, response) = futures::channel::oneshot::channel::<()>();
             let response = response
@@ -5495,8 +5377,9 @@ mod tests {
             state.change_auth(api_key_auth(), false, cx);
         });
             requests.next().await.context("listing started")?;
-            assert_eq!(offered_ids(&provider, cx), ["vendor.manual"]);
+            assert_eq!(offered_ids(&provider, cx), ["anthropic.claude-haiku-98"]);
             assert!(cx.update(|cx| provider.default_model(cx)).is_none());
+            assert!(cx.update(|cx| provider.default_fast_model(cx)).is_none());
             release
                 .send(())
                 .map_err(|_| anyhow!("listing receiver dropped"))?;
