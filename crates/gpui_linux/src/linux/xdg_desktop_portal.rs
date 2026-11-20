@@ -17,6 +17,8 @@ pub enum Event {
     #[cfg_attr(feature = "x11", allow(dead_code))]
     CursorSize(u32),
     ButtonLayout(String),
+    #[cfg_attr(feature = "x11", allow(dead_code))]
+    TextScaleFactor(f32),
 }
 
 /// Forwards desktop settings from the portal to the event loop.
@@ -73,6 +75,15 @@ async fn listen(sender: Sender<Event>) -> anyhow::Result<()> {
         sender.send(Event::ButtonLayout(initial_layout))?;
     }
 
+    if let Ok(initial_scale) = settings
+        .read::<f64>("org.gnome.desktop.interface", "text-scaling-factor")
+        .await
+    {
+        if let Some(scale) = text_scale_factor(initial_scale) {
+            sender.send(Event::TextScaleFactor(scale))?;
+        }
+    }
+
     // Each listener runs until its stream or the channel closes. They're joined rather than
     // spawned, so that cancelling this future cancels them all.
     let mut listeners: Vec<BoxFuture<'_, anyhow::Result<()>>> = Vec::new();
@@ -111,6 +122,24 @@ async fn listen(sender: Sender<Event>) -> anyhow::Result<()> {
         listeners.push(Box::pin(async move {
             while let Some(layout) = button_layout_changed.next().await {
                 sender.send(Event::ButtonLayout(layout?))?;
+            }
+            anyhow::Ok(())
+        }));
+    }
+
+    if let Ok(mut text_scale_changed) = settings
+        .receive_setting_changed_with_args::<f64>(
+            "org.gnome.desktop.interface",
+            "text-scaling-factor",
+        )
+        .await
+    {
+        let sender = sender.clone();
+        listeners.push(Box::pin(async move {
+            while let Some(scale) = text_scale_changed.next().await {
+                if let Some(scale) = text_scale_factor(scale?) {
+                    sender.send(Event::TextScaleFactor(scale))?;
+                }
             }
             anyhow::Ok(())
         }));
@@ -183,10 +212,41 @@ impl EventSource for XDPEventSource {
     }
 }
 
+/// The smallest and largest font scaling factors an app can lay out for.
+const MIN_TEXT_SCALE_FACTOR: f32 = 0.5;
+const MAX_TEXT_SCALE_FACTOR: f32 = 3.;
+
+/// A portal font scaling factor, clamped to the range above; `None` when the
+/// value cannot be used as a factor.
+fn text_scale_factor(value: f64) -> Option<f32> {
+    if !value.is_finite() || value <= 0. {
+        return None;
+    }
+    Some((value as f32).clamp(MIN_TEXT_SCALE_FACTOR, MAX_TEXT_SCALE_FACTOR))
+}
+
 fn window_appearance_from_color_scheme(cs: ColorScheme) -> WindowAppearance {
     match cs {
         ColorScheme::PreferDark => WindowAppearance::Dark,
         ColorScheme::PreferLight => WindowAppearance::Light,
         ColorScheme::NoPreference => WindowAppearance::Light,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::text_scale_factor;
+
+    #[test]
+    fn text_scale_factor_is_clamped_to_a_usable_range() {
+        assert_eq!(text_scale_factor(1.0), Some(1.0));
+        assert_eq!(text_scale_factor(1.25), Some(1.25));
+        assert_eq!(text_scale_factor(2.0), Some(2.0));
+        assert_eq!(text_scale_factor(0.1), Some(0.5), "clamped up");
+        assert_eq!(text_scale_factor(10.0), Some(3.0), "clamped down");
+        assert_eq!(text_scale_factor(0.0), None, "not a factor");
+        assert_eq!(text_scale_factor(-1.0), None);
+        assert_eq!(text_scale_factor(f64::NAN), None);
+        assert_eq!(text_scale_factor(f64::INFINITY), None);
     }
 }
