@@ -35,6 +35,7 @@ use project::{
     CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectPath, Worktree,
 };
 use rope::Point;
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
 use text::LineEnding;
@@ -328,6 +329,14 @@ fn insert_mention_for_project_path(
             cx,
         )
     }))
+}
+
+/// Pasted images have no file to reload from, so copied image mentions carry
+/// their data in clipboard metadata, one entry per image link in the text.
+#[derive(Serialize, Deserialize)]
+struct CopiedImage {
+    mime_type: String,
+    data: String,
 }
 
 enum ResolvedPastedContextItem {
@@ -1279,6 +1288,18 @@ impl MessageEditor {
 
                 let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
                 let path_style = workspace.read(cx).project().read(cx).path_style(cx);
+                let supports_images = self.session_capabilities.read().supports_images();
+                let copied_images = clipboard
+                    .entries()
+                    .iter()
+                    .find_map(|entry| match entry {
+                        ClipboardEntry::String(text) => {
+                            text.metadata_json::<Vec<Option<CopiedImage>>>()
+                        }
+                        _ => None,
+                    })
+                    .filter(|_| supports_images)
+                    .unwrap_or_default();
 
                 let mut all_mentions = Vec::new();
                 for (start_anchor, end_anchor) in selections_before {
@@ -1290,19 +1311,41 @@ impl MessageEditor {
                         snapshot.text_for_range(start_offset..end_offset).collect();
 
                     let parsed_mentions = parse_mention_links(&inserted_text, path_style);
+                    // Each selection receives the whole clipboard text, so image order restarts per selection.
+                    let mut selection_images = copied_images.iter();
                     for (range, mention_uri) in parsed_mentions {
                         let mention_start_offset = MultiBufferOffset(start_offset.0 + range.start);
                         let anchor = snapshot.anchor_before(mention_start_offset);
                         let content_len = range.end - range.start;
-                        all_mentions.push((anchor, content_len, mention_uri));
+                        let copied_image = if matches!(mention_uri, MentionUri::PastedImage { .. })
+                        {
+                            let copied_image = selection_images.next().and_then(|image| {
+                                let image = image.as_ref()?;
+                                Some(Mention::Image(MentionImage {
+                                    data: image.data.clone().into(),
+                                    format: ImageFormat::from_mime_type(&image.mime_type)?,
+                                }))
+                            });
+                            // Pasted image links can't be reloaded without their data, and a failed
+                            // mention would block sending, so they stay plain text.
+                            if copied_image.is_none() {
+                                continue;
+                            }
+                            copied_image
+                        } else {
+                            None
+                        };
+                        all_mentions.push((anchor, content_len, mention_uri, copied_image));
                     }
                 }
 
                 if !all_mentions.is_empty() {
-                    let supports_images = self.session_capabilities.read().supports_images();
                     let http_client = workspace.read(cx).client().http_client();
 
-                    for (anchor, content_len, mention_uri) in all_mentions {
+                    for (anchor, content_len, mention_uri, copied_image) in all_mentions {
+                        let image_preview = copied_image
+                            .as_ref()
+                            .and_then(image_preview_task_for_mention);
                         let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                             snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                             content_len,
@@ -1311,7 +1354,7 @@ impl MessageEditor {
                             mention_uri.tooltip_text(),
                             Some(mention_uri.clone()),
                             Some(self.workspace.clone()),
-                            None,
+                            image_preview,
                             self.editor.clone(),
                             window,
                             cx,
@@ -1319,19 +1362,22 @@ impl MessageEditor {
                             continue;
                         };
 
-                        // Create the confirmation task based on the mention URI type.
-                        // This properly loads file content, fetches URLs, etc.
-                        let task = self.mention_set.update(cx, |mention_set, cx| {
-                            mention_set.confirm_mention_for_uri(
-                                mention_uri.clone(),
-                                supports_images,
-                                http_client.clone(),
-                                cx,
-                            )
-                        });
-                        let task = cx
-                            .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
-                            .shared();
+                        let task = if let Some(copied_image) = copied_image {
+                            Task::ready(Ok(copied_image)).shared()
+                        } else {
+                            // Create the confirmation task based on the mention URI type.
+                            // This properly loads file content, fetches URLs, etc.
+                            let task = self.mention_set.update(cx, |mention_set, cx| {
+                                mention_set.confirm_mention_for_uri(
+                                    mention_uri.clone(),
+                                    supports_images,
+                                    http_client.clone(),
+                                    cx,
+                                )
+                            });
+                            cx.spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
+                                .shared()
+                        };
 
                         self.mention_set.update(cx, |mention_set, cx| {
                             mention_set.insert_mention(
@@ -1346,8 +1392,8 @@ impl MessageEditor {
                         // Drop the tx after inserting to signal the crease is ready
                         drop(tx);
                     }
-                    return;
                 }
+                return;
             }
         }
 
@@ -1361,17 +1407,17 @@ impl MessageEditor {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let Some((text, _)) = self.serialize_selection_with_mentions(false, cx) else {
+        let Some((clipboard, _)) = self.serialize_selection_with_mentions(false, cx) else {
             cx.propagate();
             return;
         };
 
         cx.stop_propagation();
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        cx.write_to_clipboard(clipboard);
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((text, ranges)) = self.serialize_selection_with_mentions(true, cx) else {
+        let Some((clipboard, ranges)) = self.serialize_selection_with_mentions(true, cx) else {
             cx.propagate();
             return;
         };
@@ -1385,7 +1431,7 @@ impl MessageEditor {
                 editor.insert("", window, cx);
             });
         });
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        cx.write_to_clipboard(clipboard);
     }
 
     fn paste_raw(&mut self, _: &PasteRaw, window: &mut Window, cx: &mut Context<Self>) {
@@ -1992,7 +2038,7 @@ impl MessageEditor {
         &self,
         expand_empty_to_line: bool,
         cx: &mut App,
-    ) -> Option<(String, Vec<Range<MultiBufferOffset>>)> {
+    ) -> Option<(ClipboardItem, Vec<Range<MultiBufferOffset>>)> {
         if self.mention_set.read(cx).is_empty() {
             return None;
         }
@@ -2014,6 +2060,7 @@ impl MessageEditor {
             .filter_map(|(crease_id, range)| {
                 mention_set.mention_uri_for_crease(&crease_id).map(|uri| {
                     (
+                        crease_id,
                         range.start.to_offset(&snapshot),
                         range.end.to_offset(&snapshot),
                         uri,
@@ -2028,6 +2075,7 @@ impl MessageEditor {
 
         let mut text = String::new();
         let mut ranges = Vec::with_capacity(point_selections.len());
+        let mut image_chips = Vec::new();
         let mut has_mentions = false;
         let mut is_first = true;
         let mut prev_was_entire_line = false;
@@ -2052,12 +2100,23 @@ impl MessageEditor {
             prev_was_entire_line = is_entire_line;
 
             let mut cursor = range.start;
-            for (start, end, uri) in mention_ranges
+            for (crease_id, start, end, uri) in mention_ranges
                 .iter()
-                .filter(|(start, end, _)| *start < range.end && range.start < *end)
+                .filter(|(_, start, end, _)| *start < range.end && range.start < *end)
             {
                 if cursor < *start {
                     text.extend(snapshot.text_for_range(cursor..*start));
+                }
+                if matches!(uri, MentionUri::PastedImage { .. }) {
+                    // An image still being converted has no data yet, so it pastes as plain link text.
+                    let copied_image = match mention_set.resolved_mention_for_crease(crease_id) {
+                        Some((_, Some(Mention::Image(image)))) => Some(CopiedImage {
+                            mime_type: image.format.mime_type().to_string(),
+                            data: image.data.to_string(),
+                        }),
+                        _ => None,
+                    };
+                    image_chips.push((text.len(), copied_image));
                 }
                 write!(text, "{}", uri.as_link()).unwrap();
                 cursor = *end;
@@ -2070,7 +2129,34 @@ impl MessageEditor {
             ranges.push(range);
         }
 
-        has_mentions.then_some((text, ranges))
+        if !has_mentions {
+            return None;
+        }
+        // Paste assigns image data to every image link in order, including plain-text links
+        // that have no chip, so the list must have an entry for each of them.
+        let path_style = self
+            .workspace
+            .upgrade()?
+            .read(cx)
+            .project()
+            .read(cx)
+            .path_style(cx);
+        let copied_images = parse_mention_links(&text, path_style)
+            .into_iter()
+            .filter(|(_, uri)| matches!(uri, MentionUri::PastedImage { .. }))
+            .map(|(range, _)| {
+                image_chips
+                    .iter_mut()
+                    .find(|(start, _)| *start == range.start)
+                    .and_then(|(_, image)| image.take())
+            })
+            .collect::<Vec<_>>();
+        let clipboard = if !copied_images.iter().any(Option::is_some) {
+            ClipboardItem::new_string(text)
+        } else {
+            ClipboardItem::new_string_with_json_metadata(text, copied_images)
+        };
+        Some((clipboard, ranges))
     }
 }
 
@@ -2335,7 +2421,7 @@ mod tests {
     use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
-        actions::{Cut, Paste},
+        actions::{Copy, Cut, Paste},
     };
 
     use fs::FakeFs;
@@ -4782,7 +4868,7 @@ mod tests {
         let copied_text = source_message_editor.update(&mut cx, |message_editor, cx| {
             message_editor
                 .serialize_selection_with_mentions(false, cx)
-                .map(|(text, _)| text)
+                .and_then(|(clipboard, _)| clipboard.text())
                 .expect("selection mentions should serialize")
         });
         let expected_text = format!(
@@ -4950,6 +5036,167 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copy_and_paste_pasted_image_mention_keeps_image(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (source_message_editor, source_editor, mut cx) =
+            setup_paste_test_message_editor(json!({}), cx).await;
+        let workspace = source_message_editor.read_with(&cx, |message_editor, _| {
+            message_editor.workspace.upgrade().expect("workspace")
+        });
+        let project = workspace.read_with(&cx, |workspace, _| workspace.project().clone());
+        let target_message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace.downgrade(),
+                    project.downgrade(),
+                    None,
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+        target_message_editor.update(&mut cx, |message_editor, _| {
+            message_editor
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(
+                    acp_v2::PromptCapabilities::new().image(acp_v2::PromptImageCapabilities::new()),
+                );
+        });
+
+        let image = |data: &str| {
+            acp_v2::ContentBlock::Image(acp_v2::ImageContent::new(data.to_string(), "image/png"))
+        };
+        let text =
+            |text: &str| acp_v2::ContentBlock::Text(acp_v2::TextContent::new(text.to_string()));
+        let plain_image_link = MentionUri::PastedImage {
+            name: "Image".into(),
+        }
+        .as_link()
+        .to_string();
+        // Images at the start, middle and end, back to back, next to unusual whitespace,
+        // and after a plain-text image link that has no image data.
+        source_message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.set_message(
+                vec![
+                    image("Zmlyc3Q="),
+                    text("a  "),
+                    text(&plain_image_link),
+                    image("c2Vjb25k"),
+                    image("dGhpcmQ="),
+                    text("\n\tb\n"),
+                    image("bGFzdA=="),
+                ],
+                window,
+                cx,
+            );
+        });
+
+        let copy_all = |message_editor: &Entity<MessageEditor>, cx: &mut VisualTestContext| {
+            message_editor.update_in(cx, |message_editor, window, cx| {
+                message_editor.editor.update(cx, |editor, cx| {
+                    let end = editor.buffer().read(cx).snapshot(cx).len();
+                    editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| selections.select_ranges([MultiBufferOffset(0)..end]),
+                    );
+                });
+                message_editor.copy(&Copy, window, cx);
+            });
+            cx.read_from_clipboard().expect("clipboard item")
+        };
+
+        let source_clipboard = copy_all(&source_message_editor, &mut cx);
+        target_message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+
+        let source_text = source_editor.read_with(&cx, |editor, cx| editor.text(cx));
+        let target_text = target_message_editor.read_with(&cx, |editor, cx| editor.text(cx));
+        assert_eq!(target_text, source_text);
+
+        let contents = mention_contents(&target_message_editor, &mut cx).await;
+        assert_eq!(contents.len(), 4);
+        assert!(contents.iter().all(|(uri, mention)| {
+            matches!(uri, MentionUri::PastedImage { .. }) && matches!(mention, Mention::Image(_))
+        }));
+
+        let image_positions = |message_editor: &Entity<MessageEditor>,
+                               cx: &mut VisualTestContext| {
+            message_editor.update(cx, |message_editor, cx| {
+                let display_snapshot = message_editor
+                    .editor
+                    .update(cx, |editor, cx| editor.display_snapshot(cx));
+                let snapshot = message_editor
+                    .editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx);
+                let mention_set = message_editor.mention_set.read(cx);
+                let mut positions = display_snapshot
+                    .crease_snapshot
+                    .crease_items_with_offsets(&snapshot)
+                    .into_iter()
+                    .filter_map(|(crease_id, range)| {
+                        let (_, Some(Mention::Image(image))) =
+                            mention_set.resolved_mention_for_crease(&crease_id)?
+                        else {
+                            return None;
+                        };
+                        Some((range.start, image.data))
+                    })
+                    .collect::<Vec<_>>();
+                positions.sort_by_key(|(offset, _)| *offset);
+                positions
+            })
+        };
+        let source_positions = image_positions(&source_message_editor, &mut cx);
+        assert_eq!(source_positions.len(), 4);
+        assert_eq!(
+            image_positions(&target_message_editor, &mut cx),
+            source_positions
+        );
+
+        // Copying the pasted message again yields the same images in the same order.
+        let target_clipboard = copy_all(&target_message_editor, &mut cx);
+        assert_eq!(target_clipboard, source_clipboard);
+    }
+
+    #[gpui::test]
+    async fn test_paste_image_link_without_image_data_stays_text(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) = setup_paste_test_message_editor(json!({}), cx).await;
+
+        let image_link = MentionUri::PastedImage {
+            name: "Image".into(),
+        }
+        .as_link()
+        .to_string();
+        let pasted_text = format!("a {image_link} b");
+        cx.write_to_clipboard(ClipboardItem::new_string(pasted_text.clone()));
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), pasted_text)
+        });
+        assert!(mention_contents(&message_editor, &mut cx).await.is_empty());
+    }
+
+    #[gpui::test]
     async fn test_serialized_copy_text_selection_covers_only_mention(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -4973,7 +5220,7 @@ mod tests {
             .update(&mut cx, |message_editor, cx| {
                 message_editor
                     .serialize_selection_with_mentions(false, cx)
-                    .map(|(text, _)| text)
+                    .and_then(|(clipboard, _)| clipboard.text())
             });
 
         assert_eq!(copied, Some(fixture.first_uri.as_link().to_string()));
@@ -5007,7 +5254,7 @@ mod tests {
             .update(&mut cx, |message_editor, cx| {
                 message_editor
                     .serialize_selection_with_mentions(false, cx)
-                    .map(|(text, _)| text)
+                    .and_then(|(clipboard, _)| clipboard.text())
             });
 
         assert_eq!(copied, None);
