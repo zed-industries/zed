@@ -401,6 +401,8 @@ actions!(
         Duplicate,
         /// Reveals the selected item in the system file manager.
         RevealInFileManager,
+        /// Previews the selected local file with Quick Look on macOS.
+        QuickLook,
         /// Removes the selected folder from the project.
         RemoveFromProject,
         /// Cuts the selected file or directory.
@@ -1189,10 +1191,14 @@ impl ProjectPanel {
             };
 
             let has_pasteable_content = self.has_pasteable_content(cx);
+            let can_quick_look = self.quick_look_entry(cx).is_some();
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
-                        menu.when(is_markdown, |menu| {
+                        menu.when(can_quick_look, |menu| {
+                            menu.action("Quick Look", Box::new(QuickLook))
+                        })
+                        .when(is_markdown, |menu| {
                             menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
                         })
                         .when(is_svg, |menu| {
@@ -1217,6 +1223,9 @@ impl ProjectPanel {
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_markdown, |menu| {
                                 menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                            })
+                            .when(can_quick_look, |menu| {
+                                menu.action("Quick Look", Box::new(QuickLook))
                             })
                             .when(is_svg, |menu| {
                                 menu.action("Open SVG Preview", Box::new(OpenSvgPreview))
@@ -4202,6 +4211,21 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let abs_path = worktree.absolutize(&entry.path);
             cx.open_with_system(&abs_path);
+        }
+    }
+
+    fn quick_look_entry<'a>(&self, cx: &'a App) -> Option<(&'a Worktree, &'a project::Entry)> {
+        if !cfg!(target_os = "macos") || !self.project.read(cx).is_local() {
+            return None;
+        }
+        self.selected_entry(cx).filter(|(worktree, entry)| {
+            worktree.is_local() && !entry.is_dir() && !entry.is_fifo && !entry.is_external
+        })
+    }
+
+    fn quick_look(&mut self, _: &QuickLook, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((worktree, entry)) = self.quick_look_entry(cx) {
+            window.preview_file(&worktree.absolutize(&entry.path));
         }
     }
 
@@ -7265,6 +7289,9 @@ impl ProjectPanel {
         };
 
         dispatch_context.add(identifier);
+        if self.quick_look_entry(cx).is_some() {
+            dispatch_context.add("quick_look_available");
+        }
         dispatch_context
     }
 
@@ -7701,6 +7728,9 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::collapse_selected_entry_and_children))
                 .on_action(cx.listener(Self::expand_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
+                .when(self.quick_look_entry(cx).is_some(), |el| {
+                    el.on_action(cx.listener(Self::quick_look))
+                })
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))

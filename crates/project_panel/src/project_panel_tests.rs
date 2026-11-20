@@ -11212,6 +11212,47 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[gpui::test]
+async fn test_quick_look_uses_the_selected_local_file(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({"folder": {}, "- a #1.txt": "", "other.txt": ""}),
+    )
+    .await;
+    fs.insert_tree("/outside", json!({"target.txt": ""})).await;
+    fs.insert_symlink("/root/link", PathBuf::from("/outside/target.txt"))
+        .await;
+    let project = Project::test(fs, [Path::new("/root")], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    for name in ["other.txt", "- a #1.txt", "folder", "link"] {
+        select_path(&panel, &format!("root/{name}"), cx);
+        let preview = panel.update(cx, |panel, cx| {
+            panel
+                .quick_look_entry(cx)
+                .map(|(tree, entry)| tree.absolutize(&entry.path))
+        });
+        let expected = match name {
+            "folder" | "link" => None,
+            _ => Some(Path::new("/root").join(name)),
+        };
+        assert_eq!(preview, expected);
+    }
+    panel.update(cx, |panel, cx| {
+        panel.selection = None;
+        assert!(panel.quick_look_entry(cx).is_none());
+    });
+}
+
 #[gpui::test]
 async fn test_reveal_in_file_manager_path_falls_back_to_worktree_root(
     cx: &mut gpui::TestAppContext,
