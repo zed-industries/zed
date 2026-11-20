@@ -2013,6 +2013,124 @@ mod resolve_worktree_tests {
             );
         }
     }
+
+    #[test]
+    fn test_delta_checkout_short_name() {
+        let examples = [
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                false,
+                "/home/bob/zed/.delta/worktrees/olivetti/zed",
+                "olivetti",
+            ),
+            (
+                "/data/repositories/1/clones/olivetti/zed.git",
+                false,
+                "/data/repositories/1/worktrees/olivetti/zed",
+                "olivetti",
+            ),
+            (
+                "/storage/clones/olivetti/My_Project.git",
+                false,
+                "/storage/worktrees/olivetti/My_Project",
+                "olivetti",
+            ),
+            (
+                "/home/runner/.delta/clones/zed.git",
+                false,
+                "/home/runner/zed",
+                "clones/zed",
+            ),
+            (
+                "/home/runner/.delta/clones/zed-2.git",
+                false,
+                "/home/runner/zed-2",
+                "clones/zed-2",
+            ),
+            (
+                "/mounts/olivetti/zed.git",
+                false,
+                "/mounts/olivetti/zed",
+                "olivetti",
+            ),
+            (
+                "/storage/clones/olivetti/zed.git",
+                false,
+                "/storage/worktrees/olivetti/zed/crates/gpui",
+                "olivetti",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                false,
+                "/home/bob/zed/.delta/worktrees/review-olivetti/zed",
+                "olivetti/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/lettera/zed.git",
+                false,
+                "/home/bob/zed/.delta/worktrees/review-lettera/zed",
+                "lettera/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                true,
+                "/tmp/review/zed",
+                "olivetti/zed/review/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                true,
+                "/tmp/other/zed",
+                "olivetti/zed/other/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                true,
+                "/tmp/feature",
+                "olivetti/zed/feature",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/lettera/zed.git",
+                true,
+                "/tmp/review/zed",
+                "lettera/zed/review/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                true,
+                "/checkouts/olivetti/zed.git",
+                "olivetti/zed/olivetti/zed.git",
+            ),
+            (
+                "/storage/clones/olivetti/repo.git",
+                false,
+                "/storage/worktrees/olivetti/repo",
+                "olivetti",
+            ),
+            (
+                "/storage/clones/olivetti/repo-2.git",
+                false,
+                "/storage/worktrees/olivetti/repo-2",
+                "olivetti/repo-2",
+            ),
+        ];
+        let short_names = examples.map(|(clone_path, is_linked_worktree, folder_path, _)| {
+            project::delta_checkout_short_name(
+                &project::DeltaClone {
+                    path: PathBuf::from(clone_path),
+                    is_linked_worktree,
+                    checkout_path: Some(PathBuf::from(folder_path)),
+                },
+                Path::new(folder_path),
+                PathStyle::Unix,
+            )
+        });
+
+        assert_eq!(
+            short_names,
+            examples.map(|(_, _, _, short_name)| Some(short_name.into()))
+        );
+    }
 }
 
 mod repository_activation_tests {

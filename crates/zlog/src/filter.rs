@@ -289,8 +289,7 @@ impl ScopeMap {
                     this.entries[parent_index].enabled = Some(items[sub_items_start].1);
                     continue;
                 }
-                let is_valid_scope = !scope_name.is_empty();
-                let is_last = depth + 1 == SCOPE_DEPTH_MAX || !is_valid_scope;
+                let is_last = depth + 1 == SCOPE_DEPTH_MAX;
                 let mut enabled = None;
                 if is_last {
                     assert_eq!(

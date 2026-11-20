@@ -1,5 +1,5 @@
 use crate::{
-    DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
+    CycleResponseSpeed, DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     conversation_view::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent},
     entry_view_state::TERMINAL_CONTENT_TOP_PADDING,
     open_abs_path_at_point, project_path_for_file_link,
@@ -28,7 +28,7 @@ use crate::completion_provider::{AvailableSkill, PromptLocalCommand, pluralize};
 use crate::message_editor::SharedSessionCapabilities;
 use crate::ui::{
     SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip, TerminalSandboxWarning,
-    TerminalToolHeader,
+    TerminalToolHeader, fast_mode_button, thinking_effort_trigger,
 };
 use crate::unicode_confusables;
 
@@ -1180,6 +1180,10 @@ impl ThreadView {
             Self::handle_message_editor_event,
         ));
 
+        if let Some(config_options_view) = &config_options_view {
+            subscriptions.push(cx.observe(config_options_view, |_, _, cx| cx.notify()));
+        }
+
         // If this thread is backed by a NativeAgent, listen for skill loading
         // issues so we can surface them as banners. The agent emits a single
         // replacement-style event per project refresh, so we overwrite our
@@ -2261,6 +2265,7 @@ impl ThreadView {
                             server_view.clone(),
                             AuthRequired::new(),
                             connection,
+                            None,
                             window,
                             cx,
                         );
@@ -2913,7 +2918,6 @@ impl ThreadView {
                 message_editor.update(cx, |message_editor, cx| {
                     message_editor.clear(window, cx);
                 });
-                cx.notify();
             })?;
             Ok(())
         })
@@ -3294,7 +3298,6 @@ impl ThreadView {
         }
         self.set_editor_is_expanded(!self.editor_expanded, cx);
         cx.stop_propagation();
-        cx.notify();
     }
 
     pub fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
@@ -3529,7 +3532,10 @@ impl ThreadView {
                 elicitation_id.clone(),
                 matches!(elicitation.status, ElicitationStatus::Pending { .. }),
                 match &elicitation.request.mode {
-                    acp_v2::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    acp_v2::ElicitationMode::Form(mode) => Some((
+                        mode.requested_schema.clone(),
+                        elicitation.v1_string_patterns.clone(),
+                    )),
                     _ => None,
                 },
             )
@@ -3540,11 +3546,13 @@ impl ThreadView {
         };
 
         if is_pending
-            && let Some(schema) = schema
+            && let Some((schema, patterns)) = schema
             && !self.elicitation_form_states.contains_key(&id)
         {
-            self.elicitation_form_states
-                .insert(id, ElicitationFormState::new(&schema, window, cx));
+            self.elicitation_form_states.insert(
+                id,
+                ElicitationFormState::with_v1_string_patterns(&schema, patterns, window, cx),
+            );
         } else if !is_pending {
             self.elicitation_form_states.remove(&id);
         }
@@ -3921,17 +3929,15 @@ impl ThreadView {
         let following = self.is_following(cx);
 
         self.should_be_following = !following;
-        if self.thread.read(cx).status() == ThreadStatus::Generating {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    if following {
-                        workspace.unfollow(CollaboratorId::Agent, window, cx);
-                    } else {
-                        workspace.follow(CollaboratorId::Agent, window, cx);
-                    }
-                })
-                .ok();
-        }
+        self.workspace
+            .update(cx, |workspace, cx| {
+                if following {
+                    workspace.unfollow(CollaboratorId::Agent, window, cx);
+                } else {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                }
+            })
+            .ok();
 
         telemetry::event!("Follow Agent Selected", following = !following);
     }
@@ -5415,7 +5421,7 @@ impl ThreadView {
                                 this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
                             })
                             .key_binding(
-                                KeyBinding::for_action_in(&RejectAll, &focus_handle.clone(), cx)
+                                KeyBinding::for_action_in(&RejectAll, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -5696,8 +5702,13 @@ impl ThreadView {
                                     .gap_0p5()
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
-                                    .children(self.render_fast_mode_control(cx))
-                                    .children(self.render_thinking_control(cx)),
+                                    .map(|this| match &self.config_options_view {
+                                        Some(config_view) => this
+                                            .children(config_view.read(cx).response_controls(cx)),
+                                        None => this
+                                            .children(self.render_fast_mode_control(cx))
+                                            .children(self.render_thinking_control(cx)),
+                                    }),
                             )
                             .child(
                                 h_flex()
@@ -5967,7 +5978,7 @@ impl ThreadView {
                                         this.key_binding(
                                             KeyBinding::for_action_in(
                                                 action.as_ref(),
-                                                &focus_handle.clone(),
+                                                &focus_handle,
                                                 cx,
                                             )
                                             .map(|kb| kb.size(keybinding_size)),
@@ -6181,13 +6192,6 @@ impl ThreadView {
         }
     }
 
-    fn fast_mode_available(&self, cx: &Context<Self>) -> bool {
-        self.as_native_thread(cx)
-            .and_then(|thread| thread.read(cx).model())
-            .map(|model| model.supports_fast_mode())
-            .unwrap_or(false)
-    }
-
     fn refresh_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<VerifiedSandboxStatus> {
         let thread = self.as_native_thread(cx)?;
         let (key, refresh) =
@@ -6302,31 +6306,29 @@ impl ThreadView {
     }
 
     fn render_fast_mode_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.fast_mode_available(cx) {
+        let thread = self.as_native_thread(cx)?.read(cx);
+        let model = thread.model()?;
+        if model.supports_ultrafast_mode {
+            return Some(
+                self.render_response_speed_picker(
+                    model.supports_fast_mode(),
+                    thread
+                        .speed()
+                        .filter(|speed| model.supports_speed(*speed))
+                        .unwrap_or_default(),
+                    cx,
+                ),
+            );
+        }
+        if !model.supports_fast_mode() {
             return None;
         }
-
-        let thread = self.as_native_thread(cx)?.read(cx);
         let is_fast = matches!(thread.speed(), Some(Speed::Fast));
 
-        let model_identity = thread
-            .model()
-            .map(|model| (model.provider_id(), model.id()));
-
-        let (tooltip_label, color, icon, new_speed) = if is_fast {
-            (
-                "Disable Fast Mode",
-                Color::Accent,
-                IconName::FastForward,
-                Speed::Standard,
-            )
+        let (tooltip_label, new_speed) = if is_fast {
+            ("Disable Fast Mode", Speed::Standard)
         } else {
-            (
-                "Enable Fast Mode",
-                Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
-                IconName::FastForwardOff,
-                Speed::Fast,
-            )
+            ("Enable Fast Mode", Speed::Fast)
         };
 
         let focus_handle = self.message_editor.focus_handle(cx);
@@ -6335,9 +6337,7 @@ impl ThreadView {
             .then(|| self.pending_fast_mode_confirmation(cx))
             .flatten();
 
-        let icon_button = IconButton::new("fast-mode", icon)
-            .icon_size(IconSize::Small)
-            .icon_color(color);
+        let icon_button = fast_mode_button("fast-mode", is_fast, cx);
 
         if let Some((provider_id, model_id, confirmation)) = pending_confirmation {
             let weak_self = cx.entity().downgrade();
@@ -6405,8 +6405,6 @@ impl ThreadView {
             );
         }
 
-        let _ = model_identity;
-
         Some(
             icon_button
                 .tooltip(move |_, cx| {
@@ -6417,6 +6415,93 @@ impl ThreadView {
                 }))
                 .into_any_element(),
         )
+    }
+
+    fn render_response_speed_picker(
+        &self,
+        supports_fast: bool,
+        speed: Speed,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (icon, label) = match speed {
+            Speed::Standard => (IconName::FastForwardOff, "Response Speed: Standard"),
+            Speed::Fast => (IconName::FastForward, "Response Speed: Fast"),
+            Speed::Ultrafast => (IconName::FastForwardUltrafast, "Response Speed: Ultrafast"),
+        };
+        let button = ButtonLike::new("response-speed")
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .aria_label(label)
+            .child(
+                Icon::new(icon)
+                    .size(IconSize::Small)
+                    .color(if speed == Speed::Standard {
+                        Color::Disabled
+                    } else {
+                        Color::Accent
+                    }),
+            );
+        let focus = self.message_editor.focus_handle(cx);
+        let view = cx.entity().downgrade();
+        PopoverMenu::new("response-speed-menu")
+            .trigger_with_tooltip(button, move |_, cx| {
+                let focus = focus.clone();
+                cx.new(|_| ResponseSpeedTooltip {
+                    focus,
+                    speed,
+                    supports_fast,
+                })
+                .into()
+            })
+            .anchor(gpui::Anchor::BottomRight)
+            .offset(gpui::point(px(0.), px(-2.)))
+            .menu(move |window, cx| {
+                Some(ContextMenu::build(window, cx, |mut menu, _, _| {
+                    menu = menu.header("Speed").spacing(ui::ListItemSpacing::Sparse);
+                    for (choice, label, description) in [
+                        (Speed::Standard, "Standard", "Default Speed and Usage"),
+                        (Speed::Fast, "Fast", "Faster Responses  •  Higher Usage"),
+                        (
+                            Speed::Ultrafast,
+                            "Ultrafast",
+                            "Fastest Responses  •  Highest Usage",
+                        ),
+                    ] {
+                        if choice == Speed::Fast && !supports_fast {
+                            continue;
+                        }
+                        let view = view.clone();
+                        menu = menu.custom_entry(
+                            move |_, _| {
+                                h_flex()
+                                    .w_full()
+                                    .justify_between()
+                                    .gap_4()
+                                    .child(
+                                        v_flex().child(Label::new(label)).child(
+                                            Label::new(description)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                    )
+                                    .when(choice == speed, |row| {
+                                        row.child(
+                                            Icon::new(IconName::Check)
+                                                .size(IconSize::Small)
+                                                .color(Color::Accent),
+                                        )
+                                    })
+                                    .into_any_element()
+                            },
+                            move |_, cx| {
+                                view.update(cx, |this, cx| this.apply_fast_mode_speed(choice, cx))
+                                    .log_err();
+                            },
+                        );
+                    }
+                    menu
+                }))
+            })
+            .into_any_element()
     }
 
     fn pending_fast_mode_confirmation(
@@ -6585,12 +6670,6 @@ impl ThreadView {
             .or(default_effort_level)
             .map_or("Select Effort".into(), |effort| effort.name);
 
-        let (label_color, icon) = if self.thinking_effort_menu_handle.is_deployed() {
-            (Color::Accent, IconName::ChevronUp)
-        } else {
-            (Color::Muted, IconName::ChevronDown)
-        };
-
         let focus_handle = self.message_editor.focus_handle(cx);
         let show_cycle_row = supported_effort_levels.len() > 1;
 
@@ -6629,29 +6708,15 @@ impl ThreadView {
             }
         });
 
-        let trigger = if standalone {
-            ButtonLike::new("effort-selector-trigger").child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Icon::new(IconName::ThinkingMode)
-                            .size(IconSize::Small)
-                            .color(Color::Accent),
-                    )
-                    .child(Label::new(label).size(LabelSize::Small).color(label_color))
-                    .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
-            )
-        } else {
-            ButtonLike::new_rounded_right("effort-selector-trigger")
-                .child(Label::new(label).size(LabelSize::Small).color(label_color))
-                .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
-        };
+        let trigger = thinking_effort_trigger(
+            "effort-selector-trigger",
+            label,
+            self.thinking_effort_menu_handle.is_deployed(),
+            standalone,
+        );
 
         PopoverMenu::new("effort-selector")
-            .trigger_with_tooltip(
-                trigger.selected_style(ButtonStyle::Tinted(TintColor::Accent)),
-                tooltip,
-            )
+            .trigger_with_tooltip(trigger, tooltip)
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
                     menu = menu.header("Change Thinking Effort");
@@ -7048,6 +7113,51 @@ impl ThreadView {
     }
 }
 
+struct ResponseSpeedTooltip {
+    focus: FocusHandle,
+    speed: Speed,
+    supports_fast: bool,
+}
+
+impl Render for ResponseSpeedTooltip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let enabled = self.speed != Speed::Standard;
+        ui::tooltip_container(cx, move |container, cx| {
+            container
+                .gap_0p5()
+                .when(self.supports_fast, |container| {
+                    container
+                        .child(
+                            h_flex()
+                                .gap_4()
+                                .justify_between()
+                                .child(
+                                    Label::new("Cycle Response Speed")
+                                        .when(!enabled, |label| label.color(Color::Muted)),
+                                )
+                                .child(KeyBinding::for_action_in(
+                                    &CycleResponseSpeed,
+                                    &self.focus,
+                                    cx,
+                                )),
+                        )
+                        .child(div().my_0p5().child(Divider::horizontal()))
+                })
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .justify_between()
+                        .child(Label::new(if enabled {
+                            "Disable Fast Mode"
+                        } else {
+                            "Enable Fast Mode"
+                        }))
+                        .child(KeyBinding::for_action_in(&ToggleFastMode, &self.focus, cx)),
+                )
+        })
+    }
+}
+
 struct TokenUsageTooltip {
     percentage: String,
     used: String,
@@ -7174,18 +7284,9 @@ impl Render for TokenUsageTooltip {
                                                     .on_click(move |_, window, cx| {
                                                         workspace
                                                             .update(cx, |workspace, cx| {
-                                                                workspace
-                                                                    .open_abs_path(
-                                                                        paths::agents_file()
-                                                                            .clone(),
-                                                                        workspace::OpenOptions {
-                                                                            focus: Some(true),
-                                                                            ..Default::default()
-                                                                        },
-                                                                        window,
-                                                                        cx,
-                                                                    )
-                                                                    .detach_and_log_err(cx);
+                                                                crate::agent_panel::open_global_rules(
+                                                                    workspace, window, cx,
+                                                                );
                                                             })
                                                             .log_err();
                                                     }),
@@ -7378,7 +7479,9 @@ fn fs_grants_nothing(fs: &SandboxFsDisplay) -> bool {
 fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
     match network {
         SandboxNetPolicy::Blocked => true,
-        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains.is_empty(),
+        SandboxNetPolicy::Restricted {
+            allowed_domains, ..
+        } => allowed_domains.is_empty(),
         SandboxNetPolicy::Unrestricted => false,
     }
 }
@@ -7413,10 +7516,14 @@ fn sandbox_network_rows(network: &SandboxNetPolicy) -> Vec<SandboxRow> {
     match network {
         SandboxNetPolicy::Unrestricted => vec![SandboxRow::message("All domains (unrestricted)")],
         SandboxNetPolicy::Blocked => vec![SandboxRow::message("None")],
-        SandboxNetPolicy::Restricted { allowed_domains } if allowed_domains.is_empty() => {
+        SandboxNetPolicy::Restricted {
+            allowed_domains, ..
+        } if allowed_domains.is_empty() => {
             vec![SandboxRow::message("None")]
         }
-        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains
+        SandboxNetPolicy::Restricted {
+            allowed_domains, ..
+        } => allowed_domains
             .iter()
             .map(|domain| SandboxRow::domain(domain.clone()))
             .collect(),
@@ -8549,7 +8656,9 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.thread_search_bar.is_none() {
+        let search_bar = if let Some(search_bar) = self.thread_search_bar.clone() {
+            search_bar
+        } else {
             let thread = self.thread.clone();
             let view = cx.entity().downgrade();
             let on_activate =
@@ -8588,27 +8697,21 @@ impl ThreadView {
                     }
                 },
             ));
-            self.thread_search_bar = Some(search_bar);
-        }
+            self.thread_search_bar = Some(search_bar.clone());
+            search_bar
+        };
 
         // Re-focus an open bar unless it already owns focus.
-        let search_bar_focused = self
-            .thread_search_bar
-            .as_ref()
-            .is_some_and(|bar| bar.focus_handle(cx).contains_focused(window, cx));
+        let search_bar_focused = search_bar.focus_handle(cx).contains_focused(window, cx);
 
         if self.thread_search_visible && search_bar_focused {
-            if let Some(bar) = &self.thread_search_bar {
-                bar.update(cx, |bar, cx| bar.clear_highlights(cx));
-            }
+            search_bar.update(cx, |bar, cx| bar.clear_highlights(cx));
             self.thread_search_visible = false;
             self.message_editor.focus_handle(cx).focus(window, cx);
             cx.notify();
         } else {
             self.thread_search_visible = true;
-            if let Some(bar) = self.thread_search_bar.clone() {
-                bar.update(cx, |bar, cx| bar.focus_and_refresh(window, cx));
-            }
+            search_bar.update(cx, |bar, cx| bar.focus_and_refresh(window, cx));
             cx.notify();
         }
     }
@@ -11819,6 +11922,7 @@ impl ThreadView {
                 active_editor.update_in(cx, |editor, window, cx| {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     if snapshot.as_singleton().is_some()
+                        && let Some(agent_location) = agent_location
                         && let Some(anchor) = snapshot.anchor_in_excerpt(agent_location.position)
                     {
                         editor.change_selections(Default::default(), window, cx, |selections| {
@@ -13219,6 +13323,7 @@ impl ThreadView {
                             server_view,
                             AuthRequired::new(),
                             connection,
+                            None,
                             window,
                             cx,
                         );
@@ -13328,7 +13433,6 @@ impl ThreadView {
             .on_click(cx.listener({
                 move |this, _, _, cx| {
                     this.clear_thread_error(cx);
-                    cx.notify();
                 }
             }))
     }
@@ -13900,18 +14004,32 @@ impl ThreadView {
     }
 
     fn toggle_fast_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.fast_mode_available(cx) {
+        if let Some(config_options_view) = self.config_options_view.clone() {
+            config_options_view.update(cx, |view, cx| view.toggle_fast_mode(window, cx));
             return;
         }
 
-        let Some(thread) = self.as_native_thread(cx) else {
+        let Some(thread) = self.as_native_thread(cx).map(|thread| thread.read(cx)) else {
             return;
         };
-
-        let current_speed = thread.read(cx).speed().unwrap_or_default();
-        let new_speed = current_speed.toggle();
-
-        if new_speed == Speed::Fast && self.pending_fast_mode_confirmation(cx).is_some() {
+        let Some(model) = thread.model() else { return };
+        let current_speed = thread
+            .speed()
+            .filter(|speed| model.supports_speed(*speed))
+            .unwrap_or_default();
+        let new_speed = if current_speed != Speed::Standard {
+            Speed::Standard
+        } else if model.supports_fast_mode() {
+            Speed::Fast
+        } else if model.supports_ultrafast_mode {
+            Speed::Ultrafast
+        } else {
+            return;
+        };
+        if new_speed == Speed::Fast
+            && !model.supports_ultrafast_mode
+            && self.pending_fast_mode_confirmation(cx).is_some()
+        {
             let menu_handle = self.fast_mode_menu_handle.clone();
             window.defer(cx, move |window, cx| {
                 menu_handle.toggle(window, cx);
@@ -13922,12 +14040,35 @@ impl ThreadView {
         self.apply_fast_mode_speed(new_speed, cx);
     }
 
-    fn apply_fast_mode_speed(&mut self, new_speed: Speed, cx: &mut Context<Self>) {
+    fn cycle_response_speed(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.as_native_thread(cx).map(|thread| thread.read(cx)) else {
+            return;
+        };
+        let Some(model) = thread.model() else { return };
+        if !model.supports_fast_mode() || !model.supports_ultrafast_mode {
+            return;
+        }
+        match thread.speed() {
+            Some(Speed::Fast) => self.apply_fast_mode_speed(Speed::Ultrafast, cx),
+            Some(Speed::Ultrafast) => self.apply_fast_mode_speed(Speed::Fast, cx),
+            _ => {}
+        }
+    }
+
+    fn apply_fast_mode_speed(&mut self, speed: Speed, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
+        let current = thread.read(cx);
+        if current.speed() == Some(speed)
+            || !current
+                .model()
+                .is_some_and(|model| model.supports_speed(speed))
+        {
+            return;
+        }
         thread.update(cx, |thread, cx| {
-            thread.set_speed(new_speed, cx);
+            thread.set_speed(speed, cx);
 
             let favorite_key = thread
                 .model()
@@ -13936,11 +14077,11 @@ impl ThreadView {
             update_settings_file(fs, cx, move |settings, _| {
                 if let Some(agent) = settings.agent.as_mut() {
                     if let Some(default_model) = agent.default_model.as_mut() {
-                        default_model.speed = Some(new_speed);
+                        default_model.speed = Some(speed);
                     }
                     if let Some((provider_id, model_id)) = &favorite_key {
                         agent.update_favorite_model(provider_id, model_id, |favorite| {
-                            favorite.speed = Some(new_speed)
+                            favorite.speed = Some(speed)
                         });
                     }
                 }
@@ -14156,6 +14297,9 @@ impl Render for ThreadView {
             .on_action(cx.listener(|this, _: &ToggleFastMode, window, cx| {
                 this.toggle_fast_mode(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &CycleResponseSpeed, _, cx| {
+                this.cycle_response_speed(cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;
@@ -14173,7 +14317,7 @@ impl Render for ThreadView {
                     });
                 }
             }))
-            .on_action(cx.listener(|this, _: &CycleThinkingEffort, _window, cx| {
+            .on_action(cx.listener(|this, _: &CycleThinkingEffort, window, cx| {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;
                 }
@@ -14182,6 +14326,7 @@ impl Render for ThreadView {
                         view.cycle_category_option(
                             acp_v2::SessionConfigOptionCategory::ThoughtLevel,
                             false,
+                            window,
                             cx,
                         )
                     });
@@ -14272,6 +14417,7 @@ impl Render for ThreadView {
                         view.cycle_category_option(
                             acp_v2::SessionConfigOptionCategory::Mode,
                             false,
+                            window,
                             cx,
                         )
                     });
@@ -14321,6 +14467,7 @@ impl Render for ThreadView {
                         view.cycle_category_option(
                             acp_v2::SessionConfigOptionCategory::Model,
                             true,
+                            window,
                             cx,
                         )
                     });
@@ -15919,6 +16066,103 @@ mod tests {
         }
 
         fn flush(&self) {}
+    }
+
+    #[gpui::test]
+    async fn test_open_tool_call_location_without_resolved_buffer(cx: &mut gpui::TestAppContext) {
+        use agent_client_protocol::v1::schema as acp;
+
+        crate::conversation_view::tests::init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({"notes.txt": "first\nsecond\nthird\n"}),
+        )
+        .await;
+        fs.insert_file(
+            path!("/project/screenshot.png"),
+            b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        let connection = acp_thread::StubAgentConnection::new();
+        crate::test_support::open_thread_with_connection(&panel, connection.clone(), cx);
+        let session_id = crate::test_support::active_session_id(&panel, cx);
+        let thread_view = panel.read_with(cx, |panel, cx| {
+            panel.active_thread_view(cx).expect("active thread view")
+        });
+
+        let send_read =
+            |id: &'static str, path: &str, line: Option<u32>, cx: &mut gpui::VisualTestContext| {
+                cx.update(|_window, cx| {
+                    connection.send_update(
+                        session_id.clone(),
+                        acp::SessionUpdate::ToolCall(
+                            acp::ToolCall::new(acp::ToolCallId::new(id), "Read")
+                                .kind(acp::ToolKind::Read)
+                                .locations(vec![acp::ToolCallLocation::new(path).line(line)]),
+                        ),
+                        cx,
+                    );
+                });
+                thread_view.read_with(cx, |thread_view, cx| {
+                    thread_view
+                        .thread
+                        .read(cx)
+                        .tool_call(&acp_v2::ToolCallId::new(id))
+                        .expect("tool call")
+                        .0
+                })
+            };
+        let open_location = |entry_ix: usize, cx: &mut gpui::VisualTestContext| {
+            thread_view.update_in(cx, |thread_view, window, cx| {
+                thread_view.open_tool_call_location(entry_ix, 0, window, cx);
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                workspace.active_item(cx).expect("location should open")
+            })
+        };
+
+        let image_ix = send_read("read-image", path!("/project/screenshot.png"), None, cx);
+        cx.run_until_parked();
+        thread_view.read_with(cx, |thread_view, cx| {
+            let (_, resolved) = thread_view.thread.read(cx).entries()[image_ix]
+                .location(0)
+                .expect("location");
+            assert!(resolved.is_none(), "binary files never resolve to a buffer");
+        });
+        let item = open_location(image_ix, cx);
+        cx.read(|cx| {
+            assert_eq!(item.tab_content_text(0, cx), "screenshot.png");
+            assert!(item.downcast::<Editor>().is_none());
+        });
+
+        // Clicking before resolution finishes still opens the reported line.
+        let text_ix = send_read("read-text", path!("/project/notes.txt"), Some(2), cx);
+        let editor = open_location(text_ix, cx)
+            .downcast::<Editor>()
+            .expect("text file should open in an editor");
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(1, 0)
+            );
+        });
     }
 }
 

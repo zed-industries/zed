@@ -127,6 +127,7 @@ members = [
     "crates/language_extension",
     "crates/language_model",
     "crates/language_model_core",
+    "crates/language_model_selector",
     "crates/language_models",
     "crates/language_models_cloud",
     "crates/language_onboarding",
@@ -404,6 +405,7 @@ language_detection = { path = "crates/language_detection" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_model_core = { path = "crates/language_model_core" }
+language_model_selector = { path = "crates/language_model_selector" }
 language_models = { path = "crates/language_models" }
 language_models_cloud = { path = "crates/language_models_cloud" }
 language_onboarding = { path = "crates/language_onboarding" }
@@ -537,7 +539,7 @@ accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.22"
 accesskit_windows = "0.34"
-agent-client-protocol = { version = "=5.3.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
+agent-client-protocol = { version = "=5.4.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
@@ -944,7 +946,7 @@ tokio-rustls = { version = "0.26", default-features = false }
 toml = { version = "0.9", default-features = false, features = ["std", "serde", "parse"] }
 toml_edit = { version = "0.22", default-features = false, features = ["parse"] }
 tower-http = "0.4.4"
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "803c6ebaac27d69e1808b45058482e868d073ceb" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "cf5d3a63f9fa069fc32b9a73dc28830e427d5ee0" }
 tracing = "0.1.40"
 tracing-subscriber = "0.3"
 tree-sitter-bash = "0.25.1"
@@ -1042,7 +1044,7 @@ cpal = { git = "https://github.com/RustAudio/cpal", rev = "e1612d5d98152f8dc2a62
 # Unify `tree_sitter_language::LanguageFn` between crates.io grammar crates and
 # the git tree-sitter above; two instances of the crate would make grammar
 # constants type-incompatible with `tree_sitter::Language`.
-tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "803c6ebaac27d69e1808b45058482e868d073ceb" }
+tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "cf5d3a63f9fa069fc32b9a73dc28830e427d5ee0" }
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 # Keep the waker identity fix until it is released: https://github.com/smol-rs/async-task/pull/108
 async-task = { git = "https://github.com/smol-rs/async-task", rev = "41fd3359c75e221bd8b187a8ee361aa309c1714c" }

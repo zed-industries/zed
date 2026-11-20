@@ -92,9 +92,6 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn enabled(&self, _cx: &App) -> bool {
         true
     }
-    fn is_agent_panel(&self) -> bool {
-        false
-    }
     /// Returns metadata describing how to hide this panel's button from the
     /// status bar by writing to user settings. Implementors should return
     /// `None` if the panel button cannot be hidden through settings.
@@ -132,7 +129,6 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
-    fn is_agent_panel(&self, cx: &App) -> bool;
     fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
@@ -261,10 +257,6 @@ where
 
     fn enabled(&self, cx: &App) -> bool {
         self.read(cx).enabled(cx)
-    }
-
-    fn is_agent_panel(&self, cx: &App) -> bool {
-        self.read(cx).is_agent_panel()
     }
 
     fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem> {
@@ -925,12 +917,6 @@ impl Dock {
 
     pub fn panels_len(&self) -> usize {
         self.panel_entries.len()
-    }
-
-    pub fn has_agent_panel(&self, cx: &App) -> bool {
-        self.panel_entries
-            .iter()
-            .any(|entry| entry.panel.is_agent_panel(cx))
     }
 
     pub fn activate_panel(&mut self, panel_ix: usize, window: &mut Window, cx: &mut Context<Self>) {

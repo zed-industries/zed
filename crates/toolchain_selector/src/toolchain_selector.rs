@@ -11,7 +11,7 @@ use gpui::{
     Focusable, KeyContext, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
     actions, pulsating_between,
 };
-use language::{Language, LanguageName, Toolchain, ToolchainScope};
+use language::{LanguageName, Toolchain, ToolchainScope};
 use open_path_prompt::OpenPathDelegate;
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
@@ -45,7 +45,6 @@ pub fn init(cx: &mut App) {
 pub struct ToolchainSelector {
     state: State,
     create_search_state: Arc<dyn Fn(&mut Window, &mut Context<Self>) -> SearchState + 'static>,
-    language: Option<Arc<Language>>,
     project: Entity<Project>,
     language_name: LanguageName,
     worktree_id: WorktreeId,
@@ -509,25 +508,7 @@ impl Render for AddToolchainState {
                                                         window,
                                                         cx,
                                                     );
-                                                }))
-                                                .map(|this| {
-                                                    if false {
-                                                        this.with_animation(
-                                                            "inspecting-user-toolchain",
-                                                            Animation::new(Duration::from_millis(
-                                                                500,
-                                                            ))
-                                                            .repeat()
-                                                            .with_easing(pulsating_between(
-                                                                0.4, 0.8,
-                                                            )),
-                                                            |label, delta| label.alpha(delta),
-                                                        )
-                                                        .into_any()
-                                                    } else {
-                                                        this.into_any_element()
-                                                    }
-                                                }),
+                                                })),
                                         )
                                     })),
                             )
@@ -648,22 +629,6 @@ impl ToolchainSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let language_registry = project.read(cx).languages().clone();
-        cx.spawn({
-            let language_name = language_name.clone();
-            async move |this, cx| {
-                let language = language_registry
-                    .language_for_name(&language_name.0)
-                    .await
-                    .ok();
-                this.update(cx, |this, cx| {
-                    this.language = language;
-                    cx.notify();
-                })
-                .ok();
-            }
-        })
-        .detach();
         let project_clone = project.clone();
         let language_name_clone = language_name.clone();
         let relative_path_clone = relative_path.clone();
@@ -695,7 +660,6 @@ impl ToolchainSelector {
         Self {
             state: State::Search(create_search_state(window, cx)),
             create_search_state,
-            language: None,
             project,
             language_name,
             worktree_id,

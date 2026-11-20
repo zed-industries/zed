@@ -30,7 +30,6 @@ use settings::Settings;
 use task::{HideStrategy, Shell, ShellKind, SpawnInTerminal};
 use terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use urlencoding;
 use util::{ResultExt as _, paths::PathStyle, truncate_and_trailoff};
 
 #[cfg(unix)]
@@ -5607,7 +5606,7 @@ mod tests {
                     terminal.with_renderable_cells(|cells| {
                         let mut text_lines = Vec::new();
                         let linegroups = cells.into_iter().chunk_by(|cell| cell.point.line);
-                        for (_, (_, line)) in linegroups.into_iter().enumerate() {
+                        for (_, line) in linegroups.into_iter() {
                             let mut previous_cell_had_extras = false;
                             let mut text = String::new();
                             for IndexedCell { cell, .. } in line {

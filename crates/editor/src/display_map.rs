@@ -142,12 +142,6 @@ pub(crate) use tab_map::TabPoint;
 use tab_map::{TabPointCursor, TabSnapshot};
 use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FoldStatus {
-    Folded,
-    Foldable,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NavigationOverlayKey(TypeId);
 
@@ -960,9 +954,7 @@ impl DisplayMap {
             .lsp_folding_crease_ids
             .remove(&buffer_id)
             .unwrap_or_default();
-        if !old_ids.is_empty() {
-            self.crease_map.remove(old_ids, &snapshot);
-        }
+        self.crease_map.remove(old_ids, &snapshot);
 
         if ranges.is_empty() {
             return;
@@ -1806,11 +1798,6 @@ impl DisplaySnapshot {
     pub fn display_point_to_inlay_offset(&self, point: DisplayPoint, bias: Bias) -> InlayOffset {
         self.inlay_snapshot()
             .to_offset(self.display_point_to_inlay_point(point, bias))
-    }
-
-    pub fn anchor_to_inlay_offset(&self, anchor: Anchor) -> InlayOffset {
-        self.inlay_snapshot()
-            .to_inlay_offset(anchor.to_offset(self.buffer_snapshot()))
     }
 
     pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
@@ -4909,7 +4896,7 @@ pub mod tests {
         let buffer = cx.new(|cx| Buffer::local("initial", cx));
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-        // Edit the buffer. This sets buffer_changed_since_sync = true.
+        // Edit the buffer. This adds it to the multibuffer's changed buffers.
         // Importantly, do NOT call multibuffer.snapshot() yet.
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..0, "prefix ")], None, cx);

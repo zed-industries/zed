@@ -7277,7 +7277,7 @@ async fn test_contacts(
                 .iter()
                 .map(|contact| {
                     (
-                        contact.user.username.clone().to_string(),
+                        contact.user.username.to_string(),
                         if contact.online { "online" } else { "offline" },
                         if contact.busy { "busy" } else { "free" },
                     )

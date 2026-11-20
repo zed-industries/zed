@@ -17,7 +17,6 @@ pub struct AnnotatedToken {
     pub annotation: TokenAnnotation,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct KeptRateResult {
     /// Characters newly introduced by the candidate

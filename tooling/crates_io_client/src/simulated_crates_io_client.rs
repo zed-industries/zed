@@ -16,6 +16,7 @@ struct CratesIoState {
     site_metadata: SiteMetadata,
     token_user: UserId,
     crates: BTreeMap<CrateName, SimulatedCrate>,
+    team_ids: BTreeMap<String, TeamId>,
     github_configs: BTreeMap<GitHubConfigId, GitHubConfig>,
     latest_id: i32,
 }
@@ -80,6 +81,16 @@ impl CratesIoState {
         self.latest_id
     }
 
+    fn team_id(&mut self, login: &str) -> TeamId {
+        let login = login.to_ascii_lowercase();
+        if let Some(id) = self.team_ids.get(&login) {
+            return *id;
+        }
+        let id = TeamId(self.next_id());
+        self.team_ids.insert(login, id);
+        id
+    }
+
     fn simulated_crate(&mut self, name: &CrateName) -> Result<&mut SimulatedCrate> {
         self.crates
             .get_mut(name)
@@ -138,6 +149,7 @@ impl SimulatedCratesIoClient {
                 },
                 token_user: UserId(1),
                 crates: BTreeMap::new(),
+                team_ids: BTreeMap::new(),
                 github_configs: BTreeMap::new(),
                 latest_id: 1,
             }),
@@ -195,7 +207,7 @@ impl SimulatedCratesIoClient {
 
     pub fn test_team_owner(&self, name: &CrateName, login: &str) -> Result<TeamId> {
         let mut state = self.state.lock();
-        let id = TeamId(state.next_id());
+        let id = state.team_id(login);
         state.simulated_crate(name)?.team_owners.push(Team {
             id,
             login: login.to_owned(),
@@ -274,11 +286,27 @@ impl CratesIoClient for SimulatedCratesIoClient {
             .values()
             .filter(|simulated_crate| {
                 let krate = &simulated_crate.krate;
-                let matches_owner = match (&query.keyword, query.user_id) {
-                    (Some(keyword), _) => has_value(&krate.keywords, keyword),
-                    (None, Some(user_id)) => simulated_crate.owners.contains(&user_id),
-                    (None, None) => true,
-                };
+                let matches_owner = query
+                    .keyword
+                    .as_ref()
+                    .filter(|keyword| !keyword.is_empty())
+                    .map(|keyword| has_value(&krate.keywords, keyword))
+                    .or_else(|| {
+                        query
+                            .user_id
+                            .as_ref()
+                            .map(|user_id| simulated_crate.owners.contains(user_id))
+                    })
+                    .or_else(|| {
+                        query.team_id.as_ref().map(|team_id| {
+                            simulated_crate
+                                .team_owners
+                                .iter()
+                                .any(|team| &team.id == team_id)
+                        })
+                    })
+                    .unwrap_or(true);
+
                 matches_owner
                     && query.search.as_ref().is_none_or(|search| {
                         krate
@@ -358,11 +386,10 @@ impl CratesIoClient for SimulatedCratesIoClient {
 
         let mut additions = Vec::new();
         for login in owners {
-            let team_id = TeamId(state.next_id());
-            let simulated_crate = state.simulated_crate(name)?;
             let addition = match login {
                 OwnerLogin::GitHubTeam { .. } => {
-                    simulated_crate.team_owners.push(Team {
+                    let team_id = state.team_id(&login.to_string());
+                    state.simulated_crate(name)?.team_owners.push(Team {
                         id: team_id,
                         login: login.to_string(),
                         name: None,
@@ -374,7 +401,8 @@ impl CratesIoClient for SimulatedCratesIoClient {
                 OwnerLogin::Username(username)
                 | OwnerLogin::CratesIoUser(username)
                 | OwnerLogin::GitHubUser(username) => {
-                    let username = username.clone();
+                    let simulated_crate = state.simulated_crate(name)?;
+                    let username = username.to_string();
                     if simulated_crate.invited_owners.contains(login) {
                         OwnerAddition::UserAlreadyInvited { username }
                     } else {

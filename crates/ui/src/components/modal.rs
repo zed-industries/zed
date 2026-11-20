@@ -1,4 +1,4 @@
-use crate::{IconButtonShape, prelude::*};
+use crate::prelude::*;
 
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
@@ -48,11 +48,6 @@ impl Modal {
         self.header.show_dismiss_button = show;
         self
     }
-
-    pub fn show_back(mut self, show: bool) -> Self {
-        self.header.show_back_button = show;
-        self
-    }
 }
 
 impl ParentElement for Modal {
@@ -95,7 +90,6 @@ pub struct ModalHeader {
     description: Option<SharedString>,
     children: SmallVec<[AnyElement; 2]>,
     show_dismiss_button: bool,
-    show_back_button: bool,
 }
 
 impl Default for ModalHeader {
@@ -112,7 +106,6 @@ impl ModalHeader {
             description: None,
             children: SmallVec::new(),
             show_dismiss_button: false,
-            show_back_button: false,
         }
     }
 
@@ -137,11 +130,6 @@ impl ModalHeader {
 
     pub fn show_dismiss_button(mut self, show: bool) -> Self {
         self.show_dismiss_button = show;
-        self
-    }
-
-    pub fn show_back_button(mut self, show: bool) -> Self {
-        self.show_back_button = show;
         self
     }
 }
@@ -175,15 +163,6 @@ impl RenderOnce for ModalHeader {
             .pt(DynamicSpacing::Base08.rems(cx))
             .pb(DynamicSpacing::Base04.rems(cx))
             .gap(DynamicSpacing::Base08.rems(cx))
-            .when(self.show_back_button, |this| {
-                this.child(
-                    IconButton::new("back", IconName::ArrowLeft)
-                        .shape(IconButtonShape::Square)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::Cancel.boxed_clone(), cx);
-                        }),
-                )
-            })
             .child(
                 v_flex()
                     .min_w_0()
@@ -295,7 +274,6 @@ impl RenderOnce for ModalFooter {
 
 #[derive(IntoElement)]
 pub struct Section {
-    contained: bool,
     padded: bool,
     header: Option<SectionHeader>,
     meta: Option<SharedString>,
@@ -311,27 +289,11 @@ impl Default for Section {
 impl Section {
     pub fn new() -> Self {
         Self {
-            contained: false,
             padded: true,
             header: None,
             meta: None,
             children: SmallVec::new(),
         }
-    }
-
-    pub fn new_contained() -> Self {
-        Self {
-            contained: true,
-            padded: true,
-            header: None,
-            meta: None,
-            children: SmallVec::new(),
-        }
-    }
-
-    pub fn contained(mut self, contained: bool) -> Self {
-        self.contained = contained;
-        self
     }
 
     pub fn header(mut self, header: SectionHeader) -> Self {
@@ -357,40 +319,15 @@ impl ParentElement for Section {
 
 impl RenderOnce for Section {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let mut section_bg = cx.theme().colors().text;
-        section_bg.fade_out(0.96);
-
-        let children = if self.contained {
-            v_flex()
-                .flex_1()
-                .when(self.padded, |this| this.px(DynamicSpacing::Base12.rems(cx)))
-                .child(
-                    v_flex()
-                        .w_full()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(section_bg)
-                        .child(
-                            div()
-                                .flex()
-                                .flex_1()
-                                .pb_2()
-                                .size_full()
-                                .children(self.children),
-                        ),
-                )
-        } else {
-            v_flex()
-                .w_full()
-                .flex_1()
-                .gap_y(DynamicSpacing::Base04.rems(cx))
-                .pb_2()
-                .when(self.padded, |this| {
-                    this.px(DynamicSpacing::Base06.rems(cx) + DynamicSpacing::Base06.rems(cx))
-                })
-                .children(self.children)
-        };
+        let children = v_flex()
+            .w_full()
+            .flex_1()
+            .gap_y(DynamicSpacing::Base04.rems(cx))
+            .pb_2()
+            .when(self.padded, |this| {
+                this.px(DynamicSpacing::Base06.rems(cx) + DynamicSpacing::Base06.rems(cx))
+            })
+            .children(self.children);
 
         v_flex()
             .size_full()

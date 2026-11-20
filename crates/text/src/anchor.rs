@@ -80,10 +80,6 @@ impl Anchor {
         let min = Self::min_for_buffer(buffer_id);
         min..min
     }
-    pub fn max_max_range_for_buffer(buffer_id: BufferId) -> std::ops::Range<Self> {
-        let max = Self::max_for_buffer(buffer_id);
-        max..max
-    }
     pub fn min_max_range_for_buffer(buffer_id: BufferId) -> std::ops::Range<Self> {
         Self::min_for_buffer(buffer_id)..Self::max_for_buffer(buffer_id)
     }

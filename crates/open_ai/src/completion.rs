@@ -32,11 +32,11 @@ const RESPONSE_MESSAGE_PHASE_COMMENTARY: &str = "commentary";
 const RESPONSE_MESSAGE_PHASE_FINAL_ANSWER: &str = "final_answer";
 
 /// Translates the request's `Speed` into the corresponding OpenAI service tier.
-/// Only `Fast` produces a value; `Standard` leaves the field unset so that the
-/// project's default tier applies.
+/// `Standard` leaves the field unset so that the project's default tier applies.
 fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<ServiceTier> {
     match speed? {
         language_model_core::Speed::Fast => Some(ServiceTier::Priority),
+        language_model_core::Speed::Ultrafast => Some(ServiceTier::Ultrafast),
         language_model_core::Speed::Standard => None,
     }
 }
@@ -305,10 +305,8 @@ pub fn into_open_ai_response(
     let mut system_instructions = Vec::new();
     let mut in_initial_system_prompt = true;
     for (index, message) in messages.into_iter().enumerate() {
-        // Only the initial prompt belongs in `instructions`, outside a
-        // provider-compacted input window. Later instructions must retain their
-        // position; developer-role items also work on Codex, which rejects
-        // system-role input items.
+        // Collect the initial prompt separately so a compaction window cannot
+        // discard it. Later instructions must retain their position.
         if message.role == Role::System && in_initial_system_prompt {
             for content in message.content {
                 if let MessageContent::Text(text) = content
@@ -393,14 +391,22 @@ pub fn into_open_ai_response(
         Vec::new()
     };
 
+    let mut input = crate::responses::ResponseInput::new(provider_items, input_items);
+    if !system_instructions.is_empty() {
+        // Match Codex: the current system prompt precedes even a replayed
+        // compaction window, which is passed through unchanged.
+        input = input.with_leading_item(ResponseInputItem::Message(ResponseMessageItem {
+            role: crate::Role::Developer,
+            content: vec![ResponseInputContent::Text {
+                text: system_instructions.join("\n\n"),
+            }],
+            phase: None,
+        }));
+    }
     Ok(ResponseRequest {
         model: model_id.into(),
-        instructions: if system_instructions.is_empty() {
-            None
-        } else {
-            Some(system_instructions.join("\n\n"))
-        },
-        input: crate::responses::ResponseInput::new(provider_items, input_items),
+        instructions: None,
+        input,
         store: Some(false),
         include,
         stream,
@@ -1941,8 +1947,12 @@ mod tests {
         let serialized = serde_json::to_value(&response).unwrap();
         let expected = json!({
             "model": "custom-model",
-            "instructions": "System context",
             "input": [
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{ "type": "input_text", "text": "System context" }]
+                },
                 {
                     "type": "message",
                     "role": "user",
@@ -2455,15 +2465,13 @@ mod tests {
         Ok(())
     }
 
-    /// `Speed::Fast` should translate to `service_tier: "priority"` on the
-    /// outgoing Responses request, while `Standard` / `None` should leave the
-    /// field unset so the project's default tier wins.
     #[test]
-    fn into_open_ai_response_sets_service_tier_for_fast_speed() -> Result<()> {
+    fn into_open_ai_response_sets_service_tier_for_speed() -> Result<()> {
         for (speed, expected) in [
             (None, None),
             (Some(Speed::Standard), None),
             (Some(Speed::Fast), Some("priority")),
+            (Some(Speed::Ultrafast), Some("ultrafast")),
         ] {
             let request = LanguageModelRequest {
                 thread_id: None,
@@ -4416,18 +4424,24 @@ mod tests {
     fn open_ai_response_converts_to_compact_request_with_supported_controls() {
         let request = LanguageModelRequest {
             thread_id: Some("thread-123".to_string()),
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("Retain this context.".into())],
+            messages: [
+                (Role::System, "Preserve implementation details."),
+                (Role::User, "Retain this context."),
+            ]
+            .into_iter()
+            .map(|(role, text)| LanguageModelRequestMessage {
+                role,
+                content: vec![MessageContent::Text(text.into())],
                 cache: false,
                 reasoning_details: None,
-            }],
+            })
+            .collect(),
             speed: Some(Speed::Fast),
             compact_at_tokens: Some(100_000),
             ..Default::default()
         };
 
-        let mut response_request = into_open_ai_response(
+        let compact_request = into_open_ai_response(
             request,
             "gpt-5.4",
             true,
@@ -4437,23 +4451,25 @@ mod tests {
             false,
             &OPEN_AI_PROVIDER_ID,
         )
-        .unwrap();
-        response_request.instructions = Some("Preserve implementation details.".to_string());
-        let compact_request = response_request.into_compact_request();
+        .unwrap()
+        .into_compact_request();
 
         assert_eq!(
             serde_json::to_value(compact_request).unwrap(),
             json!({
                 "model": "gpt-5.4",
-                "instructions": "Preserve implementation details.",
-                "input": [{
-                    "type": "message",
-                    "role": "user",
-                    "content": [{
-                        "type": "input_text",
-                        "text": "Retain this context."
-                    }]
-                }],
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "developer",
+                        "content": [{"type": "input_text", "text": "Preserve implementation details."}]
+                    },
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Retain this context."}]
+                    }
+                ],
                 "prompt_cache_key": "thread-123",
                 "service_tier": "priority"
             })
@@ -4617,13 +4633,17 @@ mod tests {
         .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
-        assert_eq!(
-            serialized["instructions"],
-            json!("You are a coding assistant.")
-        );
+        assert!(serialized.get("instructions").is_none());
         assert_eq!(
             serialized["input"],
             json!([
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        { "type": "input_text", "text": "You are a coding assistant." }
+                    ]
+                },
                 {
                     "type": "message",
                     "role": "user",
@@ -4642,13 +4662,9 @@ mod tests {
         );
     }
 
-    /// Replaying provider compaction state discards all input items
-    /// accumulated before it, but the system prompt must not be lost with
-    /// them: it lives in the per-request `instructions` field, outside the
-    /// compacted window, so the model keeps running on the current prompt
-    /// rather than whatever was frozen into the window at compaction time.
+    /// Replaying provider compaction state must not discard the current system prompt.
     #[test]
-    fn into_open_ai_response_preserves_system_prompt_across_compaction_replay() {
+    fn into_open_ai_response_prepends_system_prompt_to_compaction_replay() {
         let state = provider_compaction_state_from_items(
             OPEN_AI_PROVIDER_ID,
             vec![json!({
@@ -4711,10 +4727,17 @@ mod tests {
         .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
-        assert_eq!(serialized["instructions"], json!("Current system prompt."));
+        assert!(serialized.get("instructions").is_none());
         assert_eq!(
             serialized["input"],
             json!([
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        { "type": "input_text", "text": "Current system prompt." }
+                    ]
+                },
                 {
                     "type": "compaction",
                     "id": "cmp_1",

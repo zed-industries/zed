@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 pub mod error;
 mod macros;
 mod typed_envelope;
@@ -145,6 +143,15 @@ messages!(
     (GetSignatureHelpResponse, Background),
     (GetTerminalShell, Background),
     (GetTerminalShellResponse, Background),
+    (GetGlobalSkills, Background),
+    (GetGlobalSkillsResponse, Background),
+    (GlobalSkillsChanged, Background),
+    (CreateGlobalSkill, Background),
+    (CreateGlobalSkillResponse, Background),
+    (TrashGlobalSkill, Background),
+    (ResolveGlobalSkillPath, Background),
+    (ResolveGlobalSkillPathResponse, Background),
+    (ApplyGlobalSkillFileOperation, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -642,6 +649,11 @@ request_messages!(
     (GitClone, GitCloneResponse),
     (GetDirectoryEnvironment, DirectoryEnvironment),
     (GetTerminalShell, GetTerminalShellResponse),
+    (GetGlobalSkills, GetGlobalSkillsResponse),
+    (CreateGlobalSkill, CreateGlobalSkillResponse),
+    (TrashGlobalSkill, Ack),
+    (ResolveGlobalSkillPath, ResolveGlobalSkillPathResponse),
+    (ApplyGlobalSkillFileOperation, Ack),
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (GetContextServerCommand, ContextServerCommand),
@@ -842,6 +854,12 @@ entity_messages!(
     ToggleLspLogs,
     GetDirectoryEnvironment,
     GetTerminalShell,
+    GetGlobalSkills,
+    GlobalSkillsChanged,
+    CreateGlobalSkill,
+    TrashGlobalSkill,
+    ResolveGlobalSkillPath,
+    ApplyGlobalSkillFileOperation,
 
     Push,
     Fetch,
