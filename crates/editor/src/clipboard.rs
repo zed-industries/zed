@@ -172,16 +172,19 @@ impl Editor {
             } else {
                 let clipboard_is_url = is_standalone_url(&clipboard_text);
 
-                let auto_indent_mode = if !clipboard_text.is_empty() {
-                    Some(AutoindentMode::Block {
-                        original_indent_columns: Vec::new(),
-                    })
-                } else {
-                    None
-                };
-
                 let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.snapshot(cx);
+                    let auto_indent_mode = if !clipboard_text.is_empty()
+                        && snapshot
+                            .language_settings_at(cursor_offset, cx)
+                            .auto_indent_on_paste
+                    {
+                        Some(AutoindentMode::Block {
+                            original_indent_columns: Vec::new(),
+                        })
+                    } else {
+                        None
+                    };
 
                     let anchors = old_selections
                         .iter()
