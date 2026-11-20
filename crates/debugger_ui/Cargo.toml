@@ -76,6 +76,7 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 command_palette_hooks.workspace = true
 dap = { workspace = true, features = ["test-support"] }
 dap_adapters = { workspace = true, features = ["test-support"] }

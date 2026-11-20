@@ -170,3 +170,41 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
         configure,
     )
 }
+
+#[cfg(test)]
+/// A [`dap::DapLocator`] used in tests that resolves any task to a fake `launch`
+/// scenario (with no working directory), so tests can drive a debug session
+/// without real locators.
+#[derive(Default)]
+pub struct FakeLocator;
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl dap::DapLocator for FakeLocator {
+    fn name(&self) -> gpui::SharedString {
+        gpui::SharedString::new_static("fake-locator")
+    }
+
+    async fn create_scenario(
+        &self,
+        _build_config: &task::TaskTemplate,
+        resolved_label: &str,
+        _adapter: &dap::adapters::DebugAdapterName,
+    ) -> Option<task::DebugScenario> {
+        Some(task::DebugScenario {
+            adapter: gpui::SharedString::from("fake-adapter"),
+            label: resolved_label.to_string().into(),
+            build: None,
+            config: serde_json::json!({ "request": "launch" }),
+            tcp_connection: None,
+        })
+    }
+
+    async fn run(
+        &self,
+        _build_config: task::SpawnInTerminal,
+        _executor: gpui::BackgroundExecutor,
+    ) -> anyhow::Result<task::DebugRequest> {
+        anyhow::bail!("fake locator does not run tasks")
+    }
+}
