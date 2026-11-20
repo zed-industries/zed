@@ -46,14 +46,6 @@ fn foundation_model_id(profile: &InferenceProfileSummary) -> Option<&str> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelCatalog {
     models: Vec<ListedModel>,
-    failed_profiles: Option<FailedProfiles>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct FailedProfiles {
-    profile_type: InferenceProfileType,
-    error: String,
-    retained: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,13 +69,6 @@ struct GeographicProfile {
 }
 
 impl ListedModel {
-    fn profile_type(&self) -> InferenceProfileType {
-        if self.id == self.base_model_id {
-            InferenceProfileType::SystemDefined
-        } else {
-            InferenceProfileType::Application
-        }
-    }
     fn new(id: &str, display_name: &str, model: &FoundationModelSummary) -> Self {
         Self {
             id: id.to_string(),
@@ -198,43 +183,7 @@ impl ModelCatalog {
 
         let mut models = system_defined.into_values().collect::<Vec<_>>();
         models.extend(application);
-        Self {
-            models,
-            failed_profiles: None,
-        }
-    }
-
-    pub fn retain_failed_profiles(&mut self, previous: ModelCatalog) {
-        if let Some(failure) = &mut self.failed_profiles {
-            let old_count = self.models.len();
-            self.models.extend(
-                previous
-                    .models
-                    .into_iter()
-                    .filter(|model| model.profile_type() == failure.profile_type),
-            );
-            failure.retained = self.models.len() > old_count;
-        }
-    }
-
-    pub fn profile_listing_warning(&self) -> Option<String> {
-        let failure = self.failed_profiles.as_ref()?;
-        let kind = if failure.profile_type == InferenceProfileType::Application {
-            "application"
-        } else {
-            "system-defined"
-        };
-        Some(if failure.retained {
-            format!(
-                "Zed keeps the earlier {kind} profiles, which may be out of date. {}",
-                failure.error
-            )
-        } else {
-            format!(
-                "Zed offers the listed models without {kind} profiles. {}",
-                failure.error
-            )
-        })
+        Self { models }
     }
 
     /// Every model in the catalog, described by `capability_catalog`. A model
@@ -305,14 +254,6 @@ pub async fn list_models(
     client: &Client,
     deadline: impl Future<Output = ()> + Send,
 ) -> Result<ModelCatalog> {
-    let deadline = deadline.boxed().shared();
-    let with_deadline =
-        async |operation: &str, future: futures::future::BoxFuture<'_, Result<_>>| {
-            futures::select_biased! {
-                result = future.fuse() => result,
-                _ = deadline.clone().fuse() => Err(anyhow!("{operation} exceeded the model listing deadline")),
-            }
-        };
     let foundation_models = async {
         client
             .list_foundation_models()
@@ -323,41 +264,19 @@ pub async fn list_models(
     };
     // An unfiltered listing is not documented to include the profiles
     // created in the account, so each kind is requested by name.
-    let system = with_deadline(
-        "ListInferenceProfiles (system-defined)",
-        list_inference_profiles(client, InferenceProfileType::SystemDefined).boxed(),
-    );
-    let foundation = async {
-        futures::select_biased! {
-            result = foundation_models.fuse() => result,
-            _ = deadline.clone().fuse() => Err(anyhow!("ListFoundationModels exceeded the model listing deadline")),
-        }
+    let listing = async {
+        let (foundation_models, mut system, application) = futures::try_join!(
+            foundation_models,
+            list_inference_profiles(client, InferenceProfileType::SystemDefined),
+            list_inference_profiles(client, InferenceProfileType::Application),
+        )?;
+        system.extend(application);
+        Ok(ModelCatalog::new(&system, &foundation_models))
     };
-    let application = with_deadline(
-        "ListInferenceProfiles (application)",
-        list_inference_profiles(client, InferenceProfileType::Application).boxed(),
-    );
-    let (foundation_models, (system, application)) = futures::try_join!(foundation, async {
-        Ok::<_, anyhow::Error>(futures::join!(system, application))
-    })?;
-    let (profiles, failure) = match (system, application) {
-        (Ok(mut system), Ok(application)) => {
-            system.extend(application);
-            (system, None)
-        }
-        (Ok(profiles), Err(error)) => (profiles, Some((InferenceProfileType::Application, error))),
-        (Err(error), Ok(profiles)) => {
-            (profiles, Some((InferenceProfileType::SystemDefined, error)))
-        }
-        (Err(system), Err(application)) => return Err(anyhow!("{system:#}; {application:#}")),
-    };
-    let mut catalog = ModelCatalog::new(&profiles, &foundation_models);
-    catalog.failed_profiles = failure.map(|(profile_type, error)| FailedProfiles {
-        profile_type,
-        error: format!("{error:#}"),
-        retained: false,
-    });
-    Ok(catalog)
+    futures::select_biased! {
+        result = listing.fuse() => result,
+        _ = deadline.fuse() => Err(anyhow!("model listing deadline exceeded")),
+    }
 }
 
 #[cfg(test)]

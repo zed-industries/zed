@@ -592,12 +592,7 @@ impl State {
                     return;
                 }
                 this.listing = match result {
-                    Ok(mut catalog) => {
-                        if let Some(previous) = std::mem::take(&mut this.listing).into_catalog() {
-                            catalog.retain_failed_profiles(previous);
-                        }
-                        ModelListing::Listed(catalog)
-                    }
+                    Ok(catalog) => ModelListing::Listed(catalog),
                     Err(error) => {
                         log::warn!("Failed to list Bedrock models: {error:#}");
                         ModelListing::Failed {
@@ -910,10 +905,7 @@ impl State {
             ModelListing::Loading { previous: None } => Some(("Zed offers only the models in your settings while it lists the models in your account.".into(), false)),
             ModelListing::Loading { previous: Some(_) } => Some(("Zed keeps the earlier account list while it refreshes the models.".into(), false)),
             ModelListing::RetryingPublic => Some((format!("Zed is retrying the account listing. {}", public_consequence()), false)),
-            ModelListing::Listed(catalog) => Some(match catalog.profile_listing_warning() {
-                Some(warning) => (warning, true),
-                None => ("Zed offers the models listed in your account and the models in your settings.".into(), false),
-            }),
+            ModelListing::Listed(_) => Some(("Zed offers the models listed in your account and the models in your settings.".into(), false)),
             ModelListing::Failed { previous: Some(_), error } => Some((format!("Zed keeps the earlier account list, which may be out of date. {error}"), true)),
             ModelListing::Failed { previous: None, error } => Some((format!("{} {error}", public_consequence()), true)),
             ModelListing::Gateway => Some((format!("{} A custom endpoint is configured, so Zed does not list models in your AWS account.", public_consequence()), false)),
@@ -5278,13 +5270,19 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn profile_legs_keep_their_own_last_success(cx: &mut gpui::TestAppContext) {
+    async fn failed_listing_keeps_the_last_success_until_a_complete_replacement(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let scenario = async {
             init_provider_test(cx);
             let app_arn =
                 "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/account-chat";
-            for fail_application in [true, false] {
-                let responses = Arc::new(parking_lot::Mutex::new((Some(fail_application), false)));
+            for (failed_call, operation) in [
+                ("APPLICATION", "ListInferenceProfiles"),
+                ("SYSTEM_DEFINED", "ListInferenceProfiles"),
+                ("/foundation-models", "ListFoundationModels"),
+            ] {
+                let responses = Arc::new(parking_lot::Mutex::new((false, false)));
                 let client = http_client::FakeHttpClient::create({
                     let responses = responses.clone();
                     move |request| {
@@ -5297,13 +5295,14 @@ mod tests {
                                 .uri()
                                 .query()
                                 .is_some_and(|query| query.contains("APPLICATION"));
-                            let response = if request.uri().path() == "/foundation-models" {
-                                listing_response(&request, &["vendor.chat"])
-                            } else if failure == Some(application) {
+                            if failure && request.uri().to_string().contains(failed_call) {
                                 return json_response(
                                     403,
                                     serde_json::json!({"__type":"AccessDeniedException", "message":"test denial"}),
                                 );
+                            }
+                            let response = if request.uri().path() == "/foundation-models" {
+                                listing_response(&request, &["vendor.chat", "vendor.second"])
                             } else if empty {
                                 listing_response(&request, &[])
                             } else if application {
@@ -5314,8 +5313,16 @@ mod tests {
                                     "status": "ACTIVE", "type": "APPLICATION",
                                     "models": [{"modelArn": "arn:aws:bedrock:us-east-1::foundation-model/vendor.chat"}]
                                 }]})
+                            } else if request
+                                .uri()
+                                .query()
+                                .is_some_and(|query| query.contains("nextToken"))
+                            {
+                                listing_response(&request, &["vendor.second"])
                             } else {
-                                listing_response(&request, &["vendor.chat"])
+                                let mut body = listing_response(&request, &["vendor.chat"]);
+                                body["nextToken"] = "page-two".into();
+                                body
                             };
                             json_response(200, response)
                         }
@@ -5328,136 +5335,38 @@ mod tests {
                 finish_listing(&provider, cx).await?;
                 assert_eq!(
                     offered_ids(&provider, cx),
-                    [if fail_application {
-                        "vendor.chat"
-                    } else {
-                        app_arn
-                    }]
-                );
-                assert!(
-                    provider
-                        .state
-                        .read_with(cx, |state, _| state.listing_message())
-                        .context("cold warning")?
-                        .1
+                    [app_arn, "vendor.chat", "vendor.second"]
                 );
 
-                *responses.lock() = (None, false);
-                cx.update(|cx| provider.refresh_models(cx));
-                finish_listing(&provider, cx).await?;
-                assert_eq!(offered_ids(&provider, cx), [app_arn, "vendor.chat"]);
-
-                *responses.lock() = (Some(fail_application), true);
+                *responses.lock() = (true, true);
                 cx.update(|cx| provider.refresh_models(cx));
                 finish_listing(&provider, cx).await?;
                 assert_eq!(
                     offered_ids(&provider, cx),
-                    [if fail_application {
-                        app_arn
-                    } else {
-                        "vendor.chat"
-                    }]
+                    [app_arn, "vendor.chat", "vendor.second"]
                 );
                 let (message, warning) = provider
                     .state
                     .read_with(cx, |state, _| state.listing_message())
                     .context("refresh warning")?;
-                assert!(warning && message.contains("may be out of date"));
-            }
-            anyhow::Ok(())
-        };
-        scenario.await.expect("independent profile lists");
-    }
-
-    #[gpui::test]
-    async fn partial_listing_and_total_failure_preserve_usable_models(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let scenario = async {
-            init_provider_test(cx);
-            let fail_foundation = Arc::new(parking_lot::Mutex::new(false));
-            let http_client = http_client::FakeHttpClient::create({
-                let fail_foundation = fail_foundation.clone();
-                move |request| {
-                    let fail = *fail_foundation.lock();
-                    async move {
-                        if request.uri() == CAPABILITY_CATALOG_URL {
-                            return json_response(404, serde_json::json!({}));
-                        }
-                        if request
-                            .uri()
-                            .query()
-                            .is_some_and(|query| query.contains("APPLICATION"))
-                        {
-                            return json_response(
-                                403,
-                                serde_json::json!({"__type": "AccessDeniedException", "message": "application listing test error"}),
-                            );
-                        }
-                        if request.uri().path() == "/foundation-models" && fail {
-                            return json_response(
-                                403,
-                                serde_json::json!({"__type": "AccessDeniedException", "message": "foundation listing test error"}),
-                            );
-                        }
-                        let body = if request.uri().path() == "/foundation-models" {
-                            listing_response(&request, &["vendor.first", "vendor.second"])
-                        } else if request
-                            .uri()
-                            .query()
-                            .is_some_and(|query| query.contains("nextToken"))
-                        {
-                            listing_response(&request, &["vendor.second"])
-                        } else {
-                            let mut body = listing_response(&request, &["vendor.first"]);
-                            body["nextToken"] = "page-two".into();
-                            body
-                        };
-                        json_response(200, body)
-                    }
-                }
-            });
-            let provider = cx.update(|cx| new_test_provider(http_client, cx));
-            provider
-                .state
-                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
-            finish_listing(&provider, cx).await?;
-            assert_eq!(
-                offered_ids(&provider, cx),
-                ["vendor.first", "vendor.second"]
-            );
-            provider.state.read_with(cx, |state, _| {
-                let (message, warning) = state.listing_message().expect("listing message");
-                assert!(
-                    message.contains("ListInferenceProfiles")
-                        && message.contains("application listing test error")
-                );
-                assert!(warning && message.contains("without application profiles"));
-            });
-            *fail_foundation.lock() = true;
-            cx.update(|cx| provider.refresh_models(cx));
-            finish_listing(&provider, cx).await?;
-            assert_eq!(
-                offered_ids(&provider, cx),
-                ["vendor.first", "vendor.second"]
-            );
-            provider.state.read_with(cx, |state, _| {
-                let (message, warning) = state.listing_message().expect("stale message");
-                assert!(
-                    message.contains("ListFoundationModels")
-                        && message.contains("foundation listing test error")
-                );
                 assert!(
                     warning
                         && message.contains("may be out of date")
                         && !message.contains("models.dev")
                 );
-            });
-            Ok::<_, anyhow::Error>(())
+                assert!(
+                    message.contains(&format!("bedrock:{operation}"))
+                        && message.contains("test denial")
+                );
+
+                *responses.lock() = (false, true);
+                cx.update(|cx| provider.refresh_models(cx));
+                finish_listing(&provider, cx).await?;
+                assert!(offered_ids(&provider, cx).is_empty());
+            }
+            anyhow::Ok(())
         };
-        scenario
-            .await
-            .expect("partial and stale listing scenario should complete");
+        scenario.await.expect("complete profile lists");
     }
 
     #[gpui::test]
@@ -5608,12 +5517,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn listing_deadline_covers_all_pages_and_optional_profile_timeouts(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn listing_deadline_covers_all_calls_and_pages(cx: &mut gpui::TestAppContext) {
         let scenario = async {
             init_provider_test(cx);
-            for (optional_timeout, foundation_timeout) in
+            for (application_timeout, foundation_timeout) in
                 [(false, false), (true, false), (false, true)]
             {
                 let (release_first_page, first_page) = futures::channel::oneshot::channel::<()>();
@@ -5643,13 +5550,13 @@ mod tests {
                                 .context("foundation started")?;
                             return futures::future::pending().await;
                         }
-                        if optional_timeout && application {
+                        if application_timeout && application {
                             entered
                                 .unbounded_send("application")
                                 .context("application started")?;
                             return futures::future::pending().await;
                         }
-                        if !optional_timeout && !foundation_timeout && system {
+                        if !application_timeout && !foundation_timeout && system {
                             if request
                                 .uri()
                                 .query()
@@ -5698,37 +5605,17 @@ mod tests {
                     .await
                 });
                 let first = requests.next().await.context("listing started")?;
-                if foundation_timeout {
-                    assert_eq!(first, "foundation");
-                    cx.executor().advance_clock(LIST_MODELS_TIMEOUT);
-                    cx.run_until_parked();
-                    let error = listing
-                        .now_or_never()
-                        .context("foundation listing must complete at the shared deadline")?
-                        .expect_err("foundation deadline must fail the listing");
-                    assert!(
-                        error.to_string().contains("ListFoundationModels")
-                            && error.to_string().contains("listing deadline")
-                    );
-                    drop(release_first_page);
-                } else if optional_timeout {
-                    assert_eq!(first, "application");
-                    cx.run_until_parked();
-                    cx.executor().advance_clock(LIST_MODELS_TIMEOUT);
-                    let catalog = listing.await?;
+                if foundation_timeout || application_timeout {
                     assert_eq!(
-                        catalog
-                            .models(false, &CapabilityCatalog::default())
-                            .map(|model| model.id)
-                            .collect::<Vec<_>>(),
-                        ["vendor.chat"]
+                        first,
+                        if foundation_timeout {
+                            "foundation"
+                        } else {
+                            "application"
+                        }
                     );
-                    assert!(
-                        catalog
-                            .profile_listing_warning()
-                            .context("optional timeout")?
-                            .contains("listing deadline")
-                    );
+                    cx.run_until_parked();
+                    cx.executor().advance_clock(LIST_MODELS_TIMEOUT);
                     // This sender is unused in this scenario; its receiver is never polled.
                     drop(release_first_page);
                 } else {
@@ -5742,15 +5629,13 @@ mod tests {
                         "second"
                     );
                     cx.executor().advance_clock(Duration::from_secs(10));
-                    let error = listing
-                        .await?
-                        .profile_listing_warning()
-                        .context("system profile timeout")?;
-                    assert!(
-                        error.contains("ListInferenceProfiles (system-defined)")
-                            && error.contains("listing deadline")
-                    );
                 }
+                cx.run_until_parked();
+                let error = listing
+                    .now_or_never()
+                    .context("listing must complete at the shared deadline")?
+                    .expect_err("any deadline must fail the listing");
+                assert!(error.to_string().contains("listing deadline"));
             }
             Ok::<_, anyhow::Error>(())
         };
