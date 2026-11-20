@@ -979,6 +979,18 @@ fn render_remote_button(
                 menu_handle,
             )),
         },
+        // Without counts, only offer a fetch, as for a branch that is up to date.
+        Some(Upstream {
+            tracking: UpstreamTracking::Unknown(_),
+            ..
+        }) => show_fetch_button.then(|| {
+            remote_button::render_fetch_button(
+                keybinding_target,
+                id,
+                in_progress_operation,
+                menu_handle,
+            )
+        }),
         Some(Upstream {
             tracking: UpstreamTracking::Gone,
             ..

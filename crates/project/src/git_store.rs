@@ -11456,6 +11456,16 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
                 .map(|upstream| proto::UpstreamTracking {
                     ahead: upstream.ahead as u64,
                     behind: upstream.behind as u64,
+                    unknown: None,
+                })
+                .or(match upstream.tracking {
+                    git::repository::UpstreamTracking::Unknown(key) => {
+                        Some(proto::UpstreamTracking {
+                            unknown: Some(key),
+                            ..Default::default()
+                        })
+                    }
+                    _ => None,
                 }),
         }),
         most_recent_commit: branch
@@ -11511,6 +11521,9 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
                     .tracking
                     .as_ref()
                     .map(|tracking| {
+                        if let Some(key) = tracking.unknown {
+                            return git::repository::UpstreamTracking::Unknown(key);
+                        }
                         git::repository::UpstreamTracking::Tracked(UpstreamTrackingStatus {
                             ahead: tracking.ahead as u32,
                             behind: tracking.behind as u32,
@@ -11626,6 +11639,38 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn test_branch_upstream_tracking_proto_round_trip() {
+        use git::repository::{Upstream, UpstreamTracking};
+
+        for tracking in [
+            UpstreamTracking::Gone,
+            UpstreamTrackingStatus {
+                ahead: 2,
+                behind: 3,
+            }
+            .into(),
+            UpstreamTracking::Unknown(u64::MAX),
+        ] {
+            let branch = Branch {
+                is_head: true,
+                ref_name: "refs/heads/main".into(),
+                upstream: Some(Upstream {
+                    ref_name: "refs/remotes/origin/main".into(),
+                    tracking,
+                }),
+                most_recent_commit: None,
+            };
+            let encoded = proto::Message::encode_to_vec(&branch_to_proto(&branch));
+            let decoded = <proto::Branch as proto::Message>::decode(encoded.as_slice()).unwrap();
+            assert_eq!(proto_to_branch(&decoded), branch);
+            // Collab stores the head branch as JSON.
+            let json = serde_json::to_string(&decoded).unwrap();
+            let decoded = serde_json::from_str(&json).unwrap();
+            assert_eq!(proto_to_branch(&decoded), branch);
+        }
     }
 
     #[gpui::test]

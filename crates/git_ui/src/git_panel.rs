@@ -5306,7 +5306,7 @@ impl GitPanel {
                     branch
                         .upstream
                         .as_ref()
-                        .filter(|u| matches!(u.tracking, UpstreamTracking::Tracked(_)))
+                        .filter(|u| !matches!(u.tracking, UpstreamTracking::Gone))
                         .and_then(|u| u.branch_name())
                         .unwrap_or_else(|| branch.name())
                         .to_owned()
@@ -5383,7 +5383,7 @@ impl GitPanel {
             let source_branch = branch
                 .upstream
                 .as_ref()
-                .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
+                .filter(|upstream| !matches!(upstream.tracking, UpstreamTracking::Gone))
                 .and_then(|upstream| upstream.branch_name())
                 .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
             let source_branch = source_branch.to_string();
