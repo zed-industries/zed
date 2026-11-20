@@ -176,6 +176,74 @@ fn test_list_crates_requests_next_page_only_after_full_page() {
 }
 
 #[test]
+fn test_team_identity_is_shared_across_ownership_assignments() -> anyhow::Result<()> {
+    let client = SimulatedCratesIoClient::new();
+    let owner = client.token_user();
+    let crates: Vec<_> = ["alpha", "beta", "delta", "gamma"]
+        .into_iter()
+        .map(|name| client.test_crate(name, owner))
+        .collect();
+    let login = OwnerLogin::GitHubTeam {
+        organization: "zed-industries".into(),
+        team: "crates-io".into(),
+    };
+    let mut team_id = None;
+    for (index, name) in crates.iter().enumerate() {
+        if index % 2 == 0 {
+            let id = client.test_team_owner(name, &login.to_string())?;
+            if let Some(previous_id) = team_id {
+                assert_eq!(id, previous_id);
+            }
+            team_id = Some(id);
+        } else {
+            smol::block_on(client.add_owners(name, std::slice::from_ref(&login)))?;
+        }
+    }
+    let listed = smol::block_on(client.list_crates(&CrateListQuery {
+        team_id,
+        ..Default::default()
+    }))?;
+    assert_eq!(
+        listed
+            .into_iter()
+            .map(|krate| krate.name)
+            .collect::<Vec<_>>(),
+        crates
+    );
+    Ok(())
+}
+
+#[test]
+fn test_list_crates_filter_precedence() -> anyhow::Result<()> {
+    let client = SimulatedCratesIoClient::new();
+    let user_owned = client.test_crate("user-owned", client.token_user());
+    let other_user = client.test_user();
+    let keyword_match = client.test_crate("keyword-match", other_user);
+    let team_owned = client.test_crate("team-owned", other_user);
+    client.update_test_crate(&keyword_match, |krate| {
+        krate.keywords = Some(vec!["keyword".into()]);
+    })?;
+    let team_id = client.test_team_owner(&team_owned, "github:zed-industries:crates-io")?;
+    for (keyword, user_id, expected) in [
+        (None, Some(client.token_user()), &user_owned),
+        (Some("keyword"), Some(client.token_user()), &keyword_match),
+        (Some("keyword"), None, &keyword_match),
+    ] {
+        let listed = smol::block_on(client.list_crates(&CrateListQuery {
+            keyword: keyword.map(str::to_owned),
+            user_id,
+            team_id: Some(team_id),
+            ..Default::default()
+        }))?;
+        assert_eq!(
+            listed.iter().map(|krate| &krate.name).collect::<Vec<_>>(),
+            [expected]
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn test_list_crates_filters_by_team_id() -> anyhow::Result<()> {
     let simulated_client = SimulatedCratesIoClient::new();
     let owner = simulated_client.token_user();

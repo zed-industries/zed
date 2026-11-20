@@ -47,8 +47,8 @@ pub struct SiteMetadata {
     pub banner_message: Option<String>,
 }
 
-/// Filters for listing crates. crates.io ignores `user_id` when `keyword` is
-/// set.
+/// Filters for listing crates. Among `keyword`, `user_id`, and `team_id`,
+/// crates.io uses only the first filter set, in that order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CrateListQuery {
     /// Results are sorted by relevance with a search and alphabetically
