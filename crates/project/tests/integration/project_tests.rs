@@ -17319,7 +17319,7 @@ async fn test_blame_buffer_with_default_textconv(cx: &mut gpui::TestAppContext) 
     );
     std::fs::write(
         work_dir.join(".gitattributes"),
-        "unknown_driver.py diff=unknown\n",
+        "*.py -text\nunknown_driver.py diff=unknown\n",
     )
     .unwrap();
     git_add(".gitattributes", &work_dir);
