@@ -270,7 +270,7 @@ impl Render for TitleBar {
                 .read(cx)
                 .root_name()
                 .file_name()
-                .map(|name| SharedString::from(name.to_string()));
+                .map(SharedString::from);
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
                 let worktree_paths = self.project.read(cx).worktree_paths(cx);

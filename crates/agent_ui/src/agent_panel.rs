@@ -5174,10 +5174,6 @@ impl Panel for AgentPanel {
         AgentSettings::get_global(cx).enabled(cx)
     }
 
-    fn is_agent_panel(&self) -> bool {
-        true
-    }
-
     fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
         Some(workspace::HideStatusItem::new(|settings| {
             settings.agent.get_or_insert_default().button = Some(false);

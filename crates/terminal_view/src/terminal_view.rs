@@ -14,7 +14,6 @@ use gpui::{
     MouseDownEvent, Pixels, Point as GpuiPoint, Rems, Render, ScrollEvent, Styled, Subscription,
     Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
-use menu;
 use persistence::TerminalDb;
 use project::{Project, ProjectEntryId, search::SearchQuery};
 use schemars::JsonSchema;
@@ -77,10 +76,6 @@ fn viewport_line_for_point(point: Point, display_offset: usize) -> Option<usize>
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-
-/// Event to transmit the scroll from the element to the view
-#[derive(Clone, Debug, PartialEq)]
-pub struct ScrollTerminal(pub i32);
 
 /// Sends the specified text directly to the terminal.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
@@ -188,16 +183,6 @@ pub enum ContentMode {
 }
 
 impl ContentMode {
-    pub fn is_limited(&self) -> bool {
-        match self {
-            ContentMode::Scrollable => false,
-            ContentMode::Inline {
-                displayed_lines,
-                total_lines,
-            } => displayed_lines < total_lines,
-        }
-    }
-
     pub fn is_scrollable(&self) -> bool {
         matches!(self, ContentMode::Scrollable)
     }
@@ -1796,9 +1781,9 @@ impl Item for TerminalView {
 
                 let workspace = workspace.downgrade();
                 let terminal_panel = terminal_panel.downgrade();
-                // Defer the split operation to avoid re-entrancy panic.
-                // The pane may be the one currently being updated, so we cannot
-                // call mark_positions (via split) synchronously.
+                // Defer the split and move to avoid a re-entrancy panic: the pane
+                // may be the one currently being updated, and moving the item
+                // updates it.
                 window
                     .spawn(cx, async move |cx| {
                         cx.update(|window, cx| {
@@ -1807,12 +1792,9 @@ impl Item for TerminalView {
                                     workspace, project, is_zoomed, window, cx,
                                 );
                                 terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
-                                terminal_panel.center.split(
-                                    &this_pane,
-                                    &new_pane,
-                                    split_direction,
-                                    cx,
-                                );
+                                terminal_panel
+                                    .center
+                                    .split(&this_pane, &new_pane, split_direction);
                                 anyhow::Ok(new_pane)
                             }) else {
                                 return;
@@ -2284,7 +2266,7 @@ pub fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<Path
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } if !is_remote => shellexpand::full(directory)
             .ok()
-            .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+            .map(|dir| PathBuf::from(dir.into_owned()))
             .filter(|dir| dir.is_dir()),
         WorkingDirectory::Always { .. } => None,
     };
