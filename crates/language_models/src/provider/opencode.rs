@@ -141,7 +141,6 @@ impl State {
         self.refresh_models_task = None;
         let api_url = OpenCodeLanguageModelProvider::api_url(cx);
         if self.api_key_state.key(&api_url).is_none() {
-            self.fetch_models_task = None;
             cx.notify();
             return;
         }
@@ -175,14 +174,8 @@ impl State {
                 return;
             }
 
-            let catalog = fetch_model_catalog(http_client, executor).await;
-            let results = catalog_results(catalog.as_ref().map(String::as_str));
-            if results.iter().all(|(_, result)| result.is_ok())
-                && let Ok(catalog) = catalog
-                && let Err(error) = store_cached_catalog(fs.as_ref(), cache_path, catalog).await
-            {
-                log::warn!("Failed to cache OpenCode model catalog: {error:#}");
-            }
+            let results =
+                refresh_catalog(http_client.as_ref(), &executor, fs.as_ref(), &cache_path).await;
             this.update(cx, |this, cx| {
                 apply_discovery_results(
                     &mut this.discovered_models,
@@ -202,15 +195,9 @@ impl State {
         self.refresh_models_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 executor.timer(MODEL_CATALOG_REFRESH_INTERVAL).await;
-                let catalog = fetch_model_catalog(http_client.clone(), executor.clone()).await;
-                let results = catalog_results(catalog.as_ref().map(String::as_str));
-                if results.iter().all(|(_, result)| result.is_ok())
-                    && let Ok(catalog) = catalog
-                    && let Err(error) =
-                        store_cached_catalog(fs.as_ref(), cache_path.clone(), catalog).await
-                {
-                    log::warn!("Failed to cache OpenCode model catalog: {error:#}");
-                }
+                let results =
+                    refresh_catalog(http_client.as_ref(), &executor, fs.as_ref(), &cache_path)
+                        .await;
                 if this
                     .update(cx, |this, cx| {
                         apply_discovery_results(
@@ -717,11 +704,21 @@ fn parse_discovered_models(
     opencode::catalog::parse_model_catalog(rich_catalog, subscription, None)
 }
 
-async fn fetch_model_catalog(
-    client: Arc<dyn HttpClient>,
-    executor: BackgroundExecutor,
-) -> Result<String> {
-    model_catalog_cache::fetch(client, executor, RICH_MODEL_CATALOG_URL).await
+async fn refresh_catalog(
+    client: &dyn HttpClient,
+    executor: &BackgroundExecutor,
+    fs: &dyn Fs,
+    path: &Path,
+) -> [(OpenCodeSubscription, Result<Vec<DiscoveredModel>>); 2] {
+    let catalog = model_catalog_cache::fetch(client, executor, RICH_MODEL_CATALOG_URL).await;
+    let results = catalog_results(catalog.as_ref().map(String::as_str));
+    if results.iter().all(|(_, result)| result.is_ok())
+        && let Ok(catalog) = catalog
+        && let Err(error) = store_cached_catalog(fs, path.to_path_buf(), catalog).await
+    {
+        log::warn!("Failed to cache OpenCode model catalog: {error:#}");
+    }
+    results
 }
 
 struct ConfigurationView {

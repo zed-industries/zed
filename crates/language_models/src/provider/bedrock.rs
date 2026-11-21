@@ -650,8 +650,8 @@ impl State {
                             let cache_path = cache_path.clone();
                             async move {
                                 fetch_capability_catalog(
-                                    http_client,
-                                    executor,
+                                    http_client.as_ref(),
+                                    &executor,
                                     fs.as_ref(),
                                     cache_path,
                                 )
@@ -1457,8 +1457,8 @@ where
 /// Fetches the capability catalog and stores the part that describes
 /// Bedrock's models at `cache_path`.
 async fn fetch_capability_catalog(
-    http_client: Arc<dyn HttpClient>,
-    executor: BackgroundExecutor,
+    http_client: &dyn HttpClient,
+    executor: &BackgroundExecutor,
     fs: &dyn Fs,
     cache_path: PathBuf,
 ) -> Result<CapabilityCatalog> {

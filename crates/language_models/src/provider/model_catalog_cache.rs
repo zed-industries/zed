@@ -23,11 +23,11 @@ const DISK_FRESHNESS: Duration = Duration::from_secs(5 * 60);
 pub(crate) const REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 pub(crate) async fn fetch(
-    client: Arc<dyn HttpClient>,
-    executor: BackgroundExecutor,
+    client: &dyn HttpClient,
+    executor: &BackgroundExecutor,
     url: &str,
 ) -> Result<String> {
-    let fetch = fetch_resource(client.as_ref(), url).fuse();
+    let fetch = fetch_resource(client, url).fuse();
     let timeout = executor.timer(FETCH_TIMEOUT).fuse();
     futures::pin_mut!(fetch, timeout);
     futures::select_biased! {
@@ -79,13 +79,7 @@ async fn read_catalog_response(reader: impl AsyncRead + Unpin) -> Result<String>
         body.len() as u64 <= RESPONSE_LIMIT_BYTES,
         "model catalog response exceeds the {RESPONSE_LIMIT_BYTES}-byte limit"
     );
-    String::from_utf8(body).map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "stream did not contain valid UTF-8",
-        )
-        .into()
-    })
+    String::from_utf8(body).context("model catalog response is not valid UTF-8")
 }
 
 /// The catalog stored at `path`, and whether it is recent enough to use
@@ -123,12 +117,6 @@ pub(crate) async fn load_cached_with<T: Send + 'static>(
                 "cached model catalog exceeds the {RESPONSE_LIMIT_BYTES}-byte limit"
             );
             let text = String::from_utf8(catalog)
-                .map_err(|_| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "stream did not contain valid UTF-8",
-                    )
-                })
                 .with_context(|| format!("Failed to read file {}", path.display()))?;
             decode(text)
         })
@@ -151,88 +139,74 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn fetch_decodes_gzip_and_limits_the_decoded_size(cx: &mut gpui::TestAppContext) {
+    async fn responses_are_limited_to_the_decoded_size(cx: &mut gpui::TestAppContext) {
         use async_compression::futures::bufread::GzipEncoder;
         use futures::io::Cursor;
 
         let limit = usize::try_from(RESPONSE_LIMIT_BYTES).expect("response limit fits usize");
         for size in [limit, limit + 1] {
-            let mut catalog = b"{}".to_vec();
-            catalog.resize(size, b' ');
+            let catalog = catalog_of_size(size);
             let mut compressed = Vec::new();
-            GzipEncoder::new(Cursor::new(catalog))
+            GzipEncoder::new(Cursor::new(catalog.as_bytes()))
                 .read_to_end(&mut compressed)
                 .await
                 .expect("gzip fixture should encode");
-            let client = http_client::FakeHttpClient::create(move |request| {
-                assert_eq!(request.headers()[ACCEPT_ENCODING], "gzip");
-                let body = AsyncBody::from(compressed.clone());
-                async move {
-                    Ok(http_client::Response::builder()
-                        .header(CONTENT_ENCODING, "gzip")
-                        .body(body)?)
-                }
-            });
-            let result = fetch(
-                client,
-                cx.background_executor.clone(),
-                "https://catalog.example.com",
-            )
-            .await;
-            if size == limit {
-                let body = result.expect("gzip response should decode");
-                assert_eq!(body.len(), size);
-                assert_eq!(body.trim_end(), "{}");
-            } else {
-                let error = result.expect_err("oversized decoded response").to_string();
-                assert!(error.contains("8388608-byte limit"), "{error}");
+            for (encoding, bytes) in [(None, catalog.into_bytes()), (Some("gzip"), compressed)] {
+                let client = http_client::FakeHttpClient::create(move |request| {
+                    assert_eq!(request.headers()[ACCEPT_ENCODING], "gzip");
+                    let body = AsyncBody::from(bytes.clone());
+                    async move {
+                        let mut response = http_client::Response::builder();
+                        if let Some(encoding) = encoding {
+                            response = response.header(CONTENT_ENCODING, encoding);
+                        }
+                        Ok(response.body(body)?)
+                    }
+                });
+                let result = fetch(
+                    client.as_ref(),
+                    &cx.background_executor,
+                    "https://catalog.example.com",
+                )
+                .await;
+                assert_catalog_size(result, size, "response");
             }
         }
     }
 
     #[gpui::test]
-    async fn response_and_disk_reads_report_the_size_limit(cx: &mut gpui::TestAppContext) {
-        let scenario = async {
-            let fs = fs::FakeFs::new(cx.background_executor.clone());
-            let path = PathBuf::from("/cache/catalog.json");
-            let limit = usize::try_from(RESPONSE_LIMIT_BYTES)?;
-            for size in [limit, limit + 1] {
-                // A complete JSON value followed by whitespace also tests that
-                // exceeding the limit cannot be mistaken for a valid prefix.
-                let body = format!("{{}}{}", " ".repeat(size - 2));
-                let client = http_client::FakeHttpClient::create({
-                    let body = body.clone();
-                    move |_| {
-                        let body = body.clone();
-                        async move { Ok(http_client::Response::builder().body(AsyncBody::from(body))?) }
-                    }
-                });
-                let response = fetch(
-                    client,
-                    cx.background_executor.clone(),
-                    "https://catalog.example.com",
-                )
-                .await;
-                store_cached(fs.as_ref(), path.clone(), body).await?;
-                let cached = load_cached(fs.clone(), &path, &cx.background_executor).await;
-                if size == limit {
-                    assert_eq!(response?.len(), size);
-                    assert_eq!(cached?.context("cached catalog")?.0.len(), size);
-                } else {
-                    for (result, source) in [
-                        (response.map(|_| ()), "response"),
-                        (cached.map(|_| ()), "cached"),
-                    ] {
-                        let error = result.expect_err("oversized input").to_string();
-                        assert!(
-                            error.contains(source) && error.contains("8388608-byte limit"),
-                            "{error}"
-                        );
-                    }
-                }
-            }
-            Ok::<_, anyhow::Error>(())
-        };
-        scenario.await.expect("size limit scenario should complete");
+    async fn disk_reads_report_the_size_limit(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let path = PathBuf::from("/cache/catalog.json");
+        let limit = usize::try_from(RESPONSE_LIMIT_BYTES).expect("response limit fits usize");
+        for size in [limit, limit + 1] {
+            store_cached(fs.as_ref(), path.clone(), catalog_of_size(size))
+                .await
+                .expect("write cached catalog");
+            let result = load_cached(fs.clone(), &path, &cx.background_executor)
+                .await
+                .and_then(|catalog| catalog.context("missing cached catalog"))
+                .map(|(catalog, _)| catalog);
+            assert_catalog_size(result, size, "cached");
+        }
+    }
+
+    fn catalog_of_size(size: usize) -> String {
+        // A valid JSON prefix must not hide an oversized response.
+        format!("{{}}{}", " ".repeat(size - 2))
+    }
+
+    fn assert_catalog_size(result: Result<String>, size: usize, source: &str) {
+        if size as u64 <= RESPONSE_LIMIT_BYTES {
+            let catalog = result.expect("catalog should be readable");
+            assert_eq!(catalog.len(), size);
+            assert_eq!(catalog.trim_end(), "{}");
+        } else {
+            let error = result.expect_err("oversized catalog").to_string();
+            assert!(
+                error.contains(source) && error.contains("8388608-byte limit"),
+                "{error}"
+            );
+        }
     }
 }
