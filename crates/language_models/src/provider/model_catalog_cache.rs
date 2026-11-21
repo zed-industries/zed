@@ -2,10 +2,14 @@
 //! provider has its models before the network answers.
 
 use anyhow::{Context as _, Result, bail};
+use async_compression::futures::bufread::GzipDecoder;
 use fs::Fs;
-use futures::{AsyncReadExt, FutureExt};
+use futures::{AsyncRead, AsyncReadExt, FutureExt, io::BufReader};
 use gpui::BackgroundExecutor;
-use http_client::{AsyncBody, HttpClient, Method, Request};
+use http_client::{
+    AsyncBody, HttpClient, Method, Request,
+    http::header::{ACCEPT_ENCODING, CONTENT_ENCODING},
+};
 use std::io::Read as _;
 use std::{
     path::{Path, PathBuf},
@@ -34,8 +38,11 @@ pub(crate) async fn fetch(
 
 async fn fetch_resource(client: &dyn HttpClient, url: &str) -> Result<String> {
     // Catalogs are public; completion credentials and custom headers must not be sent here.
-    let request = Request::builder().method(Method::GET).uri(url);
-    let mut response = client
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri(url)
+        .header(ACCEPT_ENCODING, "gzip");
+    let response = client
         .send(request.body(AsyncBody::empty())?)
         .await
         .with_context(|| format!("requesting model catalog at {url}"))?;
@@ -45,9 +52,26 @@ async fn fetch_resource(client: &dyn HttpClient, url: &str) -> Result<String> {
             response.status()
         );
     }
+    let encoding = response
+        .headers()
+        .get(CONTENT_ENCODING)
+        .map(|encoding| encoding.to_str())
+        .transpose()?
+        .unwrap_or("identity");
+    if encoding.eq_ignore_ascii_case("gzip") {
+        let mut decoder = GzipDecoder::new(BufReader::new(response.into_body()));
+        decoder.multiple_members(true);
+        read_catalog_response(decoder).await
+    } else if encoding.eq_ignore_ascii_case("identity") {
+        read_catalog_response(response.into_body()).await
+    } else {
+        bail!("unsupported model catalog content encoding: {encoding}");
+    }
+}
+
+async fn read_catalog_response(reader: impl AsyncRead + Unpin) -> Result<String> {
     let mut body = Vec::new();
-    response
-        .body_mut()
+    reader
         .take(RESPONSE_LIMIT_BYTES + 1)
         .read_to_end(&mut body)
         .await?;
@@ -125,6 +149,46 @@ pub(crate) async fn store_cached(fs: &dyn Fs, path: PathBuf, catalog: String) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    async fn fetch_decodes_gzip_and_limits_the_decoded_size(cx: &mut gpui::TestAppContext) {
+        use async_compression::futures::bufread::GzipEncoder;
+        use futures::io::Cursor;
+
+        let limit = usize::try_from(RESPONSE_LIMIT_BYTES).expect("response limit fits usize");
+        for size in [limit, limit + 1] {
+            let mut catalog = b"{}".to_vec();
+            catalog.resize(size, b' ');
+            let mut compressed = Vec::new();
+            GzipEncoder::new(Cursor::new(catalog))
+                .read_to_end(&mut compressed)
+                .await
+                .expect("gzip fixture should encode");
+            let client = http_client::FakeHttpClient::create(move |request| {
+                assert_eq!(request.headers()[ACCEPT_ENCODING], "gzip");
+                let body = AsyncBody::from(compressed.clone());
+                async move {
+                    Ok(http_client::Response::builder()
+                        .header(CONTENT_ENCODING, "gzip")
+                        .body(body)?)
+                }
+            });
+            let result = fetch(
+                client,
+                cx.background_executor.clone(),
+                "https://catalog.example.com",
+            )
+            .await;
+            if size == limit {
+                let body = result.expect("gzip response should decode");
+                assert_eq!(body.len(), size);
+                assert_eq!(body.trim_end(), "{}");
+            } else {
+                let error = result.expect_err("oversized decoded response").to_string();
+                assert!(error.contains("8388608-byte limit"), "{error}");
+            }
+        }
+    }
 
     #[gpui::test]
     async fn response_and_disk_reads_report_the_size_limit(cx: &mut gpui::TestAppContext) {

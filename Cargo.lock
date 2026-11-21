@@ -9734,6 +9734,7 @@ dependencies = [
  "ai_onboarding",
  "anthropic",
  "anyhow",
+ "async-compression",
  "aws-config",
  "aws-credential-types",
  "aws-sigv4",
