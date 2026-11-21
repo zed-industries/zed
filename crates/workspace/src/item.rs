@@ -247,6 +247,9 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// Singleton items use their only project item by default. Items backed by
     /// multiple buffers should override this to return the path for the buffer
     /// under the primary cursor or otherwise selected sub-item.
+    /// This path is navigation metadata; project item identity comes from
+    /// `for_each_project_item`, so a preview can expose its source path without
+    /// being reused when opening the source file.
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         if self.buffer_kind(cx) != ItemBufferKind::Singleton {
             return None;
