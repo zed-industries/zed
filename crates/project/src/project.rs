@@ -1170,9 +1170,9 @@ impl DirectoryLister {
 
     pub fn path_style(&self, cx: &App) -> PathStyle {
         match self {
-            Self::Local(project, ..) | Self::Project(project, ..) => {
-                project.read(cx).path_style(cx)
-            }
+            // A local lister browses this machine's file system, even for a remote project.
+            Self::Local(..) => PathStyle::local(),
+            Self::Project(project) => project.read(cx).path_style(cx),
         }
     }
 }

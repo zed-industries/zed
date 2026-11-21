@@ -420,6 +420,38 @@ async fn test_create_confirmation_keeps_the_checked_destination(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_create_confirmation_of_relative_query_against_verbatim_base(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({}))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, cx) = build_open_path_prompt(project, true, false, cx);
+    picker.update_in(cx, |picker, _, _| {
+        picker.delegate.path_style = util::paths::PathStyle::Windows;
+        picker.delegate.relative_to = PathBuf::from(r"\\?\C:\root");
+    });
+
+    insert_query(r".\nested\new.txt", &picker, cx).await;
+
+    let (tx, receiver) = futures::channel::oneshot::channel();
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.on_confirm = Some(Box::new(move |result| {
+            tx.send(result.map(|result| result.paths)).ok();
+        }));
+        picker.delegate.confirm(false, window, cx);
+    });
+
+    assert_eq!(
+        receiver.await.unwrap(),
+        Some(vec![PathBuf::from(r"\\?\C:\root\nested\new.txt")]),
+    );
+}
+
+#[gpui::test]
 async fn test_open_path_prompt_panics_with_stale_highlight_positions(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
@@ -824,8 +856,10 @@ fn build_open_path_prompt(
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     (
-        workspace.update_in(cx, |_, window, cx| {
-            let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            let relative_to = OpenPathPrompt::relative_to(workspace, &lister, creating_path, cx);
+            let delegate =
+                OpenPathDelegate::new(tx, lister.clone(), creating_path, relative_to, cx);
             let delegate = if show_hidden {
                 delegate.show_hidden()
             } else {
@@ -912,4 +946,107 @@ fn open_path_prompt(
         );
     });
     cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_open_path_prompt_relative_to(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "file_in_root": "Content",
+                "subdir": {
+                    "file_in_subdir": "Content",
+                }
+            }),
+        )
+        .await;
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.workspace.use_system_path_prompts = Some(false);
+        });
+    });
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    workspace.update_in(cx, |workspace, window, cx| {
+        OpenPathPrompt::register(workspace, Some(window), cx)
+    });
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/root/subdir/file_in_subdir")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    open_path_prompt(&workspace, false, cx);
+    let picker = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_modal::<Picker<OpenPathDelegate>>(cx)
+            .unwrap()
+    });
+
+    #[cfg(not(windows))]
+    let expected_separator = "./";
+    #[cfg(windows)]
+    let expected_separator = ".\\";
+
+    insert_query("./", &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec![expected_separator, "file_in_subdir"]
+    );
+
+    insert_query("../", &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec![expected_separator, "subdir", "file_in_root"]
+    );
+}
+
+#[gpui::test]
+async fn test_open_path_prompt_relative_to_file_root(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/repro"),
+            json!({
+                "a.txt": "Content",
+                "b.txt": "Content",
+            }),
+        )
+        .await;
+
+    // `missing.txt` is a file-backed root that has not been saved yet, so its
+    // worktree has no root entry.
+    for root in [path!("/repro/a.txt"), path!("/repro/missing.txt")] {
+        let project = Project::test(app_state.fs.clone(), [root.as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        for creating_path in [false, true] {
+            let relative_to = workspace.read_with(cx, |workspace, cx| {
+                let lister = project::DirectoryLister::Project(workspace.project().clone());
+                OpenPathPrompt::relative_to(workspace, &lister, creating_path, cx)
+            });
+            assert_eq!(
+                relative_to,
+                std::path::PathBuf::from(path!("/repro")),
+                "root: {root}, creating_path: {creating_path}"
+            );
+        }
+    }
 }
