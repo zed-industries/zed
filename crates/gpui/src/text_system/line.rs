@@ -1703,6 +1703,55 @@ mod tests {
     }
 
     #[test]
+    fn test_split_at_descending_glyph_indices() {
+        // A right-to-left run is shaped in visual order, so its byte indices descend.
+        let line = make_shaped_line(
+            "abcdef",
+            &[
+                (5, 0.0),
+                (4, 10.0),
+                (3, 20.0),
+                (2, 30.0),
+                (1, 40.0),
+                (0, 50.0),
+            ],
+            60.0,
+            &[],
+        );
+
+        for split in 0..=6 {
+            let (left, right) = line.split_at(split);
+
+            let left_indices: Vec<usize> = left
+                .runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
+                .collect();
+            let right_indices: Vec<usize> = right
+                .runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
+                .collect();
+
+            assert!(
+                left_indices.iter().all(|index| *index < split),
+                "left glyphs must precede split={split}: {left_indices:?}"
+            );
+            assert!(
+                right_indices.iter().all(|index| *index < 6 - split),
+                "right glyphs must be rebased below {} at split={split}: {right_indices:?}",
+                6 - split
+            );
+            assert_eq!(
+                left_indices.len() + right_indices.len(),
+                6,
+                "every glyph must land in exactly one half at split={split}"
+            );
+            assert_eq!(left.width() + right.width(), line.width());
+        }
+    }
+
+    #[test]
     fn test_cursor_preserves_existing_visual_order_splitting() {
         let line = make_shaped_line("abc", &[(0, 0.0), (2, 10.0), (1, 20.0)], 30.0, &[]);
         let mut cursor = line.cursor();

@@ -1369,7 +1369,9 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             // leftwards from the baseline origin.
             let is_rtl = glyphrun.bidiLevel % 2 == 1;
             let run_advance = glyph_advances.iter().sum::<f32>();
-            let mut run_right = if is_rtl {
+            // The run's right edge comes from the baseline and the summed advances.
+            // Glyph offsets only move where a glyph is drawn, not the pen position.
+            let run_right = if is_rtl {
                 baselineoriginx
             } else {
                 baselineoriginx + run_advance
@@ -1387,7 +1389,6 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 } else {
                     baselineoriginx + advance + offset.advanceOffset
                 };
-                run_right = run_right.max(x + glyph_advance);
                 let utf16_idx = desc.textPosition as usize + glyph_utf16_starts[glyph_idx];
                 glyphs.push(ShapedGlyph {
                     id,
