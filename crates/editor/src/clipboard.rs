@@ -293,18 +293,26 @@ impl Editor {
                         .read(cx)
                         .worktree_for_id(worktree_id, cx)?;
 
-                    let extension = image.format.extension();
-                    let snapshot = worktree.read(cx).snapshot();
-                    let (filename, file_path) =
-                        unused_image_path(&dir_rel_path, extension, |path| {
-                            snapshot.entry_for_path(path).is_some()
-                        })?;
-
-                    let create_task = worktree.update(cx, |worktree, cx| {
-                        worktree.create_entry(file_path, false, Some(image.bytes.clone()), cx)
-                    });
+                    let image_bytes = image.bytes.clone();
+                    let image_format = image.format;
 
                     cx.spawn_in(window, async move |editor, cx| {
+                        let (image_bytes, image_format) = cx
+                            .background_spawn(async move {
+                                prepare_image_for_markdown(image_bytes, image_format)
+                            })
+                            .await;
+                        let snapshot = worktree.read_with(cx, |worktree, _| worktree.snapshot());
+                        let (filename, file_path) =
+                            unused_image_path(&dir_rel_path, image_format.extension(), |path| {
+                                snapshot.entry_for_path(path).is_some()
+                            })
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("Failed to choose a path for pasted image")
+                            })?;
+                        let create_task = worktree.update(cx, |worktree, cx| {
+                            worktree.create_entry(file_path, false, Some(image_bytes), cx)
+                        });
                         create_task.await?;
                         editor.update_in(cx, |editor, window, cx| {
                             editor.insert_image_snippet(&filename, window, cx)
@@ -677,6 +685,32 @@ impl Editor {
             text,
             clipboard_selections,
         ));
+    }
+}
+
+fn prepare_image_for_markdown(
+    bytes: Vec<u8>,
+    format: gpui::ImageFormat,
+) -> (Vec<u8>, gpui::ImageFormat) {
+    if format != gpui::ImageFormat::Bmp {
+        return (bytes, format);
+    }
+
+    let converted =
+        image::load_from_memory_with_format(&bytes, image::ImageFormat::Bmp).and_then(|image| {
+            let mut png_bytes = Vec::new();
+            image.write_to(
+                &mut std::io::Cursor::new(&mut png_bytes),
+                image::ImageFormat::Png,
+            )?;
+            Ok(png_bytes)
+        });
+    match converted {
+        Ok(png_bytes) => (png_bytes, gpui::ImageFormat::Png),
+        Err(error) => {
+            log::warn!("Failed to convert pasted BMP image to PNG: {error}");
+            (bytes, format)
+        }
     }
 }
 
