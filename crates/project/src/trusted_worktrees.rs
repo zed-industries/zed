@@ -471,7 +471,7 @@ impl TrustedWorktreesStore {
     /// finds the persisted local trusted paths that match the worktree path only when ignoring
     /// ASCII case, and trusts their on-disk spelling in that store.
     /// The file system decides whether those name the same directory; nothing restricted is lifted.
-    pub fn resolve_trusted_path_casing(
+    pub(crate) fn resolve_trusted_path_casing(
         &mut self,
         worktree_store: &Entity<WorktreeStore>,
         worktree_abs_path: &Path,

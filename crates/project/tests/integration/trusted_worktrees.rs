@@ -333,14 +333,17 @@ async fn test_differently_cased_db_trusted_path_under_unlistable_parent(cx: &mut
 
 #[cfg(windows)]
 #[gpui::test]
-async fn test_db_trusted_link_differing_only_by_case(cx: &mut TestAppContext) {
+async fn test_db_trusted_paths_on_case_sensitive_fake_fs(cx: &mut TestAppContext) {
+    use std::path::Path;
+
     init_test(cx);
 
-    // A case-sensitive file system, where links may point at names differing only by case.
+    // A case-sensitive file system, where distinct directories and link targets may have names
+    // differing only by case.
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
-        json!({ "LINK": {}, "PARENT": { "project": {} } }),
+        json!({ "safe": {}, "SAFE": {}, "only": {}, "LINK": {}, "PARENT": { "project": {} } }),
     )
     .await;
     fs.insert_symlink(path!("/root/link"), PathBuf::from(path!("/root/LINK")))
@@ -352,6 +355,8 @@ async fn test_db_trusted_link_differing_only_by_case(cx: &mut TestAppContext) {
             DbTrustedPaths::from_iter([(
                 None,
                 HashSet::from_iter([
+                    PathBuf::from(path!("/root/safe")),
+                    PathBuf::from(path!("/root/ONLY")),
                     PathBuf::from(path!("/root/link")),
                     PathBuf::from(path!("/root/parent/project")),
                 ]),
@@ -359,12 +364,32 @@ async fn test_db_trusted_link_differing_only_by_case(cx: &mut TestAppContext) {
             cx,
         )
     });
+    let expected_trust = [
+        (path!("/root/safe"), true, "`safe` is trusted"),
+        (
+            path!("/root/SAFE"),
+            false,
+            "trusting `safe` must not trust the distinct `SAFE` directory",
+        ),
+        (
+            path!("/root/only"),
+            false,
+            "`ONLY` names no directory on a case-sensitive file system",
+        ),
+        (
+            path!("/root/LINK"),
+            false,
+            "a trusted link must not extend trust to its target",
+        ),
+        (
+            path!("/root/PARENT/project"),
+            false,
+            "a link in a parent directory must not extend trust to its target",
+        ),
+    ];
     let project = Project::test_with_worktree_trust(
         fs,
-        [
-            path!("/root/LINK").as_ref(),
-            path!("/root/PARENT/project").as_ref(),
-        ],
+        expected_trust.iter().map(|(path, _, _)| Path::new(path)),
         cx,
     )
     .await;
@@ -373,15 +398,20 @@ async fn test_db_trusted_link_differing_only_by_case(cx: &mut TestAppContext) {
     let worktree_ids = worktree_store.read_with(cx, |store, cx| {
         store
             .worktrees()
-            .map(|worktree| worktree.read(cx).id())
-            .collect::<Vec<_>>()
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (worktree.abs_path().to_path_buf(), worktree.id())
+            })
+            .collect::<collections::HashMap<_, _>>()
     });
     let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
     trusted_worktrees.update(cx, |store, cx| {
-        for worktree_id in worktree_ids {
-            assert!(
-                !store.can_trust(&worktree_store, worktree_id, cx),
-                "a trusted link must not extend trust to its target"
+        for (path, trusted, message) in expected_trust {
+            let worktree_id = worktree_ids[Path::new(path)];
+            assert_eq!(
+                store.can_trust(&worktree_store, worktree_id, cx),
+                trusted,
+                "{message}"
             );
         }
     });
