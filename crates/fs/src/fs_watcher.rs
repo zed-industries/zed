@@ -4,7 +4,7 @@ use gpui::{BackgroundExecutor, Task};
 use notify::{Event, EventKind};
 use parking_lot::Mutex;
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry},
     ops::DerefMut,
     path::Path,
     pin::Pin,
@@ -841,15 +841,50 @@ enum Coverage {
 /// The registered watch paths for one backend, keyed by [`WatchKey`] so that
 /// add (dedup), remove, and dispatch share a single notion of path identity.
 #[derive(Default)]
-struct WatchPaths(FxHashMap<WatchKey, PathRegistrationState>);
+struct WatchPaths {
+    entries: FxHashMap<WatchKey, PathRegistrationState>,
+    exact_depths: BTreeMap<usize, usize>,
+    folded_depths: BTreeMap<usize, usize>,
+}
 
 impl WatchPaths {
+    fn insert(&mut self, key: WatchKey, registration: PathRegistrationState) {
+        let (depth, depths) = match &key {
+            WatchKey::Exact(path) => (path.components().count(), &mut self.exact_depths),
+            WatchKey::Folded(path) => (
+                Path::new(path.as_ref()).components().count(),
+                &mut self.folded_depths,
+            ),
+        };
+        if self.entries.insert(key, registration).is_none() {
+            *depths.entry(depth).or_default() += 1;
+        }
+    }
+
+    fn remove(&mut self, key: &WatchKey) -> Option<PathRegistrationState> {
+        let registration = self.entries.remove(key)?;
+        let (depth, depths) = match key {
+            WatchKey::Exact(path) => (path.components().count(), &mut self.exact_depths),
+            WatchKey::Folded(path) => (
+                Path::new(path.as_ref()).components().count(),
+                &mut self.folded_depths,
+            ),
+        };
+        if let Entry::Occupied(mut entry) = depths.entry(depth) {
+            *entry.get_mut() -= 1;
+            if *entry.get() == 0 {
+                entry.remove();
+            }
+        }
+        Some(registration)
+    }
+
     fn contains(&self, key: &WatchKey) -> bool {
-        self.0.contains_key(key)
+        self.entries.contains_key(key)
     }
 
     fn get_mut(&mut self, key: &WatchKey) -> Option<&mut PathRegistrationState> {
-        self.0.get_mut(key)
+        self.entries.get_mut(key)
     }
 
     /// The nearest strict ancestor whose recursive backend watch covers `path`.
@@ -863,7 +898,7 @@ impl WatchPaths {
             [WatchKey::exact(ancestor), WatchKey::folded(ancestor)]
                 .into_iter()
                 .find(|key| {
-                    self.0.get(key).is_some_and(|registration| {
+                    self.entries.get(key).is_some_and(|registration| {
                         matches!(registration.coverage, Coverage::Watched { .. })
                     })
                 })
@@ -871,7 +906,7 @@ impl WatchPaths {
     }
 
     fn covered_by_mut(&mut self, key: &WatchKey) -> Option<&mut BTreeSet<(usize, WatchKey)>> {
-        match &mut self.0.get_mut(key)?.coverage {
+        match &mut self.entries.get_mut(key)?.coverage {
             Coverage::Watched { covered } => Some(covered),
             Coverage::CoveredBy(_) => None,
         }
@@ -881,29 +916,53 @@ impl WatchPaths {
     /// ancestor of (or equal to) `path`. Both exact and folded keys are probed,
     /// so a real-cased event path matches a folded registration and vice versa.
     fn watcher_ids_covering(&self, path: &SanitizedPath, ids: &mut Vec<WatcherRegistrationId>) {
-        for ancestor in path.as_path().ancestors() {
+        for ancestor in ancestors_at_depths(path.as_path(), &self.exact_depths) {
             let ancestor = SanitizedPath::unchecked_new(ancestor);
-            if let Some(registration) = self.0.get(&WatchKey::exact(ancestor)) {
-                ids.extend_from_slice(&registration.watcher_ids);
-            }
-
-            #[cfg(not(target_os = "macos"))]
-            if let Some(registration) = self.0.get(&WatchKey::folded(ancestor)) {
+            if let Some(registration) = self.entries.get(&WatchKey::exact(ancestor)) {
                 ids.extend_from_slice(&registration.watcher_ids);
             }
         }
 
+        #[cfg(not(target_os = "macos"))]
+        if !self.folded_depths.is_empty() {
+            for ancestor in path.as_path().ancestors() {
+                let ancestor = SanitizedPath::unchecked_new(ancestor);
+                if let Some(registration) = self.entries.get(&WatchKey::folded(ancestor)) {
+                    ids.extend_from_slice(&registration.watcher_ids);
+                }
+            }
+        }
+
         #[cfg(target_os = "macos")]
-        {
-            let folded_path = WatchKey::folded_path(path);
-            for ancestor in Path::new(&folded_path).ancestors() {
+        if let Some(ancestor) = ancestors_at_depths(path.as_path(), &self.folded_depths).next() {
+            let folded_path = WatchKey::folded_path(SanitizedPath::unchecked_new(ancestor));
+            for ancestor in ancestors_at_depths(Path::new(&folded_path), &self.folded_depths) {
                 let key = WatchKey::Folded(Arc::from(ancestor.to_string_lossy().as_ref()));
-                if let Some(registration) = self.0.get(&key) {
+                if let Some(registration) = self.entries.get(&key) {
                     ids.extend_from_slice(&registration.watcher_ids);
                 }
             }
         }
     }
+}
+
+fn ancestors_at_depths<'a>(
+    path: &'a Path,
+    depths: &'a BTreeMap<usize, usize>,
+) -> impl Iterator<Item = &'a Path> {
+    let path_depth = path.components().count();
+    let mut ancestor_depth = Some(path_depth);
+    let mut ancestors = path.ancestors();
+
+    depths
+        .range(..=path_depth)
+        .rev()
+        .filter_map(move |(&depth, _)| {
+            let current_depth = ancestor_depth?;
+            let ancestor = ancestors.nth(current_depth - depth)?;
+            ancestor_depth = depth.checked_sub(1);
+            Some(ancestor)
+        })
 }
 
 struct WatcherState {
@@ -1097,7 +1156,7 @@ impl OsWatcher {
                 {
                     covered.insert((path_depth(&path), key.clone()));
                 }
-                state.paths.0.insert(
+                state.paths.insert(
                     key,
                     PathRegistrationState {
                         path,
@@ -1172,7 +1231,7 @@ impl OsWatcher {
             Coverage::CoveredBy(ancestor) => {
                 let ancestor = ancestor.clone();
                 let covered_entry = (path_depth(&path_state.path), key);
-                state.paths.0.remove(&covered_entry.1);
+                state.paths.remove(&covered_entry.1);
                 let Some(ancestor_state) = state.paths.get_mut(&ancestor) else {
                     return;
                 };
@@ -1200,20 +1259,20 @@ impl OsWatcher {
     /// that could not be promoted is removed.
     fn release_watch(&self, state: &mut WatcherState, key: WatchKey) {
         // Exclude this watch from coverage checks while it stays installed.
-        let Some(mut released) = state.paths.0.remove(&key) else {
+        let Some(mut released) = state.paths.remove(&key) else {
             return;
         };
         let mut pending = match &mut released.coverage {
             Coverage::Watched { covered } => std::mem::take(covered),
             Coverage::CoveredBy(_) => {
-                state.paths.0.insert(key, released);
+                state.paths.insert(key, released);
                 return;
             }
         };
         while let Some((depth, covered_key)) = pending.pop_first() {
             let Some(covered_path) = state
                 .paths
-                .0
+                .entries
                 .get(&covered_key)
                 .map(|registration| registration.path.clone())
             else {
@@ -1232,7 +1291,7 @@ impl OsWatcher {
                 None => {
                     pending.insert((depth, covered_key));
                     released.coverage = Coverage::Watched { covered: pending };
-                    state.paths.0.insert(key, released);
+                    state.paths.insert(key, released);
                     return;
                 }
             };
@@ -1404,7 +1463,7 @@ fn dispatch(
         // Invalidate before callbacks can trigger a scan.
         if !kind.is_recursive() && event.need_rescan() {
             // Overflow may have dropped removal events.
-            for path_state in state.paths.0.values_mut() {
+            for path_state in state.paths.entries.values_mut() {
                 path_state.stale = true;
             }
         } else if !kind.is_recursive()
@@ -1424,7 +1483,7 @@ fn dispatch(
                         continue;
                     }
                     // Descendant watches follow the directory without their own rename events.
-                    for (key, path_state) in &mut state.paths.0 {
+                    for (key, path_state) in &mut state.paths.entries {
                         let descendant = match (key, &event_key) {
                             (WatchKey::Exact(key), WatchKey::Exact(event_key)) => {
                                 key.starts_with(event_key)
@@ -1710,7 +1769,7 @@ mod tests {
             &[parent.to_path_buf(), child.to_path_buf()]
         );
         assert!(backend.watched_paths.is_empty());
-        assert!(watcher.state.lock().paths.0.is_empty());
+        assert!(watcher.state.lock().paths.entries.is_empty());
     }
 
     #[test]
@@ -1751,7 +1810,7 @@ mod tests {
             watcher.remove(deep);
         }
         assert!(backend.lock().watched_paths.is_empty());
-        assert!(watcher.state.lock().paths.0.is_empty());
+        assert!(watcher.state.lock().paths.entries.is_empty());
     }
 
     #[test]
@@ -1784,7 +1843,7 @@ mod tests {
 
         watcher.remove(child);
         assert!(backend.lock().watched_paths.is_empty());
-        assert!(watcher.state.lock().paths.0.is_empty());
+        assert!(watcher.state.lock().paths.entries.is_empty());
     }
 
     #[cfg(target_os = "macos")]
@@ -1869,7 +1928,7 @@ mod tests {
 
         watcher.remove(registrations[2]);
         assert!(backend.lock().watched_paths.is_empty());
-        assert!(watcher.state.lock().paths.0.is_empty());
+        assert!(watcher.state.lock().paths.entries.is_empty());
     }
 
     #[test]
@@ -1886,7 +1945,7 @@ mod tests {
                 .expect("registered");
             watcher.remove(registration);
             assert!(backend.lock().watched_paths.is_empty());
-            assert!(watcher.state.lock().paths.0.is_empty());
+            assert!(watcher.state.lock().paths.entries.is_empty());
 
             let registration = watcher
                 .add(path.as_path().into(), false, |_| {})
@@ -1899,7 +1958,7 @@ mod tests {
             // watched directory is deleted.
             backend.lock().watched_paths.clear();
             watcher.remove(registration);
-            assert!(watcher.state.lock().paths.0.is_empty());
+            assert!(watcher.state.lock().paths.entries.is_empty());
         }
     }
 
@@ -2082,6 +2141,75 @@ mod tests {
         let mut got = fired.lock().clone();
         got.sort();
         assert_eq!(got, vec!["/repo/a".to_owned(), "/repo/a/nested".to_owned()]);
+    }
+
+    #[test]
+    fn ancestors_at_registered_depths() {
+        for (path, depths, expected) in [
+            (
+                "/repo/target/debug/build/output",
+                vec![2, 4],
+                vec!["/repo/target/debug", "/repo"],
+            ),
+            ("/repo/src", vec![1, 2, 3], vec!["/repo/src", "/repo", "/"]),
+            ("relative/path", vec![0, 1], vec!["relative", ""]),
+            ("/repo", vec![4], vec![]),
+            ("/repo", vec![], vec![]),
+        ] {
+            let depths = depths.into_iter().map(|depth| (depth, 1)).collect();
+            let actual = ancestors_at_depths(Path::new(path), &depths).collect::<Vec<_>>();
+            let expected = expected.into_iter().map(Path::new).collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn watch_path_depth_counts_follow_insert_and_remove() {
+        for case_insensitive in [false, true] {
+            let mut paths = WatchPaths::default();
+            let insert = |paths: &mut WatchPaths, path: &str| {
+                let path = SanitizedPath::new(Path::new(path));
+                let key = WatchKey::for_registration(path, case_insensitive);
+                paths.insert(
+                    key.clone(),
+                    PathRegistrationState {
+                        path: path.into(),
+                        watcher_ids: Vec::new(),
+                        coverage: Coverage::Watched {
+                            covered: BTreeSet::new(),
+                        },
+                        stale: false,
+                    },
+                );
+                key
+            };
+            let assert_depth_count = |paths: &WatchPaths, count| {
+                let (depths, unused_depths) = if case_insensitive {
+                    (&paths.folded_depths, &paths.exact_depths)
+                } else {
+                    (&paths.exact_depths, &paths.folded_depths)
+                };
+                let depth = Path::new("/repo/first").components().count();
+                assert_eq!(*depths, BTreeMap::from([(depth, count)]));
+                assert!(unused_depths.is_empty());
+            };
+
+            let first = insert(&mut paths, "/repo/first");
+            assert_depth_count(&paths, 1);
+            insert(&mut paths, "/repo/first");
+            assert_depth_count(&paths, 1);
+            let second = insert(&mut paths, "/repo/second");
+            assert_depth_count(&paths, 2);
+
+            assert!(paths.remove(&first).is_some());
+            assert_depth_count(&paths, 1);
+            assert!(paths.remove(&first).is_none());
+            assert_depth_count(&paths, 1);
+            assert!(paths.remove(&second).is_some());
+            assert!(paths.exact_depths.is_empty());
+            assert!(paths.folded_depths.is_empty());
+            assert!(paths.entries.is_empty());
+        }
     }
 
     fn fired_count() -> (
