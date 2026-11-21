@@ -888,4 +888,76 @@ mod tests {
             green
         );
     }
+
+    #[test]
+    fn overriding_a_status_color_keeps_the_themes_own_staged_color() {
+        let mut test_theme = crate::refine_theme(&crate::ThemeContent {
+            name: "Test".into(),
+            appearance: ::theme::AppearanceContent::Dark,
+            style: ::settings::ThemeStyleContent {
+                status: ::settings::StatusColorsContent {
+                    created: Some("#00ff00ff".into()),
+                    created_staged: Some("#00ff0099".into()),
+                    modified: Some("#ffff00ff".into()),
+                    modified_staged: Some("#ffff0099".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        });
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &::settings::ThemeStyleContent {
+                status: ::settings::StatusColorsContent {
+                    created: Some("#0000ffff".into()),
+                    modified: Some("#ff00ffff".into()),
+                    modified_staged: Some("#ff00ff99".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let status = &test_theme.styles.status;
+        assert_eq!(
+            status.created_staged(),
+            ::theme::try_parse_color("#00ff0099").unwrap()
+        );
+        assert_eq!(
+            status.modified_staged(),
+            ::theme::try_parse_color("#ff00ff99").unwrap()
+        );
+    }
+
+    #[test]
+    fn overriding_a_status_color_overrides_the_staged_color_of_themes_without_one() {
+        let mut test_theme = crate::refine_theme(&crate::ThemeContent {
+            name: "Test".into(),
+            appearance: ::theme::AppearanceContent::Dark,
+            style: ::settings::ThemeStyleContent {
+                status: ::settings::StatusColorsContent {
+                    created: Some("#00ff00ff".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        });
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &::settings::ThemeStyleContent {
+                status: ::settings::StatusColorsContent {
+                    created: Some("#0000ffff".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            test_theme.styles.status.created_staged(),
+            ::theme::try_parse_color("#0000ffff").unwrap()
+        );
+    }
 }

@@ -298,6 +298,7 @@ impl TabMatch {
                     git_status,
                     entry.is_ignored,
                     selected,
+                    cx,
                 ))
             })
             .flatten();

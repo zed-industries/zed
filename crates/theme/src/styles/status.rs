@@ -3,7 +3,7 @@
 use gpui::Hsla;
 use refineable::Refineable;
 
-use crate::{blue, grass, neutral, red, yellow};
+use crate::{amber, blue, grass, neutral, red, yellow};
 
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
@@ -18,11 +18,17 @@ pub struct StatusColors {
     pub created: Hsla,
     pub created_background: Hsla,
     pub created_border: Hsla,
+    /// Like `created`, but for a change that has been fully staged in Git.
+    /// Falls back to `created` when not set.
+    pub created_staged: Option<Hsla>,
 
     /// Indicates that something no longer exists, like a deleted file.
     pub deleted: Hsla,
     pub deleted_background: Hsla,
     pub deleted_border: Hsla,
+    /// Like `deleted`, but for a change that has been fully staged in Git.
+    /// Falls back to `deleted` when not set.
+    pub deleted_staged: Option<Hsla>,
 
     /// Indicates a system error, a failed operation or a diagnostic error.
     pub error: Hsla,
@@ -53,6 +59,9 @@ pub struct StatusColors {
     pub modified: Hsla,
     pub modified_background: Hsla,
     pub modified_border: Hsla,
+    /// Like `modified`, but for a change that has been fully staged in Git.
+    /// Falls back to `modified` when not set.
+    pub modified_staged: Option<Hsla>,
 
     /// Indicates something that is predicted, like automatic code completion, or generated code.
     pub predictive: Hsla,
@@ -73,6 +82,12 @@ pub struct StatusColors {
     pub unreachable: Hsla,
     pub unreachable_background: Hsla,
     pub unreachable_border: Hsla,
+
+    /// Indicates something new that Git does not yet track, like a file that
+    /// has not been staged/added to the index.
+    pub untracked: Hsla,
+    pub untracked_background: Hsla,
+    pub untracked_border: Hsla,
 
     /// Represents a warning status, like an operation that is about to fail.
     pub warning: Hsla,
@@ -95,9 +110,11 @@ impl StatusColors {
             created: grass().dark().step_9(),
             created_background: grass().dark().step_9().opacity(0.25),
             created_border: grass().dark().step_9(),
+            created_staged: None,
             deleted: red().dark().step_9(),
             deleted_background: red().dark().step_9().opacity(0.25),
             deleted_border: red().dark().step_9(),
+            deleted_staged: None,
             error: red().dark().step_9(),
             error_background: red().dark().step_9(),
             error_border: red().dark().step_9(),
@@ -116,6 +133,7 @@ impl StatusColors {
             modified: yellow().dark().step_9(),
             modified_background: yellow().dark().step_9().opacity(0.25),
             modified_border: yellow().dark().step_9(),
+            modified_staged: None,
             predictive: neutral().dark_alpha().step_9(),
             predictive_background: neutral().dark_alpha().step_9(),
             predictive_border: neutral().dark_alpha().step_9(),
@@ -128,6 +146,9 @@ impl StatusColors {
             unreachable: neutral().dark().step_10(),
             unreachable_background: neutral().dark().step_10(),
             unreachable_border: neutral().dark().step_10(),
+            untracked: amber().dark().step_9(),
+            untracked_background: amber().dark().step_9().opacity(0.25),
+            untracked_border: amber().dark().step_9(),
             warning: yellow().dark().step_9(),
             warning_background: yellow().dark().step_9(),
             warning_border: yellow().dark().step_9(),
@@ -142,9 +163,11 @@ impl StatusColors {
             created: grass().light().step_9(),
             created_background: grass().light().step_9(),
             created_border: grass().light().step_9(),
+            created_staged: None,
             deleted: red().light().step_9(),
             deleted_background: red().light().step_9(),
             deleted_border: red().light().step_9(),
+            deleted_staged: None,
             error: red().light().step_9(),
             error_background: red().light().step_9(),
             error_border: red().light().step_9(),
@@ -163,6 +186,7 @@ impl StatusColors {
             modified: yellow().light().step_9(),
             modified_background: yellow().light().step_9(),
             modified_border: yellow().light().step_9(),
+            modified_staged: None,
             predictive: neutral().light_alpha().step_9(),
             predictive_background: neutral().light_alpha().step_9(),
             predictive_border: neutral().light_alpha().step_9(),
@@ -175,10 +199,25 @@ impl StatusColors {
             unreachable: neutral().light().step_10(),
             unreachable_background: neutral().light().step_10(),
             unreachable_border: neutral().light().step_10(),
+            untracked: amber().light().step_9(),
+            untracked_background: amber().light().step_9(),
+            untracked_border: amber().light().step_9(),
             warning: yellow().light().step_9(),
             warning_background: yellow().light().step_9(),
             warning_border: yellow().light().step_9(),
         }
+    }
+
+    pub fn created_staged(&self) -> Hsla {
+        self.created_staged.unwrap_or(self.created)
+    }
+
+    pub fn deleted_staged(&self) -> Hsla {
+        self.deleted_staged.unwrap_or(self.deleted)
+    }
+
+    pub fn modified_staged(&self) -> Hsla {
+        self.modified_staged.unwrap_or(self.modified)
     }
 
     pub fn diagnostic(&self) -> DiagnosticColors {

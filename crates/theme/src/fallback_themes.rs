@@ -34,6 +34,7 @@ pub fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
         (&status.conflict, &mut status.conflict_background),
         (&status.error, &mut status.error_background),
         (&status.hidden, &mut status.hidden_background),
+        (&status.untracked, &mut status.untracked_background),
     ] {
         if bg_color.is_none()
             && let Some(fg_color) = fg_color
@@ -286,9 +287,11 @@ pub(crate) fn zed_default_dark() -> Theme {
                 created: green,
                 created_background: green,
                 created_border: green,
+                created_staged: None,
                 deleted: red,
                 deleted_background: red,
                 deleted_border: red,
+                deleted_staged: None,
                 error: red,
                 error_background: red,
                 error_border: red,
@@ -307,6 +310,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 modified: yellow,
                 modified_background: yellow,
                 modified_border: yellow,
+                modified_staged: None,
                 predictive: gray,
                 predictive_background: gray,
                 predictive_border: gray,
@@ -319,6 +323,9 @@ pub(crate) fn zed_default_dark() -> Theme {
                 unreachable: gray,
                 unreachable_background: gray,
                 unreachable_border: gray,
+                untracked: orange,
+                untracked_background: orange,
+                untracked_border: orange,
                 warning: yellow,
                 warning_background: yellow,
                 warning_border: yellow,
