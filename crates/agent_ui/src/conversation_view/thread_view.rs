@@ -14956,19 +14956,19 @@ mod tests {
     #[test]
     fn submission_preview_and_copy_separate_attachments_but_not_adjacent_text() {
         let content = [
-            "hel".into(),
-            "lo".into(),
+            "key".into(),
+            "board".into(),
             acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new("file", "file:///file")),
-            "wor".into(),
-            "ld".into(),
+            "work".into(),
+            "space".into(),
         ];
         assert_eq!(
             ThreadView::submission_text_parts(&content, " ").collect::<String>(),
-            "hello file world"
+            "keyboard file workspace"
         );
         assert_eq!(
             ThreadView::submission_text_parts(&content, "\n").collect::<String>(),
-            "hello\nfile\nworld"
+            "keyboard\nfile\nworkspace"
         );
     }
 
