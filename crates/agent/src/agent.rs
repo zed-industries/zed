@@ -5979,7 +5979,10 @@ mod internal_tests {
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let unknown = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
             "_future",
-            std::collections::BTreeMap::from([("payload".into(), json!("private-payload"))]),
+            agent_client_protocol::schema::IndexMap::from([(
+                "payload".into(),
+                json!("private-payload"),
+            )]),
         ));
 
         for text in ["ordinary prompt", "/compact"] {

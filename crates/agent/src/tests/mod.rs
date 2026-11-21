@@ -6014,12 +6014,12 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
         thread.respond_to_elicitation(
             &elicitation_id,
             acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
-                acp_v2::ElicitationAcceptAction::new().content(std::collections::BTreeMap::from([
-                    (
+                acp_v2::ElicitationAcceptAction::new().content(
+                    agent_client_protocol::schema::IndexMap::from([(
                         "other".to_string(),
                         acp_v2::ElicitationContentValue::from("delve into src"),
-                    ),
-                ])),
+                    )]),
+                ),
             )),
             cx,
         );
