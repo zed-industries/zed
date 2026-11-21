@@ -11087,6 +11087,10 @@ dependencies = [
  "collections",
  "editor",
  "gpui",
+ "language",
+ "multi_buffer",
+ "text",
+ "theme",
  "ui",
  "workspace",
 ]

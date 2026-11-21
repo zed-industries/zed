@@ -18,7 +18,7 @@ use gpui::{
     HighlightStyle, StyledText, Subscription, Task, TaskExt, TextStyle, WeakEntity,
 };
 use language::{Buffer, BufferEvent, BufferId, Chunk, LanguageAwareStyling, Point};
-use modal_editor::{Register, Registers};
+use modal_editor::{HelixJumpLabel, Register, Registers};
 
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
@@ -170,12 +170,6 @@ pub enum Operator {
         first_char: Option<char>,
         labels: Vec<HelixJumpLabel>,
     },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct HelixJumpLabel {
-    pub label: [char; 2],
-    pub range: Range<Anchor>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
