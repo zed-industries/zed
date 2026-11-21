@@ -366,7 +366,12 @@ impl CapabilityCatalog {
                 let geographic = geographies(region)
                     .iter()
                     .find_map(|geography| profile_ids.get(geography));
-                let global = profile_ids.get(GLOBAL_GEOGRAPHY);
+                // Global profiles only serve commercial AWS Regions.
+                let global = if region.starts_with("us-gov-") {
+                    None
+                } else {
+                    profile_ids.get(GLOBAL_GEOGRAPHY)
+                };
                 let profile_id = if allow_global {
                     global.or(geographic)
                 } else {
@@ -745,17 +750,27 @@ mod tests {
         let catalog = catalog(json!({
             "us.vendor.chat": entry("Chat (US)", json!({})),
             "us-gov.vendor.chat": entry("Chat (GovCloud)", json!({})),
+            "global.vendor.chat": entry("Chat (Global)", json!({})),
+            "global.vendor.global-only": entry("Global only", json!({})),
         }))?;
-        let request_ids = |region| {
+        let request_ids = |region, allow_global| {
             catalog
-                .models_for_region(region, false)
+                .models_for_region(region, allow_global)
                 .into_iter()
                 .map(|model| model.request_id)
                 .collect::<Vec<_>>()
         };
 
-        assert_eq!(request_ids("us-gov-west-1"), ["us-gov.vendor.chat"]);
-        assert_eq!(request_ids("us-west-2"), ["us.vendor.chat"]);
+        for allow_global in [false, true] {
+            assert_eq!(
+                request_ids("us-gov-west-1", allow_global),
+                ["us-gov.vendor.chat"]
+            );
+        }
+        assert_eq!(
+            request_ids("us-west-2", false),
+            ["us.vendor.chat", "global.vendor.global-only"]
+        );
         Ok(())
     }
 }
