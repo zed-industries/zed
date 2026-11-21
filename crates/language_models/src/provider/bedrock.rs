@@ -1163,16 +1163,15 @@ fn converse_model_from_settings(
         })
         .or_else(|| capability_catalog.model_for_request_id(&model.name));
     let known = known.as_ref();
-    let thinking = match known {
+    let thinking = match known.and_then(|known| known.thinking.clone()) {
         None => thinking_from_settings(model.thinking.as_ref()),
-        Some(known) => {
-            let mut thinking = known.thinking.clone();
+        Some(mut thinking) => {
             if let Some(settings::BedrockThinkingSettings::Config(config)) = &model.thinking
-                && let Some(ConverseThinking::Budget { budget_tokens }) = &mut thinking
+                && let ConverseThinking::Budget { budget_tokens } = &mut thinking
             {
                 *budget_tokens = config.budget_tokens.unwrap_or(*budget_tokens);
             }
-            thinking
+            Some(thinking)
         }
     };
     let thinking_disabled = matches!(
