@@ -1994,7 +1994,7 @@ mod tests {
             "Mode",
             acp::SessionConfigKind::Other(acp::OtherSessionConfigKind::new(
                 "_future",
-                std::collections::BTreeMap::from([(
+                agent_client_protocol::schema::IndexMap::from([(
                     "currentValue".to_string(),
                     serde_json::json!({"opaque": [1, true]}),
                 )]),

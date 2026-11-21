@@ -4170,11 +4170,18 @@ impl Render for ConversationView {
             .bg(cx.theme().colors().panel_background)
             .child(v_flex().flex_1().min_h_0().child(content))
             .when(self.has_saved_input(), |this| {
+                let unconfirmed = self.saved_submissions.iter()
+                    .chain(self.recovery.iter().flat_map(|recovery| &recovery.submissions))
+                    .any(|submission| matches!(submission.state, acp_thread::SubmissionState::Disconnected { receipt: None }));
                 this.child(
                     h_flex()
                         .p_2()
                         .gap_2()
                         .flex_wrap()
+                        .when(unconfirmed, |this| this.child(
+                            div().debug_selector(|| "saved-input-outcome-unknown".into())
+                                .child(Label::new("Some messages were not confirmed. The agent may already have acted on them. Zed has not sent them again.").size(LabelSize::Small))
+                        ))
                         .child(self.copy_saved_input_button(cx))
                         .when(
                             !self.saved_submissions.is_empty()
@@ -8262,6 +8269,7 @@ pub(crate) mod tests {
             assert!(view.recovery.is_some());
         });
         assert!(cx.debug_bounds("copy-saved-agent-input").is_some());
+        assert!(cx.debug_bounds("saved-input-outcome-unknown").is_some());
         conversation_view.update_in(cx, |view, window, cx| view.reset(window, cx));
         cx.run_until_parked();
         let current_view = active_thread(&conversation_view, cx);
@@ -11002,7 +11010,7 @@ pub(crate) mod tests {
                         "_future_login",
                         Self::OTHER_AUTH_METHOD_ID,
                         "Future Login",
-                        std::collections::BTreeMap::from([
+                        agent_client_protocol::schema::IndexMap::from([
                             ("args".into(), json!(["must-not-run"])),
                             ("details".into(), json!({"nested": [1, {"preserve": true}]})),
                             ("description".into(), json!("Not supported by this client")),
@@ -12028,7 +12036,7 @@ pub(crate) mod tests {
         });
         let elicitation_id = elicitation_id.expect("elicitation entry should exist");
 
-        let other_answer = std::collections::BTreeMap::from([(
+        let other_answer = agent_client_protocol::schema::IndexMap::from([(
             "other".to_string(),
             acp_v2::ElicitationContentValue::from("delve into src"),
         )]);
@@ -14137,13 +14145,15 @@ pub(crate) mod tests {
 
         for (update, query, expected_source) in [
             (
-                acp_v2::CompactionUpdate::new("failed", acp_v2::CompactionStatus::Failed)
+                acp_v2::CompactionUpdate::new("failed")
+                    .status(acp_v2::CompactionStatus::Failed)
                     .error("model *still* unavailable <details>"),
                 "model *still* unavailable <details>",
                 Vec::new(),
             ),
             (
-                acp_v2::CompactionUpdate::new("completed", acp_v2::CompactionStatus::Completed)
+                acp_v2::CompactionUpdate::new("completed")
+                    .status(acp_v2::CompactionStatus::Completed)
                     .summary(source.clone()),
                 "retained resource details",
                 source,
@@ -14212,7 +14222,8 @@ pub(crate) mod tests {
                     replacement_query,
                 ))]
             };
-            let replacement = acp_v2::CompactionUpdate::new(compaction_id.clone(), status.clone());
+            let replacement =
+                acp_v2::CompactionUpdate::new(compaction_id.clone()).status(status.clone());
             let replacement = if is_error {
                 replacement.error(replacement_query)
             } else {
@@ -14285,7 +14296,8 @@ pub(crate) mod tests {
             );
             thread.update(cx, |thread, cx| {
                 thread.upsert_context_compaction_update(
-                    acp_v2::CompactionUpdate::new(compaction_id, status)
+                    acp_v2::CompactionUpdate::new(compaction_id)
+                        .status(status)
                         .summary(None::<Vec<acp_v2::ContentBlock>>)
                         .error(None::<String>),
                     cx,

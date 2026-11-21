@@ -5743,7 +5743,7 @@ async fn test_elicitation_marks_sidebar_thread_waiting_until_responded(cx: &mut 
 
     for action in [
         acp_v2::ElicitationAction::Accept(acp_v2::ElicitationAcceptAction::new().content(
-            std::collections::BTreeMap::from([(
+            agent_client_protocol::schema::IndexMap::from([(
                 "choice".to_string(),
                 acp_v2::ElicitationContentValue::from("first"),
             )]),

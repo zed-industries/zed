@@ -494,7 +494,7 @@ pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
     /// The root of an announced child session controls when the child is addressable.
     subagent_root: Option<acp_v2::SessionId>,
-    replay: Option<Rc<RefCell<V2Replay>>>,
+    replay: Option<Rc<RefCell<SessionReplay>>>,
     suppress_abort_err: bool,
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
     config_options: Option<ConfigOptions>,
@@ -503,10 +503,20 @@ pub struct AcpSession {
 }
 
 #[derive(Default)]
-struct V2Replay {
-    /// Each session, including each child, has its own history boundary.
+struct SessionReplay {
+    /// In v2 each session, including each child, has its own replay_complete marker.
+    /// In v1 only the load response separates history from current updates.
     completed: HashSet<acp_v2::SessionId>,
     finished: bool,
+}
+
+impl AcpSession {
+    fn is_replaying(&self, id: &acp_v2::SessionId) -> bool {
+        self.replay.as_ref().is_some_and(|replay| {
+            let replay = replay.borrow();
+            !replay.finished && !replay.completed.contains(id)
+        })
+    }
 }
 
 /// Builds a v2 terminal-notification handler without selecting it for application connections.
@@ -939,27 +949,26 @@ fn apply_v2_session_notification(
     sessions: &Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let (is_subagent, replay) = {
+    let (is_subagent, replaying) = {
         let sessions = sessions.borrow();
         let session = sessions
             .get(&notification.session_id)
             .filter(|session| session.thread.entity_id() == thread.entity_id())
             .context("Session was released or replaced before applying an update")?;
-        (session.subagent_root.is_some(), session.replay.clone())
-    };
-    if matches!(notification.update, InboundSessionUpdate::ReplayComplete) {
-        if let Some(replay) = replay {
-            let mut replay = replay.borrow_mut();
-            if !replay.finished {
-                replay.completed.insert(notification.session_id);
+        if matches!(notification.update, InboundSessionUpdate::ReplayComplete) {
+            if let Some(replay) = &session.replay {
+                let mut replay = replay.borrow_mut();
+                if !replay.finished {
+                    replay.completed.insert(notification.session_id);
+                }
             }
+            return Ok(());
         }
-        return Ok(());
-    }
-    let replaying = replay.is_some_and(|replay| {
-        let replay = replay.borrow();
-        !replay.finished && !replay.completed.contains(&notification.session_id)
-    });
+        (
+            session.subagent_root.is_some(),
+            session.is_replaying(&notification.session_id),
+        )
+    };
     if let InboundSessionUpdate::Subagent(update) = &mut notification.update {
         let parent = thread
             .upgrade()
