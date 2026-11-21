@@ -2935,6 +2935,80 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_e2e_unanswered_prompt_does_not_save_setting(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project_a"), json!({ "file.txt": "content" }))
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project_b"), json!({ "file.txt": "content" }))
+            .await;
+
+        open_workspace_file(
+            path!("/project_a"),
+            Default::default(),
+            app_state.clone(),
+            cx,
+        )
+        .await;
+        assert_eq!(cx.windows().len(), 1);
+
+        // `Zed.exe <path>` on Windows sends the open request and then closes
+        // its request channel, so the prompt is never answered.
+        let (request_tx, request_rx) = mpsc::unbounded::<CliRequest>();
+        let (response_tx, response_rx) = std::sync::mpsc::channel::<CliResponse>();
+        request_tx
+            .unbounded_send(make_cli_open_request(
+                vec![path!("/project_b").to_string()],
+                cli::OpenBehavior::Default,
+            ))
+            .unwrap();
+        drop(request_tx);
+
+        cx.spawn({
+            let app_state = app_state.clone();
+            |mut cx| async move {
+                handle_cli_connection(
+                    (request_rx, Box::new(SyncResponseSender(response_tx))),
+                    app_state,
+                    &mut cx,
+                )
+                .await;
+            }
+        })
+        .detach();
+        cx.run_until_parked();
+
+        let responses = response_rx.try_iter().collect::<Vec<_>>();
+        assert!(
+            responses
+                .iter()
+                .any(|response| matches!(response, CliResponse::PromptOpenBehavior)),
+            "prompt should be requested, got: {responses:?}"
+        );
+        assert!(
+            matches!(responses.last(), Some(CliResponse::Exit { status: 0 })),
+            "should exit successfully, got: {responses:?}"
+        );
+        assert_eq!(cx.windows().len(), 1);
+
+        let settings_text = app_state
+            .fs
+            .load(paths::settings_file())
+            .await
+            .unwrap_or_default();
+        assert!(
+            !settings_text.contains("cli_default_open_behavior"),
+            "settings should not be written, got: {settings_text}"
+        );
+    }
+
+    #[gpui::test]
     async fn test_e2e_setting_already_configured_no_prompt(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 

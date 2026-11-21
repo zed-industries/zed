@@ -178,6 +178,12 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
                 let (tx, rx) = (handshake.requests, handshake.responses);
 
                 tx.send(request)?;
+                // The running instance may ask which default open behavior to
+                // save. There is no terminal to ask the user here, and any
+                // answer would be saved as their choice, so close the request
+                // channel instead. The running instance then opens the paths
+                // with the current default without writing to settings.
+                drop(tx);
 
                 while let Ok(response) = rx.recv() {
                     match response {
@@ -188,11 +194,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
                             exit_status.lock().replace(status);
                             return Ok(());
                         }
-                        CliResponse::PromptOpenBehavior => {
-                            tx.send(CliRequest::SetOpenBehavior {
-                                behavior: cli::CliBehaviorSetting::ExistingWindow,
-                            })?;
-                        }
+                        CliResponse::PromptOpenBehavior => {}
                     }
                 }
                 Ok(())
