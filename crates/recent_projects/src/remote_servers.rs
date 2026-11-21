@@ -96,7 +96,7 @@ enum DevContainerCreationProgress {
     SelectingConfig,
     Creating,
     Rebuilding,
-    Error(String),
+    Error { message: String, rebuild: bool },
 }
 
 #[derive(Clone)]
@@ -1978,7 +1978,7 @@ impl RemoteServerProjects {
                 cx.notify();
             }
             Mode::CreateRemoteDevContainer(CreateRemoteDevContainer {
-                progress: DevContainerCreationProgress::Error(_),
+                progress: DevContainerCreationProgress::Error { .. },
                 ..
             }) => {
                 cx.emit(DismissEvent);
@@ -2302,9 +2302,14 @@ impl RemoteServerProjects {
                 Ok((c, s)) => (c, s),
                 Err(e) => {
                     log::error!("Failed to start dev container: {:?}", e);
+                    let title = if rebuild {
+                        "Failed to rebuild Dev Container. See logs for details"
+                    } else {
+                        "Failed to start Dev Container. See logs for details"
+                    };
                     cx.prompt(
                         gpui::PromptLevel::Critical,
-                        "Failed to start Dev Container. See logs for details",
+                        title,
                         Some(&format!("{e}")),
                         &["OK"],
                     )
@@ -2315,7 +2320,10 @@ impl RemoteServerProjects {
                             remote_server_projects.allow_dismissal = true;
                             remote_server_projects.mode =
                                 Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
-                                    DevContainerCreationProgress::Error(format!("{e}")),
+                                    DevContainerCreationProgress::Error {
+                                        message: format!("{e}"),
+                                        rebuild,
+                                    },
                                     cx,
                                 ));
                             remote_server_projects.focus_handle(cx).focus(window, cx);
@@ -2399,7 +2407,12 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         match &state.progress {
-            DevContainerCreationProgress::Error(message) => {
+            DevContainerCreationProgress::Error { message, rebuild } => {
+                let heading = if *rebuild {
+                    "Error Rebuilding Dev Container:"
+                } else {
+                    "Error Creating Dev Container:"
+                };
                 let view = Navigable::new(
                     div()
                         .child(
@@ -2412,7 +2425,7 @@ impl RemoteServerProjects {
                                         .start_slot(
                                             Icon::new(IconName::XCircle).color(Color::Error),
                                         )
-                                        .child(Label::new("Error Creating Dev Container:"))
+                                        .child(Label::new(heading))
                                         .child(Label::new(message).buffer_font(cx)),
                                 ),
                             ),

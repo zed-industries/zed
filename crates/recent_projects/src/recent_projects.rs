@@ -501,12 +501,24 @@ pub fn init(cx: &mut App) {
                 workspace,
                 cx,
             );
-            let handle = cx.entity().downgrade();
-            workspace.toggle_modal(window, cx, |window, cx| {
-                RemoteServerProjects::rebuild_dev_container(
-                    fs, config, app_state, context, window, handle, cx,
-                )
-            });
+            // The rebuilt container reconnects as a new workspace, which doesn't
+            // restore this one's unsaved buffers, so they must be saved or
+            // discarded now rather than kept for hot exit.
+            let save = workspace.prompt_to_save_or_discard_all(window, cx);
+            cx.spawn_in(window, async move |handle, cx| {
+                if !save.await? {
+                    return anyhow::Ok(());
+                }
+                handle.update_in(cx, |workspace, window, cx| {
+                    let handle = cx.entity().downgrade();
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        RemoteServerProjects::rebuild_dev_container(
+                            fs, config, app_state, context, window, handle, cx,
+                        )
+                    });
+                })
+            })
+            .detach_and_log_err(cx);
         });
     });
 

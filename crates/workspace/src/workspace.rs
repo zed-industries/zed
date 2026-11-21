@@ -4039,6 +4039,18 @@ impl Workspace {
         state.task.clone().unwrap()
     }
 
+    /// Asks the user to save or discard every unsaved item, without storing
+    /// them for hot exit. Use this before replacing the workspace with one
+    /// that won't restore this workspace's unsaved buffers. Resolves to
+    /// `false` if the user cancels.
+    pub fn prompt_to_save_or_discard_all(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<bool>> {
+        self.save_all_internal(SaveIntent::Close, false, window, cx)
+    }
+
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
@@ -14376,6 +14388,51 @@ mod tests {
             "replacing a workspace with folder paths should hot-exit silently; \
              the buffer is recoverable by reopening the project"
         );
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_prompt_to_save_or_discard_all_skips_hot_exit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prompt_to_save_or_discard_all(window, cx)
+        });
+        cx.executor().run_until_parked();
+        assert!(
+            cx.has_pending_prompt(),
+            "unsaved items must be saved or discarded, not stored for hot exit"
+        );
+        cx.simulate_prompt_answer("Cancel");
+        cx.executor().run_until_parked();
+        assert!(!task.await.unwrap());
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prompt_to_save_or_discard_all(window, cx)
+        });
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
         assert!(task.await.unwrap());
     }
 
