@@ -234,6 +234,7 @@ pub struct AgentSettings {
 
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub play_sound_when_agent_done: PlaySoundWhenAgentDone,
+    pub on_turn_complete_command: String,
     pub prevent_idle_sleep: bool,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
@@ -820,6 +821,7 @@ impl Settings for AgentSettings {
 
             notify_when_agent_waiting: agent.notify_when_agent_waiting.unwrap(),
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap_or_default(),
+            on_turn_complete_command: agent.on_turn_complete_command.unwrap_or_default(),
             prevent_idle_sleep: agent.prevent_idle_sleep.unwrap(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,

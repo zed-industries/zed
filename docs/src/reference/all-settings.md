@@ -7093,6 +7093,7 @@ See [Agent Panel](#agent-panel) for width, flexible sizing, and Threads Sidebar 
 | `commit_message_include_project_rules` | `true`                                          | Include project instruction files when generating Git commit messages.                                |
 | `notify_when_agent_waiting`            | `"primary_screen"`                              | Notification display: `"primary_screen"`, `"all_screens"`, or `"never"`.                              |
 | `play_sound_when_agent_done`           | `"never"`                                       | Completion and input-required sounds: `"never"`, `"when_hidden"`, or `"always"`.                      |
+| `on_turn_complete_command`             | `""`                                            | Shell command run when an agent turn completes; a JSON payload is written to its stdin.               |
 | `expand_edit_card`                     | `true`                                          | Expand new edit cards to show diffs.                                                                  |
 | `expand_terminal_card`                 | `true`                                          | Expand new terminal cards to show output.                                                             |
 | `terminal_init_command`                | `""`                                            | Command run when creating or recreating a Terminal Thread shell, or an empty string to disable.       |

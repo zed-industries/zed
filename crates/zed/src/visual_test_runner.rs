@@ -238,6 +238,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
             agent_settings::AgentSettings {
                 notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
                 play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
+                on_turn_complete_command: String::new(),
                 ..agent_settings::AgentSettings::get_global(cx).clone()
             },
             cx,

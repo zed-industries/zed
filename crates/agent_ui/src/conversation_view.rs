@@ -2319,6 +2319,15 @@ impl ConversationView {
                         window,
                         cx,
                     );
+
+                    // The agent went idle without a queued message taking over, so this
+                    // is a real turn boundary. Mirrors the completion sound above.
+                    run_turn_complete_command(
+                        session_id.0.to_string(),
+                        stop_reason.clone(),
+                        *activity_duration,
+                        cx,
+                    );
                 }
             }
             AcpThreadEvent::Refusal => {
@@ -21835,5 +21844,109 @@ pub(crate) mod tests {
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
+    }
+}
+
+/// Runs `agent.on_turn_complete_command`, if one is configured.
+///
+/// The command receives a single JSON object on stdin describing the turn. It is spawned
+/// detached: Zed never waits for it, and its stdout and stderr are discarded so a chatty
+/// hook cannot flood the panel.
+///
+/// Called once per completed turn, from the `AcpThreadEvent::Stopped` handler, on the
+/// same path that plays the completion sound. Subagent threads and turns superseded by a
+/// queued message return earlier and therefore do not run the hook.
+pub(crate) fn run_turn_complete_command(
+    thread_id: String,
+    stop_reason: Option<acp_v2::StopReason>,
+    activity_duration: Option<std::time::Duration>,
+    cx: &mut App,
+) {
+    use futures::io::AsyncWriteExt as _;
+    use util::command::{Stdio, new_command};
+
+    let command = AgentSettings::get_global(cx)
+        .on_turn_complete_command
+        .clone();
+    if command.trim().is_empty() {
+        return;
+    }
+
+    let payload = turn_complete_payload(&thread_id, stop_reason.as_ref(), activity_duration);
+
+    cx.background_spawn(async move {
+        let mut child = match new_command("sh")
+            .arg("-c")
+            .arg(&command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                log::warn!("agent.on_turn_complete_command failed to start: {error}");
+                return;
+            }
+        };
+
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Err(error) = stdin.write_all(payload.to_string().as_bytes()).await {
+                log::warn!("agent.on_turn_complete_command did not accept payload: {error}");
+            }
+        }
+
+        if let Err(error) = child.status().await {
+            log::warn!("agent.on_turn_complete_command failed: {error}");
+        }
+    })
+    .detach();
+}
+
+/// Builds the JSON payload handed to `agent.on_turn_complete_command`.
+///
+/// Separate from the spawn so the contract can be pinned by a test: this is the part an
+/// external consumer depends on, and it is the part that must not drift silently.
+fn turn_complete_payload(
+    thread_id: &str,
+    stop_reason: Option<&acp_v2::StopReason>,
+    activity_duration: Option<std::time::Duration>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "v1",
+        "thread_id": thread_id,
+        "stop_reason": stop_reason.map(|reason| format!("{reason:?}")),
+        "activity_duration_ms": activity_duration.map(|duration| duration.as_millis()),
+    })
+}
+
+#[cfg(test)]
+mod turn_complete_command_tests {
+    use super::turn_complete_payload;
+    use agent_client_protocol::v2::schema as acp_v2;
+    use std::time::Duration;
+
+    #[test]
+    fn payload_reports_thread_stop_reason_and_duration() {
+        let payload = turn_complete_payload(
+            "session-1",
+            Some(&acp_v2::StopReason::EndTurn),
+            Some(Duration::from_millis(18422)),
+        );
+
+        assert_eq!(payload["schema_version"], "v1");
+        assert_eq!(payload["thread_id"], "session-1");
+        assert_eq!(payload["stop_reason"], "EndTurn");
+        assert_eq!(payload["activity_duration_ms"], 18422);
+    }
+
+    #[test]
+    fn payload_tolerates_missing_stop_reason_and_duration() {
+        let payload = turn_complete_payload("session-2", None, None);
+
+        assert_eq!(payload["schema_version"], "v1");
+        assert_eq!(payload["thread_id"], "session-2");
+        assert!(payload["stop_reason"].is_null());
+        assert!(payload["activity_duration_ms"].is_null());
     }
 }

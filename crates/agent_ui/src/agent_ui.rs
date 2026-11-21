@@ -1060,6 +1060,7 @@ mod tests {
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
             play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
+            on_turn_complete_command: String::new(),
             prevent_idle_sleep: true,
             single_file_review: false,
             model_parameters: vec![],

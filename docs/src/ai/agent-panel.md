@@ -115,6 +115,16 @@ If you send a prompt to the Agent and then put Zed in the background, you can ch
 
 These notifications can be used together or individually, and you can use the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys to customize that, including turning both off entirely.
 
+### Turn-complete commands {#turn-complete-command}
+
+Set `agent.on_turn_complete_command` to run a shell command whenever an agent thread finishes a turn. Zed writes a JSON object to the command's stdin and does not wait for it:
+
+```json
+{ "schema_version": "v1", "thread_id": "session-1f4c", "stop_reason": "EndTurn", "activity_duration_ms": 18422 }
+```
+
+This is for your own tooling: raising a custom notification, appending to a local log, or triggering a script of your own. The hook runs once per completed turn. It does not run for subagent threads, and it is skipped when a queued message is auto-sent, because in that case the agent never actually went idle.
+
 ### Reviewing Changes {#reviewing-changes}
 
 Once the agent has made changes to your project, the panel will surface which files, how many of them, and how many lines have been edited.

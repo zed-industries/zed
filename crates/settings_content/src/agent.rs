@@ -328,6 +328,13 @@ pub struct AgentSettingsContent {
     ///
     /// Default: never
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
+    /// A shell command to run when an agent thread finishes a turn.
+    ///
+    /// The command receives a JSON object on stdin describing the turn. Zed does not wait
+    /// for the command to exit, and its output is discarded.
+    ///
+    /// Default: none
+    pub on_turn_complete_command: Option<String>,
     /// Whether to keep the system awake while agent threads are running.
     ///
     /// Default: true
