@@ -577,6 +577,10 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: true
     pub cursor_position_button: Option<bool>,
+    /// Whether to show the word count of the active buffer in the status bar.
+    ///
+    /// Default: false
+    pub word_count_button: Option<bool>,
     /// Whether to show active line endings button in the status bar.
     ///
     /// Default: false
