@@ -65,17 +65,17 @@ fn matrix_of(buffer: &CVPixelBuffer) -> YCbCrMatrix {
     let Some(tag) = attachment.and_then(|value| value.downcast::<CFString>().ok()) else {
         return YCbCrMatrix::Bt601;
     };
-    let tag = tag.to_string();
-    // SAFETY: these are Core Video's constant strings.
+    // SAFETY: these are Core Video's constant strings. Comparing uses `CFEqual`, so this runs
+    // on every surface draw without allocating.
     let (bt709, bt2020) = unsafe {
         (
-            kCVImageBufferYCbCrMatrix_ITU_R_709_2.to_string(),
-            kCVImageBufferYCbCrMatrix_ITU_R_2020.to_string(),
+            kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+            kCVImageBufferYCbCrMatrix_ITU_R_2020,
         )
     };
-    if tag == bt709 {
+    if *tag == *bt709 {
         YCbCrMatrix::Bt709
-    } else if tag == bt2020 {
+    } else if *tag == *bt2020 {
         YCbCrMatrix::Bt2020
     } else {
         YCbCrMatrix::Bt601
@@ -116,7 +116,68 @@ pub(crate) fn ycbcr_to_rgb(matrix: YCbCrMatrix, range: YCbCrRange) -> ColorTrans
 
 #[cfg(test)]
 mod tests {
-    use super::{ColorTransform, YCbCrMatrix, YCbCrRange, ycbcr_to_rgb};
+    use std::ptr;
+
+    use objc2_core_foundation::CFRetained;
+    use objc2_core_video::{
+        CVAttachmentMode, CVBuffer, CVPixelBuffer, CVPixelBufferCreate,
+        kCVImageBufferYCbCrMatrix_ITU_R_709_2, kCVImageBufferYCbCrMatrix_ITU_R_2020,
+        kCVImageBufferYCbCrMatrixKey, kCVPixelFormatType_32BGRA,
+        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVReturnSuccess,
+    };
+
+    use super::{ColorTransform, YCbCrMatrix, YCbCrRange, surface_color_transform, ycbcr_to_rgb};
+
+    /// A 16×16 pixel buffer in `format`.
+    fn pixel_buffer(format: u32) -> CFRetained<CVPixelBuffer> {
+        let mut buffer = ptr::null_mut();
+        let status = unsafe {
+            CVPixelBufferCreate(None, 16, 16, format, None, ptr::NonNull::from(&mut buffer))
+        };
+        assert_eq!(status, kCVReturnSuccess);
+        unsafe { CFRetained::from_raw(ptr::NonNull::new(buffer).unwrap()) }
+    }
+
+    /// Tags `buffer` with a `kCVImageBufferYCbCrMatrixKey` value.
+    fn tag(buffer: &CVBuffer, matrix: &objc2_core_foundation::CFString) {
+        unsafe {
+            buffer.set_attachment(
+                kCVImageBufferYCbCrMatrixKey,
+                matrix.as_ref(),
+                CVAttachmentMode::ShouldPropagate,
+            );
+        }
+    }
+
+    #[test]
+    fn reads_range_from_the_format_and_matrix_from_the_attachment() {
+        let untagged = pixel_buffer(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange);
+        assert_eq!(
+            surface_color_transform(&untagged).unwrap(),
+            ycbcr_to_rgb(YCbCrMatrix::Bt601, YCbCrRange::Full)
+        );
+
+        let hd = pixel_buffer(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
+        tag(&hd, unsafe { kCVImageBufferYCbCrMatrix_ITU_R_709_2 });
+        assert_eq!(
+            surface_color_transform(&hd).unwrap(),
+            ycbcr_to_rgb(YCbCrMatrix::Bt709, YCbCrRange::Video)
+        );
+
+        let uhd = pixel_buffer(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
+        tag(&uhd, unsafe { kCVImageBufferYCbCrMatrix_ITU_R_2020 });
+        assert_eq!(
+            surface_color_transform(&uhd).unwrap(),
+            ycbcr_to_rgb(YCbCrMatrix::Bt2020, YCbCrRange::Video)
+        );
+    }
+
+    #[test]
+    fn rejects_formats_the_shader_cannot_sample() {
+        let bgra = pixel_buffer(kCVPixelFormatType_32BGRA);
+        assert!(surface_color_transform(&bgra).is_err());
+    }
 
     /// Applies `transform` to 8-bit `(Y, Cb, Cr)` and returns 8-bit RGB.
     fn apply(transform: ColorTransform, ycbcr: [u8; 3]) -> [i32; 3] {
