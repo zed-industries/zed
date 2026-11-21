@@ -4583,7 +4583,7 @@ impl ThreadView {
             .children(request.description.as_ref().map(|description| {
                 div()
                     .debug_selector(|| format!("generic-permission-description-{description}"))
-                    .child(description.clone())
+                    .child(markdown::MarkdownLabel(description.into()))
             }))
             .children(subject)
             .child(
@@ -12607,9 +12607,23 @@ impl ThreadView {
                     .into_any_element(),
             });
 
-        let has_expandable_content = thread
+        let description = thread.as_ref().and_then(|thread| {
+            let thread = thread.read(cx);
+            if thread.connection().description_format()
+                != acp_thread::AgentDescriptionFormat::Markdown
+            {
+                return None;
+            }
+            thread
+                .subagent_association()?
+                .description
+                .as_ref()
+                .filter(|description| !description.is_empty())
+        });
+        let has_entries = thread
             .as_ref()
-            .map_or(false, |thread| !thread.read(cx).entries().is_empty());
+            .is_some_and(|thread| !thread.read(cx).entries().is_empty());
+        let has_expandable_content = has_entries || description.is_some();
 
         let tooltip_meta_description = if is_expanded {
             "Click to Collapse"
@@ -12776,6 +12790,17 @@ impl ThreadView {
                         )
                     }),
             )
+            .when_some(description.filter(|_| is_expanded), |this, description| {
+                this.child(
+                    div()
+                        .debug_selector(|| format!("subagent-description-{entry_ix}"))
+                        .px_2()
+                        .py_1()
+                        .text_ui_sm(cx)
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(markdown::MarkdownLabel(description.clone())),
+                )
+            })
             .when_some(thread_view, |this, thread_view| {
                 let thread = &thread_view.read(cx).thread;
                 let tv_session_id = thread.read(cx).session_id();
@@ -12837,13 +12862,15 @@ impl ThreadView {
                     }
                 } else {
                     this.when(is_expanded, |this| {
-                        this.child(self.render_subagent_expanded_content(
-                            thread_view,
-                            card_id,
-                            state,
-                            window,
-                            cx,
-                        ))
+                        this.when(has_entries || description.is_none(), |this| {
+                            this.child(self.render_subagent_expanded_content(
+                                thread_view,
+                                card_id,
+                                state,
+                                window,
+                                cx,
+                            ))
+                        })
                         .when_some(error_message, |this, message| {
                             this.child(
                                 Callout::new()

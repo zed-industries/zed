@@ -1889,7 +1889,10 @@ impl AgentConnection for AcpConnection {
             .parent_session_id()
             .is_some()
         {
-            return Some(Rc::new(ReadOnlyConfigOptions(config_opts.clone())));
+            return Some(Rc::new(ReadOnlyConfigOptions(
+                config_opts.clone(),
+                self.description_format(),
+            )));
         }
 
         Some(Rc::new(AcpSessionConfigOptions {
@@ -8673,6 +8676,7 @@ exit 7
                 .get(&acp_v2::SessionId::new("child"))
                 .and_then(|session| session.config_options.clone())
                 .expect("child config exists at announcement"),
+            acp_thread::AgentDescriptionFormat::PlainText,
         );
         use acp_thread::AgentSessionConfigOptions as _;
         assert!(options.is_read_only());
