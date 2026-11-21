@@ -294,7 +294,7 @@ impl OpenPathPrompt {
 
     /// Directory that `./` and `../` queries resolve against: the active file's directory
     /// when opening, otherwise the first project root (or its parent directory when the root
-    /// is a single file), falling back to the process cwd, or to the remote home directory
+    /// is a single file, even one not saved yet), falling back to the process cwd, or to the remote home directory
     /// for a remote project, whose lister must never be asked for a client path.
     ///
     /// Workspace paths are only used when `lister` browses the project's own file system: a
@@ -315,7 +315,8 @@ impl OpenPathPrompt {
         let project_root = workspace.visible_worktrees(cx).next().map(|worktree| {
             let worktree = worktree.read(cx);
             let abs_path = worktree.abs_path();
-            if worktree.root_entry().is_some_and(|entry| entry.is_file()) {
+            // A single-file root has no root entry until its file exists on disk.
+            if worktree.is_single_file() {
                 path_style
                     .parent(&abs_path)
                     .unwrap_or(&abs_path)

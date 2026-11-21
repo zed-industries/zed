@@ -1016,16 +1016,24 @@ async fn test_open_path_prompt_relative_to_file_root(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), [path!("/repro/a.txt").as_ref()], cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    // `missing.txt` is a file-backed root that has not been saved yet, so its
+    // worktree has no root entry.
+    for root in [path!("/repro/a.txt"), path!("/repro/missing.txt")] {
+        let project = Project::test(app_state.fs.clone(), [root.as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-    for creating_path in [false, true] {
-        let relative_to = workspace.read_with(cx, |workspace, cx| {
-            let lister = project::DirectoryLister::Project(workspace.project().clone());
-            OpenPathPrompt::relative_to(workspace, &lister, creating_path, cx)
-        });
-        assert_eq!(relative_to, std::path::PathBuf::from(path!("/repro")));
+        for creating_path in [false, true] {
+            let relative_to = workspace.read_with(cx, |workspace, cx| {
+                let lister = project::DirectoryLister::Project(workspace.project().clone());
+                OpenPathPrompt::relative_to(workspace, &lister, creating_path, cx)
+            });
+            assert_eq!(
+                relative_to,
+                std::path::PathBuf::from(path!("/repro")),
+                "root: {root}, creating_path: {creating_path}"
+            );
+        }
     }
 }
