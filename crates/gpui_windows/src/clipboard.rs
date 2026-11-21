@@ -349,8 +349,9 @@ impl ClipboardGuard {
         // Only one process can have the clipboard open at a time, and clipboard
         // managers or history tools briefly open it after every change, so a
         // failure is often transient.
-        const ATTEMPTS: u32 = 10;
-        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(10);
+        // This runs on the calling thread, so keep the worst case short.
+        const ATTEMPTS: u32 = 5;
+        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(5);
 
         for attempt in 1..=ATTEMPTS {
             match unsafe { OpenClipboard(None) } {
