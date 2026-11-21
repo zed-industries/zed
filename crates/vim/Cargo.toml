@@ -45,6 +45,7 @@ text.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 menu.workspace = true
+modal_editor.workspace = true
 tokio = { version = "1.15", features = ["full"], optional = true }
 ui.workspace = true
 util.workspace = true

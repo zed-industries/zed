@@ -350,7 +350,7 @@ impl NeovimBackedTestContext {
             editor: self.update(|_, cx| {
                 cx.global::<VimGlobals>()
                     .registers
-                    .get(&register)
+                    .get(register)
                     .cloned()
                     .unwrap_or_default()
                     .text

@@ -4,6 +4,7 @@ use editor::{
 };
 use gpui::{Action, Context, Window};
 use language::{Bias, SelectionGoal};
+use modal_editor::Register;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
@@ -15,7 +16,7 @@ use crate::{
     Vim,
     motion::{Motion, MotionKind},
     object::Object,
-    state::{Mode, Register},
+    state::Mode,
 };
 
 /// Pastes text from the specified register at the cursor position.
@@ -388,12 +389,13 @@ impl Vim {
 #[cfg(test)]
 mod test {
     use crate::{
-        state::{Mode, Register},
+        state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
     use language::{LanguageName, language_settings::LanguageSettingsContent};
+    use modal_editor::Register;
     use settings::{SettingsStore, UseSystemClipboard};
 
     #[gpui::test]

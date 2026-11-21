@@ -11081,6 +11081,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "modal_editor"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor",
+ "gpui",
+]
+
+[[package]]
 name = "moka"
 version = "0.12.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19729,6 +19738,7 @@ dependencies = [
  "lsp",
  "markdown_preview",
  "menu",
+ "modal_editor",
  "multi_buffer",
  "nvim-rs",
  "outline_panel",
