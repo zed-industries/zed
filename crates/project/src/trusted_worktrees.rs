@@ -50,7 +50,7 @@ use std::{
     path::{Component, Path, PathBuf, Prefix},
     sync::Arc,
 };
-use util::{debug_panic, paths::SanitizedPath};
+use util::debug_panic;
 
 use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
 
@@ -65,13 +65,16 @@ pub fn init(db_trusted_paths: DbTrustedPaths, cx: &mut App) {
 ///
 /// Paths through a symlink or junction are skipped, as resolving those may land in another
 /// directory whose name differs only by case. Components are checked from the root, so nothing
-/// under a link is looked up. Paths with a component that cannot be checked are skipped, as are
-/// UNC paths (network shares, `\\wsl.localhost`).
+/// under a link is looked up. Only local drive paths are resolved, `C:\` and `\\?\C:\` alike:
+/// paths with a component that cannot be checked are skipped, as are UNC paths (network shares,
+/// `\\wsl.localhost`).
 async fn on_disk_spelling(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
     let Some(Component::Prefix(prefix)) = path.components().next() else {
         return None;
     };
-    if !matches!(prefix.kind(), Prefix::Disk(_)) {
+    // Local drives, including in the extended-length `\\?\C:\` form, which paths keep e.g. when
+    // longer than `MAX_PATH`.
+    if !matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) {
         return None;
     }
     for ancestor in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
@@ -79,11 +82,12 @@ async fn on_disk_spelling(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
             return None;
         }
     }
-    // Resolved the way worktree paths are, which keeps mapped drive letters.
+    // Resolved with the `Fs::canonicalize` worktree paths are opened with, which keeps mapped
+    // drive letters. Unlike worktree roots, the result is not simplified: it keeps the drive
+    // prefix form of `path`, so that a short `\\?\C:\` parent of a longer root keeps matching it.
     let canonical = fs.canonicalize(path).await.ok()?;
-    let canonical = SanitizedPath::new(&canonical).as_path();
     (canonical != path && canonical.as_os_str().eq_ignore_ascii_case(path.as_os_str()))
-        .then(|| canonical.to_path_buf())
+        .then_some(canonical)
 }
 
 fn starts_with_ignoring_ascii_case(path: &Path, prefix: &Path) -> bool {

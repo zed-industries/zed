@@ -174,6 +174,79 @@ async fn test_differently_cased_db_trusted_path_on_mapped_drive(cx: &mut TestApp
 
 #[cfg(windows)]
 #[gpui::test]
+async fn test_differently_cased_db_trusted_path_longer_than_max_path(cx: &mut TestAppContext) {
+    use fs::{Fs as _, RealFs};
+    use util::{paths::SanitizedPath, test::TempTree};
+
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({}));
+    let root = dir.path().join("review");
+    // A long project trusted itself, and one trusted through its shorter parent: both get saved
+    // in the extended-length `\\?\C:\` form that the project path keeps.
+    let deep_parent = ["a", "b", "c"]
+        .iter()
+        .fold(root.join("deep"), |path, letter| {
+            path.join(letter.repeat(90))
+        });
+    let short_parent = root.join("Dev");
+    let fs = RealFs::new(None, cx.executor());
+    for path in [
+        deep_parent.join("Project"),
+        short_parent.join("x".repeat(240)),
+    ] {
+        fs.create_dir(&path).await.unwrap();
+    }
+    cx.update(|cx| {
+        init(
+            DbTrustedPaths::from_iter([(
+                None,
+                HashSet::from_iter([deep_parent.join("project"), root.join("dev")]),
+            )]),
+            cx,
+        )
+    });
+    let mut worktree_paths = Vec::new();
+    for path in [
+        deep_parent.join("project"),
+        root.join("dev").join("x".repeat(240)),
+    ] {
+        let worktree_path = fs.canonicalize(&path).await.unwrap();
+        assert!(
+            worktree_path.as_os_str().len() > 260
+                && SanitizedPath::new(&worktree_path).as_path() == worktree_path
+                && worktree_path.to_string_lossy().starts_with(r"\\?\"),
+            "worktree paths longer than `MAX_PATH` should keep their `\\\\?\\` form"
+        );
+        worktree_paths.push(worktree_path);
+    }
+    assert_eq!(worktree_paths[0], deep_parent.join("Project"));
+    let project =
+        Project::test_with_worktree_trust(fs, worktree_paths.iter().map(|path| path.as_path()), cx)
+            .await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_ids = worktree_store.read_with(cx, |store, cx| {
+        store
+            .worktrees()
+            .map(|worktree| worktree.read(cx).id())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(worktree_ids.len(), 2);
+
+    let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
+    trusted_worktrees.update(cx, |store, cx| {
+        for worktree_id in worktree_ids {
+            assert!(
+                store.can_trust(&worktree_store, worktree_id, cx),
+                "a differently cased trusted path should match its directory longer than `MAX_PATH`"
+            );
+        }
+    });
+}
+
+#[cfg(windows)]
+#[gpui::test]
 async fn test_differently_cased_db_trusted_path_under_unlistable_parent(cx: &mut TestAppContext) {
     use fs::RealFs;
     use std::path::Path;
