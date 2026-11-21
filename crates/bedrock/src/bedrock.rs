@@ -1,6 +1,9 @@
+mod capability_catalog;
+mod model_catalog;
 mod models;
 
 use anyhow::{Result, anyhow};
+pub use aws_sdk_bedrock as bedrock_control_plane_client;
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::{
@@ -30,6 +33,8 @@ use serde_json::{Number, Value};
 use std::collections::HashMap;
 use thiserror::Error;
 
+pub use crate::capability_catalog::*;
+pub use crate::model_catalog::*;
 pub use crate::models::*;
 
 pub async fn stream_completion(
@@ -56,7 +61,7 @@ pub async fn stream_completion(
     }
 
     let inference_config = InferenceConfiguration::builder()
-        .max_tokens(request.max_tokens as i32)
+        .set_max_tokens(request.max_tokens.map(wire_max_tokens).transpose()?)
         .set_temperature(request.temperature)
         .set_top_p(request.top_p)
         .build();
@@ -138,6 +143,20 @@ pub async fn stream_completion(
     Ok(stream)
 }
 
+fn wire_max_tokens(value: u64) -> Result<i32, BedrockError> {
+    if value == 0 {
+        return Err(BedrockError::Validation(
+            "max_tokens 0 must be positive".into(),
+        ));
+    }
+    i32::try_from(value).map_err(|_| {
+        BedrockError::Validation(format!(
+            "max_tokens {value} exceeds the Converse limit of {}",
+            i32::MAX
+        ))
+    })
+}
+
 pub fn aws_document_to_value(document: &Document) -> Value {
     match document {
         Document::Null => Value::Null,
@@ -193,7 +212,8 @@ pub enum Thinking {
         binding_controls_beta: Option<String>,
     },
     Reasoning {
-        effort: BedrockAdaptiveThinkingEffort,
+        /// `None` sends the explicit opt-out, `reasoning.effort = "none"`.
+        effort: Option<BedrockAdaptiveThinkingEffort>,
     },
     /// Explicitly turns thinking off. Required by Claude Opus 5, where
     /// adaptive thinking runs by default when the `thinking` field is
@@ -260,9 +280,12 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
             );
         }
         Thinking::Reasoning { effort } => {
+            let effort = effort
+                .as_ref()
+                .map_or("none", BedrockAdaptiveThinkingEffort::as_str);
             fields.insert(
                 "reasoning".to_string(),
-                value_to_aws_document(&serde_json::json!({"effort": effort.as_str()})),
+                value_to_aws_document(&serde_json::json!({"effort": effort})),
             );
         }
         Thinking::Disabled => {
@@ -285,7 +308,8 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
 #[derive(Debug)]
 pub struct Request {
     pub model: String,
-    pub max_tokens: u64,
+    /// The output limit. Bedrock applies its own default when this is unset.
+    pub max_tokens: Option<u64>,
     pub messages: Vec<BedrockMessage>,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,
@@ -379,14 +403,34 @@ mod tests {
     }
 
     #[test]
-    fn test_gpt_6_astra_uses_openai_reasoning_fields() {
-        let fields = thinking_request_fields(&Thinking::Reasoning {
-            effort: BedrockAdaptiveThinkingEffort::High,
-        });
-        assert_eq!(
-            aws_document_to_value(&Document::Object(fields)),
-            serde_json::json!({"reasoning": {"effort": "high"}})
+    fn test_reasoning_serializes_effort() {
+        for (effort, value) in [
+            (Some(BedrockAdaptiveThinkingEffort::High), "high"),
+            (None, "none"),
+        ] {
+            let fields = thinking_request_fields(&Thinking::Reasoning { effort });
+            assert_eq!(
+                aws_document_to_value(&Document::Object(fields)),
+                serde_json::json!({"reasoning": {"effort": value}})
+            );
+        }
+    }
+
+    #[test]
+    fn output_limit_must_fit_the_sdk_field() -> Result<()> {
+        assert!(
+            wire_max_tokens(0)
+                .expect_err("zero output limit")
+                .to_string()
+                .contains("max_tokens 0")
         );
+        assert_eq!(wire_max_tokens(1)?, 1);
+        let largest = i32::MAX as u64;
+        assert_eq!(wire_max_tokens(largest)?, i32::MAX);
+        let oversized = largest + 1;
+        let error = wire_max_tokens(oversized).expect_err("oversized output limit");
+        assert!(error.to_string().contains(&oversized.to_string()));
+        Ok(())
     }
 
     #[test]

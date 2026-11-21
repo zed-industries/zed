@@ -16,22 +16,27 @@ use bedrock::bedrock_client::types::{
     CachePointBlock, CachePointType, ContentBlockDelta, ContentBlockStart, ConverseStreamOutput,
     ReasoningContentBlockDelta, StopReason,
 };
+use bedrock::bedrock_control_plane_client::Client as BedrockControlPlaneClient;
 use bedrock::{
-    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockImageBlock,
-    BedrockImageFormat, BedrockImageSource, BedrockInnerContent, BedrockMessage, BedrockModelMode,
-    BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock, BedrockTool,
-    BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema, BedrockToolResultBlock,
-    BedrockToolResultContentBlock, BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock,
-    ConverseModel, MantleModel, MantleProtocol, value_to_aws_document,
+    BedrockAdaptiveThinkingEffort, BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob,
+    BedrockError, BedrockImageBlock, BedrockImageFormat, BedrockImageSource, BedrockInnerContent,
+    BedrockMessage, BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock,
+    BedrockTool, BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema,
+    BedrockToolResultBlock, BedrockToolResultContentBlock, BedrockToolResultStatus,
+    BedrockToolSpec, BedrockToolUseBlock, CAPABILITY_CATALOG_URL, CapabilityCatalog, ConverseModel,
+    ConverseModelRoute, ConverseThinking, MantleModel, MantleProtocol, ModelCatalog,
+    value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap, IndexMap};
 use credentials_provider::CredentialsProvider;
+use fs::Fs;
 use futures::{
     AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, io::BufReader,
     stream::BoxStream,
 };
 use gpui::{
-    App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window, actions,
+    App, AsyncApp, BackgroundExecutor, Context, Entity, FocusHandle, Subscription, Task, TaskExt,
+    Window, actions,
 };
 use gpui_tokio::Tokio;
 use http_client::{
@@ -57,14 +62,16 @@ use settings::{
     BedrockAvailableModel as AvailableModel, BedrockMantleAvailableModel as MantleAvailableModel,
     Settings, SettingsStore,
 };
+use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime};
-use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
+use strum::{EnumIter, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::model_catalog_cache;
 use crate::provider::open_ai::{
     ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
@@ -177,21 +184,17 @@ impl From<settings::BedrockAuthMethodContent> for BedrockAuthMethod {
 
 fn thinking_from_settings(
     thinking: Option<&settings::BedrockThinkingSettings>,
-) -> Option<bedrock::BedrockThinkingConfig> {
+) -> Option<ConverseThinking> {
     match thinking {
         None | Some(settings::BedrockThinkingSettings::Enabled(false)) => None,
         Some(settings::BedrockThinkingSettings::Enabled(true)) => {
-            Some(bedrock::BedrockThinkingConfig {
-                adaptive: false,
-                has_xhigh: false,
-                budget_tokens: None,
-            })
+            Some(ConverseThinking::budget(None))
         }
         Some(settings::BedrockThinkingSettings::Config(thinking)) => {
-            Some(bedrock::BedrockThinkingConfig {
-                adaptive: thinking.adaptive.unwrap_or(false),
-                has_xhigh: thinking.has_xhigh.unwrap_or(false),
-                budget_tokens: thinking.budget_tokens,
+            Some(if thinking.adaptive.unwrap_or(false) {
+                ConverseThinking::adaptive(thinking.has_xhigh.unwrap_or(false), false)
+            } else {
+                ConverseThinking::budget(thinking.budget_tokens)
             })
         }
     }
@@ -201,45 +204,6 @@ fn mantle_protocol_from_settings(value: settings::BedrockMantleProtocolContent) 
     match value {
         settings::BedrockMantleProtocolContent::ChatCompletions => MantleProtocol::ChatCompletions,
         settings::BedrockMantleProtocolContent::Responses => MantleProtocol::Responses,
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
-        budget_tokens: Option<u64>,
-    },
-    AdaptiveThinking {
-        effort: bedrock::BedrockAdaptiveThinkingEffort,
-    },
-    Reasoning {
-        effort: bedrock::BedrockAdaptiveThinkingEffort,
-    },
-}
-
-impl From<ModelMode> for BedrockModelMode {
-    fn from(value: ModelMode) -> Self {
-        match value {
-            ModelMode::Default => BedrockModelMode::Default,
-            ModelMode::Thinking { budget_tokens } => BedrockModelMode::Thinking { budget_tokens },
-            ModelMode::AdaptiveThinking { effort } => BedrockModelMode::AdaptiveThinking { effort },
-            ModelMode::Reasoning { effort } => BedrockModelMode::Reasoning { effort },
-        }
-    }
-}
-
-impl From<BedrockModelMode> for ModelMode {
-    fn from(value: BedrockModelMode) -> Self {
-        match value {
-            BedrockModelMode::Default => ModelMode::Default,
-            BedrockModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
-            BedrockModelMode::AdaptiveThinking { effort } => ModelMode::AdaptiveThinking { effort },
-            BedrockModelMode::Reasoning { effort } => ModelMode::Reasoning { effort },
-        }
     }
 }
 
@@ -253,9 +217,7 @@ const AMAZON_AWS_URL: &str = "https://amazonaws.com";
 static ZED_BEDROCK_ACCESS_KEY_ID_VAR: LazyLock<EnvVar> = env_var!("ZED_ACCESS_KEY_ID");
 static ZED_BEDROCK_SECRET_ACCESS_KEY_VAR: LazyLock<EnvVar> = env_var!("ZED_SECRET_ACCESS_KEY");
 static ZED_BEDROCK_SESSION_TOKEN_VAR: LazyLock<EnvVar> = env_var!("ZED_SESSION_TOKEN");
-static ZED_AWS_PROFILE_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_PROFILE");
 static ZED_BEDROCK_REGION_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_REGION");
-static ZED_AWS_ENDPOINT_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_ENDPOINT");
 static ZED_BEDROCK_BEARER_TOKEN_VAR: LazyLock<EnvVar> = env_var!("ZED_BEDROCK_BEARER_TOKEN");
 
 /// AWS Regions where the `bedrock-mantle` endpoint is available.
@@ -372,11 +334,14 @@ fn sign_mantle_request_sigv4_at(
 pub struct State {
     /// The resolved authentication method. Settings take priority over UX credentials.
     auth: Option<BedrockAuth>,
-    /// Raw settings from settings.json
-    settings: Option<AmazonBedrockSettings>,
+    /// Updated atomically with auth and listing invalidation, before requests
+    /// take their routing and header snapshot.
+    settings: AmazonBedrockSettings,
     /// Whether credentials came from environment variables (only relevant for static credentials)
     credentials_from_env: bool,
     credentials_provider: Arc<dyn CredentialsProvider>,
+    credential_store_task: Option<Task<()>>,
+    credential_delete_error: Option<String>,
     /// AWS credentials that expire, such as those from SSO, STS or a credential
     /// process, reused until shortly before they expire. Credentials without an
     /// expiry are resolved for every request instead, because the AWS SDK never
@@ -385,6 +350,18 @@ pub struct State {
     /// Incremented on every auth change, so credentials resolved for earlier
     /// auth are not cached once they arrive.
     auth_generation: u64,
+    http_client: AwsHttpClient,
+    plain_http_client: Arc<dyn HttpClient>,
+    fs: Arc<dyn Fs>,
+    listing: ModelListing,
+    listing_generation: u64,
+    fetch_models_task: Option<Task<()>>,
+    /// What the public capability catalog says about Bedrock's models. It is
+    /// empty until the catalog has loaded.
+    capability_catalog: CapabilityCatalog,
+    capability_catalog_cache_path: PathBuf,
+    refresh_capability_catalog_task: Option<Task<()>>,
+    last_capability_catalog_error: Option<String>,
     _subscription: Subscription,
 }
 
@@ -392,6 +369,47 @@ struct ExpiringCredentials {
     auth: Option<BedrockAuth>,
     region: String,
     credentials: Credentials,
+}
+
+#[derive(Default)]
+enum ModelListing {
+    #[default]
+    Unauthenticated,
+    Loading {
+        previous: Option<ModelCatalog>,
+    },
+    RetryingPublic,
+    Listed(ModelCatalog),
+    Failed {
+        previous: Option<ModelCatalog>,
+        error: String,
+    },
+    Gateway,
+}
+
+impl ModelListing {
+    fn catalog(&self) -> Option<&ModelCatalog> {
+        match self {
+            Self::Listed(catalog) => Some(catalog),
+            Self::Loading { previous } | Self::Failed { previous, .. } => previous.as_ref(),
+            Self::Unauthenticated | Self::Gateway | Self::RetryingPublic => None,
+        }
+    }
+
+    fn into_catalog(self) -> Option<ModelCatalog> {
+        match self {
+            Self::Listed(catalog) => Some(catalog),
+            Self::Loading { previous } | Self::Failed { previous, .. } => previous,
+            Self::Unauthenticated | Self::Gateway | Self::RetryingPublic => None,
+        }
+    }
+
+    fn uses_public_catalog(&self) -> bool {
+        matches!(
+            self,
+            Self::Gateway | Self::RetryingPublic | Self::Failed { previous: None, .. }
+        )
+    }
 }
 
 /// How long before expiry cached AWS credentials are replaced, so a request
@@ -418,6 +436,54 @@ fn environment_bearer_token(
 }
 
 impl State {
+    fn sync_settings(&mut self, cx: &mut Context<Self>) {
+        let settings = AllLanguageModelSettings::get_global(cx).bedrock.clone();
+        if self.settings == settings {
+            return;
+        }
+        let auth_changed = self.settings.authentication_method != settings.authentication_method
+            || (matches!(
+                settings.authentication_method,
+                Some(BedrockAuthMethod::NamedProfile | BedrockAuthMethod::SingleSignOn)
+            ) && self.settings.profile_name != settings.profile_name);
+        let region_changed = self.get_region() != bedrock_region(&settings);
+        let endpoint_changed = self.settings.endpoint != settings.endpoint;
+        self.settings = settings;
+        if auth_changed {
+            let auth = self.settings_auth().or_else(|| match &self.auth {
+                Some(BedrockAuth::IamCredentials { .. } | BedrockAuth::ApiKey { .. }) => {
+                    self.auth.clone()
+                }
+                _ => None,
+            });
+            let from_env = auth == self.auth && self.credentials_from_env;
+            let was_authenticated = self.is_authenticated();
+            self.change_auth(auth, from_env, cx);
+            if was_authenticated && !self.is_authenticated() {
+                self.authenticate(cx).detach_and_log_err(cx);
+            }
+        } else if region_changed || endpoint_changed {
+            self.expiring_credentials = None;
+            self.listing = ModelListing::default();
+            self.restart_fetch_models_task(cx);
+        }
+        cx.notify();
+    }
+
+    fn settings_auth(&self) -> Option<BedrockAuth> {
+        let profile_name = self
+            .settings
+            .profile_name
+            .clone()
+            .unwrap_or_else(|| "default".into());
+        match self.settings.authentication_method.as_ref()? {
+            BedrockAuthMethod::Automatic => Some(BedrockAuth::Automatic),
+            BedrockAuthMethod::NamedProfile => Some(BedrockAuth::NamedProfile { profile_name }),
+            BedrockAuthMethod::SingleSignOn => Some(BedrockAuth::SingleSignOn { profile_name }),
+            BedrockAuthMethod::ApiKey => None,
+        }
+    }
+
     /// Sets the auth method and drops credentials resolved for the old one.
     fn set_auth(&mut self, auth: Option<BedrockAuth>) {
         self.auth = auth;
@@ -425,18 +491,239 @@ impl State {
         self.auth_generation += 1;
     }
 
-    fn reset_auth(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = self.credentials_provider.clone();
+    /// Switches to `auth` and lists the models it can reach.
+    fn change_auth(
+        &mut self,
+        auth: Option<BedrockAuth>,
+        credentials_from_env: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_auth(auth);
+        self.credentials_from_env = credentials_from_env;
+        self.listing = ModelListing::default();
+        self.restart_fetch_models_task(cx);
+        cx.notify();
+    }
+
+    fn fetch_models(&self, cx: &mut Context<Self>) -> Task<Result<ModelCatalog>> {
+        let http_client = self.http_client.clone();
+        let profile_name = aws_profile_name(&self.auth);
+        let region = self.get_region();
+        let generation = self.listing_generation;
+        let deadline = cx
+            .background_executor()
+            .timer(LIST_MODELS_TIMEOUT)
+            .boxed()
+            .shared();
         cx.spawn(async move |this, cx| {
-            credentials_provider
-                .delete_credentials(AMAZON_AWS_URL, cx)
+            this.update(cx, |state, cx| {
+                state.sync_settings(cx);
+                anyhow::ensure!(state.listing_generation == generation, "Bedrock model listing configuration changed");
+                Ok::<_, anyhow::Error>(())
+            })??;
+            let setup = async {
+                let request_auth = {
+                    let state = this.upgrade().context("Bedrock provider state was dropped")?;
+                    let http_client = http_client.clone();
+                    resolve_cached_request_auth(
+                        &state,
+                        cx,
+                        |name| std::env::var(name).ok(),
+                        move |auth, region| resolve_request_auth(http_client, auth, region),
+                    )
+                }
+                .await?;
+                Tokio::spawn_result(cx, async move {
+                    Ok(build_control_plane_client(http_client, request_auth, profile_name, region).await)
+                })
                 .await
-                .log_err();
+            };
+            let client = futures::select_biased! {
+                result = setup.fuse() => result?,
+                _ = deadline.clone().fuse() => anyhow::bail!("model listing exceeded the {LIST_MODELS_TIMEOUT:?} deadline"),
+            };
+            Tokio::spawn_result(cx, async move {
+                bedrock::list_models(&client, deadline).await
+            }).await
+        })
+    }
+
+    /// Whether requests go to a custom endpoint, which stands in for
+    /// `bedrock-runtime` only. It does not serve the listing APIs, and
+    /// credentials for it need not be valid for AWS.
+    fn uses_custom_endpoint(&self) -> bool {
+        self.settings
+            .endpoint
+            .as_deref()
+            .is_some_and(|endpoint| !endpoint.is_empty())
+    }
+
+    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        self.fetch_models_task = None;
+        self.listing_generation += 1;
+        if !self.is_authenticated() {
+            self.listing = ModelListing::Unauthenticated;
+            self.refresh_capability_catalog_task = None;
+            self.last_capability_catalog_error = None;
+            return;
+        }
+        if self.refresh_capability_catalog_task.is_none() {
+            self.refresh_capability_catalog_task = Some(self.refresh_capability_catalog(false, cx));
+        }
+        if self.uses_custom_endpoint() {
+            self.listing = ModelListing::Gateway;
+            return;
+        }
+
+        self.listing = if self.listing.uses_public_catalog() {
+            ModelListing::RetryingPublic
+        } else {
+            ModelListing::Loading {
+                previous: std::mem::take(&mut self.listing).into_catalog(),
+            }
+        };
+        let generation = self.listing_generation;
+        let fetch_task = self.fetch_models(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_task.await;
             this.update(cx, |this, cx| {
-                this.set_auth(None);
-                this.credentials_from_env = false;
+                this.sync_settings(cx);
+                if this.listing_generation != generation {
+                    return;
+                }
+                this.listing = match result {
+                    Ok(catalog) => ModelListing::Listed(catalog),
+                    Err(error) => {
+                        log::warn!("Failed to list Bedrock models: {error:#}");
+                        ModelListing::Failed {
+                            previous: std::mem::take(&mut this.listing).into_catalog(),
+                            error: format!("{error:#}"),
+                        }
+                    }
+                };
                 cx.notify();
             })
+            .log_err();
+        });
+        self.fetch_models_task.replace(task);
+    }
+
+    /// Loads the capability catalog from disk, fetches it when that copy is
+    /// missing or old, and then fetches it again every hour. The catalog is
+    /// public, so the task does not depend on which credentials are in use.
+    fn refresh_capability_catalog(&self, fetch_now: bool, cx: &mut Context<Self>) -> Task<()> {
+        let http_client = self.plain_http_client.clone();
+        let fs = self.fs.clone();
+        let cache_path = self.capability_catalog_cache_path.clone();
+        let executor = cx.background_executor().clone();
+        let load_cache = self.capability_catalog.is_empty();
+        cx.spawn(async move |this, cx| {
+            let cached_catalog = if load_cache {
+                model_catalog_cache::load_cached_with(fs.clone(), &cache_path, &executor, |text| {
+                    CapabilityCatalog::parse(&text)
+                })
+                .await
+                .log_err()
+                .flatten()
+            } else {
+                None
+            };
+            let mut is_fresh = false;
+            if let Some((capability_catalog, cached_is_fresh)) = cached_catalog {
+                is_fresh = cached_is_fresh && !fetch_now;
+                let applied = this.update(cx, |this, cx| {
+                    this.capability_catalog = capability_catalog;
+                    cx.notify();
+                });
+                if applied.is_err() {
+                    return;
+                }
+            }
+
+            loop {
+                if !is_fresh {
+                    let capability_catalog = executor
+                        .spawn({
+                            let http_client = http_client.clone();
+                            let executor = executor.clone();
+                            let fs = fs.clone();
+                            let cache_path = cache_path.clone();
+                            async move {
+                                fetch_capability_catalog(
+                                    http_client.as_ref(),
+                                    &executor,
+                                    fs.as_ref(),
+                                    cache_path,
+                                )
+                                .await
+                            }
+                        })
+                        .await;
+                    let applied = this.update(cx, |this, cx| {
+                        match capability_catalog {
+                            Ok(capability_catalog) => {
+                                this.capability_catalog = capability_catalog;
+                                this.last_capability_catalog_error = None;
+                            }
+                            Err(error) => {
+                                log::warn!("Failed to fetch Bedrock model capabilities: {error:#}");
+                                this.last_capability_catalog_error = Some(format!("{error:#}"));
+                            }
+                        }
+                        cx.notify();
+                    });
+                    if applied.is_err() {
+                        return;
+                    }
+                }
+                is_fresh = false;
+                executor.timer(model_catalog_cache::REFRESH_INTERVAL).await;
+            }
+        })
+    }
+
+    // Reserve the position synchronously, even if the caller drops its result
+    // or the executor polls a later save first.
+    fn queue_credential_operation<E>(
+        &mut self,
+        cx: &mut Context<Self>,
+        operation: impl AsyncFnOnce(gpui::WeakEntity<Self>, &mut AsyncApp) -> Result<(), E> + 'static,
+    ) -> Task<Result<(), E>>
+    where
+        E: From<anyhow::Error> + 'static,
+    {
+        let previous = self.credential_store_task.take();
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        self.credential_store_task = Some(cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            drop(sender.send(operation(this, cx).await));
+        }));
+        cx.spawn(async move |_, _| {
+            receiver
+                .await
+                .context("Bedrock credential operation cancelled")?
+        })
+    }
+
+    fn reset_auth(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.change_auth(None, false, cx);
+        let credentials_provider = self.credentials_provider.clone();
+        self.credential_delete_error = None;
+        self.queue_credential_operation(cx, async move |this, cx| {
+            let result = credentials_provider
+                .delete_credentials(AMAZON_AWS_URL, cx)
+                .await;
+            if let Err(error) = &result {
+                this.update(cx, |state, cx| {
+                    state.credential_delete_error = Some(format!(
+                        "Could not delete stored Bedrock credentials: {error:#}"
+                    ));
+                    cx.notify();
+                })?;
+            }
+            result
         })
     }
 
@@ -447,7 +734,9 @@ impl State {
     ) -> Task<Result<()>> {
         let auth = credentials.clone().into_auth();
         let credentials_provider = self.credentials_provider.clone();
-        cx.spawn(async move |this, cx| {
+        self.auth_generation += 1;
+        let generation = self.auth_generation;
+        self.queue_credential_operation(cx, async move |this, cx| {
             credentials_provider
                 .write_credentials(
                     AMAZON_AWS_URL,
@@ -457,9 +746,11 @@ impl State {
                 )
                 .await?;
             this.update(cx, |this, cx| {
-                this.set_auth(auth);
-                this.credentials_from_env = false;
-                cx.notify();
+                this.credential_delete_error = None;
+                this.sync_settings(cx);
+                if this.auth_generation == generation {
+                    this.change_auth(auth, false, cx);
+                }
             })
         })
     }
@@ -469,39 +760,16 @@ impl State {
     }
 
     /// Resolve authentication. Settings take priority over UX-provided credentials.
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        self.sync_settings(cx);
         if self.is_authenticated() {
             return Task::ready(Ok(()));
         }
 
-        // Step 1: Check if settings specify an auth method (enterprise control)
-        if let Some(settings) = &self.settings {
-            if let Some(method) = &settings.authentication_method {
-                let profile_name = settings
-                    .profile_name
-                    .clone()
-                    .unwrap_or_else(|| "default".to_string());
-
-                let auth = match method {
-                    BedrockAuthMethod::Automatic => BedrockAuth::Automatic,
-                    BedrockAuthMethod::NamedProfile => BedrockAuth::NamedProfile { profile_name },
-                    BedrockAuthMethod::SingleSignOn => BedrockAuth::SingleSignOn { profile_name },
-                    BedrockAuthMethod::ApiKey => {
-                        // ApiKey method means "use static credentials from keychain/env"
-                        // Fall through to load them below
-                        return self.load_static_credentials(cx);
-                    }
-                };
-
-                return cx.spawn(async move |this, cx| {
-                    this.update(cx, |this, cx| {
-                        this.set_auth(Some(auth));
-                        this.credentials_from_env = false;
-                        cx.notify();
-                    })?;
-                    Ok(())
-                });
-            }
+        self.auth_generation += 1;
+        if let Some(auth) = self.settings_auth() {
+            self.change_auth(Some(auth), false, cx);
+            return Task::ready(Ok(()));
         }
 
         // Step 2: No settings auth method - try to load static credentials
@@ -510,11 +778,12 @@ impl State {
 
     /// Load static credentials from environment variables or keychain.
     fn load_static_credentials(
-        &self,
+        &mut self,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = self.credentials_provider.clone();
-        cx.spawn(async move |this, cx| {
+        let generation = self.auth_generation;
+        self.queue_credential_operation(cx, async move |this, cx| {
             // Try environment variables first
             let (auth, from_env) = if let Some(bearer_token) = &ZED_BEDROCK_BEARER_TOKEN_VAR.value {
                 if !bearer_token.is_empty() {
@@ -556,18 +825,27 @@ impl State {
             // If we got auth from env vars, use it
             if let Some(auth) = auth {
                 this.update(cx, |this, cx| {
-                    this.set_auth(Some(auth));
-                    this.credentials_from_env = from_env;
-                    cx.notify();
+                    this.sync_settings(cx);
+                    if this.auth_generation == generation {
+                        this.change_auth(Some(auth), from_env, cx);
+                    }
                 })?;
                 return Ok(());
             }
 
             // Try keychain
-            let (_, credentials_bytes) =
+            let credentials =
                 language_model::read_credentials(credentials_provider.as_ref(), AMAZON_AWS_URL, cx)
-                    .await?
-                    .ok_or(AuthenticateError::CredentialsNotFound)?;
+                    .await;
+            let is_current = this.update(cx, |this, cx| {
+                this.sync_settings(cx);
+                this.auth_generation == generation
+            })?;
+            if !is_current {
+                return Ok(());
+            }
+            let (_, credentials_bytes) =
+                credentials?.ok_or(AuthenticateError::CredentialsNotFound)?;
 
             let credentials_str = String::from_utf8(credentials_bytes)
                 .with_context(|| format!("invalid {PROVIDER_NAME} credentials"))?;
@@ -580,9 +858,10 @@ impl State {
                 .ok_or(AuthenticateError::CredentialsNotFound)?;
 
             this.update(cx, |this, cx| {
-                this.set_auth(Some(auth));
-                this.credentials_from_env = false;
-                cx.notify();
+                this.sync_settings(cx);
+                if this.auth_generation == generation {
+                    this.change_auth(Some(auth), false, cx);
+                }
             })?;
 
             Ok(())
@@ -591,31 +870,53 @@ impl State {
 
     /// Get the resolved region. Checks env var, then settings, then defaults to us-east-1.
     fn get_region(&self) -> String {
-        // Priority: env var > settings > default
-        if let Some(region) = ZED_BEDROCK_REGION_VAR.value.as_deref() {
-            if !region.is_empty() {
-                return region.to_string();
-            }
-        }
-
-        self.settings
-            .as_ref()
-            .and_then(|s| s.region.clone())
-            .unwrap_or_else(|| "us-east-1".to_string())
+        bedrock_region(&self.settings)
     }
 
     fn get_allow_global(&self) -> bool {
-        self.settings
-            .as_ref()
-            .and_then(|s| s.allow_global)
-            .unwrap_or(false)
+        self.settings.allow_global.unwrap_or(false)
     }
 
     fn get_guardrail_config(&self) -> (Option<String>, Option<String>) {
-        self.settings.as_ref().map_or((None, None), |s| {
-            (s.guardrail_identifier.clone(), s.guardrail_version.clone())
-        })
+        (
+            self.settings.guardrail_identifier.clone(),
+            self.settings.guardrail_version.clone(),
+        )
     }
+
+    fn listing_message(&self) -> Option<(String, bool)> {
+        match &self.listing {
+            ModelListing::Failed {
+                previous: Some(_),
+                error,
+            } => Some((
+                format!("Zed keeps the earlier account list, which may be out of date. {error}"),
+                true,
+            )),
+            listing if listing.uses_public_catalog() => {
+                let reason = match listing {
+                    ModelListing::Failed { error, .. } => error.as_str(),
+                    ModelListing::Gateway => "A custom endpoint is configured.",
+                    _ => "",
+                };
+                Some((
+                    format!("Zed shows the models that models.dev lists for your Region. {reason}"),
+                    matches!(listing, ModelListing::Failed { .. }),
+                ))
+            }
+            _ => None,
+        }
+    }
+}
+
+fn bedrock_region(settings: &AmazonBedrockSettings) -> String {
+    ZED_BEDROCK_REGION_VAR
+        .value
+        .as_deref()
+        .filter(|region| !region.is_empty())
+        .map(str::to_string)
+        .or_else(|| settings.region.clone())
+        .unwrap_or_else(|| "us-east-1".to_string())
 }
 
 pub struct BedrockLanguageModelProvider {
@@ -637,75 +938,106 @@ impl BedrockLanguageModelProvider {
         credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut App,
     ) -> Self {
+        Self::new_with_cache(
+            http_client,
+            credentials_provider,
+            <dyn Fs>::global(cx),
+            paths::temp_dir().join("bedrock").join("models.json"),
+            cx,
+        )
+    }
+
+    fn new_with_cache(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        fs: Arc<dyn Fs>,
+        capability_catalog_cache_path: PathBuf,
+        cx: &mut App,
+    ) -> Self {
+        let plain_http_client = http_client;
+        let http_client = AwsHttpClient::new(plain_http_client.clone());
         let state = cx.new(|cx| State {
             auth: None,
-            settings: Some(AllLanguageModelSettings::get_global(cx).bedrock.clone()),
+            settings: AllLanguageModelSettings::get_global(cx).bedrock.clone(),
             credentials_from_env: false,
             credentials_provider,
+            credential_store_task: None,
+            credential_delete_error: None,
             expiring_credentials: None,
             auth_generation: 0,
-            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                cx.notify();
+            http_client: http_client.clone(),
+            plain_http_client: plain_http_client.clone(),
+            fs,
+            listing: ModelListing::default(),
+            listing_generation: 0,
+            fetch_models_task: None,
+            capability_catalog: CapabilityCatalog::default(),
+            capability_catalog_cache_path,
+            refresh_capability_catalog_task: None,
+            last_capability_catalog_error: None,
+            _subscription: cx.observe_global::<SettingsStore>(|state: &mut State, cx| {
+                state.sync_settings(cx);
             }),
         });
 
         Self {
-            http_client: AwsHttpClient::new(http_client.clone()),
-            plain_http_client: http_client,
+            http_client,
+            plain_http_client,
             state,
             request_limiters: ModelRateLimiters::default(),
         }
     }
 
-    /// Every model this provider offers, keyed by id: the built-in Converse
-    /// models with settings entries added or overriding them, then the same
-    /// for Mantle. A Mantle model replaces a Converse model with the same id,
-    /// so each id is offered and served exactly once.
+    /// Every model this provider offers, keyed by id: the Converse models
+    /// Bedrock listed with settings entries added or overriding them, then
+    /// the Mantle models from settings. A Mantle model replaces a Converse
+    /// model with the same id, so each id is offered and served exactly once.
     fn bedrock_models(&self, cx: &App) -> IndexMap<String, BedrockModelConfig> {
-        let bedrock_settings = &AllLanguageModelSettings::get_global(cx).bedrock;
+        let state = self.state.read(cx);
+        let bedrock_settings = &state.settings;
+        let model_catalog = state.listing.catalog();
+        let capability_catalog = &state.capability_catalog;
+        let allow_global = state.get_allow_global();
         let mut models = BTreeMap::default();
 
-        for model in bedrock::ConverseModel::iter() {
-            if !matches!(model, bedrock::ConverseModel::Custom { .. }) {
-                models.insert(model.id().to_string(), model);
+        match model_catalog {
+            Some(model_catalog) => {
+                for model in model_catalog.models(allow_global, capability_catalog) {
+                    models.insert(model.id.clone(), model);
+                }
             }
+            // Without Bedrock's own listing, which the credentials in use may
+            // not be allowed to ask for, offer the models that the capability
+            // catalog names for the Region.
+            None if state.listing.uses_public_catalog() => {
+                for model in capability_catalog.models_for_region(&state.get_region(), allow_global)
+                {
+                    models.insert(model.id.clone(), model);
+                }
+            }
+            None => {}
         }
 
         for model in bedrock_settings.available_models.iter() {
             models.insert(
                 model.name.clone(),
-                bedrock::ConverseModel::Custom {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    max_output_tokens: model.max_output_tokens,
-                    default_temperature: model.default_temperature,
-                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
-                        bedrock::BedrockModelCacheConfiguration {
-                            max_cache_anchors: config.max_cache_anchors,
-                            min_total_token: config.min_total_token,
-                        }
-                    }),
-                    supports_tool_use: model.supports_tools,
-                    supports_images: model.supports_images,
-                    thinking: thinking_from_settings(model.thinking.as_ref()),
-                },
+                converse_model_from_settings(model, model_catalog, capability_catalog),
             );
         }
 
         let mut mantle_models = BTreeMap::default();
 
-        for model in bedrock::MantleModel::iter() {
-            if !matches!(model, bedrock::MantleModel::Custom { .. }) {
-                mantle_models.insert(model.id().to_string(), model);
-            }
-        }
-
         for model in bedrock_settings.mantle_available_models.iter() {
             mantle_models.insert(
                 model.name.clone(),
-                bedrock::MantleModel::Custom {
+                MantleModel {
                     name: model.name.clone(),
+                    known_foundation_model_id: model_catalog
+                        .and_then(|catalog| {
+                            catalog.model_for_request_id(&model.name, capability_catalog)
+                        })
+                        .or_else(|| capability_catalog.model_for_request_id(&model.name))
+                        .map(|model| model.base_model_id),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
@@ -727,9 +1059,41 @@ impl BedrockLanguageModelProvider {
         all_models
     }
 
-    /// Describes the offered model with `id`.
-    fn offered_model(&self, id: &str, cx: &App) -> Option<LanguageModel> {
-        self.bedrock_models(cx).get(id).map(language_model)
+    fn preferred_model(&self, fast: bool, cx: &App) -> Option<LanguageModel> {
+        if matches!(
+            self.state.read(cx).listing,
+            ModelListing::Loading { previous: None }
+        ) {
+            return None;
+        }
+        let models = self.bedrock_models(cx);
+        let prefix = if fast {
+            DEFAULT_FAST_MODEL_ID_PREFIX
+        } else {
+            DEFAULT_MODEL_ID_PREFIX
+        };
+        newest_converse_model(&models, prefix)
+            .map(|model| self.offered_language_model(model, &models))
+    }
+
+    fn offered_language_model(
+        &self,
+        config: &BedrockModelConfig,
+        models: &IndexMap<String, BedrockModelConfig>,
+    ) -> LanguageModel {
+        let mut model = language_model(config);
+        if let BedrockModelConfig::Converse(config) = config
+            && config.route == ConverseModelRoute::Automatic
+            && anthropic_model_id(config)
+                .is_some_and(|id| id.starts_with(anthropic::FABLE_MODEL_ID_PREFIX))
+            && matches!(
+                models.get(FABLE_FALLBACK_MODEL_ID),
+                Some(BedrockModelConfig::Converse(target)) if target.route == ConverseModelRoute::Automatic
+            )
+        {
+            model.refusal_fallback_model_id = Some(FABLE_FALLBACK_MODEL_ID);
+        }
+        model
     }
 
     /// The current configuration of `model`, if this provider still offers it.
@@ -741,6 +1105,118 @@ impl BedrockLanguageModelProvider {
         self.bedrock_models(cx)
             .swap_remove(model.id.0.as_ref())
             .ok_or_else(|| unavailable_error(model))
+    }
+}
+
+/// The newest offered model of these families is the default.
+const DEFAULT_MODEL_ID_PREFIX: &str = "anthropic.claude-sonnet-";
+const DEFAULT_FAST_MODEL_ID_PREFIX: &str = "anthropic.claude-haiku-";
+const FABLE_FALLBACK_MODEL_ID: &str = "anthropic.claude-opus-4-8";
+
+fn model_version(model_id: &str) -> Vec<u64> {
+    model_id
+        .split_once(':')
+        .map_or(model_id, |(id, _)| id)
+        .split('-')
+        .skip_while(|component| !component.bytes().all(|byte| byte.is_ascii_digit()))
+        .take_while(|component| component.len() != 8 && !component.is_empty())
+        .map_while(|component| component.parse().ok())
+        .collect()
+}
+
+fn newest_converse_model<'a>(
+    models: &'a IndexMap<String, BedrockModelConfig>,
+    prefix: &str,
+) -> Option<&'a BedrockModelConfig> {
+    models
+        .values()
+        .filter_map(|config| match config {
+            BedrockModelConfig::Converse(model) if model.base_model_id.starts_with(prefix) => {
+                Some((config, model))
+            }
+            _ => None,
+        })
+        .max_by(|(_, left), (_, right)| {
+            model_version(&left.base_model_id)
+                .cmp(&model_version(&right.base_model_id))
+                .then_with(|| {
+                    (left.route == ConverseModelRoute::Automatic)
+                        .cmp(&(right.route == ConverseModelRoute::Automatic))
+                })
+                .then_with(|| right.id.cmp(&left.id))
+        })
+        .map(|(config, _)| config)
+}
+
+/// The Converse model a settings entry describes. The entry's name is sent as
+/// the model id exactly as written. An entry whose name Bedrock listed, or
+/// that the capability catalog knows, takes what it leaves unsaid from that
+/// model. Any other entry has only the capabilities it states.
+fn converse_model_from_settings(
+    model: &AvailableModel,
+    model_catalog: Option<&ModelCatalog>,
+    capability_catalog: &CapabilityCatalog,
+) -> ConverseModel {
+    let known = model_catalog
+        .and_then(|model_catalog| {
+            model_catalog.model_for_request_id(&model.name, capability_catalog)
+        })
+        .or_else(|| capability_catalog.model_for_request_id(&model.name));
+    let known = known.as_ref();
+    let thinking = match known.and_then(|known| known.thinking.clone()) {
+        None => thinking_from_settings(model.thinking.as_ref()),
+        Some(mut thinking) => {
+            if let Some(settings::BedrockThinkingSettings::Config(config)) = &model.thinking
+                && let ConverseThinking::Budget { budget_tokens } = &mut thinking
+            {
+                *budget_tokens = config.budget_tokens.unwrap_or(*budget_tokens);
+            }
+            Some(thinking)
+        }
+    };
+    let thinking_disabled = matches!(
+        model.thinking,
+        Some(settings::BedrockThinkingSettings::Enabled(false))
+    ) && !thinking
+        .as_ref()
+        .is_some_and(ConverseThinking::is_always_on);
+    ConverseModel {
+        id: model.name.clone(),
+        request_id: model.name.clone(),
+        base_model_id: known.map_or_else(
+            || bedrock::base_model_id(&model.name).to_string(),
+            |known| known.base_model_id.clone(),
+        ),
+        foundation_model_known: known.is_some_and(|known| known.foundation_model_known),
+        route: ConverseModelRoute::Pinned,
+        display_name: model
+            .display_name
+            .clone()
+            .or_else(|| known.map(|known| known.display_name.clone()))
+            .unwrap_or_else(|| model.name.clone()),
+        max_tokens: model.max_tokens,
+        max_output_tokens: model.max_output_tokens.or_else(|| match known {
+            Some(known) => known.max_output_tokens,
+            None => Some(4_096),
+        }),
+        default_temperature: model.default_temperature,
+        supports_temperature: known.map_or(model.default_temperature.is_some(), |known| {
+            known.supports_temperature
+        }) && !thinking
+            .as_ref()
+            .is_some_and(ConverseThinking::is_always_on),
+        supports_tool_use: model
+            .supports_tools
+            .or_else(|| known.map(|known| known.supports_tool_use))
+            .unwrap_or(false),
+        supports_images: model
+            .supports_images
+            .or_else(|| known.map(|known| known.supports_images))
+            .unwrap_or(false),
+        supports_caching: model.cache_configuration.is_some()
+            || known.is_some_and(|known| known.supports_caching),
+        thinking,
+        thinking_disabled,
     }
 }
 
@@ -765,21 +1241,18 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<LanguageModel> {
-        self.offered_model(bedrock::ConverseModel::default().id(), cx)
+        self.preferred_model(false, cx)
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
-        let region = self.state.read(cx).get_region();
-        self.offered_model(
-            bedrock::ConverseModel::default_fast(region.as_str()).id(),
-            cx,
-        )
+        self.preferred_model(true, cx)
     }
 
     fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
-        self.bedrock_models(cx)
+        let models = self.bedrock_models(cx);
+        models
             .values()
-            .map(language_model)
+            .map(|config| self.offered_language_model(config, &models))
             .collect()
     }
 
@@ -791,6 +1264,19 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
+    fn refresh_models(&self, cx: &mut App) {
+        self.state.update(cx, |state, cx| {
+            state.sync_settings(cx);
+            state.refresh_capability_catalog_task = None;
+            if state.is_authenticated() {
+                state.refresh_capability_catalog_task =
+                    Some(state.refresh_capability_catalog(true, cx));
+            }
+            state.restart_fetch_models_task(cx);
+            cx.notify();
+        });
+    }
+
     fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
         Some(ProviderSettingsView::SubPage(
@@ -799,7 +1285,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     .into()
             })
             .description(InlineDescription::Text(
-                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require IAM permissions for the `bedrock-mantle` endpoint.".into(),
+                "Configure authentication in settings or enter static credentials. Zed lists inference profiles in your Region. If AWS listing is unavailable, Zed keeps earlier results or offers models from models.dev. A custom endpoint uses the models.dev list and your settings.".into(),
             )),
         ))
     }
@@ -813,7 +1299,10 @@ impl LanguageModelClient for BedrockLanguageModelProvider {
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
     {
-        let config = match cx.update(|cx| self.config(model, cx)) {
+        let config = match cx.update(|cx| {
+            self.state.update(cx, |state, cx| state.sync_settings(cx));
+            self.config(model, cx)
+        }) {
             Ok(config) => config,
             Err(error) => return async move { Err(error) }.boxed(),
         };
@@ -854,65 +1343,12 @@ impl BedrockLanguageModelProvider {
         &self,
         cx: &AsyncApp,
         environment_variable: impl Fn(&str) -> Option<String>,
-        resolve: impl FnOnce(Option<BedrockAuth>, String) -> ResolveFuture,
+        resolve: impl FnOnce(BedrockAuth, String) -> ResolveFuture,
     ) -> Task<Result<BedrockRequestAuth>>
     where
         ResolveFuture: Future<Output = Result<BedrockRequestAuth>> + Send + 'static,
     {
-        let (auth, region, auth_generation, cached_credentials) =
-            cx.read_entity(&self.state, |state, _cx| {
-                let (auth, region) = (state.auth.clone(), state.get_region());
-                let fresh_until = SystemTime::now() + CREDENTIALS_EXPIRY_MARGIN;
-                let cached_credentials = state
-                    .expiring_credentials
-                    .as_ref()
-                    .filter(|cached| {
-                        cached.auth == auth
-                            && cached.region == region
-                            && cached
-                                .credentials
-                                .expiry()
-                                .is_some_and(|expiry| expiry > fresh_until)
-                    })
-                    .map(|cached| cached.credentials.clone());
-                (auth, region, state.auth_generation, cached_credentials)
-            });
-        if !matches!(auth, Some(BedrockAuth::ApiKey { .. }))
-            && let Some(api_key) = environment_bearer_token(environment_variable)
-        {
-            return Task::ready(Ok(BedrockRequestAuth::ApiKey { api_key }));
-        }
-        if let Some(credentials) = cached_credentials {
-            return Task::ready(Ok(BedrockRequestAuth::SigV4 { credentials }));
-        }
-
-        let resolve_task = Tokio::spawn_result(cx, resolve(auth.clone(), region.clone()));
-        let timeout = cx.background_executor().timer(CREDENTIALS_LOAD_TIMEOUT);
-        let state = self.state.clone();
-        cx.spawn(async move |cx| {
-            // Dropping `resolve_task` on timeout cancels the Tokio task.
-            let request_auth = futures::select_biased! {
-                request_auth = resolve_task.fuse() => request_auth?,
-                _ = timeout.fuse() => anyhow::bail!(
-                    "timed out after {CREDENTIALS_LOAD_TIMEOUT:?} resolving AWS credentials"
-                ),
-            };
-            if let BedrockRequestAuth::SigV4 { credentials } = &request_auth
-                && credentials.expiry().is_some()
-            {
-                let credentials = credentials.clone();
-                state.update(cx, |state, _| {
-                    if state.auth_generation == auth_generation {
-                        state.expiring_credentials = Some(ExpiringCredentials {
-                            auth,
-                            region,
-                            credentials,
-                        });
-                    }
-                });
-            }
-            Ok(request_auth)
-        })
+        resolve_cached_request_auth(&self.state, cx, environment_variable, resolve)
     }
 
     fn stream_bedrock_request(
@@ -926,15 +1362,12 @@ impl BedrockLanguageModelProvider {
         let http_client = self.http_client.clone();
         let auth_task = self.resolve_request_auth(cx);
         let (profile_name, endpoint, region, extra_headers) =
-            self.state.read_with(cx, |state, cx| {
+            self.state.read_with(cx, |state, _cx| {
                 (
                     aws_profile_name(&state.auth),
-                    state.settings.as_ref().and_then(|s| s.endpoint.clone()),
+                    state.settings.endpoint.clone(),
                     state.get_region(),
-                    AllLanguageModelSettings::get_global(cx)
-                        .bedrock
-                        .custom_headers
-                        .clone(),
+                    state.settings.custom_headers.clone(),
                 )
             });
 
@@ -949,8 +1382,141 @@ impl BedrockLanguageModelProvider {
     }
 }
 
-/// Builds a Converse client for one request from already-resolved auth. The
+/// Resolves auth for one request to Bedrock, reusing the unexpired credentials
+/// cached in `state`. Environment variables are read with
+/// `environment_variable` and uncached auth is resolved with `resolve`.
+fn resolve_cached_request_auth<ResolveFuture>(
+    state: &Entity<State>,
+    cx: &AsyncApp,
+    environment_variable: impl Fn(&str) -> Option<String>,
+    resolve: impl FnOnce(BedrockAuth, String) -> ResolveFuture,
+) -> Task<Result<BedrockRequestAuth>>
+where
+    ResolveFuture: Future<Output = Result<BedrockRequestAuth>> + Send + 'static,
+{
+    cx.update(|cx| state.update(cx, |state, cx| state.sync_settings(cx)));
+    let (auth, region, auth_generation, cached_credentials) =
+        cx.read_entity(state, |state, _cx| {
+            let (auth, region) = (state.auth.clone(), state.get_region());
+            let fresh_until = SystemTime::now() + CREDENTIALS_EXPIRY_MARGIN;
+            let cached_credentials = state
+                .expiring_credentials
+                .as_ref()
+                .filter(|cached| {
+                    cached.auth == auth
+                        && cached.region == region
+                        && cached
+                            .credentials
+                            .expiry()
+                            .is_some_and(|expiry| expiry > fresh_until)
+                })
+                .map(|cached| cached.credentials.clone());
+            (auth, region, state.auth_generation, cached_credentials)
+        });
+    let Some(auth) = auth else {
+        return Task::ready(Err(anyhow!("Amazon Bedrock is not authenticated")));
+    };
+    if !matches!(auth, BedrockAuth::ApiKey { .. })
+        && let Some(api_key) = environment_bearer_token(environment_variable)
+    {
+        return Task::ready(Ok(BedrockRequestAuth::ApiKey { api_key }));
+    }
+    if let Some(credentials) = cached_credentials {
+        return Task::ready(Ok(BedrockRequestAuth::SigV4 { credentials }));
+    }
+
+    let resolve_task = Tokio::spawn_result(cx, resolve(auth.clone(), region.clone()));
+    let timeout = cx.background_executor().timer(CREDENTIALS_LOAD_TIMEOUT);
+    let state = state.clone();
+    cx.spawn(async move |cx| {
+        // Dropping `resolve_task` on timeout cancels the Tokio task.
+        let request_auth = futures::select_biased! {
+            request_auth = resolve_task.fuse() => request_auth?,
+            _ = timeout.fuse() => anyhow::bail!(
+                "timed out after {CREDENTIALS_LOAD_TIMEOUT:?} resolving AWS credentials"
+            ),
+        };
+        if let BedrockRequestAuth::SigV4 { credentials } = &request_auth
+            && credentials.expiry().is_some()
+        {
+            let credentials = credentials.clone();
+            state.update(cx, |state, _| {
+                if state.auth_generation == auth_generation && state.get_region() == region {
+                    state.expiring_credentials = Some(ExpiringCredentials {
+                        auth: Some(auth),
+                        region,
+                        credentials,
+                    });
+                }
+            });
+        }
+        Ok(request_auth)
+    })
+}
+
+/// Fetches the capability catalog and stores the part that describes
+/// Bedrock's models at `cache_path`.
+async fn fetch_capability_catalog(
+    http_client: &dyn HttpClient,
+    executor: &BackgroundExecutor,
+    fs: &dyn Fs,
+    cache_path: PathBuf,
+) -> Result<CapabilityCatalog> {
+    let catalog = model_catalog_cache::fetch(http_client, executor, CAPABILITY_CATALOG_URL).await?;
+    let (capability_catalog, catalog) = CapabilityCatalog::parse_with_cache(&catalog)?;
+    if let Err(error) = model_catalog_cache::store_cached(fs, cache_path, catalog).await {
+        log::warn!("Failed to cache Bedrock model capabilities: {error:#}");
+    }
+    Ok(capability_catalog)
+}
+
+/// How long listing models may take. Zed's HTTP client applies no timeout of
+/// its own to AWS SDK requests.
+const LIST_MODELS_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The AWS SDK configuration for one request from already-resolved auth. The
 /// profile still applies, since it can configure more than credentials.
+fn sdk_config_loader(
+    http_client: AwsHttpClient,
+    request_auth: BedrockRequestAuth,
+    profile_name: Option<String>,
+    region: String,
+) -> aws_config::ConfigLoader {
+    let mut config_loader = aws_config::defaults(BehaviorVersion::latest())
+        .http_client(http_client)
+        .region(Region::new(region));
+
+    if let Some(profile_name) = profile_name {
+        config_loader = config_loader.profile_name(profile_name);
+    }
+
+    match request_auth {
+        BedrockRequestAuth::SigV4 { credentials } => {
+            config_loader.credentials_provider(credentials)
+        }
+        BedrockRequestAuth::ApiKey { api_key } => config_loader
+            .auth_scheme_preference(["httpBearerAuth".into()]) // https://github.com/smithy-lang/smithy-rs/pull/4241
+            .token_provider(Token::new(api_key, None)),
+    }
+}
+
+/// Builds a client for the Bedrock control plane, which lists models. The
+/// `endpoint_url` setting does not apply to it: that setting names a
+/// `bedrock-runtime` endpoint, which does not serve the listing APIs.
+async fn build_control_plane_client(
+    http_client: AwsHttpClient,
+    request_auth: BedrockRequestAuth,
+    profile_name: Option<String>,
+    region: String,
+) -> BedrockControlPlaneClient {
+    let config = sdk_config_loader(http_client, request_auth, profile_name, region)
+        .timeout_config(TimeoutConfig::disabled())
+        .load()
+        .await;
+    BedrockControlPlaneClient::new(&config)
+}
+
+/// Builds a Converse client for one request from already-resolved auth.
 async fn build_converse_client(
     http_client: AwsHttpClient,
     request_auth: BedrockRequestAuth,
@@ -958,107 +1524,111 @@ async fn build_converse_client(
     endpoint: Option<String>,
     region: String,
 ) -> BedrockClient {
-    let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
+    let mut config_loader = sdk_config_loader(http_client, request_auth, profile_name, region)
         .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
-        .http_client(http_client)
-        .region(Region::new(region))
         .timeout_config(TimeoutConfig::disabled());
 
-    if let Some(profile_name) = profile_name {
-        config_builder = config_builder.profile_name(profile_name);
-    }
     if let Some(endpoint_url) = endpoint
         && !endpoint_url.is_empty()
     {
-        config_builder = config_builder.endpoint_url(endpoint_url);
+        config_loader = config_loader.endpoint_url(endpoint_url);
     }
 
-    config_builder = match request_auth {
-        BedrockRequestAuth::SigV4 { credentials } => {
-            config_builder.credentials_provider(credentials)
-        }
-        BedrockRequestAuth::ApiKey { api_key } => config_builder
-            .auth_scheme_preference(["httpBearerAuth".into()]) // https://github.com/smithy-lang/smithy-rs/pull/4241
-            .token_provider(Token::new(api_key, None)),
-    };
+    BedrockClient::new(&config_loader.load().await)
+}
 
-    BedrockClient::new(&config_builder.load().await)
+/// The id that the `anthropic` crate knows the Claude model behind `model`
+/// by, which is the Bedrock id without its `anthropic.` namespace.
+fn anthropic_model_id(model: &ConverseModel) -> Option<&str> {
+    model
+        .base_model_id
+        .rsplit_once("anthropic.")
+        .map(|(_, model_id)| model_id)
+}
+
+/// Claude models that think when a request has no `thinking` field, so that
+/// turning thinking off takes an explicit `disabled`. Neither listing source
+/// records this.
+const THINKS_BY_DEFAULT: &[&str] = &["claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5"];
+
+fn thinks_by_default(model: &ConverseModel) -> bool {
+    anthropic_model_id(model).is_some_and(|model_id| THINKS_BY_DEFAULT.contains(&model_id))
+}
+
+/// Whether `model` is driven through OpenAI's request conventions.
+fn is_openai_model(model: &ConverseModel) -> bool {
+    model.base_model_id.starts_with("openai.")
+}
+
+fn reasoning_source(model: &ConverseModel) -> String {
+    if model.foundation_model_known {
+        return model.base_model_id.clone();
+    }
+    // Deliberately drop opaque history if discovery later identifies the foundation:
+    // a missed replay is preferable to sending a signed block to the wrong model.
+    use sha2::{Digest as _, Sha256};
+    format!("sha256:{:x}", Sha256::digest(model.request_id.as_bytes()))
+}
+
+fn supports_forced_tool_use(model: &ConverseModel) -> bool {
+    anthropic_model_id(model).is_none_or(anthropic::supports_forced_tool_use)
+}
+
+/// Whether thinking can be turned off. This does not govern history replay.
+fn always_reasons(model: &ConverseModel) -> bool {
+    model
+        .thinking
+        .as_ref()
+        .is_some_and(ConverseThinking::is_always_on)
+}
+
+fn converse_telemetry_id(model: &ConverseModel) -> String {
+    let id = if model.foundation_model_known {
+        &model.base_model_id
+    } else {
+        "custom"
+    };
+    format!("bedrock/{id}")
 }
 
 fn converse_language_model(model: &ConverseModel) -> LanguageModel {
-    let is_gpt_6_astra = matches!(model, ConverseModel::Gpt6Astra);
-    let reasoning_model = converse_reasoning_model(model.request_id());
+    let default_effort = model
+        .thinking
+        .as_ref()
+        .and_then(ConverseThinking::default_effort);
     LanguageModel {
-        supports_tools: model.supports_tool_use(),
-        supports_images: model.supports_images(),
-        supports_thinking: model.supports_thinking(),
-        // These models always reason, so only offer effort levels.
-        supports_disabling_thinking: reasoning_model.is_none(),
-        refusal_fallback_model_id: model
-            .id()
-            .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
-            .then_some(anthropic::FABLE_FALLBACK_MODEL_ID),
-        supported_effort_levels: if model.supports_adaptive_thinking() || is_gpt_6_astra {
-            vec![
-                language_model::LanguageModelEffortLevel {
-                    name: "Low".into(),
-                    value: "low".into(),
-                    is_default: false,
-                    supports_disabling_thinking: None,
-                },
-                language_model::LanguageModelEffortLevel {
-                    name: "Medium".into(),
-                    value: "medium".into(),
-                    is_default: is_gpt_6_astra,
-                    supports_disabling_thinking: None,
-                },
-                language_model::LanguageModelEffortLevel {
-                    name: "High".into(),
-                    value: "high".into(),
-                    is_default: !is_gpt_6_astra,
-                    supports_disabling_thinking: None,
-                },
-                language_model::LanguageModelEffortLevel {
-                    name: "XHigh".into(),
-                    value: "xhigh".into(),
-                    is_default: false,
-                    supports_disabling_thinking: None,
-                },
-                language_model::LanguageModelEffortLevel {
-                    name: "Max".into(),
-                    value: "max".into(),
-                    is_default: false,
-                    supports_disabling_thinking: None,
-                },
-            ]
-            .into_iter()
-            .filter(|effort_level| {
-                effort_level.value != "xhigh"
-                    || model.supports_xhigh_adaptive_thinking()
-                    || is_gpt_6_astra
+        supports_tools: model.supports_tool_use,
+        supports_images: model.supports_images,
+        supports_thinking: model.thinking.is_some() && !model.thinking_disabled,
+        supports_disabling_thinking: !always_reasons(model),
+        refusal_fallback_model_id: None,
+        supported_effort_levels: model
+            .thinking
+            .iter()
+            .filter(|_| !model.thinking_disabled)
+            .flat_map(ConverseThinking::efforts)
+            .map(|effort| LanguageModelEffortLevel {
+                name: effort.label().into(),
+                value: effort.as_str().into(),
+                is_default: Some(*effort) == default_effort,
+                supports_disabling_thinking: None,
             })
-            .collect()
-        } else {
-            Arc::default()
-        },
+            .collect(),
         // Add support for None - we'll filter tool calls at response
         tool_choice_support: LanguageModelToolChoiceSupport {
-            auto: model.supports_tool_use(),
-            any: model.supports_tool_use()
-                && anthropic::supports_forced_tool_use(
-                    reasoning_model.as_ref().unwrap_or(model).id(),
-                ),
-            none: model.supports_tool_use(),
+            auto: model.supports_tool_use,
+            any: model.supports_tool_use && supports_forced_tool_use(model),
+            none: model.supports_tool_use,
         },
         supports_streaming_tools: true,
-        max_output_tokens: Some(model.max_output_tokens()),
+        max_output_tokens: model.max_output_tokens,
         ..LanguageModel::new(
-            LanguageModelId::from(model.id().to_string()),
-            LanguageModelName::from(model.display_name().to_string()),
+            LanguageModelId::from(model.id.clone()),
+            LanguageModelName::from(model.display_name.clone()),
             PROVIDER_ID,
             PROVIDER_NAME,
-            format!("bedrock/{}", model.id()),
-            model.max_token_count(),
+            converse_telemetry_id(model),
+            model.max_tokens,
         )
     }
 }
@@ -1072,39 +1642,16 @@ impl BedrockLanguageModelProvider {
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
     {
-        if request.contains_custom_tool_input() {
-            return async move {
-                Err(anyhow::anyhow!("Bedrock does not support custom tools").into())
-            }
-            .boxed();
-        }
-
-        let (region, allow_global, guardrail_identifier, guardrail_version) =
+        let (region, guardrail_identifier, guardrail_version) =
             cx.read_entity(&self.state, |state, _cx| {
                 let (gid, gv) = state.get_guardrail_config();
-                (state.get_region(), state.get_allow_global(), gid, gv)
+                (state.get_region(), gid, gv)
             });
 
-        let model_id = match config.cross_region_inference_id(&region, allow_global) {
-            Ok(s) => s,
-            Err(e) => {
-                return async move { Err(e.into()) }.boxed();
-            }
-        };
-
+        let model_id = config.request_id.clone();
         let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
 
-        let request = match into_bedrock(
-            request,
-            model_id.clone(),
-            config.default_temperature(),
-            config.max_output_tokens(),
-            config.thinking_mode(),
-            config.supports_caching(),
-            config.supports_tool_use(),
-            guardrail_identifier,
-            guardrail_version,
-        ) {
+        let request = match into_bedrock(request, config, guardrail_identifier, guardrail_version) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
         };
@@ -1280,16 +1827,16 @@ fn aws_profile_name(auth: &Option<BedrockAuth>) -> Option<String> {
 /// credentials to sign the request with SigV4.
 async fn resolve_request_auth(
     http_client: AwsHttpClient,
-    auth: Option<BedrockAuth>,
+    auth: BedrockAuth,
     region: String,
 ) -> Result<BedrockRequestAuth> {
     let profile_name = match auth {
-        Some(BedrockAuth::ApiKey { api_key }) => return Ok(BedrockRequestAuth::ApiKey { api_key }),
-        Some(BedrockAuth::IamCredentials {
+        BedrockAuth::ApiKey { api_key } => return Ok(BedrockRequestAuth::ApiKey { api_key }),
+        BedrockAuth::IamCredentials {
             access_key_id,
             secret_access_key,
             session_token,
-        }) => {
+        } => {
             return Ok(BedrockRequestAuth::SigV4 {
                 credentials: Credentials::new(
                     access_key_id,
@@ -1300,7 +1847,10 @@ async fn resolve_request_auth(
                 ),
             });
         }
-        _ => aws_profile_name(&auth),
+        BedrockAuth::Automatic => None,
+        BedrockAuth::NamedProfile { profile_name } | BedrockAuth::SingleSignOn { profile_name } => {
+            Some(profile_name).filter(|name| !name.is_empty())
+        }
     };
 
     let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
@@ -1857,17 +2407,13 @@ impl BedrockLanguageModelProvider {
     {
         let http_client = self.plain_http_client.clone();
         let model = config.clone();
+        let auth_task = self.resolve_request_auth(cx);
         let region = cx.read_entity(&self.state, |state, _cx| state.get_region());
         let url = format!("{}/{}", mantle_endpoint_url(&region), endpoint);
-        let extra_headers = cx.read_entity(&self.state, |_, cx| {
-            AllLanguageModelSettings::get_global(cx)
-                .bedrock
-                .custom_headers
-                .clone()
+        let extra_headers = cx.read_entity(&self.state, |state, _cx| {
+            state.settings.custom_headers.clone()
         });
         let provider_name = PROVIDER_NAME.0.to_string();
-        let auth_task = self.resolve_request_auth(cx);
-
         let future = request_limiter.stream(async move {
             let auth = auth_task
                 .await
@@ -1954,7 +2500,13 @@ fn mantle_language_model(model: &MantleModel) -> LanguageModel {
             LanguageModelName::from(model.display_name().to_string()),
             PROVIDER_ID,
             PROVIDER_NAME,
-            format!("bedrock-mantle/{}", model.id()),
+            format!(
+                "bedrock-mantle/{}",
+                model
+                    .known_foundation_model_id
+                    .as_deref()
+                    .unwrap_or("custom")
+            ),
             model.max_token_count(),
         )
     }
@@ -2057,17 +2609,7 @@ fn deny_tool_use_events(
     })
 }
 
-/// Matches by Bedrock model ID, so custom entries such as
-/// `us.anthropic.claude-fable-5-1` get the same handling as the built-in model.
-fn converse_reasoning_model(model_id: &str) -> Option<ConverseModel> {
-    [
-        ConverseModel::Gpt6Astra,
-        ConverseModel::ClaudeFable5_1,
-        ConverseModel::ClaudeOpus5_5,
-    ]
-    .into_iter()
-    .find(|model| model_id.ends_with(model.request_id()))
-}
+const DEEPSEEK_R1_MODEL_ID: &str = "deepseek.r1-v1:0";
 
 fn prepare_bedrock_content(
     content: Vec<BedrockInnerContent>,
@@ -2109,30 +2651,24 @@ fn prepare_bedrock_content(
 
 pub fn into_bedrock(
     request: LanguageModelRequest,
-    model: String,
-    default_temperature: Option<f32>,
-    max_output_tokens: u64,
-    thinking_mode: BedrockModelMode,
-    supports_caching: bool,
-    supports_tool_use: bool,
+    model: &ConverseModel,
     guardrail_identifier: Option<String>,
     guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
-    let max_output_tokens = request
-        .max_output_tokens
-        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
-    if request.contains_custom_tool_input() {
-        anyhow::bail!("Bedrock does not support custom tools");
+    if model.max_output_tokens == Some(0) {
+        anyhow::bail!(
+            "available_models entry `{}` sets max_output_tokens to 0; the output limit must be positive",
+            model.id
+        );
     }
+    let max_output_tokens = request.effective_max_output_tokens(model.max_output_tokens);
 
-    let reasoning_model = converse_reasoning_model(&model);
-    let always_adaptive = matches!(
-        reasoning_model,
-        Some(ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeOpus5_5)
-    );
-    let is_gpt_6_astra = reasoning_model == Some(ConverseModel::Gpt6Astra);
-    if always_adaptive && request.tool_choice == Some(LanguageModelToolChoice::Any) {
-        anyhow::bail!("{model} does not support forced tool use");
+    let supports_caching = model.supports_caching;
+    let supports_tool_use = model.supports_tool_use;
+    let is_openai_model = is_openai_model(model);
+    if request.tool_choice == Some(LanguageModelToolChoice::Any) && !supports_forced_tool_use(model)
+    {
+        anyhow::bail!("{} does not support forced tool use", model.request_id);
     }
 
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
@@ -2147,20 +2683,33 @@ pub fn into_bedrock(
             continue;
         }
 
-        let reasoning_source = message
+        let stored_source = message
             .reasoning_details
             .as_ref()
             .and_then(|details| details.get("bedrock_model"))
             .and_then(Value::as_str);
-        let replay_reasoning = match reasoning_source {
-            Some(source) => reasoning_model
-                .as_ref()
-                .is_some_and(|model| model.request_id() == source),
-            None => reasoning_model.is_none(),
+        let replay_reasoning = match stored_source {
+            Some(source) => reasoning_source(model) == source,
+            None => {
+                !is_openai_model
+                    && !anthropic_model_id(model)
+                        .is_some_and(anthropic::binds_thinking_blocks_to_prefix)
+            }
         };
 
         match message.role {
             Role::User | Role::Assistant => {
+                if message.content.iter().any(|content| {
+                    matches!(
+                        content,
+                        MessageContent::ToolUse(LanguageModelToolUse {
+                            input: language_model::LanguageModelToolUseInput::Text(_),
+                            ..
+                        })
+                    )
+                }) {
+                    anyhow::bail!("Bedrock does not support custom tools");
+                }
                 let mut bedrock_message_content: Vec<BedrockInnerContent> = message
                     .content
                     .into_iter()
@@ -2177,7 +2726,7 @@ pub fn into_bedrock(
                             if !replay_reasoning {
                                 return None;
                             }
-                            if model.contains(ConverseModel::DeepSeekR1.request_id()) {
+                            if model.base_model_id.contains(DEEPSEEK_R1_MODEL_ID) {
                                 // DeepSeekR1 doesn't support thinking blocks
                                 // And the AWS API demands that you strip them
                                 return None;
@@ -2203,7 +2752,7 @@ pub fn into_bedrock(
                             if !replay_reasoning {
                                 return None;
                             }
-                            if model.contains(ConverseModel::DeepSeekR1.request_id()) {
+                            if model.base_model_id.contains(DEEPSEEK_R1_MODEL_ID) {
                                 // DeepSeekR1 doesn't support thinking blocks
                                 // And the AWS API demands that you strip them
                                 return None;
@@ -2323,8 +2872,30 @@ pub fn into_bedrock(
                         }
                     })
                     .collect();
+                for block in &bedrock_message_content {
+                    if !supports_tool_use
+                        && matches!(
+                            block,
+                            BedrockInnerContent::ToolUse(_) | BedrockInnerContent::ToolResult(_)
+                        )
+                    {
+                        anyhow::bail!(
+                            "{} cannot accept tool calls in this thread. Choose another model or start a new thread.",
+                            model.display_name
+                        );
+                    }
+                    if !model.supports_images
+                        && (matches!(block, BedrockInnerContent::Image(_))
+                            || matches!(block, BedrockInnerContent::ToolResult(result) if result.content().iter().any(|part| matches!(part, BedrockToolResultContentBlock::Image(_)))))
+                    {
+                        anyhow::bail!(
+                            "{} cannot accept images in this thread. Choose another model or start a new thread.",
+                            model.display_name
+                        );
+                    }
+                }
                 bedrock_message_content =
-                    prepare_bedrock_content(bedrock_message_content, is_gpt_6_astra);
+                    prepare_bedrock_content(bedrock_message_content, is_openai_model);
                 if message.cache && supports_caching && !bedrock_message_content.is_empty() {
                     bedrock_message_content.push(BedrockInnerContent::CachePoint(
                         CachePointBlock::builder()
@@ -2454,63 +3025,73 @@ pub fn into_bedrock(
         }
     }
 
-    let selected_effort = |default_effort| {
-        // Astra, Fable 5.1, and Opus 5.5 keep reasoning enabled, so suppressed requests use the
-        // default effort, matching the Anthropic and OpenAI providers.
-        // <https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra>
-        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html>
-        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
-        if !request.thinking_allowed {
+    let thinking_allowed = request.thinking_allowed && !model.thinking_disabled;
+    let selected_effort = |efforts: &[BedrockAdaptiveThinkingEffort], default_effort| {
+        if !thinking_allowed {
             return default_effort;
         }
         request
             .thinking_effort
             .as_deref()
-            .and_then(|effort| match effort {
-                "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
-                "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
-                "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
-                "xhigh" => Some(bedrock::BedrockAdaptiveThinkingEffort::XHigh),
-                "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
-                _ => None,
-            })
+            .and_then(BedrockAdaptiveThinkingEffort::from_value)
+            .filter(|effort| efforts.contains(effort))
             .unwrap_or(default_effort)
     };
-    let thinking = match thinking_mode {
-        BedrockModelMode::Reasoning { effort } => Some(bedrock::Thinking::Reasoning {
-            effort: selected_effort(effort),
+    let anthropic_model_id = anthropic_model_id(model);
+    let thinking = match &model.thinking {
+        Some(ConverseThinking::Reasoning {
+            efforts,
+            default_effort,
+            supports_none,
+        }) => Some(bedrock::Thinking::Reasoning {
+            effort: (thinking_allowed || !supports_none)
+                .then(|| selected_effort(efforts, *default_effort)),
         }),
-        BedrockModelMode::AdaptiveThinking { effort }
-            if request.thinking_allowed || always_adaptive =>
-        {
-            Some(bedrock::Thinking::Adaptive {
-                effort: selected_effort(effort),
-                binding_controls_beta: model
-                    .rsplit_once("anthropic.")
-                    .filter(|(_, model_id)| anthropic::binds_thinking_blocks_to_prefix(model_id))
-                    .map(|_| anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string()),
+        Some(ConverseThinking::Adaptive {
+            default_effort,
+            always_on,
+            efforts,
+        }) if thinking_allowed || *always_on => Some(bedrock::Thinking::Adaptive {
+            effort: selected_effort(efforts, *default_effort),
+            binding_controls_beta: anthropic_model_id
+                .filter(|model_id| anthropic::binds_thinking_blocks_to_prefix(model_id))
+                .map(|_| anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string()),
+        }),
+        Some(ConverseThinking::Budget { budget_tokens }) if thinking_allowed => {
+            let budget_tokens = max_output_tokens
+                .filter(|cap| cap <= budget_tokens)
+                .map_or(*budget_tokens, |cap| cap / 2);
+            // Halving a binding cap leaves room for the answer. Below the 1,024-token
+            // minimum, leave budget thinking off for this request.
+            // https://platform.claude.com/docs/en/build-with-claude/extended-thinking#budget-rules-and-tuning
+            (budget_tokens >= 1_024).then_some(bedrock::Thinking::Enabled {
+                budget_tokens: Some(budget_tokens),
             })
         }
-        BedrockModelMode::Thinking { budget_tokens } if request.thinking_allowed => {
-            Some(bedrock::Thinking::Enabled { budget_tokens })
-        }
-        _ if !request.thinking_allowed
-            && model.ends_with(ConverseModel::ClaudeOpus5.request_id()) =>
-        {
-            // Opus 5 defaults to adaptive thinking, so turning it off requires `disabled`.
-            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
-            Some(bedrock::Thinking::Disabled)
-        }
+        _ if !thinking_allowed && thinks_by_default(model) => Some(bedrock::Thinking::Disabled),
         _ => None,
     };
-    let temperature = if always_adaptive || is_gpt_6_astra {
-        None
+    // Thinking and sampling controls are incompatible on Anthropic requests.
+    // https://platform.claude.com/docs/en/build-with-claude/thinking#sampling-parameters
+    let sends_anthropic_thinking = matches!(
+        thinking,
+        Some(
+            bedrock::Thinking::Enabled { .. }
+                | bedrock::Thinking::Adaptive { .. }
+                | bedrock::Thinking::Disabled
+        )
+    );
+    let temperature = if model.supports_temperature
+        && !sends_anthropic_thinking
+        && !(anthropic_model_id.is_some() && thinking.is_some())
+    {
+        request.temperature.or(model.default_temperature)
     } else {
-        request.temperature.or(default_temperature)
+        None
     };
 
     Ok(bedrock::Request {
-        model,
+        model: model.request_id.clone(),
         messages: new_messages,
         max_tokens: max_output_tokens,
         system: system_blocks,
@@ -2541,20 +3122,16 @@ pub fn map_to_language_model_completion_events(
         emitted_tool_use: bool,
     }
 
-    let model = converse_reasoning_model(model.request_id()).unwrap_or(model);
-    let report_refusals = matches!(
-        model,
-        ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeFable5 | ConverseModel::Gpt6Astra
-    );
-    let preserve_redacted_thinking = matches!(
-        model,
-        ConverseModel::Gpt6Astra | ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeOpus5_5
-    );
+    let report_refusals = is_openai_model(&model)
+        || anthropic_model_id(&model)
+            .is_some_and(|model_id| model_id.starts_with(anthropic::FABLE_MODEL_ID_PREFIX));
+    // Preserve opaque reasoning and its source independently of optional catalog
+    // metadata, so a catalog refresh cannot change an existing thread's replay.
     let initial_state = State {
         events,
         tool_uses_by_index: HashMap::default(),
         redacted_thinking_by_index: HashMap::default(),
-        reasoning_model: preserve_redacted_thinking.then(|| model.request_id().to_string()),
+        reasoning_model: Some(reasoning_source(&model)),
         emitted_tool_use: false,
     };
 
@@ -2610,22 +3187,13 @@ pub fn map_to_language_model_completion_events(
                                     }))
                                 }
                                 ReasoningContentBlockDelta::RedactedContent(redacted) => {
-                                    if preserve_redacted_thinking {
-                                        // A reasoning block can span multiple binary deltas.
-                                        state
-                                            .redacted_thinking_by_index
-                                            .entry(cb_delta.content_block_index)
-                                            .or_default()
-                                            .extend(redacted.into_inner());
-                                        None
-                                    } else {
-                                        let content = String::from_utf8(redacted.into_inner())
-                                            .unwrap_or("REDACTED".to_string());
-                                        Some(Ok(LanguageModelCompletionEvent::Thinking {
-                                            text: content,
-                                            signature: None,
-                                        }))
-                                    }
+                                    // A reasoning block can span multiple binary deltas.
+                                    state
+                                        .redacted_thinking_by_index
+                                        .entry(cb_delta.content_block_index)
+                                        .or_default()
+                                        .extend(redacted.into_inner());
+                                    None
                                 }
                                 _ => None,
                             },
@@ -2643,13 +3211,6 @@ pub fn map_to_language_model_completion_events(
                                 );
                             }
                             None
-                        }
-                        ConverseStreamOutput::MessageStart(_) => {
-                            state.reasoning_model.as_ref().map(|id| {
-                                Ok(LanguageModelCompletionEvent::ReasoningDetails(
-                                    serde_json::json!({ "bedrock_model": id }),
-                                ))
-                            })
                         }
                         ConverseStreamOutput::ContentBlockStop(cb_stop) => state
                             .redacted_thinking_by_index
@@ -2721,17 +3282,31 @@ pub fn map_to_language_model_completion_events(
                         _ => None,
                     };
 
-                    Some((result, state))
+                    let source = match &result {
+                        Some(Ok(
+                            LanguageModelCompletionEvent::Thinking {
+                                signature: Some(_), ..
+                            }
+                            | LanguageModelCompletionEvent::RedactedThinking { .. },
+                        )) => state.reasoning_model.take(),
+                        _ => None,
+                    };
+                    let details = source.map(|source| {
+                        Ok(LanguageModelCompletionEvent::ReasoningDetails(
+                            serde_json::json!({"bedrock_model": source}),
+                        ))
+                    });
+                    Some(([details, result], state))
                 }
                 Err(err) => Some((
-                    Some(Err(LanguageModelCompletionError::Other(anyhow!(err)))),
+                    [None, Some(Err(LanguageModelCompletionError::Other(err)))],
                     state,
                 )),
             },
             None => None,
         }
     })
-    .filter_map(|result| async move { result })
+    .flat_map(|events| futures::stream::iter(events.into_iter().flatten()))
 }
 
 struct ConfigurationView {
@@ -2854,22 +3429,18 @@ impl ConfigurationView {
             Some(bearer_token)
         };
 
-        let state = self.state.clone();
-        cx.spawn(async move |_, cx| {
-            state
-                .update(cx, |state, cx| {
-                    let credentials = BedrockCredentials {
-                        access_key_id,
-                        secret_access_key,
-                        session_token,
-                        bearer_token,
-                    };
+        self.state
+            .update(cx, |state, cx| {
+                let credentials = BedrockCredentials {
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                    bearer_token,
+                };
 
-                    state.set_static_credentials(credentials, cx)
-                })
-                .await
-        })
-        .detach_and_log_err(cx);
+                state.set_static_credentials(credentials, cx)
+            })
+            .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2882,8 +3453,8 @@ impl ConfigurationView {
         self.bearer_token_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
-        let state = self.state.clone();
-        cx.spawn(async move |_, cx| state.update(cx, |state, cx| state.reset_auth(cx)).await)
+        self.state
+            .update(cx, |state, cx| state.reset_auth(cx))
             .detach_and_log_err(cx);
     }
 
@@ -2906,10 +3477,9 @@ impl Render for ConfigurationView {
         let state = self.state.read(cx);
         let env_var_set = state.credentials_from_env;
         let auth = state.auth.clone();
-        let settings_auth_method = state
-            .settings
-            .as_ref()
-            .and_then(|s| s.authentication_method.clone());
+        let listing_message = state.listing_message();
+        let capability_catalog_error = state.last_capability_catalog_error.clone();
+        let settings_auth_method = state.settings.authentication_method.clone();
 
         if self.load_credentials_task.is_some() {
             return div().child(Label::new("Loading credentials...")).into_any();
@@ -3026,6 +3596,25 @@ impl Render for ConfigurationView {
                     ),
             )
             .child(credentials_control)
+            .when_some(state.credential_delete_error.clone(), |this, message| {
+                this.child(Label::new(message).color(Color::Error))
+            })
+            .when_some(listing_message, |this, (message, warning)| {
+                this.child(
+                    Label::new(message)
+                    .size(LabelSize::Small)
+                    .color(if warning { Color::Warning } else { Color::Muted }),
+                )
+            })
+            .when_some(capability_catalog_error, |this, error| {
+                this.child(
+                    Label::new(format!(
+                        "Could not load model limits and capabilities from models.dev: {error}"
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Warning),
+                )
+            })
             .into_any()
     }
 }
@@ -3108,9 +3697,7 @@ impl ConfigurationView {
             )
             .child(
                 Label::new(format!(
-                    "Optionally, if your environment uses AWS CLI profiles, you can set {}; if it requires a custom endpoint, you can set {}; and if it requires a Session Token, you can set {}.",
-                    ZED_AWS_PROFILE_VAR.name,
-                    ZED_AWS_ENDPOINT_VAR.name,
+                    "Set profile and endpoint_url in settings.json for an AWS profile or custom Converse endpoint. For temporary credentials, set {}.",
                     ZED_BEDROCK_SESSION_TOKEN_VAR.name
                 ))
                 .size(LabelSize::Small)
@@ -3139,6 +3726,844 @@ mod tests {
     use open_ai::responses::{
         ResponseFunctionToolCall, ResponseOutputMessage, ResponseReasoningItem,
     };
+    use std::path::Path;
+
+    use bedrock::bedrock_control_plane_client::types::{
+        FoundationModelSummary, InferenceProfileModel, InferenceProfileStatus,
+        InferenceProfileSummary, InferenceProfileType, ModelModality,
+    };
+
+    /// A Converse model served through a `us.` inference profile.
+    fn converse_model(base_model_id: &str, thinking: Option<ConverseThinking>) -> ConverseModel {
+        ConverseModel {
+            id: base_model_id.to_string(),
+            request_id: format!("us.{base_model_id}"),
+            base_model_id: base_model_id.to_string(),
+            foundation_model_known: true,
+            route: ConverseModelRoute::Automatic,
+            display_name: base_model_id.to_string(),
+            max_tokens: 200_000,
+            max_output_tokens: Some(128_000),
+            default_temperature: Some(1.0),
+            supports_temperature: !thinking
+                .as_ref()
+                .is_some_and(ConverseThinking::is_always_on),
+            supports_tool_use: true,
+            supports_images: true,
+            supports_caching: true,
+            thinking,
+            thinking_disabled: false,
+        }
+    }
+
+    fn adaptive_thinking(always_on: bool) -> ConverseThinking {
+        ConverseThinking::Adaptive {
+            efforts: vec![
+                BedrockAdaptiveThinkingEffort::Low,
+                BedrockAdaptiveThinkingEffort::High,
+                BedrockAdaptiveThinkingEffort::Max,
+            ],
+            default_effort: BedrockAdaptiveThinkingEffort::High,
+            always_on,
+        }
+    }
+
+    #[test]
+    fn equal_versions_prefer_automatic_routes_then_lower_selection_ids() -> Result<()> {
+        let mut models = IndexMap::default();
+        for (id, route) in [
+            ("a-private", ConverseModelRoute::Pinned),
+            ("z-automatic", ConverseModelRoute::Automatic),
+            ("b-automatic", ConverseModelRoute::Automatic),
+        ] {
+            let mut model = converse_model("anthropic.claude-sonnet-8", None);
+            model.id = id.to_string();
+            model.route = route;
+            models.insert(id.to_string(), BedrockModelConfig::Converse(model));
+        }
+        let selected =
+            newest_converse_model(&models, DEFAULT_MODEL_ID_PREFIX).context("family model")?;
+        assert_eq!(language_model(selected).id.0.as_ref(), "b-automatic");
+        Ok(())
+    }
+
+    #[test]
+    fn public_stand_in_uses_foundation_ids_and_settings_keep_verbatim_ids() -> Result<()> {
+        let catalog = CapabilityCatalog::parse(&capability_catalog_json(serde_json::json!({
+            "us.vendor.chat": capability_entry("Public", serde_json::json!({})),
+            "global.vendor.chat": capability_entry("Public global", serde_json::json!({})),
+            "us.vendor.other": capability_entry("Other", serde_json::json!({})),
+        })))?;
+        let models = catalog.models_for_region("us-east-1", false);
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["vendor.chat", "vendor.other"]
+        );
+        let pinned =
+            converse_model_from_settings(&settings_entry("us.vendor.chat", None), None, &catalog);
+        assert_eq!(pinned.id, "us.vendor.chat");
+        assert_eq!(
+            converse_language_model(&pinned).telemetry_id.as_ref(),
+            "bedrock/vendor.chat"
+        );
+        let unknown = converse_model_from_settings(
+            &settings_entry(
+                "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/private",
+                None,
+            ),
+            None,
+            &catalog,
+        );
+        assert!(!unknown.foundation_model_known);
+        assert_eq!(
+            converse_language_model(&unknown).telemetry_id.as_ref(),
+            "bedrock/custom"
+        );
+        let unknown_public_looking =
+            converse_model_from_settings(&settings_entry("vendor.secret", None), None, &catalog);
+        assert_eq!(
+            converse_language_model(&unknown_public_looking)
+                .telemetry_id
+                .as_ref(),
+            "bedrock/custom"
+        );
+        let mut mantle = mantle_model(false);
+        assert_eq!(
+            mantle_language_model(&mantle).telemetry_id.as_ref(),
+            "bedrock-mantle/custom"
+        );
+        mantle.known_foundation_model_id = Some("vendor.chat".to_string());
+        assert_eq!(
+            mantle_language_model(&mantle).telemetry_id.as_ref(),
+            "bedrock-mantle/vendor.chat"
+        );
+        Ok(())
+    }
+
+    fn application_profile(base: &str) -> Result<InferenceProfileSummary> {
+        Ok(InferenceProfileSummary::builder()
+            .inference_profile_id("app")
+            .inference_profile_name("Private profile")
+            .inference_profile_arn(
+                "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/app",
+            )
+            .models(
+                InferenceProfileModel::builder()
+                    .model_arn(format!(
+                        "arn:aws:bedrock:us-east-1::foundation-model/{base}"
+                    ))
+                    .build(),
+            )
+            .status(InferenceProfileStatus::Active)
+            .r#type(InferenceProfileType::Application)
+            .build()?)
+    }
+
+    #[gpui::test]
+    fn application_profile_arn_reaches_request_but_not_telemetry(cx: &mut gpui::TestAppContext) {
+        init_provider_test(cx);
+        let result = cx.update(|cx| -> Result<()> {
+            let provider = new_test_provider(http_client::FakeHttpClient::with_404_response(), cx);
+            let base = "vendor.chat";
+            let application = application_profile(base)?;
+            let catalog = ModelCatalog::new(
+                std::slice::from_ref(&application),
+                &[listed_foundation_model(base)],
+            );
+            provider.state.update(cx, |state, _| {
+                state.set_auth(api_key_auth());
+                state.listing = ModelListing::Listed(catalog);
+            });
+            let model = provider
+                .provided_models(cx)
+                .into_iter()
+                .next()
+                .context("application profile")?;
+            assert_eq!(model.telemetry_id.as_ref(), "bedrock/vendor.chat");
+            let pinned = provider.state.read_with(cx, |state, _| {
+                converse_model_from_settings(
+                    &settings_entry(model.id.0.as_ref(), None),
+                    state.listing.catalog(),
+                    &state.capability_catalog,
+                )
+            });
+            assert_eq!(pinned.request_id, model.id.0.as_ref());
+            assert_eq!(
+                converse_language_model(&pinned).telemetry_id.as_ref(),
+                "bedrock/vendor.chat"
+            );
+            let BedrockModelConfig::Converse(config) = provider.config(&model, cx)? else {
+                anyhow::bail!("application profile must use Converse")
+            };
+            for config in [config, pinned] {
+                let request = into_bedrock(LanguageModelRequest::default(), &config, None, None)?;
+                assert_eq!(request.model, application.inference_profile_arn());
+            }
+            Ok(())
+        });
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[gpui::test]
+    fn defaults_use_only_the_highest_foundation_version_in_their_family(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_provider_test(cx);
+        let result = cx.update(|cx| -> Result<()> {
+            let provider = new_test_provider(http_client::FakeHttpClient::with_404_response(), cx);
+            for (bases, expected_default, expected_fast) in [
+                (
+                    vec![
+                        "anthropic.claude-sonnet-9",
+                        "anthropic.claude-sonnet-10",
+                        "anthropic.claude-haiku-7",
+                    ],
+                    Some("anthropic.claude-sonnet-10"),
+                    Some("anthropic.claude-haiku-7"),
+                ),
+                (
+                    vec![
+                        "anthropic.claude-sonnet-4-9-20261201-v1:0",
+                        "anthropic.claude-sonnet-4-10-20260101-v1:0",
+                    ],
+                    Some("anthropic.claude-sonnet-4-10-20260101-v1:0"),
+                    None,
+                ),
+                (vec!["anthropic.claude-opus-8", "vendor.chat"], None, None),
+            ] {
+                let profiles = bases
+                    .iter()
+                    .map(|base| listed_inference_profile(&format!("us.{base}"), base))
+                    .collect::<Vec<_>>();
+                let foundations = bases
+                    .iter()
+                    .map(|base| listed_foundation_model(base))
+                    .collect::<Vec<_>>();
+                provider.state.update(cx, |state, _| {
+                    state.listing =
+                        ModelListing::Listed(ModelCatalog::new(&profiles, &foundations));
+                });
+                assert_eq!(
+                    provider
+                        .default_model(cx)
+                        .map(|model| model.id.0.to_string()),
+                    expected_default.map(str::to_string)
+                );
+                assert_eq!(
+                    provider
+                        .default_fast_model(cx)
+                        .map(|model| model.id.0.to_string()),
+                    expected_fast.map(str::to_string)
+                );
+            }
+            let base = "anthropic.claude-sonnet-10";
+            let application = application_profile(base)?;
+            provider.state.update(cx, |state, _| {
+                state.listing = ModelListing::Listed(ModelCatalog::new(
+                    std::slice::from_ref(&application),
+                    &[listed_foundation_model(base)],
+                ));
+                state.capability_catalog = CapabilityCatalog::default();
+            });
+            assert_eq!(
+                provider
+                    .default_model(cx)
+                    .context("application-only default")?
+                    .id
+                    .0
+                    .as_ref(),
+                application.inference_profile_arn()
+            );
+            Ok(())
+        });
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[gpui::test]
+    fn refusal_fallback_is_offered_only_for_automatic_routes(cx: &mut gpui::TestAppContext) {
+        init_provider_test(cx);
+        let result = cx.update(|cx| -> Result<()> {
+            let provider = new_test_provider(http_client::FakeHttpClient::with_404_response(), cx);
+            let fable = "anthropic.claude-fable-5";
+            let fallback = FABLE_FALLBACK_MODEL_ID;
+            let profiles = [
+                listed_inference_profile(&format!("us.{fable}"), fable),
+                listed_inference_profile(&format!("us.{fallback}"), fallback),
+                application_profile(fable)?,
+            ];
+            let foundations = [
+                listed_foundation_model(fable),
+                listed_foundation_model(fallback),
+            ];
+            provider.state.update(cx, |state, _| {
+                state.listing = ModelListing::Listed(ModelCatalog::new(&profiles, &foundations));
+                state.settings.available_models =
+                    vec![settings_entry(&format!("us.{fable}"), None)];
+            });
+            for model in provider.provided_models(cx) {
+                assert_eq!(
+                    model.refusal_fallback_model_id,
+                    (model.id.0.as_ref() == fable).then_some(fallback),
+                    "{}",
+                    model.id.0
+                );
+                if let Some(fallback_id) = model.refusal_fallback_model_id {
+                    let offered_fallback = provider
+                        .provided_models(cx)
+                        .into_iter()
+                        .find(|model| model.id.0.as_ref() == fallback_id)
+                        .context("offered fallback")?;
+                    let BedrockModelConfig::Converse(config) =
+                        provider.config(&offered_fallback, cx)?
+                    else {
+                        anyhow::bail!("expected Converse fallback")
+                    };
+                    assert_eq!(
+                        into_bedrock(LanguageModelRequest::default(), &config, None, None)?.model,
+                        format!("us.{fallback}")
+                    );
+                }
+            }
+            provider.state.update(cx, |state, _| {
+                state.listing =
+                    ModelListing::Listed(ModelCatalog::new(&profiles, &foundations[..1]));
+            });
+            assert!(
+                provider
+                    .provided_models(cx)
+                    .iter()
+                    .all(|model| model.refusal_fallback_model_id.is_none())
+            );
+            let capabilities =
+                CapabilityCatalog::parse(&capability_catalog_json(serde_json::json!({
+                    format!("us.{fable}"): capability_entry("Fable", serde_json::json!({})),
+                    format!("us.{fallback}"): capability_entry("Fallback", serde_json::json!({})),
+                })))?;
+            provider.state.update(cx, |state, _| {
+                state.listing = ModelListing::Gateway;
+                state.capability_catalog = capabilities;
+            });
+            let routed = provider
+                .provided_models(cx)
+                .into_iter()
+                .find(|model| model.id.0.as_ref() == fable)
+                .context("stand-in Fable")?;
+            assert_eq!(routed.refusal_fallback_model_id, Some(fallback));
+            provider.state.update(cx, |state, _| {
+                state
+                    .settings
+                    .available_models
+                    .push(settings_entry(fallback, None))
+            });
+            assert!(
+                provider
+                    .provided_models(cx)
+                    .iter()
+                    .all(|model| model.refusal_fallback_model_id.is_none())
+            );
+            Ok(())
+        });
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn thinking_budget_respects_effective_output_cap_and_sampling() -> Result<()> {
+        for (budget, cap, expected) in [
+            (4096, 8192, Some(4096)),
+            (4096, 4096, Some(2048)),
+            (4096, 2048, Some(1024)),
+            (4096, 2047, None),
+            (1023, 8192, None),
+            (4096, 1024, None),
+            (8192, 16384, Some(4096)),
+        ] {
+            let mut model = converse_model(
+                "anthropic.claude-example",
+                Some(ConverseThinking::Budget {
+                    budget_tokens: budget,
+                }),
+            );
+            model.max_output_tokens = Some(8192);
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    thinking_allowed: true,
+                    max_output_tokens: Some(cap),
+                    temperature: Some(0.3),
+                    ..Default::default()
+                },
+                &model,
+                None,
+                None,
+            )?;
+            assert_eq!(request.max_tokens, Some(cap.min(8192)));
+            assert_eq!(
+                match request.thinking {
+                    Some(bedrock::Thinking::Enabled { budget_tokens }) => budget_tokens,
+                    None => None,
+                    _ => anyhow::bail!("unexpected thinking mode"),
+                },
+                expected
+            );
+            assert_eq!(request.temperature, expected.is_none().then_some(0.3));
+        }
+        let custom = converse_model_from_settings(
+            &settings_entry(
+                "private",
+                Some(settings::BedrockThinkingSettings::Enabled(true)),
+            ),
+            None,
+            &CapabilityCatalog::default(),
+        );
+        let request = into_bedrock(
+            LanguageModelRequest {
+                thinking_allowed: true,
+                ..Default::default()
+            },
+            &custom,
+            None,
+            None,
+        )?;
+        assert_eq!(request.max_tokens, Some(4096));
+        assert!(matches!(
+            request.thinking,
+            Some(bedrock::Thinking::Enabled {
+                budget_tokens: Some(2048)
+            })
+        ));
+        assert_eq!(request.temperature, None);
+        let adaptive = into_bedrock(
+            LanguageModelRequest {
+                thinking_allowed: true,
+                temperature: Some(0.3),
+                ..Default::default()
+            },
+            &converse_model("anthropic.claude-example", Some(adaptive_thinking(false))),
+            None,
+            None,
+        )?;
+        assert!(matches!(
+            adaptive.thinking,
+            Some(bedrock::Thinking::Adaptive { .. })
+        ));
+        assert_eq!(adaptive.temperature, None);
+        Ok(())
+    }
+
+    #[test]
+    fn incompatible_history_fails_before_content_is_encoded() -> Result<()> {
+        let mut text_only = converse_model("vendor.text", None);
+        text_only.supports_tool_use = false;
+        text_only.supports_images = false;
+        let mut empty = user_message("");
+        empty.content = vec![MessageContent::ToolResult(
+            language_model::LanguageModelToolResult {
+                tool_use_id: "call".into(),
+                tool_name: "tool".into(),
+                is_error: false,
+                content: vec![],
+                output: None,
+            },
+        )];
+        let mut system = user_message("keep instructions");
+        system.role = Role::System;
+        system
+            .content
+            .push(MessageContent::Image(language_model::LanguageModelImage {
+                source: "AP8=".into(),
+            }));
+        let encoded = into_bedrock(
+            LanguageModelRequest {
+                messages: vec![system, empty, user_message("hello")],
+                ..Default::default()
+            },
+            &text_only,
+            None,
+            None,
+        )?;
+        assert!(
+            matches!(encoded.system.first(), Some(BedrockSystemContentBlock::Text(text)) if text == "keep instructions")
+        );
+        assert_eq!(encoded.messages.len(), 1);
+        let invalid_limit = converse_model_from_settings(
+            &AvailableModel {
+                max_output_tokens: Some(0),
+                ..settings_entry("vendor.manual", None)
+            },
+            None,
+            &CapabilityCatalog::default(),
+        );
+        let error = into_bedrock(LanguageModelRequest::default(), &invalid_limit, None, None)
+            .expect_err("invalid settings limit");
+        assert!(
+            error
+                .to_string()
+                .contains("`vendor.manual` sets max_output_tokens to 0")
+        );
+        let tool_result = MessageContent::ToolResult(language_model::LanguageModelToolResult {
+            tool_use_id: "call".into(),
+            tool_name: "tool".into(),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Image(
+                language_model::LanguageModelImage {
+                    source: "AP8=".into(),
+                },
+            )],
+            output: None,
+        });
+        let tool_use = MessageContent::ToolUse(LanguageModelToolUse {
+            id: "call".into(),
+            name: "tool".into(),
+            is_input_complete: true,
+            raw_input: "{}".into(),
+            input: language_model::LanguageModelToolUseInput::Json(serde_json::json!({})),
+            thought_signature: None,
+        });
+        for (content, tools, images, expected) in [
+            (tool_use, false, true, "tool calls"),
+            (tool_result.clone(), false, true, "tool calls"),
+            (tool_result, true, false, "images"),
+            (
+                MessageContent::Image(language_model::LanguageModelImage {
+                    source: "AP8=".into(),
+                }),
+                true,
+                false,
+                "images",
+            ),
+        ] {
+            let mut model = converse_model("vendor.chat", None);
+            model.supports_tool_use = tools;
+            model.supports_images = images;
+            let error = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![content],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    ..Default::default()
+                },
+                &model,
+                None,
+                None,
+            )
+            .expect_err("incompatible history");
+            let error = error.to_string();
+            assert!(
+                error.contains(expected)
+                    && error.contains("Choose another model or start a new thread"),
+                "{error}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn text_only_completion_emits_no_reasoning_provenance() -> Result<()> {
+        use bedrock::bedrock_client::types::{ContentBlockDeltaEvent, MessageStartEvent};
+        let model = converse_model_from_settings(
+            &settings_entry("private/chat", None),
+            None,
+            &CapabilityCatalog::default(),
+        );
+        let events = [
+            Ok(ConverseStreamOutput::MessageStart(
+                MessageStartEvent::builder()
+                    .role(bedrock::BedrockRole::Assistant)
+                    .build()?,
+            )),
+            Ok(ConverseStreamOutput::ContentBlockDelta(
+                ContentBlockDeltaEvent::builder()
+                    .content_block_index(0)
+                    .delta(ContentBlockDelta::Text("answer".into()))
+                    .build()?,
+            )),
+        ];
+        let mut message = LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: Vec::new(),
+            cache: false,
+            reasoning_details: None,
+        };
+        for event in completion_events(&model, futures::stream::iter(events))? {
+            match event {
+                LanguageModelCompletionEvent::Text(text) => {
+                    message.content.push(MessageContent::Text(text))
+                }
+                LanguageModelCompletionEvent::ReasoningDetails(details) => {
+                    message.reasoning_details = Some(Arc::new(details))
+                }
+                other => anyhow::bail!("unexpected event: {other:?}"),
+            }
+        }
+        assert!(
+            matches!(message.content.as_slice(), [MessageContent::Text(text)] if text == "answer")
+        );
+        assert!(message.reasoning_details.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_routes_do_not_share_opaque_history_or_disclose_their_names() -> Result<()> {
+        let unknown = |id| {
+            converse_model_from_settings(
+                &settings_entry(id, None),
+                None,
+                &CapabilityCatalog::default(),
+            )
+        };
+        let first = unknown("team-a/chat");
+        let source = reasoning_source(&first);
+        assert!(!source.contains("team-a") && !source.contains("chat"));
+        let listed = converse_model("vendor.chat", None);
+        for (model, replay) in [
+            (first, true),
+            (unknown("team-b/chat"), false),
+            (listed, false),
+        ] {
+            let request = replay_history(
+                &model,
+                vec![
+                    MessageContent::RedactedThinking("AP8=".into()),
+                    MessageContent::Text("answer".into()),
+                ],
+                Some(Arc::new(serde_json::json!({"bedrock_model": source}))),
+            )?;
+            assert_eq!(request.messages[0].content().iter().any(|content| matches!(content, BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::RedactedContent(bytes)) if bytes.as_ref() == [0, 255])), replay);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn openai_wire_conventions_and_reasoning_replay_survive_catalog_drift() -> Result<()> {
+        use bedrock::bedrock_client::types::{
+            ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStartEvent, MessageStopEvent,
+        };
+        let response = || -> Result<Vec<Result<BedrockStreamingResponse>>> {
+            Ok(vec![
+                Ok(ConverseStreamOutput::MessageStart(
+                    MessageStartEvent::builder()
+                        .role(bedrock::BedrockRole::Assistant)
+                        .build()?,
+                )),
+                Ok(ConverseStreamOutput::ContentBlockDelta(
+                    ContentBlockDeltaEvent::builder()
+                        .content_block_index(0)
+                        .delta(ContentBlockDelta::ReasoningContent(
+                            ReasoningContentBlockDelta::RedactedContent(BedrockBlob::new([0])),
+                        ))
+                        .build()?,
+                )),
+                Ok(ConverseStreamOutput::ContentBlockDelta(
+                    ContentBlockDeltaEvent::builder()
+                        .content_block_index(0)
+                        .delta(ContentBlockDelta::ReasoningContent(
+                            ReasoningContentBlockDelta::RedactedContent(BedrockBlob::new([255])),
+                        ))
+                        .build()?,
+                )),
+                Ok(ConverseStreamOutput::ContentBlockStop(
+                    ContentBlockStopEvent::builder()
+                        .content_block_index(0)
+                        .build()?,
+                )),
+                Ok(ConverseStreamOutput::MessageStop(
+                    MessageStopEvent::builder()
+                        .stop_reason(StopReason::ContentFiltered)
+                        .build()?,
+                )),
+            ])
+        };
+        let with_effort = CapabilityCatalog::parse(&capability_catalog_json(serde_json::json!({
+            "openai.chat": capability_entry("Chat", serde_json::json!({"reasoning": true, "reasoning_options": [{"type": "effort", "values": ["none", "low", "high"]}]})),
+        })))?.describe("openai.chat", "us.openai.chat");
+        let without_effort =
+            CapabilityCatalog::parse(&capability_catalog_json(serde_json::json!({
+                "openai.chat": capability_entry("Chat", serde_json::json!({})),
+            })))?
+            .describe("openai.chat", "us.openai.chat");
+        assert!(!always_reasons(&with_effort));
+        assert!(without_effort.thinking.is_none());
+        let record =
+            |model: &ConverseModel| completion_events(model, futures::stream::iter(response()?));
+        let recorded = record(&with_effort)?;
+        assert_eq!(record(&without_effort)?, recorded);
+        let details = recorded
+            .iter()
+            .find_map(|event| match event {
+                LanguageModelCompletionEvent::ReasoningDetails(details) => {
+                    Some(Arc::new(details.clone()))
+                }
+                _ => None,
+            })
+            .context("reasoning source")?;
+        assert_eq!(
+            *details,
+            serde_json::json!({"bedrock_model": "openai.chat"})
+        );
+        let data = recorded
+            .iter()
+            .find_map(|event| match event {
+                LanguageModelCompletionEvent::RedactedThinking { data } => Some(data.clone()),
+                _ => None,
+            })
+            .context("opaque reasoning")?;
+        for model in [&with_effort, &without_effort] {
+            let request = replay_history(
+                model,
+                vec![
+                    MessageContent::RedactedThinking(data.clone()),
+                    MessageContent::Text("answer".into()),
+                ],
+                Some(details.clone()),
+            )?;
+            assert!(
+                matches!(request.messages.first().and_then(|message| message.content().first()), Some(BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::RedactedContent(bytes))) if bytes.as_ref() == [0, 255])
+            );
+        }
+        for (model, source) in [
+            (
+                converse_model("anthropic.claude-example", Some(adaptive_thinking(true))),
+                Some(details.clone()),
+            ),
+            (with_effort.clone(), None),
+        ] {
+            let request = replay_history(
+                &model,
+                vec![
+                    MessageContent::RedactedThinking(data.clone()),
+                    MessageContent::Thinking {
+                        text: "foreign thinking".into(),
+                        signature: Some("foreign signature".into()),
+                    },
+                    MessageContent::Text("answer".into()),
+                ],
+                source,
+            )?;
+            assert!(
+                matches!(request.messages[0].content(), [BedrockInnerContent::Text(text)] if text == "answer")
+            );
+        }
+        let malformed = replay_history(
+            &with_effort,
+            vec![
+                MessageContent::RedactedThinking("not base64!".into()),
+                MessageContent::Text("answer".into()),
+            ],
+            Some(details),
+        )?;
+        assert!(
+            matches!(malformed.messages[0].content(), [BedrockInnerContent::Text(text)] if text == "answer")
+        );
+
+        for (base, thinking, image_is_inline) in [
+            ("openai.chat", None, false),
+            ("xai.chat", Some(reasoning()), true),
+        ] {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![MessageContent::ToolResult(
+                            language_model::LanguageModelToolResult {
+                                tool_use_id: "call".into(),
+                                tool_name: "image".into(),
+                                is_error: false,
+                                content: vec![LanguageModelToolResultContent::Image(
+                                    language_model::LanguageModelImage {
+                                        source: "AP8=".into(),
+                                    },
+                                )],
+                                output: None,
+                            },
+                        )],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    ..Default::default()
+                },
+                &converse_model(base, thinking),
+                None,
+                None,
+            )?;
+            let first = request
+                .messages
+                .first()
+                .and_then(|message| message.content().first())
+                .context("tool result")?;
+            let BedrockInnerContent::ToolResult(result) = first else {
+                anyhow::bail!("expected tool result")
+            };
+            assert_eq!(
+                result
+                    .content()
+                    .iter()
+                    .any(|part| matches!(part, BedrockToolResultContentBlock::Image(_))),
+                image_is_inline,
+                "{base}"
+            );
+        }
+        Ok(())
+    }
+
+    fn reasoning() -> ConverseThinking {
+        ConverseThinking::Reasoning {
+            efforts: vec![
+                BedrockAdaptiveThinkingEffort::Low,
+                BedrockAdaptiveThinkingEffort::Medium,
+                BedrockAdaptiveThinkingEffort::High,
+            ],
+            default_effort: BedrockAdaptiveThinkingEffort::Medium,
+            supports_none: false,
+        }
+    }
+
+    fn user_message(text: &str) -> LanguageModelRequestMessage {
+        LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text(text.into())],
+            cache: false,
+            reasoning_details: None,
+        }
+    }
+
+    fn completion_events(
+        model: &ConverseModel,
+        events: impl Stream<Item = Result<BedrockStreamingResponse>> + Send + 'static,
+    ) -> Result<Vec<LanguageModelCompletionEvent>> {
+        futures::executor::block_on(
+            map_to_language_model_completion_events(Box::pin(events), model.clone())
+                .collect::<Vec<_>>(),
+        )
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into)
+    }
+
+    fn replay_history(
+        model: &ConverseModel,
+        content: Vec<MessageContent>,
+        reasoning_details: Option<Arc<Value>>,
+    ) -> Result<bedrock::Request> {
+        into_bedrock(
+            LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content,
+                    cache: false,
+                    reasoning_details,
+                }],
+                ..Default::default()
+            },
+            model,
+            None,
+            None,
+        )
+    }
 
     fn into_bedrock_request(messages: Vec<LanguageModelRequestMessage>) -> bedrock::Request {
         into_bedrock(
@@ -3146,55 +4571,1679 @@ mod tests {
                 messages,
                 ..Default::default()
             },
-            "claude-sonnet-4-5".to_string(),
-            Some(1.0),
-            4096,
-            BedrockModelMode::Default,
-            true,
-            true,
+            &converse_model("vendor.chat", None),
             None,
             None,
         )
         .unwrap()
     }
 
-    #[gpui::test]
-    fn mantle_model_replaces_converse_model_with_the_same_id(cx: &mut gpui::TestAppContext) {
+    fn listed_foundation_model(model_id: &str) -> FoundationModelSummary {
+        FoundationModelSummary::builder()
+            .model_arn(format!(
+                "arn:aws:bedrock:us-east-1::foundation-model/{model_id}"
+            ))
+            .model_id(model_id)
+            .model_name(format!("Name of {model_id}"))
+            .input_modalities(ModelModality::Text)
+            .output_modalities(ModelModality::Text)
+            .response_streaming_supported(true)
+            .build()
+            .expect("the summary has every required member")
+    }
+
+    fn listed_inference_profile(profile_id: &str, model_id: &str) -> InferenceProfileSummary {
+        InferenceProfileSummary::builder()
+            .inference_profile_id(profile_id)
+            .inference_profile_arn(format!(
+                "arn:aws:bedrock:us-east-1:123456789012:inference-profile/{profile_id}"
+            ))
+            .inference_profile_name(profile_id)
+            .models(
+                InferenceProfileModel::builder()
+                    .model_arn(format!(
+                        "arn:aws:bedrock:us-east-1::foundation-model/{model_id}"
+                    ))
+                    .build(),
+            )
+            .status(InferenceProfileStatus::Active)
+            .r#type(InferenceProfileType::SystemDefined)
+            .build()
+            .expect("the summary has every required member")
+    }
+
+    const TEST_CACHE_PATH: &str = "/cache/bedrock/models.json";
+
+    fn new_test_provider_with_fs(
+        http_client: Arc<dyn HttpClient>,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+    ) -> BedrockLanguageModelProvider {
+        BedrockLanguageModelProvider::new_with_cache(
+            http_client,
+            Arc::new(NoCredentialsProvider),
+            fs,
+            PathBuf::from(TEST_CACHE_PATH),
+            cx,
+        )
+    }
+
+    fn new_test_provider(
+        http_client: Arc<dyn HttpClient>,
+        cx: &mut App,
+    ) -> BedrockLanguageModelProvider {
+        let fs = fs::FakeFs::new(cx.background_executor().clone());
+        new_test_provider_with_fs(http_client, fs, cx)
+    }
+
+    fn new_test_provider_with_credentials(
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> BedrockLanguageModelProvider {
+        BedrockLanguageModelProvider::new_with_cache(
+            http_client::FakeHttpClient::with_404_response(),
+            credentials_provider,
+            fs::FakeFs::new(cx.background_executor().clone()),
+            PathBuf::from(TEST_CACHE_PATH),
+            cx,
+        )
+    }
+
+    /// A capability catalog entry for a text model with tools.
+    fn capability_entry(name: &str, members: Value) -> Value {
+        let mut entry = serde_json::json!({
+            "name": name,
+            "tool_call": true,
+            "modalities": {"input": ["text"], "output": ["text"]},
+            "limit": {"context": 700_000, "output": 64_000},
+        });
+        if let (Some(entry), Some(members)) = (entry.as_object_mut(), members.as_object()) {
+            entry.extend(members.clone());
+        }
+        entry
+    }
+
+    /// The catalog members of a model that reasons on every request.
+    fn always_reasoning_members() -> Value {
+        serde_json::json!({
+            "reasoning": true,
+            "reasoning_options": [{"type": "effort", "values": ["low", "high"]}],
+        })
+    }
+
+    fn capability_catalog_json(models: Value) -> String {
+        serde_json::json!({
+            "amazon-bedrock": {"models": models},
+            "another-provider": {"models": {}},
+        })
+        .to_string()
+    }
+
+    fn capability_catalog(models: Value) -> CapabilityCatalog {
+        CapabilityCatalog::parse(&capability_catalog_json(models))
+            .expect("the test catalog should parse")
+    }
+
+    fn api_key_auth() -> Option<BedrockAuth> {
+        Some(BedrockAuth::ApiKey {
+            api_key: "test-key".into(),
+        })
+    }
+
+    fn init_provider_test(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            gpui_tokio::init(cx);
+        });
+    }
+
+    fn set_bedrock_settings(cx: &mut gpui::TestAppContext, settings: Value) -> Result<()> {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.set_user_settings(
+                    &serde_json::json!({"language_models": {"bedrock": settings}}).to_string(),
+                    cx,
+                )
+            })
+        })
+        .result()
+        .map(|_| ())
+    }
+
+    fn init_provider_settings(cx: &mut gpui::TestAppContext, settings: Value) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             gpui_tokio::init(cx);
-            let content = serde_json::json!({
-                "language_models": {
-                    "bedrock": {
-                        "available_models": [{
-                            "name": "shared-model",
-                            "display_name": "Converse Shared",
-                            "max_tokens": 1000,
-                        }],
-                        "mantle_available_models": [{
-                            "name": "shared-model",
-                            "display_name": "Mantle Shared",
-                            "max_tokens": 2000,
-                            "protocol": "chat_completions",
-                        }],
+        });
+        set_bedrock_settings(cx, settings).expect("test settings should parse");
+    }
+
+    fn listing_response(request: &HttpRequest<AsyncBody>, model_ids: &[&str]) -> Value {
+        if request.uri().path() == "/foundation-models" {
+            serde_json::json!({"modelSummaries": model_ids.iter().map(|id| serde_json::json!({
+                "modelId": id,
+                "modelArn": format!("arn:aws:bedrock:us-east-1::foundation-model/{id}"),
+                "modelName": format!("Name of {id}"),
+                "inputModalities": ["TEXT"], "outputModalities": ["TEXT"],
+                "responseStreamingSupported": true,
+            })).collect::<Vec<_>>()})
+        } else if request
+            .uri()
+            .query()
+            .is_some_and(|query| query.contains("SYSTEM_DEFINED"))
+        {
+            serde_json::json!({"inferenceProfileSummaries": model_ids.iter().map(|id| serde_json::json!({
+                "inferenceProfileId": format!("us.{id}"),
+                "inferenceProfileArn": format!("arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.{id}"),
+                "inferenceProfileName": id,
+                "status": "ACTIVE", "type": "SYSTEM_DEFINED",
+                "models": [{"modelArn": format!("arn:aws:bedrock:us-east-1::foundation-model/{id}")}],
+            })).collect::<Vec<_>>()})
+        } else {
+            serde_json::json!({"inferenceProfileSummaries": []})
+        }
+    }
+
+    fn json_response(status: u16, body: Value) -> Result<http_client::Response<AsyncBody>> {
+        Ok(http_client::Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(AsyncBody::from(body.to_string()))?)
+    }
+
+    async fn finish_listing(
+        provider: &BedrockLanguageModelProvider,
+        cx: &mut gpui::TestAppContext,
+    ) -> Result<()> {
+        let task = provider
+            .state
+            .update(cx, |state, _| state.fetch_models_task.take())
+            .context("listing task")?;
+        task.await;
+        Ok(())
+    }
+
+    fn offered_ids(
+        provider: &BedrockLanguageModelProvider,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<String> {
+        cx.update(|cx| provider.provided_models(cx))
+            .into_iter()
+            .map(|model| model.id.0.to_string())
+            .collect()
+    }
+
+    async fn send_test_completion(
+        provider: &BedrockLanguageModelProvider,
+        cx: &mut gpui::TestAppContext,
+    ) -> Result<()> {
+        let model = cx
+            .update(|cx| provider.provided_models(cx))
+            .into_iter()
+            .find(|model| model.id.0.as_ref() == "vendor.manual")
+            .context("manual test model")?;
+        let error = provider
+            .stream_completion(
+                &model,
+                LanguageModelRequest {
+                    messages: vec![user_message("test prompt")],
+                    ..Default::default()
+                },
+                &cx.to_async(),
+            )
+            .await
+            .err()
+            .context("controlled inference error")?;
+        anyhow::ensure!(
+            error.to_string().contains("test completion ended"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[gpui::test]
+    async fn region_changes_cancel_pending_listing_and_keep_request_settings_together(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            let settings = |region: &str, header: &str| {
+                serde_json::json!({
+                    "region": region, "custom_headers": {"x-test-route": header},
+                    "available_models": [{"name": "vendor.manual", "max_tokens": 10000}],
+                    "guardrail_identifier": header, "guardrail_version": "1",
+                })
+            };
+            set_bedrock_settings(cx, settings("us-east-1", "old"))?;
+            let (release, old_response) = futures::channel::oneshot::channel::<()>();
+            let old_response = old_response
+                .map(|result| result.expect("release old listing"))
+                .boxed()
+                .shared();
+            let (entered, mut pending) = futures::channel::mpsc::unbounded();
+            let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+            let client = http_client::FakeHttpClient::create({
+                let old_response = old_response.clone();
+                let requests = requests.clone();
+                move |mut request| {
+                    let old_response = old_response.clone();
+                    let entered = entered.clone();
+                    let requests = requests.clone();
+                    async move {
+                        if request.uri() == CAPABILITY_CATALOG_URL {
+                            return json_response(404, serde_json::json!({}));
+                        }
+                        let mut body = String::new();
+                        request.body_mut().read_to_string(&mut body).await?;
+                        requests.lock().push((
+                            request.uri().to_string(),
+                            request.headers().clone(),
+                            body,
+                        ));
+                        if request.uri().path().ends_with("converse-stream") {
+                            return json_response(
+                                400,
+                                serde_json::json!({"__type": "ValidationException", "message": "test completion ended"}),
+                            );
+                        }
+                        let old_region =
+                            request.uri().host() == Some("bedrock.us-east-1.amazonaws.com");
+                        if old_region && request.uri().path() == "/foundation-models" {
+                            entered.unbounded_send(()).context("old listing entered")?;
+                            old_response.await;
+                        }
+                        json_response(
+                            200,
+                            listing_response(
+                                &request,
+                                &[if old_region {
+                                    "vendor.old"
+                                } else {
+                                    "vendor.current"
+                                }],
+                            ),
+                        )
                     }
                 }
-            })
-            .to_string();
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store
-                    .set_user_settings(&content, cx)
-                    .expect("test settings should parse");
             });
-        });
-        let provider = cx.update(|cx| {
-            BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
-                Arc::new(NoCredentialsProvider),
+            let provider = cx.update(|cx| new_test_provider(client, cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            pending.next().await.context("pending old listing")?;
+            set_bedrock_settings(cx, settings("eu-west-1", "current"))?;
+            cx.run_until_parked();
+            finish_listing(&provider, cx).await?;
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.current", "vendor.manual"]
+            );
+            assert!(requests.lock().iter().any(|(uri, _, _)| {
+                uri.starts_with("https://bedrock.eu-west-1.amazonaws.com/foundation-models")
+            }));
+            send_test_completion(&provider, cx).await?;
+            {
+                let requests = requests.lock();
+                let (uri, headers, body) = requests
+                    .iter()
+                    .find(|(uri, _, _)| uri.contains("converse-stream"))
+                    .context("inference request")?;
+                assert!(uri.starts_with("https://bedrock-runtime.eu-west-1.amazonaws.com/"));
+                assert_eq!(
+                    headers.get("x-test-route").context("custom header")?,
+                    "current"
+                );
+                let body: Value = serde_json::from_str(body)?;
+                assert_eq!(body["guardrailConfig"]["guardrailIdentifier"], "current");
+            }
+            let before = requests.lock().len();
+            let mut passive = settings("eu-west-1", "passive");
+            passive["allow_global"] = true.into();
+            passive["available_models"][0]["max_tokens"] = 12000.into();
+            set_bedrock_settings(cx, passive)?;
+            cx.run_until_parked();
+            assert_eq!(
+                requests.lock().len(),
+                before,
+                "headers, guardrails, models and allow_global do not list again"
+            );
+            set_bedrock_settings(cx, settings("eu-west-1", "immediate"))?;
+            send_test_completion(&provider, cx).await?;
+            {
+                let requests = requests.lock();
+                let (_, headers, body) = requests.last().context("immediate settings request")?;
+                assert_eq!(
+                    headers.get("x-test-route").context("immediate header")?,
+                    "immediate"
+                );
+                assert_eq!(
+                    serde_json::from_str::<Value>(body)?["guardrailConfig"]["guardrailIdentifier"],
+                    "immediate"
+                );
+                assert_eq!(
+                    requests.len(),
+                    before + 1,
+                    "only the requested inference call is sent"
+                );
+            }
+            release
+                .send(())
+                .map_err(|_| anyhow!("old response receiver dropped"))?;
+            cx.run_until_parked();
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.current", "vendor.manual"]
+            );
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("Region settings scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn endpoint_changes_enter_and_leave_gateway_mode_without_applying_old_lists(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            let settings = |endpoint: Option<&str>, header: &str| {
+                serde_json::json!({
+                    "endpoint_url": endpoint, "custom_headers": {"x-test-route": header},
+                    "available_models": [{"name": "vendor.manual", "max_tokens": 10000}],
+                })
+            };
+            set_bedrock_settings(cx, settings(None, "direct"))?;
+            let (release, old_response) = futures::channel::oneshot::channel::<()>();
+            let old_response = old_response
+                .map(|result| result.expect("release old listing"))
+                .boxed()
+                .shared();
+            let old_listing = Arc::new(parking_lot::Mutex::new(true));
+            let (entered, mut pending) = futures::channel::mpsc::unbounded();
+            let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+            let client = http_client::FakeHttpClient::create({
+                let old_response = old_response.clone();
+                let old_listing = old_listing.clone();
+                let requests = requests.clone();
+                move |request| {
+                    let old_response = old_response.clone();
+                    let entered = entered.clone();
+                    let old = *old_listing.lock();
+                    let requests = requests.clone();
+                    async move {
+                        if request.uri() == CAPABILITY_CATALOG_URL {
+                            return json_response(404, serde_json::json!({}));
+                        }
+                        requests
+                            .lock()
+                            .push((request.uri().to_string(), request.headers().clone()));
+                        if request.uri().path().ends_with("converse-stream") {
+                            return json_response(
+                                400,
+                                serde_json::json!({"__type": "ValidationException", "message": "test completion ended"}),
+                            );
+                        }
+                        if old && request.uri().path() == "/foundation-models" {
+                            entered.unbounded_send(()).context("old listing entered")?;
+                            old_response.await;
+                        }
+                        json_response(
+                            200,
+                            listing_response(
+                                &request,
+                                &[if old { "vendor.old" } else { "vendor.current" }],
+                            ),
+                        )
+                    }
+                }
+            });
+            let provider = cx.update(|cx| new_test_provider(client, cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            pending.next().await.context("pending old listing")?;
+            set_bedrock_settings(
                 cx,
-            )
+                settings(Some("https://gateway-a.example.com/bedrock"), "gateway-a"),
+            )?;
+            cx.run_until_parked();
+            let (message, _) = provider
+                .state
+                .read_with(cx, |state, _| state.listing_message())
+                .context("gateway listing message")?;
+            assert!(message.contains("custom endpoint"));
+            let count_before_gateways = requests.lock().len();
+            for (endpoint, header) in [
+                ("https://gateway-a.example.com/bedrock", "gateway-a"),
+                ("https://gateway-b.example.com/bedrock", "gateway-b"),
+            ] {
+                set_bedrock_settings(cx, settings(Some(endpoint), header))?;
+                send_test_completion(&provider, cx).await?;
+                let requests = requests.lock();
+                let (uri, headers) = requests.last().context("gateway request")?;
+                assert!(uri.starts_with(endpoint));
+                assert_eq!(
+                    headers.get("x-test-route").context("gateway header")?,
+                    header
+                );
+            }
+            assert_eq!(
+                requests.lock().len(),
+                count_before_gateways + 2,
+                "gateway edits send no listing calls"
+            );
+            *old_listing.lock() = false;
+            set_bedrock_settings(cx, settings(None, "direct-again"))?;
+            cx.run_until_parked();
+            finish_listing(&provider, cx).await?;
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.current", "vendor.manual"]
+            );
+            send_test_completion(&provider, cx).await?;
+            {
+                let requests = requests.lock();
+                let (uri, headers) = requests.last().context("direct request")?;
+                assert!(uri.starts_with("https://bedrock-runtime.us-east-1.amazonaws.com/"));
+                assert_eq!(
+                    headers.get("x-test-route").context("direct header")?,
+                    "direct-again"
+                );
+            }
+            release
+                .send(())
+                .map_err(|_| anyhow!("old response receiver dropped"))?;
+            cx.run_until_parked();
+            assert_eq!(
+                offered_ids(&provider, cx),
+                ["vendor.current", "vendor.manual"]
+            );
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("endpoint settings scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn failed_listing_keeps_the_last_success_until_a_complete_replacement(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            let app_arn =
+                "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/account-chat";
+            for (failed_call, operation) in [
+                ("APPLICATION", "ListInferenceProfiles"),
+                ("SYSTEM_DEFINED", "ListInferenceProfiles"),
+                ("/foundation-models", "ListFoundationModels"),
+            ] {
+                let responses = Arc::new(parking_lot::Mutex::new((false, false)));
+                let client = http_client::FakeHttpClient::create({
+                    let responses = responses.clone();
+                    move |request| {
+                        let (failure, empty) = *responses.lock();
+                        async move {
+                            if request.uri() == CAPABILITY_CATALOG_URL {
+                                return json_response(404, serde_json::json!({}));
+                            }
+                            let application = request
+                                .uri()
+                                .query()
+                                .is_some_and(|query| query.contains("APPLICATION"));
+                            if failure && request.uri().to_string().contains(failed_call) {
+                                return json_response(
+                                    403,
+                                    serde_json::json!({"__type":"AccessDeniedException", "message":"test denial"}),
+                                );
+                            }
+                            let response = if request.uri().path() == "/foundation-models" {
+                                listing_response(&request, &["vendor.chat", "vendor.second"])
+                            } else if empty {
+                                listing_response(&request, &[])
+                            } else if application {
+                                serde_json::json!({"inferenceProfileSummaries": [{
+                                    "inferenceProfileId": "account-chat",
+                                    "inferenceProfileArn": app_arn,
+                                    "inferenceProfileName": "App",
+                                    "status": "ACTIVE", "type": "APPLICATION",
+                                    "models": [{"modelArn": "arn:aws:bedrock:us-east-1::foundation-model/vendor.chat"}]
+                                }]})
+                            } else if request
+                                .uri()
+                                .query()
+                                .is_some_and(|query| query.contains("nextToken"))
+                            {
+                                listing_response(&request, &["vendor.second"])
+                            } else {
+                                let mut body = listing_response(&request, &["vendor.chat"]);
+                                body["nextToken"] = "page-two".into();
+                                body
+                            };
+                            json_response(200, response)
+                        }
+                    }
+                });
+                let provider = cx.update(|cx| new_test_provider(client, cx));
+                provider
+                    .state
+                    .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+                finish_listing(&provider, cx).await?;
+                assert_eq!(
+                    offered_ids(&provider, cx),
+                    [app_arn, "vendor.chat", "vendor.second"]
+                );
+
+                *responses.lock() = (true, true);
+                cx.update(|cx| provider.refresh_models(cx));
+                finish_listing(&provider, cx).await?;
+                assert_eq!(
+                    offered_ids(&provider, cx),
+                    [app_arn, "vendor.chat", "vendor.second"]
+                );
+                let (message, warning) = provider
+                    .state
+                    .read_with(cx, |state, _| {
+                        assert!(state.listing.catalog().is_some());
+                        state.listing_message()
+                    })
+                    .context("refresh warning")?;
+                assert!(warning);
+                assert!(
+                    message.contains(&format!("bedrock:{operation}"))
+                        && message.contains("test denial")
+                );
+
+                *responses.lock() = (false, true);
+                cx.update(|cx| provider.refresh_models(cx));
+                finish_listing(&provider, cx).await?;
+                assert!(offered_ids(&provider, cx).is_empty());
+            }
+            anyhow::Ok(())
+        };
+        scenario.await.expect("complete profile lists");
+    }
+
+    #[gpui::test]
+    async fn required_listing_failure_uses_public_models_only_after_the_failure(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            let deny = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            let client = http_client::FakeHttpClient::create({
+                let deny = deny.clone();
+                move |request| {
+                    let deny = deny.load(std::sync::atomic::Ordering::SeqCst);
+                    async move {
+                        if request.uri() == CAPABILITY_CATALOG_URL {
+                            return json_response(404, serde_json::json!({}));
+                        }
+                        if request.uri().path() == "/foundation-models" && deny {
+                            json_response(
+                                403,
+                                serde_json::json!({"__type": "AccessDeniedException", "message": "required listing test error"}),
+                            )
+                        } else {
+                            json_response(200, listing_response(&request, &["vendor.listed"]))
+                        }
+                    }
+                }
+            });
+            let provider = Arc::new(cx.update(|cx| new_test_provider(client, cx)));
+            provider.state.update(cx, |state, _| {
+                state.capability_catalog = capability_catalog(serde_json::json!({
+                    "us.vendor.public": capability_entry("Public", serde_json::json!({})),
+                }));
+            });
+            assert!(
+                offered_ids(&provider, cx).is_empty(),
+                "public cache is not offered before authentication"
+            );
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            assert!(offered_ids(&provider, cx).is_empty());
+            finish_listing(&provider, cx).await?;
+            assert_eq!(offered_ids(&provider, cx), ["vendor.public"]);
+            provider.state.read_with(cx, |state, _| {
+                let (message, warning) = state.listing_message().expect("public list message");
+                assert!(
+                    message.contains("ListFoundationModels")
+                        && message.contains("required listing test error")
+                );
+                assert!(warning && state.listing.uses_public_catalog());
+            });
+            deny.store(false, std::sync::atomic::Ordering::SeqCst);
+            cx.update(|cx| provider.refresh_models(cx));
+            assert_eq!(offered_ids(&provider, cx), ["vendor.public"]);
+            finish_listing(&provider, cx).await?;
+            let current = cx
+                .update(|cx| provider.provided_models(cx))
+                .pop()
+                .context("account model")?;
+            assert_eq!(current.id.0.as_ref(), "vendor.listed");
+            assert_eq!(offered_ids(&provider, cx), ["vendor.listed"]);
+            cx.update(|cx| provider.config(&current, cx))?;
+            deny.store(true, std::sync::atomic::Ordering::SeqCst);
+            set_bedrock_settings(cx, serde_json::json!({"region": "eu-west-1"}))?;
+            cx.run_until_parked();
+            finish_listing(&provider, cx).await?;
+            assert!(offered_ids(&provider, cx).is_empty());
+            provider.state.read_with(cx, |state, _| {
+                assert!(state.listing.uses_public_catalog());
+                let (message, warning) = state.listing_message().expect("public list message");
+                assert!(warning && message.contains("required listing test error"));
+            });
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("required listing failure scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn first_listing_does_not_offer_a_provisional_default(cx: &mut gpui::TestAppContext) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"available_models": [{"name": "anthropic.claude-haiku-98", "max_tokens": 10000}]}),
+            )?;
+            let (release, response) = futures::channel::oneshot::channel::<()>();
+            let response = response
+                .map(|result| result.expect("test releases listing"))
+                .boxed()
+                .shared();
+            let (started, mut requests) = futures::channel::mpsc::unbounded();
+            let client = http_client::FakeHttpClient::create(move |request| {
+                let response = response.clone();
+                let started = started.clone();
+                async move {
+                    if request.uri() == CAPABILITY_CATALOG_URL {
+                        return json_response(404, serde_json::json!({}));
+                    }
+                    started.unbounded_send(()).context("notify listing start")?;
+                    response.await;
+                    json_response(
+                        200,
+                        listing_response(&request, &["anthropic.claude-sonnet-42"]),
+                    )
+                }
+            });
+            let provider = Arc::new(cx.update(|cx| new_test_provider(client, cx)));
+            provider.state.update(cx, |state, cx| {
+            state.capability_catalog = capability_catalog(serde_json::json!({
+                "us.anthropic.claude-sonnet-99": capability_entry("Provisional", serde_json::json!({})),
+            }));
+            state.change_auth(api_key_auth(), false, cx);
         });
+            requests.next().await.context("listing started")?;
+            assert_eq!(offered_ids(&provider, cx), ["anthropic.claude-haiku-98"]);
+            assert!(cx.update(|cx| provider.default_model(cx)).is_none());
+            assert!(cx.update(|cx| provider.default_fast_model(cx)).is_none());
+            release
+                .send(())
+                .map_err(|_| anyhow!("listing receiver dropped"))?;
+            finish_listing(&provider, cx).await?;
+            cx.update(|cx| {
+                assert_eq!(
+                    provider
+                        .default_model(cx)
+                        .map(|model| model.id.0.to_string()),
+                    Some("anthropic.claude-sonnet-42".into())
+                );
+            });
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("initial default scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn listing_deadline_covers_all_calls_and_pages(cx: &mut gpui::TestAppContext) {
+        let scenario = async {
+            init_provider_test(cx);
+            for (application_timeout, foundation_timeout) in
+                [(false, false), (true, false), (false, true)]
+            {
+                let (release_first_page, first_page) = futures::channel::oneshot::channel::<()>();
+                let first_page = first_page
+                    .map(|result| result.expect("release first page"))
+                    .boxed()
+                    .shared();
+                let (entered, mut requests) = futures::channel::mpsc::unbounded();
+                let client = http_client::FakeHttpClient::create(move |request| {
+                    let first_page = first_page.clone();
+                    let entered = entered.clone();
+                    async move {
+                        if request.uri() == CAPABILITY_CATALOG_URL {
+                            return json_response(404, serde_json::json!({}));
+                        }
+                        let application = request
+                            .uri()
+                            .query()
+                            .is_some_and(|query| query.contains("APPLICATION"));
+                        let system = request
+                            .uri()
+                            .query()
+                            .is_some_and(|query| query.contains("SYSTEM_DEFINED"));
+                        if foundation_timeout && request.uri().path() == "/foundation-models" {
+                            entered
+                                .unbounded_send("foundation")
+                                .context("foundation started")?;
+                            return futures::future::pending().await;
+                        }
+                        if application_timeout && application {
+                            entered
+                                .unbounded_send("application")
+                                .context("application started")?;
+                            return futures::future::pending().await;
+                        }
+                        if !application_timeout && !foundation_timeout && system {
+                            if request
+                                .uri()
+                                .query()
+                                .is_some_and(|query| query.contains("nextToken"))
+                            {
+                                entered
+                                    .unbounded_send("second")
+                                    .context("second page started")?;
+                                return futures::future::pending().await;
+                            }
+                            entered
+                                .unbounded_send("first")
+                                .context("first page started")?;
+                            first_page.await;
+                            let mut body = listing_response(&request, &["vendor.chat"]);
+                            body["nextToken"] = "page-two".into();
+                            return json_response(200, body);
+                        }
+                        json_response(200, listing_response(&request, &["vendor.chat"]))
+                    }
+                });
+                let client = Tokio::spawn_result(&cx.to_async(), async move {
+                    Ok(build_control_plane_client(
+                        AwsHttpClient::new(client),
+                        BedrockRequestAuth::ApiKey {
+                            api_key: "test-key".into(),
+                        },
+                        None,
+                        "us-east-1".into(),
+                    )
+                    .await)
+                })
+                .await?;
+                // The fake transport needs no Tokio I/O. Keep the paginator
+                // and deadline on the executor that the test clock drives.
+                let deadline = cx.background_executor.timer(LIST_MODELS_TIMEOUT);
+                let runtime = cx.update(|cx| Tokio::handle(cx));
+                let listing = cx.background_executor.spawn(async move {
+                    let mut listing = Box::pin(bedrock::list_models(&client, deadline));
+                    futures::future::poll_fn(move |task_context| {
+                        // Smithy's identity cache creates a Tokio timeout even
+                        // for the static token, which resolves in this poll.
+                        let _entered = runtime.enter();
+                        listing.as_mut().poll(task_context)
+                    })
+                    .await
+                });
+                let first = requests.next().await.context("listing started")?;
+                if foundation_timeout || application_timeout {
+                    assert_eq!(
+                        first,
+                        if foundation_timeout {
+                            "foundation"
+                        } else {
+                            "application"
+                        }
+                    );
+                    cx.run_until_parked();
+                    cx.executor().advance_clock(LIST_MODELS_TIMEOUT);
+                    // This sender is unused in this scenario; its receiver is never polled.
+                    drop(release_first_page);
+                } else {
+                    assert_eq!(first, "first");
+                    cx.executor().advance_clock(Duration::from_secs(20));
+                    release_first_page
+                        .send(())
+                        .map_err(|_| anyhow!("first page receiver dropped"))?;
+                    assert_eq!(
+                        requests.next().await.context("second page started")?,
+                        "second"
+                    );
+                    cx.executor().advance_clock(Duration::from_secs(10));
+                }
+                cx.run_until_parked();
+                let error = listing
+                    .now_or_never()
+                    .context("listing must complete at the shared deadline")?
+                    .expect_err("any deadline must fail the listing");
+                assert!(error.to_string().contains("listing deadline"));
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("listing deadline scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn signed_out_settings_models_do_not_resolve_credentials_or_send_requests(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({
+                    "available_models": [{"name":"vendor.chat", "max_tokens":10000}],
+                    "mantle_available_models": [{"name":"vendor.mantle", "max_tokens":10000, "protocol":"chat_completions"}]
+                }),
+            )?;
+            let provider = cx.update(|cx| {
+                new_test_provider(
+                    http_client::FakeHttpClient::create(|_| async {
+                        panic!("signed-out request reached HTTP")
+                    }),
+                    cx,
+                )
+            });
+            provider
+                .state
+                .update(cx, |state, _| state.set_auth(api_key_auth()));
+            let retained = cx.update(|cx| provider.provided_models(cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.reset_auth(cx))
+                .await?;
+            assert_eq!(retained.len(), 2);
+            for model in retained {
+                let error = provider
+                    .stream_completion(
+                        &model,
+                        LanguageModelRequest {
+                            messages: vec![user_message("hello")],
+                            ..Default::default()
+                        },
+                        &cx.to_async(),
+                    )
+                    .await
+                    .err()
+                    .context("signed out")?;
+                assert!(error.to_string().contains("not authenticated"), "{error}");
+            }
+            let result = provider
+                .resolve_request_auth_with(
+                    &cx.to_async(),
+                    |_| panic!("read environment"),
+                    |_, _| async { panic!("loaded AWS credentials") },
+                )
+                .await;
+            assert!(result.is_err());
+            anyhow::Ok(())
+        };
+        scenario.await.expect("signed-out settings models");
+    }
+
+    #[gpui::test]
+    async fn credential_operations_follow_submission_order(cx: &mut gpui::TestAppContext) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url":"https://gateway.test"}),
+            )?;
+            let store =
+                Arc::new(credentials_provider::test_support::FakeCredentialsProvider::default());
+            let provider = cx.update(|cx| new_test_provider_with_credentials(store.clone(), cx));
+            let credential = |key: &str| BedrockCredentials {
+                bearer_token: Some(key.into()),
+                ..Default::default()
+            };
+            let blocked = store.defer_next_mutation();
+            let first = provider.state.update(cx, |state, cx| {
+                state.set_static_credentials(credential("first"), cx)
+            });
+            cx.run_until_parked();
+            let second = provider.state.update(cx, |state, cx| {
+                state.set_static_credentials(credential("second"), cx)
+            });
+            cx.run_until_parked();
+            assert!(store.state.lock().keys.is_empty());
+            blocked
+                .send(())
+                .map_err(|_| anyhow!("first save dropped"))?;
+            second.await?;
+            first.await?;
+            assert_eq!(
+                store.state.lock().keys.get(AMAZON_AWS_URL),
+                Some(&serde_json::to_vec(&credential("second"))?)
+            );
+            let blocked = store.defer_next_mutation();
+            let delete = provider.state.update(cx, |state, cx| state.reset_auth(cx));
+            cx.run_until_parked();
+            let read = cx.update(|cx| provider.authenticate(cx));
+            cx.run_until_parked();
+            store.assert_reads(&[]);
+            blocked.send(()).map_err(|_| anyhow!("delete dropped"))?;
+            delete.await?;
+            assert!(matches!(
+                read.await,
+                Err(AuthenticateError::CredentialsNotFound)
+            ));
+            assert!(!cx.update(|cx| provider.is_authenticated(cx)));
+            store.assert_reads(&[AMAZON_AWS_URL]);
+
+            store.state.lock().keys.insert(
+                AMAZON_AWS_URL.into(),
+                serde_json::to_vec(&credential("next"))?,
+            );
+            let blocked = store.defer_read(AMAZON_AWS_URL);
+            let read = cx.update(|cx| provider.authenticate(cx));
+            cx.run_until_parked();
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url":"https://next.test", "region":"eu-west-1"}),
+            )?;
+            cx.run_until_parked();
+            blocked.send(()).map_err(|_| anyhow!("read dropped"))?;
+            read.await?;
+            provider.state.read_with(cx, |state, _| {
+                assert_eq!(state.auth, credential("next").into_auth());
+            });
+            let failed_delete = store.defer_next_mutation();
+            let delete = provider.state.update(cx, |state, cx| state.reset_auth(cx));
+            drop(failed_delete);
+            let error = delete.await.expect_err("fake deletion failed");
+            provider.state.read_with(cx, |state, _| {
+                assert!(
+                    state
+                        .credential_delete_error
+                        .as_deref()
+                        .is_some_and(|message| message.contains(&error.to_string()))
+                );
+                assert!(!state.is_authenticated());
+            });
+            anyhow::Ok(())
+        }
+        .await;
+        scenario.expect("ordered credential operations");
+    }
+
+    #[gpui::test]
+    async fn pending_credential_reads_cannot_overwrite_new_auth_or_a_reset(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url": "https://gateway.example.com"}),
+            )?;
+            for reset in [false, true] {
+                let credentials = Arc::new(
+                    credentials_provider::test_support::FakeCredentialsProvider::default(),
+                );
+                let encoded = |key: &str| {
+                    serde_json::to_vec(&BedrockCredentials {
+                        bearer_token: Some(key.into()),
+                        ..Default::default()
+                    })
+                };
+                credentials
+                    .state
+                    .lock()
+                    .keys
+                    .insert(AMAZON_AWS_URL.into(), encoded("old")?);
+                let release = credentials.defer_read(AMAZON_AWS_URL);
+                let provider =
+                    cx.update(|cx| new_test_provider_with_credentials(credentials.clone(), cx));
+                let pending = cx.update(|cx| provider.authenticate(cx));
+                cx.run_until_parked();
+                credentials.assert_reads(&[AMAZON_AWS_URL]);
+                if reset {
+                    let release_delete = credentials.defer_next_mutation();
+                    let deletion = provider.state.update(cx, |state, cx| state.reset_auth(cx));
+                    cx.run_until_parked();
+                    release
+                        .send(())
+                        .map_err(|_| anyhow!("credential receiver dropped"))?;
+                    pending.await?;
+                    assert!(!cx.update(|cx| provider.is_authenticated(cx)));
+                    release_delete
+                        .send(())
+                        .map_err(|_| anyhow!("delete receiver dropped"))?;
+                    deletion.await?;
+                } else {
+                    credentials
+                        .state
+                        .lock()
+                        .keys
+                        .insert(AMAZON_AWS_URL.into(), encoded("new")?);
+                    let next = cx.update(|cx| provider.authenticate(cx));
+                    release
+                        .send(())
+                        .map_err(|_| anyhow!("credential receiver dropped"))?;
+                    pending.await?;
+                    next.await?;
+                    provider.state.read_with(cx, |state, _| {
+                    assert!(matches!(&state.auth, Some(BedrockAuth::ApiKey { api_key }) if api_key == "new"));
+                });
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("credential read scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn live_authentication_settings_replace_auth_and_invalidate_cached_credentials(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url": "https://gateway.example.com"}),
+            )?;
+            let provider = cx.update(|cx| {
+                new_test_provider(http_client::FakeHttpClient::with_404_response(), cx)
+            });
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            for (method, profile, expected) in [
+                (
+                    "named_profile",
+                    "one",
+                    BedrockAuth::NamedProfile {
+                        profile_name: "one".into(),
+                    },
+                ),
+                (
+                    "named_profile",
+                    "two",
+                    BedrockAuth::NamedProfile {
+                        profile_name: "two".into(),
+                    },
+                ),
+                (
+                    "sso",
+                    "three",
+                    BedrockAuth::SingleSignOn {
+                        profile_name: "three".into(),
+                    },
+                ),
+                ("default", "four", BedrockAuth::Automatic),
+            ] {
+                provider.state.update(cx, |state, _| {
+                    state.expiring_credentials = Some(ExpiringCredentials {
+                        auth: state.auth.clone(),
+                        region: state.get_region(),
+                        credentials: Credentials::new(
+                            "cached",
+                            "secret",
+                            None,
+                            Some(SystemTime::now() + Duration::from_secs(3600)),
+                            "test",
+                        ),
+                    });
+                });
+                set_bedrock_settings(
+                    cx,
+                    serde_json::json!({
+                        "endpoint_url": "https://gateway.example.com", "authentication_method": method, "profile": profile,
+                    }),
+                )?;
+                cx.run_until_parked();
+                provider.state.read_with(cx, |state, _| {
+                    assert_eq!(state.auth.as_ref(), Some(&expected));
+                    assert!(state.expiring_credentials.is_none());
+                });
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        scenario
+            .await
+            .expect("authentication settings scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn manual_catalog_refresh_recovers_immediately_and_keeps_one_loop(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({"endpoint_url": "https://gateway.example.com"}),
+            )?;
+            let count = Arc::new(parking_lot::Mutex::new(0));
+            let client = http_client::FakeHttpClient::create({
+                let count = count.clone();
+                move |request| {
+                    assert_eq!(request.uri(), CAPABILITY_CATALOG_URL);
+                    let status = {
+                        let mut count = count.lock();
+                        *count += 1;
+                        if *count == 1 { 404 } else { 200 }
+                    };
+                    async move {
+                        json_response(
+                            status,
+                            serde_json::json!({"amazon-bedrock": {"models": {
+                                "us.vendor.chat": capability_entry("Chat", serde_json::json!({})),
+                            }}}),
+                        )
+                    }
+                }
+            });
+            let provider = cx.update(|cx| new_test_provider(client, cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            cx.run_until_parked();
+            assert_eq!(*count.lock(), 1);
+            assert!(offered_ids(&provider, cx).is_empty());
+            cx.update(|cx| {
+                provider.refresh_models(cx);
+                provider.refresh_models(cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(*count.lock(), 2);
+            assert_eq!(offered_ids(&provider, cx), ["vendor.chat"]);
+            cx.executor()
+                .advance_clock(model_catalog_cache::REFRESH_INTERVAL);
+            cx.run_until_parked();
+            assert_eq!(*count.lock(), 3, "one hourly refresh loop");
+            provider
+                .state
+                .update(cx, |state, cx| state.reset_auth(cx))
+                .await?;
+            cx.executor()
+                .advance_clock(model_catalog_cache::REFRESH_INTERVAL * 2);
+            cx.run_until_parked();
+            assert_eq!(
+                *count.lock(),
+                3,
+                "signed out providers do not refresh catalogs"
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await
+        .expect("manual refresh scenario should complete");
+    }
+
+    #[gpui::test]
+    async fn signing_out_cancels_pending_listing_and_catalog_fetch(cx: &mut gpui::TestAppContext) {
+        async {
+            init_provider_test(cx);
+            let (release, response) = futures::channel::oneshot::channel::<()>();
+            let response = response
+                .map(|result| result.expect("release responses"))
+                .boxed()
+                .shared();
+            let (entered, mut requests) = futures::channel::mpsc::unbounded();
+            let count = Arc::new(parking_lot::Mutex::new(0));
+            let client = http_client::FakeHttpClient::create({
+                let response = response.clone();
+                let count = count.clone();
+                move |request| {
+                    let response = response.clone();
+                    let entered = entered.clone();
+                    *count.lock() += 1;
+                    async move {
+                        entered.unbounded_send(()).context("request entered")?;
+                        response.await;
+                        let body = if request.uri() == CAPABILITY_CATALOG_URL {
+                            serde_json::json!({"amazon-bedrock": {"models": {
+                                "us.vendor.chat": capability_entry("Chat", serde_json::json!({})),
+                            }}})
+                        } else {
+                            listing_response(&request, &["vendor.chat"])
+                        };
+                        json_response(200, body)
+                    }
+                }
+            });
+            let fs = fs::FakeFs::new(cx.background_executor.clone());
+            let provider = cx.update(|cx| new_test_provider_with_fs(client, fs.clone(), cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            for _ in 0..4 {
+                requests.next().await.context("pending request")?;
+            }
+            provider
+                .state
+                .update(cx, |state, cx| state.reset_auth(cx))
+                .await?;
+            release
+                .send(())
+                .map_err(|_| anyhow!("response receiver dropped"))?;
+            cx.executor()
+                .advance_clock(model_catalog_cache::REFRESH_INTERVAL * 2);
+            cx.run_until_parked();
+            assert_eq!(*count.lock(), 4);
+            assert!(offered_ids(&provider, cx).is_empty());
+            provider.state.read_with(cx, |state, _| {
+                assert!(!state.is_authenticated());
+                assert!(state.capability_catalog.is_empty());
+            });
+            assert!(fs.metadata(Path::new(TEST_CACHE_PATH)).await?.is_none());
+            Ok::<_, anyhow::Error>(())
+        }
+        .await
+        .expect("sign-out cancellation scenario should complete");
+    }
+
+    #[gpui::test]
+    fn listed_models_are_offered_and_refined_by_settings(cx: &mut gpui::TestAppContext) {
+        init_provider_settings(
+            cx,
+            serde_json::json!({
+                "allow_global": true,
+                "available_models": [{"name": "us.anthropic.claude-sonnet-9", "max_tokens": 500000}],
+            }),
+        );
+        let provider =
+            cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
+        let offered_ids = |cx: &mut gpui::TestAppContext| {
+            cx.update(|cx| provider.provided_models(cx))
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(offered_ids(cx), ["us.anthropic.claude-sonnet-9"]);
+        assert_eq!(
+            cx.update(|cx| provider.default_model(cx))
+                .map(|model| model.id.0.to_string()),
+            Some("us.anthropic.claude-sonnet-9".to_string())
+        );
+
+        let model_catalog = ModelCatalog::new(
+            &[
+                listed_inference_profile(
+                    "us.anthropic.claude-sonnet-9",
+                    "anthropic.claude-sonnet-9",
+                ),
+                listed_inference_profile(
+                    "global.anthropic.claude-sonnet-9",
+                    "anthropic.claude-sonnet-9",
+                ),
+                listed_inference_profile(
+                    "us.anthropic.claude-sonnet-8",
+                    "anthropic.claude-sonnet-8",
+                ),
+                listed_inference_profile("us.anthropic.claude-haiku-9", "anthropic.claude-haiku-9"),
+            ],
+            &[
+                listed_foundation_model("anthropic.claude-sonnet-9"),
+                listed_foundation_model("anthropic.claude-sonnet-8"),
+                listed_foundation_model("anthropic.claude-haiku-9"),
+            ],
+        );
+        provider.state.update(cx, |state, cx| {
+            state.listing = ModelListing::Listed(model_catalog);
+            state.capability_catalog = capability_catalog(serde_json::json!({
+                "global.anthropic.claude-sonnet-9":
+                    capability_entry("Sonnet 9 (Global)", always_reasoning_members()),
+            }));
+            cx.notify();
+        });
+
+        assert_eq!(
+            offered_ids(cx),
+            [
+                "anthropic.claude-haiku-9",
+                "anthropic.claude-sonnet-8",
+                "anthropic.claude-sonnet-9",
+                "us.anthropic.claude-sonnet-9",
+            ]
+        );
+        let default_model = cx
+            .update(|cx| provider.default_model(cx))
+            .expect("a listed Sonnet model should be the default");
+        assert_eq!(default_model.id.0.as_ref(), "anthropic.claude-sonnet-9");
+        assert_eq!(default_model.max_token_count(), 700_000);
+        assert!(default_model.supports_thinking);
+        assert!(!default_model.supports_disabling_thinking);
+        let default_fast_model = cx
+            .update(|cx| provider.default_fast_model(cx))
+            .expect("a listed Haiku model should be the fast default");
+        assert_eq!(default_fast_model.id.0.as_ref(), "anthropic.claude-haiku-9");
+        assert!(
+            !default_fast_model.supports_thinking,
+            "a model the capability catalog does not know has no reasoning controls"
+        );
+
+        let converse_config = |model: &LanguageModel, cx: &mut gpui::TestAppContext| match cx
+            .update(|cx| provider.config(model, cx))
+            .expect("the offered model should resolve")
+        {
+            BedrockModelConfig::Converse(model) => model,
+            BedrockModelConfig::Mantle(_) => panic!("expected a converse model"),
+        };
+        assert_eq!(
+            converse_config(&default_model, cx).request_id,
+            "global.anthropic.claude-sonnet-9",
+            "`allow_global` routes a listed model through its global profile"
+        );
+
+        let configured = cx
+            .update(|cx| provider.provided_models(cx))
+            .into_iter()
+            .find(|model| model.id.0.as_ref() == "us.anthropic.claude-sonnet-9")
+            .expect("the settings entry should be offered");
+        assert_eq!(configured.max_token_count(), 500_000);
+        assert_eq!(
+            configured.name.0.as_ref(),
+            "Name of anthropic.claude-sonnet-9"
+        );
+        assert!(
+            configured.supports_thinking,
+            "a settings entry takes what it leaves unsaid from the listed model"
+        );
+        let configured = converse_config(&configured, cx);
+        assert_eq!(
+            configured.request_id, "us.anthropic.claude-sonnet-9",
+            "a settings entry is always invoked by its own name"
+        );
+        assert_eq!(configured.base_model_id, "anthropic.claude-sonnet-9");
+        assert_eq!(configured.max_output_tokens, Some(64_000));
+    }
+
+    #[gpui::test]
+    async fn capability_catalog_is_fetched_cached_and_refreshed(cx: &mut gpui::TestAppContext) {
+        init_provider_settings(
+            cx,
+            serde_json::json!({"endpoint_url": "https://gateway.example.com/bedrock"}),
+        );
+        let catalog_json = capability_catalog_json(serde_json::json!({
+            "us.vendor.chat": capability_entry("Chat (US)", serde_json::json!({})),
+        }));
+        let request_count = Arc::new(parking_lot::Mutex::new(0));
+        let http_client = http_client::FakeHttpClient::create({
+            let request_count = request_count.clone();
+            let catalog_json = catalog_json.clone();
+            let executor = cx.background_executor.clone();
+            move |request| {
+                // This ready response is decoded in the same refresh job, before its next await.
+                assert!(
+                    !executor.is_main_thread(),
+                    "catalog fetch/decode job ran on the UI executor"
+                );
+                let is_catalog_request = request.uri() == CAPABILITY_CATALOG_URL;
+                let mut count = request_count.lock();
+                *count += 1;
+                let catalog_json = if *count == 1 {
+                    catalog_json.clone()
+                } else {
+                    capability_catalog_json(serde_json::json!({}))
+                };
+                async move {
+                    let (status, body) = if is_catalog_request {
+                        (200, catalog_json)
+                    } else {
+                        (404, String::new())
+                    };
+                    Ok(http_client::Response::builder()
+                        .status(status)
+                        .body(AsyncBody::from(body))?)
+                }
+            }
+        });
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let provider =
+            cx.update(|cx| new_test_provider_with_fs(http_client.clone(), fs.clone(), cx));
+        let has_catalog = |provider: &BedrockLanguageModelProvider,
+                           cx: &mut gpui::TestAppContext| {
+            provider
+                .state
+                .read_with(cx, |state, _| !state.capability_catalog.is_empty())
+        };
+
+        assert!(
+            !has_catalog(&provider, cx),
+            "nothing is fetched before authentication"
+        );
+        cx.run_until_parked();
+        assert_eq!(*request_count.lock(), 0);
+
+        provider
+            .state
+            .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+        cx.run_until_parked();
+        assert!(has_catalog(&provider, cx));
+        assert_eq!(*request_count.lock(), 1);
+        provider.state.read_with(cx, |state, _| {
+            assert_eq!(state.last_capability_catalog_error, None)
+        });
+        let cached = fs
+            .load(Path::new(TEST_CACHE_PATH))
+            .await
+            .expect("the catalog should be cached");
+        assert!(cached.contains("amazon-bedrock") && !cached.contains("another-provider"));
+
+        cx.executor()
+            .advance_clock(model_catalog_cache::REFRESH_INTERVAL);
+        cx.run_until_parked();
+        assert_eq!(*request_count.lock(), 2);
+        provider.state.read_with(cx, |state, _| {
+            assert!(
+                state
+                    .last_capability_catalog_error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("no usable models"))
+            );
+            assert!(
+                state
+                    .capability_catalog
+                    .model_for_request_id("us.vendor.chat")
+                    .is_some()
+            );
+        });
+        assert_eq!(
+            fs.load(Path::new(TEST_CACHE_PATH))
+                .await
+                .expect("last good catalog"),
+            cached
+        );
+
+        // A second provider starts from the last good copy on disk.
+        fs.set_next_mtime(SystemTime::now() - Duration::from_secs(10 * 60));
+        fs.atomic_write(PathBuf::from(TEST_CACHE_PATH), cached)
+            .await
+            .expect("make cache stale");
+        let failed_requests = Arc::new(parking_lot::Mutex::new(0));
+        let failing_http_client = http_client::FakeHttpClient::create({
+            let failed_requests = failed_requests.clone();
+            move |request| {
+                assert_eq!(request.uri(), CAPABILITY_CATALOG_URL);
+                *failed_requests.lock() += 1;
+                async { json_response(404, serde_json::json!({})) }
+            }
+        });
+        let cached_provider =
+            cx.update(|cx| new_test_provider_with_fs(failing_http_client, fs.clone(), cx));
+        cached_provider
+            .state
+            .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+        // The initial disk read is queued on GPUI's executor. Refresh before it
+        // can populate memory, as registry initialization can do on startup.
+        cx.update(|cx| cached_provider.refresh_models(cx));
+        cx.run_until_parked();
+        assert!(has_catalog(&cached_provider, cx));
+        assert_eq!(*failed_requests.lock(), 1);
+        assert_eq!(offered_ids(&cached_provider, cx), ["vendor.chat"]);
+        cached_provider.state.read_with(cx, |state, _| {
+            assert!(
+                state
+                    .last_capability_catalog_error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("404"))
+            );
+        });
+    }
+
+    fn settings_entry(
+        name: &str,
+        thinking: Option<settings::BedrockThinkingSettings>,
+    ) -> AvailableModel {
+        AvailableModel {
+            name: name.to_string(),
+            display_name: None,
+            max_tokens: 1_000_000,
+            cache_configuration: None,
+            max_output_tokens: None,
+            default_temperature: Some(0.5),
+            supports_tools: None,
+            supports_images: None,
+            thinking,
+        }
+    }
+
+    fn adaptive_thinking_settings() -> Option<settings::BedrockThinkingSettings> {
+        Some(settings::BedrockThinkingSettings::Config(
+            settings::BedrockThinkingConfigSettings {
+                adaptive: Some(true),
+                has_xhigh: None,
+                budget_tokens: None,
+            },
+        ))
+    }
+
+    #[test]
+    fn unknown_settings_entry_has_only_the_capabilities_it_states() -> Result<()> {
+        let capability_catalog = CapabilityCatalog::default();
+        let unstated = converse_model_from_settings(
+            &settings_entry("us.vendor.chat", None),
+            None,
+            &capability_catalog,
+        );
+        assert_eq!(unstated.base_model_id, "vendor.chat");
+        assert_eq!(unstated.thinking, None);
+        assert!(unstated.supports_temperature);
+        assert_eq!(unstated.default_temperature, Some(0.5));
+        assert_eq!(unstated.max_output_tokens, Some(4_096));
+        assert!(!unstated.supports_tool_use && !unstated.supports_images);
+        assert!(!unstated.supports_caching);
+
+        let without_temperature = converse_model_from_settings(
+            &AvailableModel {
+                default_temperature: None,
+                ..settings_entry("vendor.chat", None)
+            },
+            None,
+            &capability_catalog,
+        );
+        assert!(!without_temperature.supports_temperature);
+
+        let stated = converse_model_from_settings(
+            &AvailableModel {
+                supports_tools: Some(true),
+                max_output_tokens: Some(32_000),
+                ..settings_entry("us.vendor.chat", adaptive_thinking_settings())
+            },
+            None,
+            &capability_catalog,
+        );
+        assert_eq!(
+            stated.thinking,
+            Some(ConverseThinking::adaptive(false, false))
+        );
+        assert_eq!(stated.max_output_tokens, Some(32_000));
+        assert!(stated.supports_tool_use);
+
+        use bedrock::Thinking;
+        for (setting, expected) in [
+            (
+                serde_json::json!(true),
+                Some(Thinking::Enabled {
+                    budget_tokens: Some(4096),
+                }),
+            ),
+            (serde_json::json!(false), None),
+            (
+                serde_json::json!({"budget_tokens": 10000}),
+                Some(Thinking::Enabled {
+                    budget_tokens: Some(10000),
+                }),
+            ),
+            (
+                serde_json::json!({"adaptive": true, "has_xhigh": true}),
+                Some(Thinking::Adaptive {
+                    effort: BedrockAdaptiveThinkingEffort::XHigh,
+                    binding_controls_beta: None,
+                }),
+            ),
+        ] {
+            let model = converse_model_from_settings(
+                &AvailableModel {
+                    max_output_tokens: Some(32_000),
+                    ..settings_entry("vendor.manual", Some(serde_json::from_value(setting)?))
+                },
+                None,
+                &capability_catalog,
+            );
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    thinking_allowed: true,
+                    thinking_effort: Some("xhigh".into()),
+                    ..Default::default()
+                },
+                &model,
+                None,
+                None,
+            )?;
+            assert_request_thinking(&request, expected.as_ref());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn known_settings_entry_takes_what_it_leaves_unsaid_from_the_catalog() {
+        let capability_catalog = capability_catalog(serde_json::json!({
+            "us.vendor.chat": capability_entry("Chat (US)", serde_json::json!({
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+            })),
+        }));
+        let model = converse_model_from_settings(
+            &settings_entry("vendor.chat", None),
+            None,
+            &capability_catalog,
+        );
+
+        assert_eq!(model.request_id, "vendor.chat");
+        assert_eq!(model.display_name, "Chat (US)");
+        assert_eq!(
+            model.max_tokens, 1_000_000,
+            "the entry states its context window"
+        );
+        assert_eq!(model.max_output_tokens, Some(64_000));
+        assert!(model.supports_tool_use && model.supports_images);
+    }
+
+    #[gpui::test]
+    fn mantle_model_replaces_converse_model_with_the_same_id(cx: &mut gpui::TestAppContext) {
+        init_provider_settings(
+            cx,
+            serde_json::json!({
+                "available_models": [{"name": "shared-model", "display_name": "Converse Shared", "max_tokens": 1000}],
+                "mantle_available_models": [{"name": "shared-model", "display_name": "Mantle Shared", "max_tokens": 2000, "protocol": "chat_completions"}],
+            }),
+        );
+        let provider =
+            cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
 
         let shared = cx
             .update(|cx| provider.provided_models(cx))
@@ -3215,40 +6264,18 @@ mod tests {
 
     #[gpui::test]
     fn custom_converse_model_capabilities_come_from_settings(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            gpui_tokio::init(cx);
-            let content = serde_json::json!({
-                "language_models": {
-                    "bedrock": {
-                        "available_models": [{
-                            "name": "us.anthropic.claude-custom-v1:0",
-                            "display_name": "Custom Claude",
-                            "max_tokens": 200000,
-                            "supports_tools": true,
-                            "supports_images": true,
-                            "thinking": {
-                                "budget_tokens": 8192
-                            }
-                        }],
-                    }
-                }
-            })
-            .to_string();
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store
-                    .set_user_settings(&content, cx)
-                    .expect("test settings should parse");
-            });
-        });
-        let provider = cx.update(|cx| {
-            BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
-                Arc::new(NoCredentialsProvider),
-                cx,
-            )
-        });
+        init_provider_settings(
+            cx,
+            serde_json::json!({
+                "available_models": [{
+                    "name": "us.anthropic.claude-custom-v1:0", "display_name": "Custom Claude",
+                    "max_tokens": 200000, "supports_tools": true, "supports_images": true,
+                    "thinking": {"budget_tokens": 8192}
+                }],
+            }),
+        );
+        let provider =
+            cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
 
         let custom = cx
             .update(|cx| provider.provided_models(cx))
@@ -3264,48 +6291,17 @@ mod tests {
             .expect("the offered model should resolve");
         match config {
             BedrockModelConfig::Converse(model) => {
-                assert!(model.supports_tool_use());
-                assert!(model.supports_images());
-                assert!(model.supports_thinking());
+                assert!(model.supports_tool_use);
+                assert!(model.supports_images);
                 assert_eq!(
-                    model.thinking_mode(),
-                    BedrockModelMode::Thinking {
-                        budget_tokens: Some(8192)
-                    }
+                    model.thinking,
+                    Some(ConverseThinking::Budget {
+                        budget_tokens: 8192
+                    })
                 );
             }
             BedrockModelConfig::Mantle(_) => panic!("expected a converse model"),
         }
-    }
-
-    #[test]
-    fn thinking_settings_accept_bool_or_object() {
-        assert_eq!(
-            thinking_from_settings(Some(&settings::BedrockThinkingSettings::Enabled(true))),
-            Some(bedrock::BedrockThinkingConfig {
-                adaptive: false,
-                has_xhigh: false,
-                budget_tokens: None,
-            })
-        );
-        assert_eq!(
-            thinking_from_settings(Some(&settings::BedrockThinkingSettings::Enabled(false))),
-            None
-        );
-        assert_eq!(
-            thinking_from_settings(Some(&settings::BedrockThinkingSettings::Config(
-                settings::BedrockThinkingConfigSettings {
-                    adaptive: Some(true),
-                    has_xhigh: Some(true),
-                    budget_tokens: Some(10_000),
-                }
-            ))),
-            Some(bedrock::BedrockThinkingConfig {
-                adaptive: true,
-                has_xhigh: true,
-                budget_tokens: Some(10_000),
-            })
-        );
     }
 
     #[test]
@@ -3493,239 +6489,335 @@ mod tests {
         assert!(error.to_string().contains("timed out"), "{error}");
     }
 
+    fn assert_request_thinking(request: &bedrock::Request, expected: Option<&bedrock::Thinking>) {
+        use bedrock::Thinking;
+        let equal = match (&request.thinking, expected) {
+            (None, None) | (Some(Thinking::Disabled), Some(Thinking::Disabled)) => true,
+            (
+                Some(Thinking::Enabled {
+                    budget_tokens: actual,
+                }),
+                Some(Thinking::Enabled {
+                    budget_tokens: expected,
+                }),
+            ) => actual == expected,
+            (
+                Some(Thinking::Reasoning { effort: actual }),
+                Some(Thinking::Reasoning { effort: expected }),
+            ) => actual == expected,
+            (
+                Some(Thinking::Adaptive {
+                    effort: actual,
+                    binding_controls_beta: actual_beta,
+                }),
+                Some(Thinking::Adaptive {
+                    effort: expected,
+                    binding_controls_beta: expected_beta,
+                }),
+            ) => actual == expected && actual_beta == expected_beta,
+            _ => false,
+        };
+        assert!(
+            equal,
+            "{}: expected {expected:?}, got {:?}",
+            request.model, request.thinking
+        );
+    }
+
     #[test]
-    fn test_always_reasoning_model_defaults() -> Result<()> {
-        for (model, expected_thinking) in [
-            (
-                ConverseModel::Gpt6Astra,
-                serde_json::json!({"Reasoning": {"effort": "Medium"}}),
-            ),
-            (
-                ConverseModel::ClaudeFable5_1,
-                serde_json::json!({"Adaptive": {
-                    "effort": "High", "binding_controls_beta": "thinking-binding-controls-2026-08-01"
-                }}),
-            ),
-            (
-                ConverseModel::ClaudeOpus5_5,
-                serde_json::json!({"Adaptive": {
-                    "effort": "High", "binding_controls_beta": "thinking-binding-controls-2026-08-01"
-                }}),
-            ),
+    fn test_always_reasoning_models_keep_reasoning_when_thinking_is_disallowed() -> Result<()> {
+        for model in [
+            converse_model("openai.gpt-example", Some(reasoning())),
+            converse_model("anthropic.claude-example", Some(adaptive_thinking(true))),
+            converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true))),
         ] {
+            let expected_thinking = if is_openai_model(&model) {
+                bedrock::Thinking::Reasoning {
+                    effort: Some(BedrockAdaptiveThinkingEffort::Medium),
+                }
+            } else {
+                bedrock::Thinking::Adaptive {
+                    effort: BedrockAdaptiveThinkingEffort::High,
+                    binding_controls_beta: anthropic_model_id(&model)
+                        .filter(|id| anthropic::binds_thinking_blocks_to_prefix(id))
+                        .map(|_| anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string()),
+                }
+            };
             for thinking_allowed in [true, false] {
                 let request = into_bedrock(
                     LanguageModelRequest {
                         thinking_allowed,
                         ..Default::default()
                     },
-                    model.cross_region_inference_id("us-east-1", false)?,
-                    model.default_temperature(),
-                    model.max_output_tokens(),
-                    model.thinking_mode(),
-                    model.supports_caching(),
-                    model.supports_tool_use(),
+                    &model,
                     None,
                     None,
                 )?;
-                assert_eq!(
-                    serde_json::to_value(request.thinking)?,
-                    expected_thinking,
-                    "{} with thinking_allowed: {thinking_allowed}",
-                    model.id()
-                );
+                assert_request_thinking(&request, Some(&expected_thinking));
                 assert_eq!(request.temperature, None);
             }
             assert!(!converse_language_model(&model).supports_disabling_thinking);
         }
-        assert!(converse_language_model(&ConverseModel::ClaudeOpus4_8).supports_disabling_thinking);
+        let optional = converse_model("anthropic.claude-example", Some(adaptive_thinking(false)));
+        assert!(converse_language_model(&optional).supports_disabling_thinking);
         Ok(())
     }
 
     #[test]
-    fn test_new_models_replay_only_their_own_encrypted_reasoning() -> Result<()> {
-        use bedrock::bedrock_client::types::{
-            ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStartEvent,
-        };
+    fn catalog_thinking_controls_reach_converse_requests_from_settings() -> Result<()> {
+        use BedrockAdaptiveThinkingEffort::{High, Low};
+        use bedrock::Thinking;
+        use serde_json::json;
 
-        let response = futures::stream::iter(vec![
-            Ok(ConverseStreamOutput::MessageStart(
-                MessageStartEvent::builder()
-                    .role(bedrock::BedrockRole::Assistant)
-                    .build()?,
-            )),
-            Ok(ConverseStreamOutput::ContentBlockDelta(
-                ContentBlockDeltaEvent::builder()
-                    .content_block_index(0)
-                    .delta(ContentBlockDelta::ReasoningContent(
-                        ReasoningContentBlockDelta::RedactedContent(BedrockBlob::new([0, 255])),
-                    ))
-                    .build()?,
-            )),
-            Ok(ConverseStreamOutput::ContentBlockStop(
-                ContentBlockStopEvent::builder()
-                    .content_block_index(0)
-                    .build()?,
-            )),
-        ]);
-        let events = futures::executor::block_on(
-            map_to_language_model_completion_events(Box::pin(response), ConverseModel::Gpt6Astra)
-                .collect::<Vec<_>>(),
-        )
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-        let details = events.iter().find_map(|event| match event {
-            LanguageModelCompletionEvent::ReasoningDetails(value) => Some(Arc::new(value.clone())),
-            _ => None,
-        });
-        let redacted = events.iter().find_map(|event| match event {
-            LanguageModelCompletionEvent::RedactedThinking { data } => Some(data.clone()),
-            _ => None,
-        });
-        assert!(
-            details.is_some(),
-            "the stored reasoning must identify its model"
-        );
-        let redacted = redacted.expect("binary reasoning must survive streaming");
-
-        let request_for = |model: ConverseModel, details: Option<Arc<Value>>, content| {
-            into_bedrock(
-                LanguageModelRequest {
-                    messages: vec![LanguageModelRequestMessage {
-                        role: Role::Assistant,
-                        content,
-                        cache: false,
-                        reasoning_details: details,
-                    }],
-                    ..Default::default()
+        let options = json!({"reasoning": true, "reasoning_options": [
+            {"type":"budget_tokens"}, {"type":"toggle"}, {"type":"effort", "values":["none", "low", "high"]}
+        ]});
+        let catalog = capability_catalog(json!({
+            "us.openai.example": capability_entry("Optional", options.clone()),
+            "us.anthropic.example": capability_entry("Adaptive", options.clone()),
+            "us.anthropic.claude-opus-4-5-example": capability_entry("Budget", options),
+            "us.xai.example": capability_entry("Always", always_reasoning_members()),
+            "us.anthropic.mandatory": capability_entry("Mandatory", always_reasoning_members()),
+        }));
+        for (id, setting, thinking_allowed, effort, expected) in [
+            (
+                "openai.example",
+                None,
+                false,
+                "high",
+                Thinking::Reasoning { effort: None },
+            ),
+            (
+                "openai.example",
+                Some(json!(true)),
+                true,
+                "max",
+                Thinking::Reasoning { effort: Some(Low) },
+            ),
+            (
+                "openai.example",
+                Some(json!({"adaptive":true})),
+                true,
+                "high",
+                Thinking::Reasoning { effort: Some(High) },
+            ),
+            (
+                "xai.example",
+                Some(json!(false)),
+                false,
+                "high",
+                Thinking::Reasoning { effort: Some(Low) },
+            ),
+            (
+                "anthropic.example",
+                Some(json!({"adaptive":true, "has_xhigh":true})),
+                true,
+                "max",
+                Thinking::Adaptive {
+                    effort: High,
+                    binding_controls_beta: None,
                 },
-                model.cross_region_inference_id("us-east-1", false)?,
-                model.default_temperature(),
-                model.max_output_tokens(),
-                model.thinking_mode(),
-                model.supports_caching(),
-                model.supports_tool_use(),
+            ),
+            (
+                "anthropic.claude-opus-4-5-example",
+                Some(json!({"adaptive":true})),
+                true,
+                "low",
+                Thinking::Enabled {
+                    budget_tokens: Some(4096),
+                },
+            ),
+            (
+                "openai.example",
+                Some(json!(false)),
+                true,
+                "high",
+                Thinking::Reasoning { effort: None },
+            ),
+            (
+                "anthropic.claude-opus-4-5-example",
+                Some(json!({"budget_tokens":5000})),
+                true,
+                "low",
+                Thinking::Enabled {
+                    budget_tokens: Some(5000),
+                },
+            ),
+            (
+                "anthropic.mandatory",
                 None,
-                None,
-            )
-        };
-        let own = request_for(
-            ConverseModel::Gpt6Astra,
-            details.clone(),
-            vec![MessageContent::RedactedThinking(redacted.clone())],
-        )?;
-        assert!(matches!(
-            own.messages[0].content().first(),
-            Some(BedrockInnerContent::ReasoningContent(
-                BedrockThinkingBlock::RedactedContent(data)
-            )) if data.as_ref() == [0, 255]
-        ));
-
-        for (model, source) in [
-            (ConverseModel::ClaudeFable5_1, details.clone()),
-            (ConverseModel::Gpt6Astra, None),
-            // The refusal fallback sends tagged history to a model without reasoning replay.
-            (ConverseModel::ClaudeOpus4_8, details.clone()),
+                false,
+                "high",
+                Thinking::Adaptive {
+                    effort: High,
+                    binding_controls_beta: None,
+                },
+            ),
+            (
+                "anthropic.mandatory",
+                Some(json!({"adaptive": true})),
+                false,
+                "high",
+                Thinking::Adaptive {
+                    effort: High,
+                    binding_controls_beta: None,
+                },
+            ),
+            (
+                "anthropic.mandatory",
+                Some(json!(false)),
+                true,
+                "high",
+                Thinking::Adaptive {
+                    effort: High,
+                    binding_controls_beta: None,
+                },
+            ),
         ] {
-            let request = request_for(
-                model,
-                source,
-                vec![
-                    MessageContent::RedactedThinking(redacted.clone()),
-                    MessageContent::Thinking {
-                        text: "foreign thinking".into(),
-                        signature: Some("foreign signature".into()),
+            let listed = ModelCatalog::new(
+                &[listed_inference_profile(&format!("us.{id}"), id)],
+                &[listed_foundation_model(id)],
+            );
+            for model_catalog in [None, Some(&listed)] {
+                let model = converse_model_from_settings(
+                    &settings_entry(id, setting.clone().map(serde_json::from_value).transpose()?),
+                    model_catalog,
+                    &catalog,
+                );
+                assert_eq!(model.request_id, id);
+                assert_eq!(model.base_model_id, id);
+                if id == "anthropic.mandatory" {
+                    assert!(!model.supports_temperature);
+                }
+                let language_model = converse_language_model(&model);
+                assert_eq!(
+                    language_model.supports_disabling_thinking,
+                    id != "xai.example" && id != "anthropic.mandatory",
+                    "{id}"
+                );
+                assert!(
+                    language_model
+                        .supported_effort_levels
+                        .iter()
+                        .all(|level| level.value.as_ref() != "none")
+                );
+                let request = into_bedrock(
+                    LanguageModelRequest {
+                        messages: vec![user_message("Hello")],
+                        thinking_allowed,
+                        thinking_effort: Some(effort.into()),
+                        ..Default::default()
                     },
-                    MessageContent::Text("Keep this answer".into()),
-                ],
-            )?;
-            assert_eq!(request.messages[0].content().len(), 1);
-            assert!(matches!(
-                request.messages[0].content()[0],
-                BedrockInnerContent::Text(_)
-            ));
+                    &model,
+                    None,
+                    None,
+                )?;
+                assert_request_thinking(&request, Some(&expected));
+            }
         }
-        let malformed = request_for(
-            ConverseModel::Gpt6Astra,
-            details,
-            vec![
-                MessageContent::RedactedThinking("not base64!".into()),
-                MessageContent::Text("Keep this answer".into()),
-            ],
-        )?;
-        assert_eq!(malformed.messages[0].content().len(), 1);
         Ok(())
     }
 
     #[test]
-    fn test_opus_5_5_replays_only_its_own_reasoning() -> Result<()> {
-        use bedrock::bedrock_client::types::MessageStartEvent;
+    fn test_effort_levels_come_from_the_model() {
+        let effort_levels = |thinking| {
+            converse_language_model(&converse_model("vendor.chat", thinking))
+                .supported_effort_levels
+                .iter()
+                .map(|level| (level.value.to_string(), level.is_default))
+                .collect::<Vec<_>>()
+        };
 
-        let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::MessageStart(
-            MessageStartEvent::builder()
-                .role(bedrock::BedrockRole::Assistant)
+        assert_eq!(
+            effort_levels(Some(adaptive_thinking(false))),
+            [
+                ("low".to_string(), false),
+                ("high".to_string(), true),
+                ("max".to_string(), false),
+            ]
+        );
+        assert_eq!(
+            effort_levels(Some(reasoning())),
+            [
+                ("low".to_string(), false),
+                ("medium".to_string(), true),
+                ("high".to_string(), false),
+            ]
+        );
+        assert_eq!(
+            effort_levels(Some(ConverseThinking::Budget {
+                budget_tokens: 4_096
+            })),
+            []
+        );
+        assert_eq!(effort_levels(None), []);
+    }
+
+    #[test]
+    fn test_always_on_adaptive_model_replays_only_its_own_reasoning() -> Result<()> {
+        use bedrock::bedrock_client::types::ContentBlockDeltaEvent;
+
+        let model = converse_model("anthropic.claude-example", Some(adaptive_thinking(true)));
+        let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::ContentBlockDelta(
+            ContentBlockDeltaEvent::builder()
+                .content_block_index(0)
+                .delta(ContentBlockDelta::ReasoningContent(
+                    ReasoningContentBlockDelta::Signature("signature".into()),
+                ))
                 .build()?,
         ))]);
-        let events = futures::executor::block_on(
-            map_to_language_model_completion_events(
-                Box::pin(response),
-                ConverseModel::ClaudeOpus5_5,
-            )
-            .collect::<Vec<_>>(),
-        )
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
+        let events = completion_events(&model, response)?;
         let details = events.iter().find_map(|event| match event {
             LanguageModelCompletionEvent::ReasoningDetails(value) => Some(Arc::new(value.clone())),
             _ => None,
         });
         assert!(details.is_some());
+        let signature = events
+            .iter()
+            .find_map(|event| match event {
+                LanguageModelCompletionEvent::Thinking { signature, .. } => signature.clone(),
+                _ => None,
+            })
+            .context("streamed signature")?;
+        assert_eq!(signature, "signature");
 
         for (model, replays_reasoning) in [
-            (ConverseModel::ClaudeOpus5_5, true),
-            (ConverseModel::ClaudeFable5_1, false),
-            (ConverseModel::ClaudeOpus4_8, false),
+            (model, true),
+            (
+                converse_model("anthropic.claude-other", Some(adaptive_thinking(true))),
+                false,
+            ),
+            (
+                converse_model("anthropic.claude-older", Some(adaptive_thinking(false))),
+                false,
+            ),
         ] {
-            let request = into_bedrock(
-                LanguageModelRequest {
-                    messages: vec![LanguageModelRequestMessage {
-                        role: Role::Assistant,
-                        content: vec![
-                            MessageContent::Thinking {
-                                text: "thinking".into(),
-                                signature: Some("signature".into()),
-                            },
-                            MessageContent::Text("answer".into()),
-                        ],
-                        cache: false,
-                        reasoning_details: details.clone(),
-                    }],
-                    ..Default::default()
-                },
-                model.cross_region_inference_id("us-east-1", false)?,
-                model.default_temperature(),
-                model.max_output_tokens(),
-                model.thinking_mode(),
-                model.supports_caching(),
-                model.supports_tool_use(),
-                None,
-                None,
+            let request = replay_history(
+                &model,
+                vec![
+                    MessageContent::Thinking {
+                        text: "thinking".into(),
+                        signature: Some(signature.clone()),
+                    },
+                    MessageContent::Text("answer".into()),
+                ],
+                details.clone(),
             )?;
             assert_eq!(
                 matches!(
                     request.messages[0].content().first(),
-                    Some(BedrockInnerContent::ReasoningContent(_))
+                    Some(BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::ReasoningText(thinking))) if thinking.text() == "thinking" && thinking.signature() == Some("signature")
                 ),
                 replays_reasoning,
                 "{}",
-                model.id()
+                model.id
             );
         }
         Ok(())
     }
 
     #[test]
-    fn test_astra_parallel_tool_results_precede_their_images() -> Result<()> {
+    fn test_openai_parallel_tool_results_precede_their_images() -> Result<()> {
         let results = (1..=2)
             .map(|index| {
                 let mut content = Vec::new();
@@ -3756,12 +6848,7 @@ mod tests {
                 }],
                 ..Default::default()
             },
-            "us.openai.gpt-6-astra".into(),
-            None,
-            128_000,
-            BedrockModelMode::Default,
-            false,
-            true,
+            &converse_model("openai.gpt-example", Some(reasoning())),
             None,
             None,
         )?;
@@ -3784,32 +6871,84 @@ mod tests {
     }
 
     #[test]
-    fn test_converse_refusals_and_fable_forced_tool_use() -> Result<()> {
-        let fable = ConverseModel::ClaudeFable5_1;
-        let earlier_fable = ConverseModel::ClaudeFable5;
-        assert!(!converse_language_model(&fable).tool_choice_support.any);
-        assert!(
-            converse_language_model(&earlier_fable)
-                .tool_choice_support
-                .any
-        );
-        let forced = into_bedrock(
-            LanguageModelRequest {
-                tool_choice: Some(LanguageModelToolChoice::Any),
-                ..Default::default()
-            },
-            fable.cross_region_inference_id("us-east-1", false)?,
-            fable.default_temperature(),
-            fable.max_output_tokens(),
-            fable.thinking_mode(),
-            fable.supports_caching(),
-            fable.supports_tool_use(),
-            None,
-            None,
-        );
-        assert!(forced.is_err());
+    fn test_converse_refusals_and_forced_tool_use() -> Result<()> {
+        let fable = converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true)));
+        let earlier_fable =
+            converse_model("anthropic.claude-fable-5", Some(adaptive_thinking(false)));
+        let reasoning_model = converse_model("openai.gpt-example", Some(reasoning()));
+        let other_model = converse_model("vendor.chat", None);
 
-        for model in [fable, earlier_fable, ConverseModel::Gpt6Astra] {
+        let fable_language_model = converse_language_model(&fable);
+        assert!(fable_language_model.supports_tools);
+        assert!(fable_language_model.tool_choice_support.auto);
+        assert!(fable_language_model.tool_choice_support.none);
+        assert_eq!(fable_language_model.refusal_fallback_model_id, None);
+        for model in [&fable, &earlier_fable, &reasoning_model, &other_model] {
+            let expected_forced =
+                anthropic_model_id(model).is_none_or(anthropic::supports_forced_tool_use);
+            assert_eq!(
+                converse_language_model(model).tool_choice_support.any,
+                expected_forced,
+                "{}",
+                model.id,
+            );
+            let forced = into_bedrock(
+                LanguageModelRequest {
+                    tool_choice: Some(LanguageModelToolChoice::Any),
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::Assistant,
+                        content: vec![MessageContent::ToolUse(
+                            language_model::LanguageModelToolUse {
+                                id: "call".into(),
+                                name: "example".into(),
+                                raw_input: "{}".into(),
+                                is_input_complete: true,
+                                thought_signature: None,
+                                input: language_model::LanguageModelToolUseInput::Json(
+                                    serde_json::json!({}),
+                                ),
+                            },
+                        )],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    ..Default::default()
+                },
+                model,
+                None,
+                None,
+            );
+            if expected_forced {
+                let request = forced?;
+                assert!(matches!(
+                    request
+                        .tools
+                        .context("tool configuration for forced tool use")?
+                        .tool_choice(),
+                    Some(BedrockToolChoice::Any(_))
+                ));
+            } else {
+                let error = forced
+                    .err()
+                    .context("forced tool use should fail locally")?;
+                assert!(
+                    error
+                        .to_string()
+                        .contains("does not support forced tool use")
+                );
+            }
+        }
+        assert_eq!(
+            converse_language_model(&other_model).refusal_fallback_model_id,
+            None
+        );
+
+        for (model, reports_refusals) in [
+            (fable, true),
+            (earlier_fable, true),
+            (reasoning_model, true),
+            (other_model, false),
+        ] {
             for reason in [StopReason::from("refusal"), StopReason::ContentFiltered] {
                 let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::MessageStop(
                     bedrock::bedrock_client::types::MessageStopEvent::builder()
@@ -3822,11 +6961,16 @@ mod tests {
                 )
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()?;
+                let expected_stop_reason = if reports_refusals {
+                    language_model::StopReason::Refusal(None)
+                } else {
+                    language_model::StopReason::EndTurn
+                };
                 assert_eq!(
                     events,
-                    [LanguageModelCompletionEvent::Stop(
-                        language_model::StopReason::Refusal(None)
-                    )]
+                    [LanguageModelCompletionEvent::Stop(expected_stop_reason)],
+                    "{}",
+                    model.id
                 );
             }
         }
@@ -3834,277 +6978,109 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_fable_5_1_entry_matches_the_built_in_model() -> Result<()> {
-        use bedrock::bedrock_client::types::MessageStartEvent;
-
-        let custom = ConverseModel::Custom {
-            name: "us.anthropic.claude-fable-5-1".into(),
-            max_tokens: 1_000_000,
-            display_name: None,
-            max_output_tokens: Some(128_000),
-            default_temperature: None,
-            cache_configuration: None,
-            supports_tool_use: Some(true),
-            supports_images: Some(true),
-            thinking: Some(bedrock::BedrockThinkingConfig {
-                adaptive: true,
-                has_xhigh: true,
-                budget_tokens: None,
-            }),
-        };
-        assert!(!converse_language_model(&custom).tool_choice_support.any);
-
-        let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::MessageStart(
-            MessageStartEvent::builder()
-                .role(bedrock::BedrockRole::Assistant)
-                .build()?,
-        ))]);
-        let events = futures::executor::block_on(
-            map_to_language_model_completion_events(Box::pin(response), custom.clone())
-                .collect::<Vec<_>>(),
-        )
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-        let details = events.iter().find_map(|event| match event {
-            LanguageModelCompletionEvent::ReasoningDetails(value) => Some(Arc::new(value.clone())),
-            _ => None,
-        });
-
-        let request = into_bedrock(
-            LanguageModelRequest {
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::Assistant,
-                    content: vec![
-                        MessageContent::Thinking {
-                            text: "thinking".into(),
-                            signature: Some("signature".into()),
-                        },
-                        MessageContent::Text("answer".into()),
-                    ],
-                    cache: false,
-                    reasoning_details: details,
-                }],
-                ..Default::default()
-            },
-            custom.cross_region_inference_id("us-east-1", false)?,
-            custom.default_temperature(),
-            custom.max_output_tokens(),
-            custom.thinking_mode(),
-            custom.supports_caching(),
-            custom.supports_tool_use(),
-            None,
-            None,
-        )?;
-        assert!(matches!(
-            request.messages[0].content().first(),
-            Some(BedrockInnerContent::ReasoningContent(_))
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_thinking_disallowed_sends_explicit_opt_out_only_on_opus_5() {
-        // Claude Opus 5 runs adaptive thinking by default when the `thinking`
-        // field is omitted, so suppressing thinking requires an explicit
-        // `disabled` opt-out. Earlier Claude models treat omission as "off".
-        for (model, expects_explicit_opt_out, output_limit, expected_output) in [
-            ("us.anthropic.claude-opus-5", true, None, 128_000),
-            ("global.anthropic.claude-opus-5", true, Some(8192), 8192),
-            (
-                "us.anthropic.claude-opus-4-8",
-                false,
-                Some(256_000),
-                128_000,
-            ),
+    fn test_thinking_disallowed_sends_explicit_opt_out_only_where_required() -> Result<()> {
+        for (base_model_id, output_limit, expected_output) in [
+            ("anthropic.claude-opus-5", None, 128_000),
+            ("anthropic.claude-opus-5", Some(8192), 8192),
+            ("anthropic.claude-opus-4-8", Some(256_000), 128_000),
+            ("vendor.chat", Some(8192), 8192),
         ] {
+            let model = converse_model(base_model_id, Some(adaptive_thinking(false)));
             let request = into_bedrock(
                 LanguageModelRequest {
-                    messages: vec![LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![MessageContent::Text("Hi".into())],
-                        cache: false,
-                        reasoning_details: None,
-                    }],
+                    messages: vec![user_message("Hi")],
                     thinking_allowed: false,
                     max_output_tokens: output_limit,
                     ..Default::default()
                 },
-                model.to_string(),
-                Some(1.0),
-                128_000,
-                BedrockModelMode::AdaptiveThinking {
-                    effort: bedrock::BedrockAdaptiveThinkingEffort::High,
-                },
-                true,
-                true,
+                &model,
                 None,
                 None,
-            )
-            .unwrap();
+            )?;
 
-            assert_eq!(request.max_tokens, expected_output);
-            if expects_explicit_opt_out {
+            assert_eq!(request.max_tokens, Some(expected_output));
+            if thinks_by_default(&model) {
                 assert!(
                     matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
-                    "{model} should send an explicit thinking opt-out"
+                    "{base_model_id} should send an explicit thinking opt-out"
                 );
             } else {
                 assert!(
                     request.thinking.is_none(),
-                    "{model} should omit the thinking field entirely"
+                    "{base_model_id} should omit the thinking field entirely"
                 );
             }
-        }
-    }
-
-    #[test]
-    fn test_custom_models_omit_temperature_unless_configured() {
-        let messages = vec![LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![MessageContent::Text("Hi".into())],
-            cache: false,
-            reasoning_details: None,
-        }];
-
-        let omitted = into_bedrock(
-            LanguageModelRequest {
-                messages: messages.clone(),
-                ..Default::default()
-            },
-            "us.xai.grok-4.6".to_string(),
-            None,
-            4096,
-            BedrockModelMode::Default,
-            false,
-            true,
-            None,
-            None,
-        )
-        .unwrap();
-        assert_eq!(omitted.temperature, None);
-
-        let configured = into_bedrock(
-            LanguageModelRequest {
-                messages,
-                ..Default::default()
-            },
-            "us.anthropic.claude-sonnet-4-7".to_string(),
-            Some(0.7),
-            4096,
-            BedrockModelMode::Default,
-            false,
-            true,
-            None,
-            None,
-        )
-        .unwrap();
-        assert_eq!(configured.temperature, Some(0.7));
-    }
-
-    #[test]
-    fn test_opus_5_5_rejects_only_forced_tool_choice() -> Result<()> {
-        let opus_5_5 = ConverseModel::ClaudeOpus5_5;
-        let custom = ConverseModel::Custom {
-            name: "us.anthropic.claude-opus-5-5".into(),
-            max_tokens: 1_000_000,
-            display_name: None,
-            max_output_tokens: Some(128_000),
-            default_temperature: None,
-            cache_configuration: None,
-            supports_tool_use: Some(true),
-            supports_images: Some(true),
-            thinking: None,
-        };
-        for model in [&opus_5_5, &custom] {
-            let language_model = converse_language_model(model);
-            assert!(language_model.supports_tools);
-            assert!(language_model.tool_choice_support.auto);
-            assert!(language_model.tool_choice_support.none);
-            assert!(
-                !language_model.tool_choice_support.any,
-                "{} rejects forced tool use",
-                model.id()
-            );
-        }
-
-        let forced = into_bedrock(
-            LanguageModelRequest {
-                tool_choice: Some(LanguageModelToolChoice::Any),
-                ..Default::default()
-            },
-            opus_5_5.cross_region_inference_id("us-east-1", false)?,
-            opus_5_5.default_temperature(),
-            opus_5_5.max_output_tokens(),
-            opus_5_5.thinking_mode(),
-            opus_5_5.supports_caching(),
-            opus_5_5.supports_tool_use(),
-            None,
-            None,
-        );
-        assert!(forced.is_err());
-
-        for model in [
-            ConverseModel::ClaudeOpus5,
-            ConverseModel::ClaudeFable5,
-            ConverseModel::NovaPro,
-        ] {
-            assert!(
-                converse_language_model(&model).tool_choice_support.any,
-                "{} should still support forced tool use",
-                model.id()
-            );
         }
         Ok(())
     }
 
     #[test]
-    fn test_opus_5_5_omits_sampling_controls() {
-        // Opus 5.5's always-on adaptive thinking rejects sampling controls, so
-        // its request must omit temperature (top_k/top_p are always unset).
-        // Other adaptive-thinking Claude models keep their default temperature.
-        for (model, expects_temperature) in [
-            ("global.anthropic.claude-opus-5-5", false),
-            ("us.anthropic.claude-opus-5-5", false),
-            ("us.anthropic.claude-opus-5", true),
-            ("us.anthropic.claude-sonnet-5", true),
-        ] {
+    fn test_output_limit_is_left_to_bedrock_when_the_model_has_none() {
+        let model = ConverseModel {
+            max_output_tokens: None,
+            ..converse_model("vendor.chat", None)
+        };
+        assert_eq!(converse_language_model(&model).max_output_tokens, None);
+
+        for (output_limit, expected_output) in [(None, None), (Some(8192), Some(8192))] {
             let request = into_bedrock(
                 LanguageModelRequest {
-                    messages: vec![LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![MessageContent::Text("Hi".into())],
-                        cache: false,
-                        reasoning_details: None,
-                    }],
+                    messages: vec![user_message("Hi")],
+                    max_output_tokens: output_limit,
                     ..Default::default()
                 },
-                model.to_string(),
-                Some(1.0),
-                128_000,
-                BedrockModelMode::AdaptiveThinking {
-                    effort: bedrock::BedrockAdaptiveThinkingEffort::High,
-                },
-                true,
-                true,
+                &model,
                 None,
                 None,
             )
             .unwrap();
-
-            assert_eq!(request.top_p, None, "{model} must not send top_p");
-            if expects_temperature {
-                assert_eq!(
-                    request.temperature,
-                    Some(1.0),
-                    "{model} should send its default temperature"
-                );
-            } else {
-                assert_eq!(
-                    request.temperature, None,
-                    "{model} must omit temperature because adaptive thinking is always on"
-                );
-            }
+            assert_eq!(request.max_tokens, expected_output);
         }
+    }
+
+    #[test]
+    fn test_temperature_is_sent_only_to_models_that_accept_it() {
+        let temperature = |model: &ConverseModel, temperature: Option<f32>| {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![user_message("Hi")],
+                    temperature,
+                    ..Default::default()
+                },
+                model,
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(request.top_p, None, "{} must not send top_p", model.id);
+            request.temperature
+        };
+
+        let without_default = ConverseModel {
+            default_temperature: None,
+            ..converse_model("vendor.chat", None)
+        };
+        assert_eq!(temperature(&without_default, None), None);
+        assert_eq!(temperature(&without_default, Some(0.3)), Some(0.3));
+
+        let with_default = ConverseModel {
+            default_temperature: Some(0.7),
+            ..converse_model("vendor.chat", None)
+        };
+        assert_eq!(temperature(&with_default, None), Some(0.7));
+        assert_eq!(temperature(&with_default, Some(0.3)), Some(0.3));
+
+        let unsupported = ConverseModel {
+            supports_temperature: false,
+            ..converse_model("vendor.chat", None)
+        };
+        assert_eq!(temperature(&unsupported, Some(0.3)), None);
+
+        // Always-on adaptive thinking rejects sampling controls.
+        let always_on = converse_model("anthropic.claude-example", Some(adaptive_thinking(true)));
+        assert_eq!(temperature(&always_on, Some(0.3)), None);
+        let optional = converse_model("anthropic.claude-example", Some(adaptive_thinking(false)));
+        assert_eq!(temperature(&optional, None), Some(1.0));
     }
 
     #[test]
@@ -4172,7 +7148,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sign_mantle_request_sigv4_uses_mantle_service() {
+    fn test_sign_mantle_request_sigv4_uses_mantle_service() -> Result<()> {
         let credentials = Credentials::new(
             "AKIDEXAMPLE",
             "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
@@ -4180,43 +7156,26 @@ mod tests {
             None,
             "test",
         );
-        let body = br#"{"model":"openai.gpt-5.5"}"#;
+        let body = br#"{"model":"vendor.mantle-example"}"#;
         let mut request = HttpRequest::builder()
             .method(Method::POST)
             .uri("https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses")
             .header("Content-Type", "application/json")
-            .body(AsyncBody::from(body.to_vec()))
-            .unwrap();
+            .body(AsyncBody::from(body.to_vec()))?;
         let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
 
-        sign_mantle_request_sigv4_at(&mut request, body, &credentials, "us-east-1", time).unwrap();
+        sign_mantle_request_sigv4_at(&mut request, body, &credentials, "us-east-1", time)?;
 
-        assert_eq!(
-            request
-                .headers()
-                .get(http_client::http::header::HOST)
-                .and_then(|value| value.to_str().ok()),
-            Some("bedrock-mantle.us-east-1.api.aws")
-        );
-        assert_eq!(
-            request
-                .headers()
-                .get("x-amz-date")
-                .and_then(|value| value.to_str().ok()),
-            Some("20231114T221320Z")
-        );
         let authorization = request
             .headers()
             .get(AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .unwrap();
-        assert!(authorization.starts_with("AWS4-HMAC-SHA256 "));
+            .context("signed authorization header")?
+            .to_str()?;
         assert!(
-            authorization
-                .contains("Credential=AKIDEXAMPLE/20231114/us-east-1/bedrock-mantle/aws4_request")
+            authorization.contains("/us-east-1/bedrock-mantle/"),
+            "{authorization}"
         );
-        assert!(authorization.contains("SignedHeaders=content-type;host"));
-        assert!(authorization.contains("Signature="));
+        Ok(())
     }
 
     #[test]
@@ -4243,11 +7202,69 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_mantle_supported_regions_matches_docs() {
-        assert!(MANTLE_SUPPORTED_REGIONS.contains(&"us-east-1"));
-        assert!(MANTLE_SUPPORTED_REGIONS.contains(&"eu-west-1"));
-        assert!(!MANTLE_SUPPORTED_REGIONS.contains(&"ap-southeast-1"));
+    #[gpui::test]
+    async fn test_mantle_region_policy_rejects_unconfigured_regions_before_http(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let result = async {
+            let supported = MANTLE_SUPPORTED_REGIONS
+                .first()
+                .context("configured Mantle Region")?;
+            let unsupported = "test-region-not-configured";
+            anyhow::ensure!(!MANTLE_SUPPORTED_REGIONS.contains(&unsupported));
+            let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let http_client = http_client::FakeHttpClient::create({
+                let requests = requests.clone();
+                move |request| {
+                    let requests = requests.clone();
+                    async move {
+                        assert_eq!(
+                            request.uri().host(),
+                            Some(format!("bedrock-mantle.{supported}.api.aws").as_str())
+                        );
+                        requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(http_client::Response::builder()
+                            .body(AsyncBody::from("data: [DONE]\n\n"))?)
+                    }
+                }
+            });
+            init_provider_test(cx);
+            let model = mantle_model(false);
+            let limiter = RateLimiter::new(1);
+            for (region, allowed) in [(unsupported, false), (*supported, true)] {
+                set_bedrock_settings(cx, serde_json::json!({"region": region}))?;
+                let provider = cx.update(|cx| new_test_provider(http_client.clone(), cx));
+                provider.state.update(cx, |state, _| {
+                    state.set_auth(api_key_auth());
+                });
+                let response = provider
+                    .stream_mantle_completion(
+                        &model,
+                        &limiter,
+                        LanguageModelRequest::default(),
+                        &cx.to_async(),
+                    )
+                    .await;
+                if allowed {
+                    drop(response?);
+                    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+                } else {
+                    let error = response
+                        .err()
+                        .context("unconfigured Region should be rejected")?;
+                    assert!(error.to_string().contains(region));
+                    assert!(
+                        error
+                            .to_string()
+                            .contains(&MANTLE_SUPPORTED_REGIONS.join(", "))
+                    );
+                    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+                }
+            }
+            anyhow::Ok(())
+        }
+        .await;
+        assert!(result.is_ok(), "{result:?}");
     }
 
     fn mantle_message_item(id: &str) -> ResponseOutputItem {
@@ -4775,39 +7792,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_builtin_mantle_models_support_thinking() {
-        assert!(MantleModel::Gpt5_6Sol.supports_thinking());
-        assert!(MantleModel::Gpt5_6Terra.supports_thinking());
-        assert!(MantleModel::Gpt5_6Luna.supports_thinking());
-        assert!(MantleModel::Gpt5_5.supports_thinking());
-        assert!(MantleModel::Gpt5_4.supports_thinking());
-        assert!(MantleModel::Grok4_3.supports_thinking());
-        assert_eq!(
-            mantle_default_reasoning_effort(&MantleModel::Gpt5_6Sol),
-            Some(ReasoningEffort::Medium)
-        );
-        assert_eq!(
-            mantle_default_reasoning_effort(&MantleModel::Gpt5_6Terra),
-            Some(ReasoningEffort::Medium)
-        );
-        assert_eq!(
-            mantle_default_reasoning_effort(&MantleModel::Gpt5_6Luna),
-            Some(ReasoningEffort::Medium)
-        );
-        assert_eq!(
-            mantle_default_reasoning_effort(&MantleModel::Gpt5_5),
-            Some(ReasoningEffort::Medium)
-        );
-        assert_eq!(
-            mantle_default_reasoning_effort(&MantleModel::Grok4_3),
-            Some(ReasoningEffort::Medium)
-        );
+    fn mantle_model(supports_thinking: bool) -> MantleModel {
+        MantleModel {
+            known_foundation_model_id: None,
+            name: "vendor.mantle-model".to_string(),
+            display_name: None,
+            max_tokens: 128_000,
+            max_output_tokens: None,
+            protocol: MantleProtocol::Responses,
+            supports_tools: true,
+            supports_images: false,
+            supports_thinking,
+        }
     }
 
     #[test]
     fn test_mantle_supported_effort_levels_hide_none() {
-        let effort_levels = mantle_supported_effort_levels(&MantleModel::Gpt5_5);
+        let effort_levels = mantle_supported_effort_levels(&mantle_model(true));
         let values = effort_levels
             .iter()
             .map(|level| level.value.as_ref())
@@ -4825,18 +7826,8 @@ mod tests {
 
     #[test]
     fn test_custom_mantle_model_can_disable_thinking() {
-        let model = MantleModel::Custom {
-            name: "custom-mantle-model".to_string(),
-            display_name: None,
-            max_tokens: 128_000,
-            max_output_tokens: None,
-            protocol: MantleProtocol::Responses,
-            supports_tools: true,
-            supports_images: false,
-            supports_thinking: false,
-        };
+        let model = mantle_model(false);
 
-        assert!(!model.supports_thinking());
         assert_eq!(mantle_default_reasoning_effort(&model), None);
         assert!(mantle_supported_effort_levels(&model).is_empty());
         assert_eq!(
@@ -4852,30 +7843,8 @@ mod tests {
     }
 
     #[test]
-    fn test_disabled_mantle_thinking_serializes_none() {
-        let request = into_open_ai_response(
-            LanguageModelRequest {
-                thinking_allowed: false,
-                ..Default::default()
-            },
-            MantleModel::Grok4_3.request_id(),
-            true,
-            false,
-            Some(MantleModel::Grok4_3.max_output_tokens()),
-            mantle_default_reasoning_effort(&MantleModel::Grok4_3),
-            MantleModel::Grok4_3.supports_thinking(),
-            &PROVIDER_ID,
-        )
-        .unwrap();
-
-        assert_eq!(
-            serde_json::to_value(&request).unwrap()["reasoning"],
-            serde_json::json!({ "effort": "none" })
-        );
-    }
-
-    #[test]
     fn test_mantle_reasoning_passes_known_efforts_through() {
+        let model = mantle_model(true);
         for effort in ["low", "medium", "high", "xhigh", "minimal", "max"] {
             assert_eq!(
                 mantle_selected_reasoning_effort(
@@ -4884,7 +7853,7 @@ mod tests {
                         thinking_effort: Some(effort.to_string()),
                         ..Default::default()
                     },
-                    &MantleModel::Gpt5_5,
+                    &model,
                 )
                 .map(|effort| effort.value()),
                 Some(effort)
@@ -4898,35 +7867,33 @@ mod tests {
                     thinking_effort: Some("none".to_string()),
                     ..Default::default()
                 },
-                &MantleModel::Gpt5_5,
+                &model,
             ),
             Some(ReasoningEffort::Medium)
         );
     }
 
     #[test]
-    fn test_strip_unsupported_mantle_response_fields_removes_context_management() {
+    fn test_strip_unsupported_mantle_response_fields_removes_context_management() -> Result<()> {
         let mut request = into_open_ai_response(
-            LanguageModelRequest {
-                compact_at_tokens: Some(10_000),
-                ..Default::default()
-            },
-            "openai.gpt-5.5",
+            LanguageModelRequest::default(),
+            "vendor.mantle-example",
             true,
             false,
             Some(128_000),
             Some(ReasoningEffort::Medium),
             false,
             &PROVIDER_ID,
-        )
-        .unwrap();
+        )?;
 
-        assert!(request.context_management.is_some());
+        request.context_management =
+            Some(vec![open_ai::responses::ContextManagement::Compaction {
+                compact_threshold: 10_000,
+            }]);
         strip_unsupported_mantle_response_fields(&mut request);
         assert!(request.context_management.is_none());
 
-        let request = serde_json::to_value(&request).unwrap();
-        assert!(request.get("context_management").is_none());
+        Ok(())
     }
 
     struct NoCredentialsProvider;
@@ -4965,11 +7932,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             gpui_tokio::init(cx);
-            BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
-                Arc::new(NoCredentialsProvider),
-                cx,
-            )
+            new_test_provider(http_client::FakeHttpClient::with_404_response(), cx)
         })
     }
 
