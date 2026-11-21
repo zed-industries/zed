@@ -2188,7 +2188,7 @@ impl PlatformWindow for MacWindow {
         let mut this = self.0.lock();
         let native_view_layout = native_views::plan_layout(&this, scene);
         native_views::update_background(&mut this, scene);
-        native_views::scene_drawn(&mut this);
+        native_views::scene_drawn(&mut this, scene);
         this.renderer.draw(scene);
         drop(this);
         native_views::apply_layout(&self.0, native_view_layout);

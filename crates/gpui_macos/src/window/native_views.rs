@@ -796,9 +796,10 @@ fn update_pointer_over_view(window_state: &Rc<Mutex<MacWindowState>>, position_i
 
 /// Notes that a scene was drawn, after which [`check_pointer_after_frame`]
 /// looks for the pointer again.
-pub(super) fn scene_drawn(state: &mut MacWindowState) {
+pub(super) fn scene_drawn(state: &mut MacWindowState, scene: &Scene) {
     let views = &mut state.native_views;
-    views.drew_since_pointer_check = views.pointer_over_view || !views.views.is_empty();
+    // A scene that shows no view can only take the pointer off one.
+    views.drew_since_pointer_check = views.pointer_over_view || !scene.native_views.is_empty();
 }
 
 /// Looks again for whether the pointer is over a native view, if a scene was
