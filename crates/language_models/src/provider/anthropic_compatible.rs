@@ -73,6 +73,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         max_output_tokens: available.max_output_tokens.unwrap_or(4_096),
         default_temperature: available.default_temperature.unwrap_or(1.0),
         mode,
+        thinking_types: None,
         supports_thinking,
         supports_adaptive_thinking,
         supports_images: available.capabilities.images,
@@ -404,6 +405,7 @@ impl LanguageModelClient for AnthropicCompatibleLanguageModelProvider {
             config.default_temperature,
             config.max_output_tokens,
             config.mode.clone(),
+            None,
             cache_mode,
             &self.id,
         ) {

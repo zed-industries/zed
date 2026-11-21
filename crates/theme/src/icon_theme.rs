@@ -5,18 +5,6 @@ use gpui::SharedString;
 
 use crate::Appearance;
 
-/// A family of icon themes.
-pub struct IconThemeFamily {
-    /// The unique ID for the icon theme family.
-    pub id: String,
-    /// The name of the icon theme family.
-    pub name: SharedString,
-    /// The author of the icon theme family.
-    pub author: SharedString,
-    /// The list of icon themes in the family.
-    pub themes: Vec<IconTheme>,
-}
-
 /// An icon theme.
 #[derive(Debug, PartialEq)]
 pub struct IconTheme {

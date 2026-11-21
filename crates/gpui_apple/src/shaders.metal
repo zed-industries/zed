@@ -386,11 +386,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       }
     }
 
-    // Blend the border on top of the background and then linearly interpolate
-    // between the two as we slide inside the background.
-    float4 blended_border = over(background, border_color);
-    color = mix(background, blended_border,
-                saturate(antialias_threshold - inner_sdf));
+    border_color.a *= saturate(antialias_threshold - inner_sdf);
+    color = over(background, border_color);
   }
 
   return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
@@ -1200,12 +1197,10 @@ float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds_ScaledPixe
 }
 
 float4 over(float4 below, float4 above) {
-  float4 result;
   float alpha = above.a + below.a * (1.0 - above.a);
-  result.rgb =
-      (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
-  result.a = alpha;
-  return result;
+  float3 premultiplied =
+      above.rgb * above.a + below.rgb * below.a * (1.0 - above.a);
+  return float4(premultiplied / (alpha == 0.0 ? 1.0 : alpha), alpha);
 }
 
 PreparedBackground prepare_background(Background background) {

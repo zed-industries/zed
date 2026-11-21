@@ -329,7 +329,9 @@ impl MessageContent {
     pub fn is_empty(&self) -> bool {
         match self {
             MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
-            MessageContent::Thinking { text, .. } => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::Thinking { text, signature } => {
+                signature.is_none() && text.chars().all(|c| c.is_whitespace())
+            }
             MessageContent::ToolResult(tool_result) => tool_result.is_content_empty(),
             MessageContent::RedactedThinking(_)
             | MessageContent::ToolUse(_)
@@ -353,6 +355,10 @@ impl From<&str> for MessageContent {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Hash)]
 pub struct LanguageModelRequestMessage {
+    /// Leading system messages form the initial prompt; later ones update the conversation.
+    ///
+    /// Supporting providers preserve later system messages at their position.
+    /// Other providers may flatten them into the initial instructions.
     pub role: Role,
     pub content: Vec<MessageContent>,
     pub cache: bool,
@@ -529,21 +535,16 @@ pub enum Speed {
     #[default]
     Standard,
     Fast,
+    Ultrafast,
 }
 
 impl Speed {
     pub fn toggle(self) -> Self {
         match self {
             Speed::Standard => Speed::Fast,
-            Speed::Fast => Speed::Standard,
+            Speed::Fast | Speed::Ultrafast => Speed::Standard,
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct LanguageModelResponseMessage {
-    pub role: Option<Role>,
-    pub content: Option<String>,
 }
 
 #[cfg(test)]

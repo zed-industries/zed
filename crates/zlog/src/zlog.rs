@@ -268,17 +268,6 @@ pub mod private {
         }
         scope
     }
-
-    pub fn scope_alloc_new(scopes: &[&str]) -> ScopeAlloc {
-        assert!(scopes.len() <= SCOPE_DEPTH_MAX);
-        let mut scope = [""; SCOPE_DEPTH_MAX];
-        scope[0..scopes.len()].copy_from_slice(scopes);
-        scope.map(|s| s.to_string())
-    }
-
-    pub fn scope_to_alloc(scope: &Scope) -> ScopeAlloc {
-        scope.map(|s| s.to_string())
-    }
 }
 
 pub type Scope = [&'static str; SCOPE_DEPTH_MAX];

@@ -173,6 +173,7 @@ def fetch_github_project(project_number, owner="zed-industries"):
           organization(login: $owner) {
             projectV2(number: $number) {
               id
+              readme
               fields(first: 50) {
                 nodes {
                   ... on ProjectV2Field { id name dataType }
@@ -204,6 +205,20 @@ def add_github_project_item(project_id, content_id):
         idempotent=True,
     )
     return data["addProjectV2ItemById"]["item"]["id"]
+
+
+def update_github_project_readme(project_id, readme):
+    github_graphql(
+        """
+        mutation($projectId: ID!, $readme: String!) {
+          updateProjectV2(input: {projectId: $projectId, readme: $readme}) {
+            projectV2 { id }
+          }
+        }
+        """,
+        {"projectId": project_id, "readme": readme},
+        idempotent=True,
+    )
 
 
 def _raise_unless_missing_ok(message, missing_ok):

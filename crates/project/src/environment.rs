@@ -127,7 +127,7 @@ impl ProjectEnvironment {
 
         let remote_client = self.remote_client.as_ref().and_then(|it| it.upgrade());
         match remote_client {
-            Some(remote_client) => remote_client.clone().read(cx).shell().map(|shell| {
+            Some(remote_client) => remote_client.read(cx).shell().map(|shell| {
                 self.remote_directory_environment(
                     &Shell::Program(shell),
                     abs_path,
@@ -150,7 +150,7 @@ impl ProjectEnvironment {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         let remote_client = self.remote_client.as_ref().and_then(|it| it.upgrade());
         match remote_client {
-            Some(remote_client) => remote_client.clone().read(cx).shell().map(|shell| {
+            Some(remote_client) => remote_client.read(cx).shell().map(|shell| {
                 self.remote_directory_environment(
                     &Shell::Program(shell),
                     abs_path,

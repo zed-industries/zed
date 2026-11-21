@@ -126,7 +126,9 @@ impl ProfileSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Picker<ProfilePickerDelegate>> {
-        if self.picker.is_none() {
+        let picker = if let Some(picker) = self.picker.clone() {
+            picker
+        } else {
             let delegate = ProfilePickerDelegate::new(
                 self.fs.clone(),
                 self.provider.clone(),
@@ -143,24 +145,23 @@ impl ProfileSelector {
                     .initial_width(rems(18.))
             });
 
-            self.picker = Some(picker);
-        }
+            self.picker = Some(picker.clone());
+            picker
+        };
 
         if self.pending_refresh {
-            if let Some(picker) = &self.picker {
-                let profiles = AgentProfile::available_profiles(cx);
-                self.profiles = profiles.clone();
-                picker.update(cx, |picker, cx| {
-                    let query = picker.query(cx);
-                    picker
-                        .delegate
-                        .refresh_profiles(profiles.clone(), query, cx);
-                });
-            }
+            let profiles = AgentProfile::available_profiles(cx);
+            self.profiles = profiles.clone();
+            picker.update(cx, |picker, cx| {
+                let query = picker.query(cx);
+                picker
+                    .delegate
+                    .refresh_profiles(profiles.clone(), query, cx);
+            });
             self.pending_refresh = false;
         }
 
-        self.picker.as_ref().unwrap().clone()
+        picker
     }
 }
 

@@ -106,10 +106,6 @@ impl PendingOps {
         self.ops.last().map(|op| op.id).unwrap_or_default()
     }
 
-    pub fn op_by_id(&self, id: PendingOpId) -> Option<&PendingOp> {
-        self.ops.iter().find(|op| op.id == id)
-    }
-
     pub fn op_by_id_mut(&mut self, id: PendingOpId) -> Option<&mut PendingOp> {
         self.ops.iter_mut().find(|op| op.id == id)
     }

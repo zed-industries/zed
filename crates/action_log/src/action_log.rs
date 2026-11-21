@@ -1,6 +1,5 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
-use clock;
 use collections::{BTreeMap, HashMap};
 use fs::MTime;
 use futures::{FutureExt, StreamExt, channel::mpsc};
@@ -1000,9 +999,7 @@ impl ActionLog {
                     }
                 }
 
-                if !valid_edits.is_empty() {
-                    buffer.edit(valid_edits, None, cx);
-                }
+                buffer.edit(valid_edits, None, cx);
             });
 
             if !self.tracked_buffers.contains_key(&buffer) {
@@ -1284,11 +1281,6 @@ impl TrackedBuffer {
     #[cfg(any(test, feature = "test-support"))]
     pub fn diff(&self) -> &Entity<BufferDiff> {
         &self.diff
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn diff_base_len(&self) -> usize {
-        self.diff_base.len()
     }
 
     fn has_edits(&self, cx: &App) -> bool {

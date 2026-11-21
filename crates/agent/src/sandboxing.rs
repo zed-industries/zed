@@ -162,6 +162,8 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
         SandboxFsPolicy::Unrestricted {
             protected_paths: Vec::new(),
             protected_file_names: Vec::new(),
+            paths_disallowing_reads: Vec::new(),
+            paths_allowing_reads: Vec::new(),
         }
     } else {
         SandboxFsPolicy::Restricted {
@@ -178,6 +180,8 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
             ),
             protected_paths: Vec::new(),
             protected_file_names: Vec::new(),
+            paths_disallowing_reads: Vec::new(),
+            paths_allowing_reads: Vec::new(),
         }
     };
     let network = if persistent.allow_all_hosts {
@@ -187,9 +191,14 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
     } else {
         SandboxNetPolicy::Restricted {
             allowed_domains: persistent.network_hosts.clone(),
+            allowed_tcp_ports: Vec::new(),
         }
     };
-    SandboxPolicy { fs, network }
+    SandboxPolicy {
+        fs,
+        network,
+        allowed_unix_sockets: Vec::new(),
+    }
 }
 
 /// Whether the sandboxed terminal can be exposed for this project.
@@ -442,6 +451,8 @@ impl ThreadSandboxGrants {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         } else {
             SandboxFsPolicy::Restricted {
@@ -458,6 +469,8 @@ impl ThreadSandboxGrants {
                 ),
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         };
         let network = if self.network_any_host {
@@ -471,9 +484,14 @@ impl ThreadSandboxGrants {
                     .iter()
                     .map(|host| host.to_string())
                     .collect(),
+                allowed_tcp_ports: Vec::new(),
             }
         };
-        SandboxPolicy { fs, network }
+        SandboxPolicy {
+            fs,
+            network,
+            allowed_unix_sockets: Vec::new(),
+        }
     }
 
     /// Serialize these grants for persistence in the thread's database row.
@@ -704,14 +722,18 @@ mod tests {
                     .collect(),
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             },
             network: if hosts.is_empty() {
                 SandboxNetPolicy::Blocked
             } else {
                 SandboxNetPolicy::Restricted {
                     allowed_domains: hosts.iter().map(|h| h.to_string()).collect(),
+                    allowed_tcp_ports: Vec::new(),
                 }
             },
+            allowed_unix_sockets: Vec::new(),
         };
 
         // Unsandboxed on either side wins — the agent runs with ambient access.
@@ -819,12 +841,15 @@ mod tests {
                 ],
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(
             policy.network,
             SandboxNetPolicy::Restricted {
-                allowed_domains: vec!["github.com".to_string()]
+                allowed_domains: vec!["github.com".to_string()],
+                allowed_tcp_ports: Vec::new(),
             }
         );
 
@@ -836,6 +861,8 @@ mod tests {
                 writable_paths: Vec::new(),
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(empty.network, SandboxNetPolicy::Blocked);
@@ -849,6 +876,8 @@ mod tests {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);
@@ -874,12 +903,15 @@ mod tests {
                 ],
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(
             policy.network,
             SandboxNetPolicy::Restricted {
-                allowed_domains: vec!["*.npmjs.org".to_string()]
+                allowed_domains: vec!["*.npmjs.org".to_string()],
+                allowed_tcp_ports: Vec::new(),
             }
         );
 
@@ -894,6 +926,8 @@ mod tests {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);

@@ -159,6 +159,7 @@ pub struct InboundSessionNotification {
 
 #[derive(Debug)]
 pub enum InboundSessionUpdate {
+    ReplayComplete,
     UserMessage(acp_v2::UserMessage),
     AgentMessage(acp_v2::AgentMessage),
     AgentThought(acp_v2::AgentThought),
@@ -175,10 +176,6 @@ pub enum InboundSessionUpdate {
     },
     PlanMarkdown {
         plan: acp_v2::PlanMarkdown,
-        update_meta: Option<acp_v2::Meta>,
-    },
-    PlanFile {
-        plan: acp_v2::PlanFile,
         update_meta: Option<acp_v2::Meta>,
     },
     PlanRemoved(acp_v2::PlanRemoved),
@@ -211,6 +208,7 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
 
     fn try_from(mut notification: acp_v2::UpdateSessionNotification) -> Result<Self, Self::Error> {
         let update = match notification.update {
+            acp_v2::SessionUpdate::ReplayComplete(_) => InboundSessionUpdate::ReplayComplete,
             acp_v2::SessionUpdate::UserMessage(message) => {
                 InboundSessionUpdate::UserMessage(message)
             }
@@ -247,10 +245,6 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
                     update_meta: update.meta,
                 },
                 acp_v2::PlanUpdateContent::Markdown(plan) => InboundSessionUpdate::PlanMarkdown {
-                    plan,
-                    update_meta: update.meta,
-                },
-                acp_v2::PlanUpdateContent::File(plan) => InboundSessionUpdate::PlanFile {
                     plan,
                     update_meta: update.meta,
                 },
@@ -314,6 +308,7 @@ impl InboundSessionNotification {
         );
         // Delivery metadata must not patch retained payload fields.
         match update {
+            InboundSessionUpdate::ReplayComplete => Ok(()),
             InboundSessionUpdate::UserMessage(message) => thread.upsert_user_message(message, cx),
             InboundSessionUpdate::AgentMessage(message) => {
                 thread.upsert_assistant_message(message, cx)
@@ -346,10 +341,6 @@ impl InboundSessionNotification {
             }
             InboundSessionUpdate::PlanMarkdown { plan, update_meta } => {
                 thread.upsert_plan_markdown(plan, update_meta, cx);
-                Ok(())
-            }
-            InboundSessionUpdate::PlanFile { plan, update_meta } => {
-                thread.upsert_plan_file(plan, update_meta, cx);
                 Ok(())
             }
             InboundSessionUpdate::PlanRemoved(removed) => {

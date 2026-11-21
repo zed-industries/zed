@@ -37,7 +37,6 @@ use editor::{Editor, MultiBuffer};
 use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, WeakEntity};
 use jupyter_protocol::{ExecutionState, JupyterMessage, JupyterMessageContent, Media, MediaType};
 use language::Buffer;
-use menu;
 use ui::{CommonAnimationExt, CopyButton, IconButton, Tooltip, prelude::*};
 
 mod image;
@@ -478,7 +477,6 @@ struct PendingInput {
 /// It can hold zero or more outputs, which the user
 /// sees as "the output" for a single execution.
 pub struct ExecutionView {
-    #[allow(unused)]
     workspace: WeakEntity<Workspace>,
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
