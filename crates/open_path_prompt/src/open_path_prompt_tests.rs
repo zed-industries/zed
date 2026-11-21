@@ -964,23 +964,36 @@ async fn test_open_path_prompt_relative_to(cx: &mut TestAppContext) {
             }),
         )
         .await;
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.workspace.use_system_path_prompts = Some(false);
+        });
+    });
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-    let (tx, _) = futures::channel::oneshot::channel();
-    let lister = project::DirectoryLister::Project(project.clone());
-
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-
-    let relative_to = std::path::PathBuf::from(path!("/root/subdir"));
-
-    let picker = workspace.update_in(cx, |_, window, cx| {
-        let delegate = OpenPathDelegate::new(tx, lister.clone(), false, relative_to, cx);
-        cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx).embedded();
-            picker
+    workspace.update_in(cx, |workspace, window, cx| {
+        OpenPathPrompt::register(workspace, Some(window), cx)
+    });
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/root/subdir/file_in_subdir")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
         })
+        .await
+        .unwrap();
+
+    open_path_prompt(&workspace, false, cx);
+    let picker = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_modal::<Picker<OpenPathDelegate>>(cx)
+            .unwrap()
     });
 
     #[cfg(not(windows))]
