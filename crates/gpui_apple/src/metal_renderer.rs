@@ -1,4 +1,5 @@
 use crate::metal_atlas::MetalAtlas;
+use crate::surface_color::surface_color_transform;
 use anyhow::{Context as _, Result};
 use block2::RcBlock;
 use gpui::{
@@ -12,8 +13,8 @@ use objc2_core_foundation::{CFRetained, CGSize};
 use objc2_core_graphics::{CGColorSpace, kCGColorSpaceDisplayP3};
 use objc2_core_video::{
     CVMetalTexture, CVMetalTextureCache, CVMetalTextureGetTexture, CVPixelBufferGetHeight,
-    CVPixelBufferGetHeightOfPlane, CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
-    CVPixelBufferGetWidthOfPlane, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVReturnSuccess,
+    CVPixelBufferGetHeightOfPlane, CVPixelBufferGetWidth, CVPixelBufferGetWidthOfPlane,
+    kCVReturnSuccess,
 };
 use objc2_foundation::{NSRange, NSString};
 #[cfg(target_os = "macos")]
@@ -1210,11 +1211,8 @@ impl MetalRenderer {
                 DevicePixels::from(CVPixelBufferGetHeight(image_buffer) as i32),
             );
 
-            let pixel_format = CVPixelBufferGetPixelFormatType(image_buffer);
-            anyhow::ensure!(
-                pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-                "unsupported surface pixel format: {pixel_format:#x}"
-            );
+            // The buffer's range and matrix decide how its samples become RGB.
+            let color_transform = surface_color_transform(image_buffer)?;
 
             let plane_texture = |plane, format| -> Result<CFRetained<CVMetalTexture>> {
                 let width = CVPixelBufferGetWidthOfPlane(image_buffer, plane);
@@ -1265,6 +1263,11 @@ impl MetalRenderer {
                 command_encoder.setFragmentTexture_atIndex(
                     Some(&cb_cr_metal_texture),
                     SurfaceInputIndex::CbCrTexture as usize,
+                );
+                command_encoder.setFragmentBytes_length_atIndex(
+                    ptr::NonNull::from(&color_transform).cast(),
+                    mem::size_of_val(&color_transform),
+                    SurfaceInputIndex::ColorTransform as usize,
                 );
             }
             surface_textures.extend([y_texture, cb_cr_texture]);
@@ -1620,6 +1623,7 @@ enum SurfaceInputIndex {
     TextureSize = 3,
     YTexture = 4,
     CbCrTexture = 5,
+    ColorTransform = 6,
 }
 
 #[repr(C)]
@@ -1750,7 +1754,7 @@ mod tests {
                     None,
                     16,
                     16,
-                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                    objc2_core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
                     Some(attributes.as_opaque()),
                     ptr::NonNull::from(&mut image_buffer),
                 )

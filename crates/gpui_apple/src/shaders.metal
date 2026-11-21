@@ -954,18 +954,16 @@ fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
                                  texture2d<float> y_texture
                                  [[texture(SurfaceInputIndex_YTexture)]],
                                  texture2d<float> cb_cr_texture
-                                 [[texture(SurfaceInputIndex_CbCrTexture)]]) {
+                                 [[texture(SurfaceInputIndex_CbCrTexture)]],
+                                 constant float4x4 *ycbcrToRGBTransform
+                                 [[buffer(SurfaceInputIndex_ColorTransform)]]) {
   constexpr sampler texture_sampler(mag_filter::linear, min_filter::linear);
-  const float4x4 ycbcrToRGBTransform =
-      float4x4(float4(+1.0000f, +1.0000f, +1.0000f, +0.0000f),
-               float4(+0.0000f, -0.3441f, +1.7720f, +0.0000f),
-               float4(+1.4020f, -0.7141f, +0.0000f, +0.0000f),
-               float4(-0.7010f, +0.5291f, -0.8860f, +1.0000f));
   float4 ycbcr = float4(
       y_texture.sample(texture_sampler, input.texture_position).r,
       cb_cr_texture.sample(texture_sampler, input.texture_position).rg, 1.0);
 
-  return ycbcrToRGBTransform * ycbcr;
+  // The transform follows the buffer's matrix and range (see surface_color.rs).
+  return *ycbcrToRGBTransform * ycbcr;
 }
 
 float4 hsla_to_rgba(Hsla hsla) {
