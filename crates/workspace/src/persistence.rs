@@ -2105,6 +2105,21 @@ impl WorkspaceDb {
         any_dir
     }
 
+    async fn any_path_is_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
+        for path in paths {
+            if fs
+                .metadata(path)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|metadata| metadata.is_dir)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     // Returns the raw recent workspace history. Scratch workspaces (no paths) are filtered
     // out because they are restored separately by `last_session_workspace_locations`.
     pub async fn recent_project_workspaces_ungrouped(
@@ -2308,7 +2323,10 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if paths.is_empty() || Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+            // A window is restored while one of its folders is still on disk, even if another path it
+            // had open is gone (a file in /tmp after a reboot). Windows with no folder left stay closed,
+            // like a git commit message opened with `zed --wait`.
+            if paths.is_empty() || Self::any_path_is_a_directory(paths.paths(), fs).await {
                 workspaces.push(SessionWorkspace {
                     workspace_id,
                     location: SerializedWorkspaceLocation::Local,
@@ -4997,6 +5015,46 @@ mod tests {
             sessions.is_empty(),
             "workspaces whose paths no longer exist on disk must not restore"
         );
+    }
+
+    #[gpui::test]
+    async fn test_last_session_restores_workspace_while_a_folder_exists(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "a.txt": "" }))
+            .await;
+        fs.insert_file(path!("/notes.txt"), Vec::new()).await;
+        let db =
+            WorkspaceDb::open_test_db("test_last_session_restores_workspace_while_a_folder_exists")
+                .await;
+
+        let project = Path::new(path!("/project"));
+        let file = Path::new(path!("/notes.txt"));
+        let gone_file = Path::new(path!("/gone.txt"));
+        let gone_folder = Path::new(path!("/gone-project"));
+        // Windows that still have a folder come back, whatever else is missing; windows with
+        // only files, or whose folders were all deleted, do not.
+        for (id, paths) in [
+            (1, vec![gone_file, project]),
+            (2, vec![file]),
+            (3, vec![gone_file]),
+            (4, vec![gone_folder, file]),
+            (5, vec![gone_folder, project]),
+        ] {
+            db.save_workspace(workspace_with(id, &paths, empty_pane_group(), Some("s")))
+                .await;
+        }
+
+        let mut restored = db
+            .last_session_workspace_locations("s", None, fs.as_ref())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|workspace| workspace.workspace_id)
+            .collect::<Vec<_>>();
+        restored.sort();
+        assert_eq!(restored, [WorkspaceId(1), WorkspaceId(5)]);
     }
 
     #[gpui::test]
