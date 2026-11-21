@@ -50,6 +50,12 @@ pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
     pub remote_user: String,
+    /// The `devcontainer.local_folder` label of a dev container. Unlike
+    /// `container_id`, it survives rebuilds.
+    pub local_folder: Option<String>,
+    /// The `devcontainer.config_file` label of a dev container. Unlike
+    /// `container_id`, it survives rebuilds.
+    pub config_file: Option<String>,
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
     pub remote_env: BTreeMap<String, String>,
@@ -1187,6 +1193,8 @@ mod tests {
                 name: "container".to_string(),
                 container_id: "container_id".to_string(),
                 remote_user: "user".to_string(),
+                local_folder: None,
+                config_file: None,
                 upload_binary_over_docker_exec: false,
                 use_podman: false,
                 remote_env: remote_env
