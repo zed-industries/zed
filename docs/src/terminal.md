@@ -59,6 +59,66 @@ To pass arguments to your shell:
 }
 ```
 
+## Terminal Profiles {#terminal-profiles}
+
+Use **Profiles** in the Terminal page of the Settings Editor to configure named
+shells and command-line programs in JSON. Select a profile from the arrow beside
+the terminal panel's **+** button to open it in a new tab.
+
+For example, configure Bash, GitHub CLI, GitHub Copilot CLI, and a JavaScript REPL:
+
+```json [settings]
+{
+  "terminal": {
+    "default_profile": "Bash",
+    "profiles": {
+      "Bash": {
+        "shell": { "program": "bash" }
+      },
+      "GitHub CLI": {
+        "shell": {
+          "with_arguments": {
+            "program": "bash",
+            "args": ["-ic", "gh --help; exec bash -i"],
+            "title_override": "GitHub CLI"
+          }
+        }
+      },
+      "GitHub Copilot CLI": {
+        "shell": { "program": "copilot" },
+        "detect_venv": "off"
+      },
+      "JavaScript": {
+        "shell": {
+          "with_arguments": {
+            "program": "node",
+            "args": ["--interactive"],
+            "title_override": "JavaScript"
+          }
+        },
+        "detect_venv": "off"
+      }
+    }
+  }
+}
+```
+
+Install the programs you configure and make them available on `PATH`, or use their
+full paths. Replace Bash with a shell available on your platform. GitHub CLI does
+not provide an interactive shell, so this example displays its help and leaves
+Bash open for commands.
+
+Each profile can override `shell`, `env`, `working_directory`, and `detect_venv`.
+Other terminal settings remain shared. Profile environment variables extend the
+shared environment, overriding variables with the same name. Project settings can
+add profiles or override individual fields of existing profiles.
+
+**New Terminal** and its shortcuts use `default_profile`. Leave it unset to keep
+using `terminal.shell`. Selecting another profile does not change your default.
+Splits and restored terminal tabs retain their profile. If a saved profile has
+been removed, restoration uses the default. In remote projects, a selected
+profile runs on the remote host and its program must be installed there.
+
 ## Working Directory
 
 Control where new terminals start:
