@@ -46,6 +46,23 @@ impl DevContainerConfig {
             config_path: PathBuf::from(".devcontainer.json"),
         }
     }
+
+    /// The config a running dev container was created from, given the absolute
+    /// path in its `devcontainer.config_file` label.
+    pub fn from_config_file(config_file: &Path) -> Self {
+        let name = if config_file.file_name() == Some(".devcontainer.json".as_ref()) {
+            "root".to_string()
+        } else {
+            match config_file.parent().and_then(Path::file_name) {
+                Some(folder) if folder != ".devcontainer" => folder.to_string_lossy().into_owned(),
+                _ => "default".to_string(),
+            }
+        };
+        Self {
+            name,
+            config_path: config_file.to_path_buf(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,6 +71,10 @@ pub(crate) struct DevContainerUp {
     pub(crate) container_id: String,
     pub(crate) remote_user: String,
     pub(crate) remote_workspace_folder: String,
+    #[serde(default)]
+    pub(crate) local_folder: String,
+    #[serde(default)]
+    pub(crate) config_file: String,
     #[serde(default)]
     pub(crate) extension_ids: Vec<String>,
     #[serde(default)]
@@ -252,10 +273,13 @@ pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> 
     configs
 }
 
+/// Starts the dev container for `config`, reusing an existing container unless
+/// `rebuild` is set, in which case the existing one is removed and recreated.
 pub async fn start_dev_container_with_config(
     context: DevContainerContext,
     config: Option<DevContainerConfig>,
     environment: HashMap<String, String>,
+    rebuild: bool,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
     check_for_docker(context.use_podman).await?;
 
@@ -268,6 +292,7 @@ pub async fn start_dev_container_with_config(
         environment.clone(),
         actual_config.clone(),
         context.project_directory.as_ref(),
+        rebuild,
     )
     .await
     {
@@ -275,6 +300,8 @@ pub async fn start_dev_container_with_config(
             container_id,
             remote_workspace_folder,
             remote_user,
+            local_folder,
+            config_file,
             extension_ids,
             remote_env,
             ..
@@ -290,6 +317,8 @@ pub async fn start_dev_container_with_config(
             let connection = DevContainerConnection {
                 name: project_name,
                 container_id,
+                local_folder,
+                config_file,
                 use_podman: context.use_podman,
                 remote_user,
                 extension_ids,
@@ -503,6 +532,21 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_dev_container_config_from_config_file() {
+        let project = PathBuf::from(path!("/project"));
+        for (config_file, expected_name) in [
+            (".devcontainer/devcontainer.json", "default"),
+            (".devcontainer/backend/devcontainer.json", "backend"),
+            (".devcontainer.json", "root"),
+        ] {
+            let config_file = project.join(config_file);
+            let config = DevContainerConfig::from_config_file(&config_file);
+            assert_eq!(config.name, expected_name);
+            assert_eq!(config.config_path, config_file);
+            assert_eq!(project.join(&config.config_path), config_file);
+        }
+    }
     #[gpui::test]
     async fn test_find_configs_root_devcontainer_json(cx: &mut TestAppContext) {
         init_test(cx);

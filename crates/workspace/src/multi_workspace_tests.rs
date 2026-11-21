@@ -154,6 +154,44 @@ async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppC
     });
 }
 
+#[test]
+fn test_dev_container_project_group_key_survives_rebuilds() {
+    use std::hash::{BuildHasher as _, RandomState};
+
+    let paths = PathList::new(&[PathBuf::from(path!("/workspaces/project"))]);
+    let dev_container = |container_id: &str, config_file: &str| {
+        ProjectGroupKey::new(
+            Some(RemoteConnectionOptions::Docker(
+                remote::DockerConnectionOptions {
+                    container_id: container_id.to_string(),
+                    remote_user: "vscode".to_string(),
+                    local_folder: Some("/host/project".to_string()),
+                    config_file: Some(config_file.to_string()),
+                    ..Default::default()
+                },
+            )),
+            paths.clone(),
+        )
+    };
+    let config_file = "/host/project/.devcontainer/devcontainer.json";
+    let before_rebuild = dev_container("container-before", config_file);
+    let after_rebuild = dev_container("container-after", config_file);
+    let hasher = RandomState::new();
+
+    assert_eq!(before_rebuild, after_rebuild);
+    assert_eq!(
+        hasher.hash_one(&before_rebuild),
+        hasher.hash_one(&after_rebuild)
+    );
+    assert_ne!(
+        before_rebuild,
+        dev_container(
+            "container-before",
+            "/host/project/.devcontainer/backend/devcontainer.json"
+        )
+    );
+}
+
 #[gpui::test]
 async fn test_project_group_keys_initial(cx: &mut TestAppContext) {
     init_test(cx);
