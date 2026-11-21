@@ -55,6 +55,10 @@ pub(crate) struct DevContainerUp {
     pub(crate) remote_user: String,
     pub(crate) remote_workspace_folder: String,
     #[serde(default)]
+    pub(crate) local_folder: String,
+    #[serde(default)]
+    pub(crate) config_file: String,
+    #[serde(default)]
     pub(crate) extension_ids: Vec<String>,
     #[serde(default)]
     pub(crate) remote_env: HashMap<String, String>,
@@ -275,6 +279,8 @@ pub async fn start_dev_container_with_config(
             container_id,
             remote_workspace_folder,
             remote_user,
+            local_folder,
+            config_file,
             extension_ids,
             remote_env,
             ..
@@ -290,6 +296,8 @@ pub async fn start_dev_container_with_config(
             let connection = DevContainerConnection {
                 name: project_name,
                 container_id,
+                local_folder,
+                config_file,
                 use_podman: context.use_podman,
                 remote_user,
                 extension_ids,
