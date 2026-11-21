@@ -99,8 +99,13 @@ fn fitting_ref_count(
     gap: DevicePixels,
     mut measure: impl FnMut(RefChipMeasurement) -> DevicePixels,
 ) -> usize {
+    // The primary reference is always shown, so a lone chip needs no measurement.
+    if ref_count <= 1 {
+        return ref_count;
+    }
+
     let mut prefix_width = DevicePixels(0);
-    let mut visible_count = usize::from(ref_count > 0);
+    let mut visible_count = 1;
     for index in 0..ref_count {
         if index > 0 {
             prefix_width += gap;
@@ -5575,11 +5580,14 @@ mod tests {
         assert_eq!(fit(118.), 2);
         assert_eq!(fit(117.), 1);
         assert_eq!(fit(0.), 1);
-        assert_eq!(fit_widths(&[], px(0.), px(4.), |_| unreachable!()), 0);
-        assert_eq!(
-            fit_widths(&[px(100.)], px(10.), px(4.), |_| unreachable!()),
-            1
-        );
+        for ref_count in 0..=1 {
+            assert_eq!(
+                fitting_ref_count(ref_count, DevicePixels(0), DevicePixels(4), |_| {
+                    panic!("measured a chip with only {ref_count} references")
+                }),
+                ref_count
+            );
+        }
 
         // The full row fits, although two chips and the overflow badge do not.
         assert_eq!(fit_widths(&[px(10.); 3], px(38.), px(4.), |_| px(40.)), 3);
