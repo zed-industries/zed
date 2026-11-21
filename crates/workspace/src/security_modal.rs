@@ -586,6 +586,10 @@ fn remote_host_label(remote_host: &RemoteConnectionIdentity<'_>) -> String {
             container_id,
             remote_user,
         } => (Some(remote_user.as_ref()), container_id.to_string()),
+        RemoteConnectionIdentity::DevContainer {
+            config_file,
+            remote_user,
+        } => (Some(remote_user.as_ref()), config_file.to_string()),
         #[cfg(any(test, feature = "test-support"))]
         RemoteConnectionIdentity::Mock { id } => (None, format!("mock-{id}")),
     };

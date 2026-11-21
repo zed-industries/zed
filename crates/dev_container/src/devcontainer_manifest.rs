@@ -124,17 +124,18 @@ impl DevContainerManifest {
     }
 
     fn identifying_labels(&self) -> Vec<(&str, String)> {
-        let labels = vec![
-            (
-                "devcontainer.local_folder",
-                normalize_label_path(&self.local_project_directory.display().to_string()),
-            ),
-            (
-                "devcontainer.config_file",
-                normalize_label_path(&self.config_file().display().to_string()),
-            ),
-        ];
-        labels
+        vec![
+            ("devcontainer.local_folder", self.local_folder_label()),
+            ("devcontainer.config_file", self.config_file_label()),
+        ]
+    }
+
+    fn local_folder_label(&self) -> String {
+        normalize_label_path(&self.local_project_directory.display().to_string())
+    }
+
+    fn config_file_label(&self) -> String {
+        normalize_label_path(&self.config_file().display().to_string())
     }
 
     fn parse_nonremote_vars_for_content(
@@ -1025,6 +1026,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             container_id: running_container.id,
             remote_user,
             remote_workspace_folder: remote_workspace_folder.display().to_string(),
+            local_folder: self.local_folder_label(),
+            config_file: self.config_file_label(),
             extension_ids: self.extension_ids(),
             remote_env,
         })
@@ -2479,6 +2482,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 container_id: docker_ps.id,
                 remote_user: remote_user,
                 remote_workspace_folder: remote_folder.display().to_string(),
+                local_folder: self.local_folder_label(),
+                config_file: self.config_file_label(),
                 extension_ids: self.extension_ids(),
                 remote_env,
             };
@@ -3980,6 +3985,8 @@ mod test {
             container_id: "container".to_string(),
             remote_user: "root".to_string(),
             remote_workspace_folder: "/workspaces/project".to_string(),
+            local_folder: String::new(),
+            config_file: String::new(),
             extension_ids: Vec::new(),
             remote_env: HashMap::new(),
         };
@@ -4618,6 +4625,19 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
         assert_eq!(
             devcontainer_up.extension_ids,
             vec!["vue".to_string(), "ruby".to_string()]
+        );
+        assert_eq!(
+            devcontainer_manifest.identifying_labels(),
+            vec![
+                (
+                    "devcontainer.local_folder",
+                    devcontainer_up.local_folder.clone()
+                ),
+                (
+                    "devcontainer.config_file",
+                    devcontainer_up.config_file.clone()
+                ),
+            ]
         );
 
         let files = test_dependencies.fs.files();

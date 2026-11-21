@@ -1134,6 +1134,10 @@ impl Domain for WorkspaceDb {
             DROP TABLE trusted_worktrees;
             ALTER TABLE trusted_worktrees_2 RENAME TO trusted_worktrees;
         ),
+        sql!(
+            ALTER TABLE remote_connections ADD COLUMN local_folder TEXT;
+            ALTER TABLE remote_connections ADD COLUMN config_file TEXT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1777,6 +1781,8 @@ impl WorkspaceDb {
         let mut container_id = None;
         let mut use_podman = None;
         let mut remote_env = None;
+        let mut local_folder = None;
+        let mut config_file = None;
 
         match options {
             RemoteConnectionOptions::Ssh(options) => {
@@ -1797,6 +1803,8 @@ impl WorkspaceDb {
                 name = Some(options.name.as_str());
                 use_podman = Some(options.use_podman);
                 remote_env = serde_json::to_string(&options.remote_env).ok();
+                local_folder = options.local_folder.as_deref();
+                config_file = options.config_file.as_deref();
             }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => {
@@ -1817,6 +1825,8 @@ impl WorkspaceDb {
             container_id,
             use_podman,
             remote_env.as_deref(),
+            local_folder,
+            config_file,
         )
     }
 
@@ -1831,6 +1841,8 @@ impl WorkspaceDb {
         container_id: Option<&str>,
         use_podman: Option<bool>,
         remote_env: Option<&str>,
+        local_folder: Option<&str>,
+        config_file: Option<&str>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
@@ -1842,7 +1854,9 @@ impl WorkspaceDb {
                 user IS ? AND
                 distro IS ? AND
                 name IS ? AND
-                container_id IS ?
+                container_id IS ? AND
+                local_folder IS ? AND
+                config_file IS ?
             LIMIT 1
         ))?((
             kind.serialize(),
@@ -1852,6 +1866,8 @@ impl WorkspaceDb {
             distro,
             name,
             container_id,
+            local_folder,
+            config_file,
         ))? {
             Ok(RemoteConnectionId(id))
         } else {
@@ -1865,8 +1881,10 @@ impl WorkspaceDb {
                     name,
                     container_id,
                     use_podman,
-                    remote_env
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    remote_env,
+                    local_folder,
+                    config_file
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                 RETURNING id
             ))?((
                 kind.serialize(),
@@ -1877,7 +1895,7 @@ impl WorkspaceDb {
                 name,
                 container_id,
                 use_podman,
-                remote_env,
+                (remote_env, local_folder, config_file),
             ))?
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
@@ -1995,13 +2013,25 @@ impl WorkspaceDb {
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
         Ok(self.select(sql!(
             SELECT
-                id, kind, host, port, user, distro, container_id, name, use_podman, remote_env
+                id, kind, host, port, user, distro, container_id, name, use_podman,
+                remote_env, local_folder, config_file
             FROM
                 remote_connections
         ))?()?
         .into_iter()
         .filter_map(
-            |(id, kind, host, port, user, distro, container_id, name, use_podman, remote_env)| {
+            |(
+                id,
+                kind,
+                host,
+                port,
+                user,
+                distro,
+                container_id,
+                name,
+                use_podman,
+                (remote_env, local_folder, config_file),
+            )| {
                 Some((
                     RemoteConnectionId(id),
                     Self::remote_connection_from_row(
@@ -2014,6 +2044,8 @@ impl WorkspaceDb {
                         name,
                         use_podman,
                         remote_env,
+                        local_folder,
+                        config_file,
                     )?,
                 ))
             },
@@ -2025,13 +2057,24 @@ impl WorkspaceDb {
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let (kind, host, port, user, distro, container_id, name, use_podman, remote_env) =
-            self.select_row_bound(sql!(
-                SELECT kind, host, port, user, distro, container_id, name, use_podman, remote_env
-                FROM remote_connections
-                WHERE id = ?
-            ))?(id.0)?
-            .context("no such remote connection")?;
+        let (
+            kind,
+            host,
+            port,
+            user,
+            distro,
+            container_id,
+            name,
+            use_podman,
+            (remote_env, local_folder, config_file),
+        ) = self.select_row_bound(sql!(
+            SELECT
+                kind, host, port, user, distro, container_id, name, use_podman,
+                remote_env, local_folder, config_file
+            FROM remote_connections
+            WHERE id = ?
+        ))?(id.0)?
+        .context("no such remote connection")?;
         Self::remote_connection_from_row(
             kind,
             host,
@@ -2042,6 +2085,8 @@ impl WorkspaceDb {
             name,
             use_podman,
             remote_env,
+            local_folder,
+            config_file,
         )
         .context("invalid remote_connection row")
     }
@@ -2056,6 +2101,8 @@ impl WorkspaceDb {
         name: Option<String>,
         use_podman: Option<bool>,
         remote_env: Option<String>,
+        local_folder: Option<String>,
+        config_file: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -2075,6 +2122,8 @@ impl WorkspaceDb {
                     container_id: container_id?,
                     name: name?,
                     remote_user: user?,
+                    local_folder,
+                    config_file,
                     upload_binary_over_docker_exec: false,
                     use_podman: use_podman?,
                     remote_env,
@@ -2795,6 +2844,10 @@ VALUES {placeholders};"#
     }
 }
 
+/// Dev container identities are only stored in the trusted/restricted worktree
+/// tables, never in `remote_connections`, so this isn't a `RemoteConnectionKind`.
+const DEV_CONTAINER_IDENTITY_KIND: &str = "devcontainer";
+
 type RemoteIdentityColumns = (
     Option<&'static str>,
     Option<String>,
@@ -2832,6 +2885,15 @@ fn remote_identity_columns(
             Some(remote_user.to_string()),
             None,
         ),
+        Some(RemoteConnectionIdentity::DevContainer {
+            config_file,
+            remote_user,
+        }) => (
+            Some(DEV_CONTAINER_IDENTITY_KIND),
+            Some(config_file.to_string()),
+            Some(remote_user.to_string()),
+            None,
+        ),
         #[cfg(any(test, feature = "test-support"))]
         Some(RemoteConnectionIdentity::Mock { id }) => {
             (Some("mock"), Some(id.to_string()), None, None)
@@ -2855,6 +2917,12 @@ fn remote_identity_from_columns(
     }
     let host = Cow::Owned(host?);
     let user = user.map(Cow::Owned);
+    if kind == DEV_CONTAINER_IDENTITY_KIND {
+        return Some(Some(RemoteConnectionIdentity::DevContainer {
+            config_file: host,
+            remote_user: user?,
+        }));
+    }
     let identity = match RemoteConnectionKind::deserialize(&kind)? {
         RemoteConnectionKind::Ssh => RemoteConnectionIdentity::Ssh {
             host,
@@ -3682,6 +3750,10 @@ mod tests {
             }),
             Some(RemoteConnectionIdentity::Docker {
                 container_id: Cow::Borrowed("server"),
+                remote_user: Cow::Borrowed("user"),
+            }),
+            Some(RemoteConnectionIdentity::DevContainer {
+                config_file: Cow::Borrowed("/project/.devcontainer/devcontainer.json"),
                 remote_user: Cow::Borrowed("user"),
             }),
             Some(RemoteConnectionIdentity::Mock { id: 7 }),
@@ -5185,6 +5257,33 @@ mod tests {
             .unwrap();
 
         assert_eq!(connection_id, same_connection_id);
+    }
+
+    #[gpui::test]
+    async fn test_dev_container_connection_round_trips_labels() {
+        let db =
+            WorkspaceDb::open_test_db("test_dev_container_connection_round_trips_labels").await;
+        let options = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            name: "project".to_string(),
+            container_id: "container-123".to_string(),
+            remote_user: "vscode".to_string(),
+            local_folder: Some("/home/user/project".to_string()),
+            config_file: Some("/home/user/project/.devcontainer/devcontainer.json".to_string()),
+            use_podman: false,
+            remote_env: BTreeMap::default(),
+            upload_binary_over_docker_exec: false,
+        });
+
+        let connection_id = db
+            .get_or_create_remote_connection(options.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(db.remote_connection(connection_id).unwrap(), options);
+        assert_eq!(
+            db.remote_connections().unwrap().get(&connection_id),
+            Some(&options)
+        );
     }
 
     #[gpui::test]

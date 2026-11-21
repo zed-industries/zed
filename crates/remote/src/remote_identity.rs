@@ -17,6 +17,13 @@ pub enum RemoteConnectionIdentity<'a> {
         container_id: Cow<'a, str>,
         remote_user: Cow<'a, str>,
     },
+    /// A container ID changes every time a dev container is rebuilt, so dev
+    /// containers are identified by their `devcontainer.json` instead. The
+    /// absolute config path already determines the project folder.
+    DevContainer {
+        config_file: Cow<'a, str>,
+        remote_user: Cow<'a, str>,
+    },
     #[cfg(any(test, feature = "test-support"))]
     Mock { id: u64 },
 }
@@ -44,6 +51,13 @@ impl RemoteConnectionIdentity<'_> {
                 container_id: Cow::Owned(container_id.into_owned()),
                 remote_user: Cow::Owned(remote_user.into_owned()),
             },
+            Self::DevContainer {
+                config_file,
+                remote_user,
+            } => RemoteConnectionIdentity::DevContainer {
+                config_file: Cow::Owned(config_file.into_owned()),
+                remote_user: Cow::Owned(remote_user.into_owned()),
+            },
             #[cfg(any(test, feature = "test-support"))]
             Self::Mock { id } => RemoteConnectionIdentity::Mock { id },
         }
@@ -62,9 +76,15 @@ impl<'a> From<&'a RemoteConnectionOptions> for RemoteConnectionIdentity<'a> {
                 distro_name: Cow::Borrowed(&options.distro_name),
                 user: options.user.as_deref().map(Cow::Borrowed),
             },
-            RemoteConnectionOptions::Docker(options) => Self::Docker {
-                container_id: Cow::Borrowed(&options.container_id),
-                remote_user: Cow::Borrowed(&options.remote_user),
+            RemoteConnectionOptions::Docker(options) => match &options.config_file {
+                Some(config_file) => Self::DevContainer {
+                    config_file: Cow::Borrowed(config_file),
+                    remote_user: Cow::Borrowed(&options.remote_user),
+                },
+                None => Self::Docker {
+                    container_id: Cow::Borrowed(&options.container_id),
+                    remote_user: Cow::Borrowed(&options.remote_user),
+                },
             },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => Self::Mock { id: options.id },
@@ -150,6 +170,7 @@ mod tests {
             upload_binary_over_docker_exec: true,
             use_podman: true,
             remote_env: BTreeMap::from([("FOO".to_string(), "BAR".to_string())]),
+            ..Default::default()
         });
         let right = RemoteConnectionOptions::Docker(DockerConnectionOptions {
             name: "zed-dev".to_string(),
@@ -158,8 +179,59 @@ mod tests {
             upload_binary_over_docker_exec: false,
             use_podman: false,
             remote_env: BTreeMap::new(),
+            ..Default::default()
         });
 
         assert_eq!(left.identity(), right.identity());
+    }
+
+    fn dev_container(container_id: &str, config_file: &str) -> RemoteConnectionOptions {
+        RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            name: "zed-dev".to_string(),
+            container_id: container_id.to_string(),
+            remote_user: "anth".to_string(),
+            local_folder: Some("/home/anth/project".to_string()),
+            config_file: Some(config_file.to_string()),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn dev_container_identity_survives_rebuilds() {
+        let config_file = "/home/anth/project/.devcontainer/devcontainer.json";
+        let before_rebuild = dev_container("container-123", config_file);
+        let after_rebuild = dev_container("container-456", config_file);
+
+        assert_eq!(before_rebuild.identity(), after_rebuild.identity());
+    }
+
+    #[test]
+    fn dev_container_identity_distinguishes_config_files() {
+        let backend = dev_container(
+            "container-123",
+            "/home/anth/project/.devcontainer/backend/devcontainer.json",
+        );
+        let frontend = dev_container(
+            "container-123",
+            "/home/anth/project/.devcontainer/frontend/devcontainer.json",
+        );
+
+        assert_ne!(backend.identity(), frontend.identity());
+    }
+
+    #[test]
+    fn docker_identity_without_labels_uses_container_id() {
+        let left = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            container_id: "container-123".to_string(),
+            remote_user: "anth".to_string(),
+            ..Default::default()
+        });
+        let right = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            container_id: "container-456".to_string(),
+            remote_user: "anth".to_string(),
+            ..Default::default()
+        });
+
+        assert_ne!(left.identity(), right.identity());
     }
 }

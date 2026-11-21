@@ -11384,10 +11384,9 @@ fn matches_remote_location(
             // The WSL username is not consistently populated in the workspace location, so ignore it for now.
             connection.distro_name == requested.distro_name
         }
-        (
-            RemoteConnectionOptions::Docker(connection),
-            RemoteConnectionOptions::Docker(requested),
-        ) => connection.container_id == requested.container_id,
+        (RemoteConnectionOptions::Docker(_), RemoteConnectionOptions::Docker(_)) => {
+            connection.identity() == requested.identity()
+        }
         #[cfg(any(test, feature = "test-support"))]
         (RemoteConnectionOptions::Mock(connection), RemoteConnectionOptions::Mock(requested)) => {
             connection.id == requested.id

@@ -6858,11 +6858,31 @@ impl Project {
 ///
 /// Paths are mapped to their main worktree path first so we can group
 /// workspaces by main repos.
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Default)]
+///
+/// Hosts are compared by [`remote::RemoteConnectionIdentity`] rather than by
+/// their full connection options, because options can carry runtime-only
+/// details (such as a dev container's ID, which changes on every rebuild) that
+/// must not split one project into several groups.
+#[derive(Clone, Debug, Default)]
 pub struct ProjectGroupKey {
     /// The paths of the main worktrees for this project group.
     paths: PathList,
     host: Option<RemoteConnectionOptions>,
+}
+
+impl PartialEq for ProjectGroupKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.matches_identity(other)
+    }
+}
+
+impl Eq for ProjectGroupKey {}
+
+impl std::hash::Hash for ProjectGroupKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.paths.hash(state);
+        self.host.as_ref().map(|host| host.identity()).hash(state);
+    }
 }
 
 impl ProjectGroupKey {
