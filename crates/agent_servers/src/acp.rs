@@ -1458,6 +1458,15 @@ done
                 );
                 cx.update(|cx| set_acp_beta(false, cx));
                 assert_eq!(
+                    connection.description_format(),
+                    if v2 {
+                        acp_thread::AgentDescriptionFormat::Markdown
+                    } else {
+                        acp_thread::AgentDescriptionFormat::PlainText
+                    },
+                    "descriptions follow the negotiated connection, not the current beta flag"
+                );
+                assert_eq!(
                     connection.clone().downcast::<AcpV2Connection>().is_some(),
                     v2
                 );

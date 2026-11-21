@@ -1,3 +1,4 @@
+mod formatted_text;
 pub mod html;
 mod mermaid;
 pub mod parser;
@@ -10,6 +11,7 @@ use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
 use language::LanguageName;
 
+pub use formatted_text::FormattedText;
 use log::Level;
 use mermaid::{
     MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,

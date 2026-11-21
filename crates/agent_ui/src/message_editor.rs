@@ -9,7 +9,7 @@ use crate::{
     },
     mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
-use acp_thread::MentionUri;
+use acp_thread::{AgentDescriptionFormat, MentionUri};
 use agent::ThreadStore;
 use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Result, anyhow};
@@ -31,6 +31,7 @@ use gpui::{
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
 use project::AgentId;
+use project::lsp_store::CompletionDocumentation;
 use project::{
     CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectPath, Worktree,
 };
@@ -47,6 +48,7 @@ use zed_actions::agent::{Chat, PasteRaw};
 
 #[derive(Default)]
 pub struct SessionCapabilities {
+    description_format: AgentDescriptionFormat,
     prompt_capabilities: acp_v2::PromptCapabilities,
     available_commands: Vec<acp_v2::AvailableCommand>,
     available_skills: Vec<AvailableSkill>,
@@ -54,11 +56,13 @@ pub struct SessionCapabilities {
 
 impl SessionCapabilities {
     pub fn new(
+        description_format: AgentDescriptionFormat,
         prompt_capabilities: acp_v2::PromptCapabilities,
         available_commands: Vec<acp_v2::AvailableCommand>,
         available_skills: Vec<AvailableSkill>,
     ) -> Self {
         Self {
+            description_format,
             prompt_capabilities,
             available_commands: slash_commands(available_commands),
             available_skills,
@@ -69,7 +73,12 @@ impl SessionCapabilities {
         prompt_capabilities: acp_v2::PromptCapabilities,
         available_commands: Vec<acp_v2::AvailableCommand>,
     ) -> Self {
-        Self::new(prompt_capabilities, available_commands, Vec::new())
+        Self::new(
+            AgentDescriptionFormat::PlainText,
+            prompt_capabilities,
+            available_commands,
+            Vec::new(),
+        )
     }
 
     pub fn prompt_capabilities(&self) -> &acp_v2::PromptCapabilities {
@@ -117,7 +126,16 @@ impl SessionCapabilities {
             .iter()
             .map(|command| AvailableCommand {
                 name: command.name().to_owned().into(),
-                description: command.description().to_owned().into(),
+                documentation: match self.description_format {
+                    AgentDescriptionFormat::PlainText => {
+                        CompletionDocumentation::MultiLinePlainText(command.description().into())
+                    }
+                    AgentDescriptionFormat::Markdown => {
+                        CompletionDocumentation::NonInteractiveMarkdown(
+                            command.description().into(),
+                        )
+                    }
+                },
                 requires_argument: matches!(
                     command_input(command),
                     Some(acp_v2::AvailableCommandInput::Text(_))
@@ -2329,7 +2347,7 @@ mod tests {
     use std::{ops::Range, path::Path, path::PathBuf, rc::Rc, sync::Arc};
 
     use super::PromptLocalCommand;
-    use acp_thread::MentionUri;
+    use acp_thread::{AgentDescriptionFormat, MentionUri};
     use agent::{ThreadStore, outline};
     use agent_client_protocol::v2::schema as acp_v2;
     use base64::Engine as _;
@@ -2375,6 +2393,7 @@ mod tests {
             warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
+            AgentDescriptionFormat::PlainText,
             acp_v2::PromptCapabilities::default(),
             vec![acp_v2::AvailableCommand::Command(acp_v2::Command::new(
                 "help", "Get help",
@@ -2390,8 +2409,41 @@ mod tests {
     }
 
     #[test]
+    fn replaced_command_descriptions_keep_the_connections_format() {
+        use project::lsp_store::CompletionDocumentation;
+
+        for format in [
+            AgentDescriptionFormat::PlainText,
+            AgentDescriptionFormat::Markdown,
+        ] {
+            let mut capabilities =
+                SessionCapabilities::new(format, Default::default(), vec![], vec![]);
+            let source = "**Read** [docs](https://example.org)";
+            capabilities.set_available_commands(vec![acp_v2::AvailableCommand::Command(
+                acp_v2::Command::new("read", source),
+            )]);
+            let commands = capabilities.completion_commands();
+            let [command] = commands.as_slice() else {
+                panic!("one command")
+            };
+            match (format, &command.documentation) {
+                (
+                    AgentDescriptionFormat::Markdown,
+                    CompletionDocumentation::NonInteractiveMarkdown(text),
+                )
+                | (
+                    AgentDescriptionFormat::PlainText,
+                    CompletionDocumentation::MultiLinePlainText(text),
+                ) => assert_eq!(text, source),
+                _ => panic!("incorrect completion documentation format"),
+            }
+        }
+    }
+
+    #[test]
     fn test_completion_commands_derive_category_from_meta() {
         let session_capabilities = SessionCapabilities::new(
+            AgentDescriptionFormat::PlainText,
             acp_v2::PromptCapabilities::default(),
             vec![
                 acp_v2::AvailableCommand::Command(
@@ -2435,6 +2487,7 @@ mod tests {
         ]))
         .expect("unknown command kinds parse");
         let mut session_capabilities = SessionCapabilities::new(
+            AgentDescriptionFormat::Markdown,
             acp_v2::PromptCapabilities::default(),
             commands.clone(),
             Vec::new(),

@@ -18,7 +18,13 @@ pub use terminal_tool_header::*;
 pub use undo_reject_toast::*;
 
 use gpui::{App, ElementId, SharedString};
-use ui::{ButtonLike, IconButton, TintColor, prelude::*};
+use ui::{ButtonLike, IconButton, TintColor, Tooltip, prelude::*};
+
+pub(crate) fn description_tooltip(
+    text: markdown::FormattedText,
+) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+    Tooltip::element(move |_, _| text.clone().into_any_element())
+}
 
 pub(crate) fn fast_mode_button(id: impl Into<ElementId>, enabled: bool, cx: &App) -> IconButton {
     let (icon, color) = if enabled {

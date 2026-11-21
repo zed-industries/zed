@@ -1369,6 +1369,10 @@ impl AgentConnection for AcpV2Connection {
         (!version.is_empty()).then(|| version.clone().into())
     }
 
+    fn description_format(&self) -> acp_thread::AgentDescriptionFormat {
+        acp_thread::AgentDescriptionFormat::Markdown
+    }
+
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,

@@ -4454,13 +4454,7 @@ impl ThreadView {
                 let request = thread.permission_request(*request_id)?.generic_request()?;
                 let (_, subject) = Self::permission_tool_call(thread, request)?;
                 (subject.id == tool_call.id).then(|| {
-                    self.render_generic_permission_card(
-                        self.session_id.clone(),
-                        *request_id,
-                        request,
-                        None,
-                        cx,
-                    )
+                    self.render_generic_permission_card(thread, *request_id, request, None, cx)
                 })
             })
             .collect::<Vec<_>>();
@@ -4509,7 +4503,7 @@ impl ThreadView {
                     ))
                 };
                 cards.push(self.render_generic_permission_card(
-                    session_id.clone(),
+                    thread,
                     *request_id,
                     request,
                     source,
@@ -4533,12 +4527,13 @@ impl ThreadView {
 
     pub(super) fn render_generic_permission_card(
         &self,
-        session_id: acp_v2::SessionId,
+        thread: &AcpThread,
         request_id: PermissionRequestId,
         request: &acp_v2::RequestPermissionRequest,
         source: Option<String>,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let session_id = thread.session_id().clone();
         let subject = match &request.subject {
             Some(acp_v2::RequestPermissionSubject::Command(command)) => Some(
                 v_flex()
@@ -4581,9 +4576,12 @@ impl ThreadView {
                     .child(request.title.clone()),
             )
             .children(request.description.as_ref().map(|description| {
+                let description = thread.connection().description_format().format(description);
                 div()
-                    .debug_selector(|| format!("generic-permission-description-{description}"))
-                    .child(description.clone())
+                    .debug_selector(|| {
+                        format!("generic-permission-description-{}", description.text())
+                    })
+                    .child(description)
             }))
             .children(subject)
             .child(
@@ -12607,9 +12605,23 @@ impl ThreadView {
                     .into_any_element(),
             });
 
-        let has_expandable_content = thread
+        let description = thread.as_ref().and_then(|thread| {
+            let thread = thread.read(cx);
+            if thread.connection().description_format()
+                != acp_thread::AgentDescriptionFormat::Markdown
+            {
+                return None;
+            }
+            thread
+                .subagent_association()?
+                .description
+                .as_ref()
+                .filter(|description| !description.is_empty())
+        });
+        let has_entries = thread
             .as_ref()
-            .map_or(false, |thread| !thread.read(cx).entries().is_empty());
+            .is_some_and(|thread| !thread.read(cx).entries().is_empty());
+        let has_expandable_content = has_entries || description.is_some();
 
         let tooltip_meta_description = if is_expanded {
             "Click to Collapse"
@@ -12776,6 +12788,17 @@ impl ThreadView {
                         )
                     }),
             )
+            .when_some(description.filter(|_| is_expanded), |this, description| {
+                this.child(
+                    div()
+                        .debug_selector(|| format!("subagent-description-{entry_ix}"))
+                        .px_2()
+                        .py_1()
+                        .text_ui_sm(cx)
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(markdown::FormattedText::from_markdown(description)),
+                )
+            })
             .when_some(thread_view, |this, thread_view| {
                 let thread = &thread_view.read(cx).thread;
                 let tv_session_id = thread.read(cx).session_id();
@@ -12837,13 +12860,15 @@ impl ThreadView {
                     }
                 } else {
                     this.when(is_expanded, |this| {
-                        this.child(self.render_subagent_expanded_content(
-                            thread_view,
-                            card_id,
-                            state,
-                            window,
-                            cx,
-                        ))
+                        this.when(has_entries || description.is_none(), |this| {
+                            this.child(self.render_subagent_expanded_content(
+                                thread_view,
+                                card_id,
+                                state,
+                                window,
+                                cx,
+                            ))
+                        })
                         .when_some(error_message, |this, message| {
                             this.child(
                                 Callout::new()

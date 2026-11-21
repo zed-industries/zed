@@ -1687,6 +1687,7 @@ impl ConversationView {
             .map(|native_connection| native_available_skills(&native_connection, &session_id, cx))
             .unwrap_or_default();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+            connection.description_format(),
             thread.read(cx).prompt_capabilities().clone(),
             thread.read(cx).available_commands().to_vec(),
             available_skills,
@@ -1760,10 +1761,16 @@ impl ConversationView {
             // Use config options - don't create mode_selector or model_selector
             let agent_server = self.agent.clone();
             let fs = self.project.read(cx).fs().clone();
-            config_options_view =
-                Some(cx.new(|cx| {
-                    ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
-                }));
+            config_options_view = Some(cx.new(|cx| {
+                ConfigOptionsView::new(
+                    config_options,
+                    connection.description_format(),
+                    agent_server,
+                    fs,
+                    window,
+                    cx,
+                )
+            }));
             model_selector = None;
             mode_selector = None;
         } else {
@@ -2961,7 +2968,9 @@ impl ConversationView {
                             }
                         })
                         .when_some(method.description(), |this, description| {
-                            this.tooltip(Tooltip::text(description.to_string()))
+                            this.tooltip(crate::ui::description_tooltip(
+                                connection.description_format().format(description),
+                            ))
                         })
                         .on_click({
                             cx.listener(move |this, _, window, cx| {
@@ -7889,7 +7898,7 @@ pub(crate) mod tests {
             assert_eq!(completions.len(), 1);
             let completion = completions.first().expect("replacement command completion");
             assert_eq!(completion.name.as_ref(), "deploy");
-            assert_eq!(completion.description.as_ref(), "Updated command");
+            assert_eq!(completion.documentation.text(), "Updated command");
             assert!(!completion.requires_argument);
         });
 
@@ -19431,6 +19440,66 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn v2_permission_description_click_neither_opens_link_nor_selects_option(
+        cx: &mut TestAppContext,
+    ) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        init_test(cx);
+        let connection = StubAgentConnection::new()
+            .with_description_format(acp_thread::AgentDescriptionFormat::Markdown);
+        let (conversation, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace_with_size(conversation.clone(), true, cx);
+        let thread = active_thread(&conversation, cx).read_with(cx, |view, _| view.thread.clone());
+        let fetched_image = Arc::new(AtomicBool::new(false));
+        cx.update(|_, cx| {
+            let fetched_image = fetched_image.clone();
+            cx.set_http_client(http_client::FakeHttpClient::create(move |request| {
+                if request.uri().host() == Some("images.example.org") {
+                    fetched_image.store(true, Ordering::SeqCst);
+                }
+                async { Ok(http_client::Response::default()) }
+            }));
+        });
+        let request = generic_permission_prompt(
+            &thread,
+            Some(json!({
+                "type": "command", "command": "echo **literal**", "cwd": "/tmp"
+            })),
+            cx,
+        )
+        .description("Read **[details](https://example.org)** ![preview](https://images.example.org/preview.png)");
+        let (id, mut response) = request_test_generic_permission(&thread, request, cx);
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("generic-permission-command-echo **literal**")
+                .is_some()
+        );
+        assert!(
+            cx.debug_bounds("generic-permission-title-**Permission title**")
+                .is_some()
+        );
+        let text = cx
+            .debug_bounds(
+                "generic-permission-description-Read details (https://example.org) preview",
+            )
+            .expect("literal link destination");
+        cx.simulate_click(text.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.opened_url().is_none());
+        assert!(!fetched_image.load(Ordering::SeqCst));
+        assert!((&mut response).now_or_never().is_none());
+        click_generic_permission(id, Some("reject"), cx);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "reject"
+            ))
+        );
+    }
+
+    #[gpui::test]
     async fn test_generic_permissions_render_without_transcript_anchors(cx: &mut TestAppContext) {
         init_test(cx);
         let (conversation_view, cx) =
@@ -19526,7 +19595,7 @@ pub(crate) mod tests {
                 .children(self.requests.iter().map(|(request_id, request)| {
                     self.thread_view.update(cx, |view, cx| {
                         view.render_generic_permission_card(
-                            view.session_id.clone(),
+                            view.thread.read(cx),
                             *request_id,
                             request,
                             None,
@@ -21127,7 +21196,8 @@ pub(crate) mod tests {
     #[gpui::test]
     async fn test_first_message_to_an_acp_subagent_shows_its_card(cx: &mut TestAppContext) {
         init_test(cx);
-        let connection = StubAgentConnection::new();
+        let connection = StubAgentConnection::new()
+            .with_description_format(acp_thread::AgentDescriptionFormat::Markdown);
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
         add_to_workspace_with_size(conversation_view.clone(), true, cx);
@@ -21190,6 +21260,20 @@ pub(crate) mod tests {
         assert!(
             cx.debug_bounds("stop-subagent-0").is_none(),
             "a subagent that does not advertise cancel cannot be stopped"
+        );
+
+        child.update(cx, |child, cx| {
+            child
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").description("Checks the **build**."),
+                    cx,
+                )
+                .expect("child description")
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("subagent-description-0").is_none(),
+            "descriptions do not replace the card title"
         );
 
         let thread_view = active_thread(&conversation_view, cx);
@@ -21281,6 +21365,18 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
         assert!(cx.debug_bounds("subagent-card-0").is_some());
+        assert!(cx.debug_bounds("subagent-description-0").is_some());
+        child.update(cx, |child, cx| {
+            child
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child")
+                        .description(agent_client_protocol::schema::MaybeUndefined::Null),
+                    cx,
+                )
+                .expect("clear child description")
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("subagent-description-0").is_none());
     }
 
     #[gpui::test]
