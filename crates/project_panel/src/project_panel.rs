@@ -1249,7 +1249,7 @@ impl ProjectPanel {
                             })
                             .when(is_remote, |menu| {
                                 menu.separator()
-                                    .action("Download...", Box::new(DownloadFromRemote))
+                                    .action("Download…", Box::new(DownloadFromRemote))
                             })
                             .separator()
                             .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
@@ -3949,7 +3949,7 @@ impl ProjectPanel {
                             workspace.show_toast(
                                 workspace::Toast::new(
                                     notification_id.clone(),
-                                    format!("Downloading 0/{} files...", total_files),
+                                    format!("Downloading 0/{} files…", total_files),
                                 ),
                                 cx,
                             );
@@ -3965,11 +3965,7 @@ impl ProjectPanel {
                                 workspace.show_toast(
                                     workspace::Toast::new(
                                         notification_id.clone(),
-                                        format!(
-                                            "Downloading {}/{} files...",
-                                            index + 1,
-                                            total_files
-                                        ),
+                                        format!("Downloading {}/{} files…", index + 1, total_files),
                                     ),
                                     cx,
                                 );

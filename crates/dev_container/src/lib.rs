@@ -976,7 +976,7 @@ impl DevContainerModal {
                                     .color(Color::Muted)
                                     .with_rotate_animation(2),
                             )
-                            .child(Label::new("Querying template registry...")),
+                            .child(Label::new("Querying template registry…")),
                     ),
                 )
                 .child(ListSeparator)
@@ -1028,7 +1028,7 @@ impl DevContainerModal {
                                     .color(Color::Muted)
                                     .with_rotate_animation(2),
                             )
-                            .child(Label::new("Querying features...")),
+                            .child(Label::new("Querying features…")),
                     ),
                 )
                 .child(ListSeparator)

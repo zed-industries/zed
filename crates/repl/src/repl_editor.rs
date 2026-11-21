@@ -98,7 +98,7 @@ pub fn install_ipykernel_and_assign(
             workspace.show_toast(
                 workspace::Toast::new(
                     notification_id.clone(),
-                    format!("Installing ipykernel in {}...", env_name),
+                    format!("Installing ipykernel in {}…", env_name),
                 ),
                 cx,
             );

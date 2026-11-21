@@ -167,7 +167,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select Icon Theme...".into()
+        "Select Icon Theme…".into()
     }
 
     fn match_count(&self) -> usize {

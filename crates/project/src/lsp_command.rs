@@ -2272,7 +2272,7 @@ impl LspCommand for GetReferences {
     }
 
     fn status(&self) -> Option<String> {
-        Some("Finding references...".to_owned())
+        Some("Finding references…".to_owned())
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {

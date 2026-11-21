@@ -171,7 +171,7 @@ unsafe extern "system" fn wnd_proc(
                 &HSTRING::from(font_name),
             );
             let temp = SelectObject(hdc, font.into());
-            let string = HSTRING::from("Updating Zed...");
+            let string = HSTRING::from("Updating Zed…");
             return_if_failed!(TextOutW(hdc, 20, 15, &string).ok());
             return_if_failed!(DeleteObject(temp).ok());
 

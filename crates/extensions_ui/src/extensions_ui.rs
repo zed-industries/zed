@@ -444,7 +444,7 @@ impl ExtensionsPage {
 
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text("Search extensions...", window, cx);
+                input.set_placeholder_text("Search extensions…", window, cx);
                 if let Some(id) = focus_extension_id {
                     input.set_text(format!("id:{id}"), window, cx);
                 }
@@ -802,7 +802,7 @@ impl ExtensionsPage {
         ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
                 .entry(
-                    "Install Another Version...",
+                    "Install Another Version…",
                     None,
                     window.handler_for(this, {
                         let extension_id = extension_id.clone();
