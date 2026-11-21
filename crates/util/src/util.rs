@@ -326,26 +326,32 @@ fn load_shell_from_passwd() -> Result<()> {
     Ok(())
 }
 
-/// Returns a shell escaped path for the current zed executable
 #[cfg(not(target_family = "wasm"))]
-pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
+pub fn get_zed_path() -> anyhow::Result<PathBuf> {
     use anyhow::Context as _;
-    use paths::PathExt;
-    let mut zed_path =
+    let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
+
     if cfg!(target_os = "linux")
         && !zed_path.is_file()
         && let Some(truncated) = zed_path
-            .clone()
             .file_name()
             .and_then(|s| s.to_str())
             .and_then(|n| n.strip_suffix(" (deleted)"))
     {
         // Might have been deleted during update; let's use the new binary if there is one.
-        zed_path.set_file_name(truncated);
+        return Ok(zed_path.with_file_name(truncated));
     }
 
-    zed_path
+    Ok(zed_path)
+}
+
+/// Returns a shell escaped path for the current zed executable
+#[cfg(not(target_family = "wasm"))]
+pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
+    use anyhow::Context as _;
+    use paths::PathExt;
+    get_zed_path()?
         .try_shell_safe(shell_kind)
         .context("Failed to shell-escape Zed executable path.")
 }
