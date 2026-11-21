@@ -17,6 +17,20 @@ a > .hljs {
   display: block;
 }
 
+.docs-channel-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--search-btn-bg);
+  border: 1px solid var(--search-btn-border);
+  border-radius: 4px;
+  color: var(--icons);
+  font-size: 1.1rem;
+  line-height: 1;
+  user-select: none;
+}
+
 .icon-button {
   position: relative;
   height: 28px;
