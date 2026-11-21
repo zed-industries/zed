@@ -1446,6 +1446,81 @@ async fn test_project_tasks_and_debug_scenarios_require_trust(cx: &mut gpui::Tes
     assert_eq!(scenarios[0].1.label, "debug");
 }
 
+#[cfg(windows)]
+#[gpui::test]
+async fn test_debug_scenarios_load_with_differently_cased_db_trusted_path(
+    cx: &mut gpui::TestAppContext,
+) {
+    use project::trusted_worktrees::{self, DbTrustedPaths, TrustedWorktrees};
+
+    init_test(cx);
+    TaskStore::init(None);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(
+        path!("/root/Project"),
+        json!({
+            ".zed": {
+                "debug.json": r#"[{ "label": "debug", "adapter": "Debugpy", "request": "launch" }]"#,
+            },
+        }),
+    )
+    .await;
+    let root = PathBuf::from(path!("/root"));
+    let db_trusted_paths =
+        DbTrustedPaths::from_iter([(None, HashSet::from_iter([root.join("project")]))]);
+    cx.update(|cx| trusted_worktrees::init(db_trusted_paths, cx));
+    let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
+
+    let no_paths: [&Path; 0] = [];
+    let project = Project::test_with_worktree_trust(fs, no_paths, cx).await;
+    let release_casing_resolution =
+        trusted_worktrees.update(cx, |store, _| store.hold_next_casing_resolution());
+    let create_worktree = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(root.join("Project"), true, cx)
+    });
+    // Let everything else run first: had the worktree started scanning, the scan would finish here.
+    cx.run_until_parked();
+    assert!(
+        project.read_with(cx, |project, cx| project.worktrees(cx).next().is_none()),
+        "the casing resolution should hold the worktree creation"
+    );
+    release_casing_resolution.send(()).unwrap();
+    create_worktree.await.unwrap();
+    cx.run_until_parked();
+
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    assert!(
+        !trusted_worktrees.read_with(cx, |store, cx| store
+            .has_restricted_worktrees(&worktree_store, cx)),
+        "the worktree must never be restricted"
+    );
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let inventory = project.read_with(cx, |project, cx| {
+        project
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .unwrap()
+            .clone()
+    });
+    let contexts = TaskContexts {
+        active_worktree_context: Some((worktree_id, TaskContext::default())),
+        ..Default::default()
+    };
+    let (_, scenarios) = inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
+        })
+        .await;
+    assert_eq!(scenarios.len(), 1);
+    assert_eq!(scenarios[0].1.label, "debug");
+}
+
 #[gpui::test]
 async fn test_invalid_local_tasks_shows_toast_with_doc_link(cx: &mut gpui::TestAppContext) {
     init_test(cx);
