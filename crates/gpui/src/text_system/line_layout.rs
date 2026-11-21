@@ -611,6 +611,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width,
+            max_lines,
             force_width: None,
         } as &dyn AsCacheKeyRef;
 
@@ -653,6 +654,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
+                max_lines,
                 force_width: None,
             });
 
@@ -684,6 +686,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width: None,
+            max_lines: None,
             force_width,
         } as &dyn AsCacheKeyRef;
 
@@ -717,6 +720,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width: None,
+                max_lines: None,
                 force_width,
             });
             let layout = Arc::new(layout);
@@ -792,6 +796,7 @@ struct CacheKey {
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,
+    max_lines: Option<usize>,
     force_width: Option<Pixels>,
 }
 
@@ -801,6 +806,7 @@ struct CacheKeyRef<'a> {
     font_size: Pixels,
     runs: &'a [FontRun],
     wrap_width: Option<Pixels>,
+    max_lines: Option<usize>,
     force_width: Option<Pixels>,
 }
 
@@ -825,6 +831,7 @@ impl AsCacheKeyRef for CacheKey {
             font_size: self.font_size,
             runs: self.runs.as_slice(),
             wrap_width: self.wrap_width,
+            max_lines: self.max_lines,
             force_width: self.force_width,
         }
     }
@@ -875,6 +882,43 @@ mod tests {
         let state = text_system.line_layout_cache.state.borrow();
         let (key, _) = state.current_frame.lines.iter().next().unwrap();
         assert_eq!(key.text.as_ptr(), text.as_ptr());
+    }
+
+    #[test]
+    fn shape_text_does_not_reuse_layouts_across_line_clamps() {
+        let text = SharedString::from(
+            "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.",
+        );
+        let runs = [TextRun {
+            len: text.len(),
+            font: font(".ZedMono"),
+            ..Default::default()
+        }];
+        let line_count = |text_system: &WindowTextSystem, line_clamp| {
+            text_system
+                .shape_text(text.clone(), px(16.), &runs, Some(px(100.)), line_clamp)
+                .unwrap()
+                .iter()
+                .map(|line| line.wrap_boundaries().len() + 1)
+                .sum::<usize>()
+        };
+        let new_text_system =
+            || WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new()))));
+
+        let unclamped = line_count(&new_text_system(), None);
+        assert!(unclamped > 2);
+
+        let text_system = new_text_system();
+        assert_eq!(line_count(&text_system, None), unclamped);
+        assert_eq!(line_count(&text_system, Some(2)), 2);
+
+        let text_system = new_text_system();
+        assert_eq!(line_count(&text_system, Some(2)), 2);
+        assert_eq!(line_count(&text_system, None), unclamped);
+
+        text_system.line_layout_cache.finish_frame();
+        assert_eq!(line_count(&text_system, None), unclamped);
+        assert_eq!(line_count(&text_system, Some(2)), 2);
     }
 
     fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
