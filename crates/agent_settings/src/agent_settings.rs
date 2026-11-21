@@ -327,7 +327,7 @@ pub fn language_model_to_selection(
                         .default_effort_level()
                         .map(|effort| effort.value.to_string())
                 }),
-            speed: current.speed.filter(|_| model.supports_fast_mode()),
+            speed: current.speed.filter(|speed| model.supports_speed(*speed)),
         },
         None => LanguageModelSelection {
             provider,

@@ -178,14 +178,6 @@ pub struct LocalModelListing {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct LocalModel {
-    pub modelfile: String,
-    pub parameters: String,
-    pub template: String,
-    pub details: ModelDetails,
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct ModelDetails {
     pub format: String,
     pub family: String,

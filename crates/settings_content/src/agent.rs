@@ -459,6 +459,16 @@ impl AgentSettingsContent {
         });
     }
 
+    pub fn set_commit_message_model(&mut self, provider: String, model: String) {
+        self.commit_message_model = Some(LanguageModelSelection {
+            provider: provider.into(),
+            model,
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        });
+    }
+
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
     }
@@ -1144,7 +1154,9 @@ pub enum ToolPermissionMode {
     Allow,
     /// Auto-reject with an error.
     Deny,
-    /// Always prompt for confirmation (default behavior).
+    /// Prompt for confirmation (default behavior).
+    /// The `edit_file` and `write_file` tools don't prompt for files inside
+    /// the project unless an `always_confirm` pattern matches.
     #[default]
     Confirm,
 }

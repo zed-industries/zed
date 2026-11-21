@@ -33,6 +33,7 @@ pub enum Role {
     User,
     Assistant,
     System,
+    Developer,
     Tool,
 }
 
@@ -44,6 +45,7 @@ impl TryFrom<String> for Role {
             "user" => Ok(Self::User),
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
+            "developer" => Ok(Self::Developer),
             "tool" => Ok(Self::Tool),
             _ => anyhow::bail!("invalid role '{value}'"),
         }
@@ -56,6 +58,7 @@ impl From<Role> for String {
             Role::User => "user".to_owned(),
             Role::Assistant => "assistant".to_owned(),
             Role::System => "system".to_owned(),
+            Role::Developer => "developer".to_owned(),
             Role::Tool => "tool".to_owned(),
         }
     }
@@ -478,6 +481,15 @@ impl Model {
         }
     }
 
+    /// Whether the OpenAI Responses API offers Ultrafast for this model.
+    pub fn supports_ultrafast(&self) -> bool {
+        self.uses_responses_api()
+            && matches!(
+                self.id(),
+                "gpt-6.2-astra" | "gpt-6.2-sol" | "gpt-6-astra" | "gpt-6.1-sol"
+            )
+    }
+
     /// Whether OpenAI's Priority processing tier is available for this model.
     /// Sourced from <https://openai.com/api-priority-processing/>. The `*-pro`,
     /// `*-nano`, and legacy `gpt-4` variants are not eligible.
@@ -787,6 +799,7 @@ pub enum ServiceTier {
     Scale,
     #[serde(alias = "fast")]
     Priority,
+    Ultrafast,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -802,7 +815,6 @@ pub enum ToolChoice {
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
-    #[allow(dead_code)]
     Function { function: FunctionDefinition },
 }
 

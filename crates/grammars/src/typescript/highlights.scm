@@ -10,11 +10,11 @@
       "Number" "String" "Boolean" "Symbol" "BigInt" "Proxy" "ArrayBuffer" "DataView")))
 
 ; Special identifiers
-(type_annotation) @type
-
 (type_identifier) @type
 
 (predefined_type) @type.builtin
+
+(this_type) @type.builtin
 
 (type_alias_declaration
   (type_identifier) @type)
@@ -179,8 +179,6 @@
     (function_expression)
     (arrow_function)
   ])
-
-(arrow_function) @function
 
 ; Parameters
 (required_parameter
@@ -437,6 +435,10 @@
   "void"
   "with"
 ] @keyword
+
+; `void` is also a unary operator, so the keyword rule above would otherwise win in type positions.
+(predefined_type
+  "void" @type.builtin)
 
 [
   "const"

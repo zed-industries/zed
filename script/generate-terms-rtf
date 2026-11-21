@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
 if ! command -v pandoc &> /dev/null
 then
     brew install pandoc   # Install pandoc using Homebrew
 fi
 
-pandoc ./legal/terms.md -f markdown-smart -t rtf -o ./script/terms/terms.rtf --standalone
+# The installers show the General Terms followed by the Zed Product Terms as one
+# document. Each file's front-matter title becomes a top-level heading, since
+# pandoc keeps only one document title when it reads several files.
+for document in ./legal/terms.md ./legal/zed-product-terms.md; do
+    title=$(awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } sub(/^title: /, "")' "$document")
+    if [ -z "$title" ]; then
+        echo "error: no front-matter title in $document" >&2
+        exit 1
+    fi
+    printf '# %s\n\n' "$title"
+    awk 'NR == 1 && $0 == "---" { front_matter = 1; next } front_matter && $0 == "---" { front_matter = 0; next } !front_matter' "$document"
+    printf '\n'
+# Without -autolink_bare_uris, pandoc also links URL-like text inside existing
+# links, producing nested RTF hyperlink fields.
+done | pandoc -f gfm-autolink_bare_uris -t rtf --standalone -o ./script/terms/terms.rtf

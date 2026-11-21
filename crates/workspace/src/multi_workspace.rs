@@ -7,7 +7,7 @@ use gpui::{
     Window, WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
-use project::{DisableAiSettings, Project};
+use project::{DisableAiSettings, Project, WorktreePaths};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
@@ -127,6 +127,15 @@ pub trait Sidebar: Focusable + Render + EventEmitter<SidebarEvent> + Sized {
     fn is_threads_list_view_active(&self) -> bool {
         true
     }
+    /// Whether the sidebar still lists, under the old group, saved threads or terminals that do not move with the re-keyed workspace.
+    fn retains_project_group(
+        &self,
+        _old_worktree_paths: &WorktreePaths,
+        _new_git_worktree_paths: &WorktreePaths,
+        _cx: &App,
+    ) -> bool {
+        false
+    }
     /// Makes focus reset back to the search editor upon toggling the sidebar from outside
     fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
     /// Opens or cycles the thread switcher popup.
@@ -173,6 +182,12 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn cycle_thread(&self, forward: bool, window: &mut Window, cx: &mut App);
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
+    fn retains_project_group(
+        &self,
+        old_worktree_paths: &WorktreePaths,
+        new_git_worktree_paths: &WorktreePaths,
+        cx: &App,
+    ) -> bool;
 
     fn side(&self, cx: &App) -> SidebarSide;
     fn serialized_state(&self, cx: &App) -> Option<String>;
@@ -251,6 +266,16 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool {
         self.read(cx).is_threads_list_view_active()
+    }
+
+    fn retains_project_group(
+        &self,
+        old_worktree_paths: &WorktreePaths,
+        new_git_worktree_paths: &WorktreePaths,
+        cx: &App,
+    ) -> bool {
+        self.read(cx)
+            .retains_project_group(old_worktree_paths, new_git_worktree_paths, cx)
     }
 
     fn side(&self, cx: &App) -> SidebarSide {
@@ -613,7 +638,12 @@ impl MultiWorkspace {
                             .cloned();
                         let old_key =
                             ProjectGroupKey::from_worktree_paths(old_worktree_paths, host);
-                        this.handle_project_group_key_change(&workspace, &old_key, cx);
+                        this.handle_project_group_key_change(
+                            &workspace,
+                            &old_key,
+                            old_worktree_paths,
+                            cx,
+                        );
                     }
                 }
                 _ => {}
@@ -633,6 +663,7 @@ impl MultiWorkspace {
         &mut self,
         workspace: &Entity<Workspace>,
         old_key: &ProjectGroupKey,
+        old_worktree_paths: &WorktreePaths,
         cx: &mut Context<Self>,
     ) {
         if !self.is_workspace_retained(workspace) {
@@ -646,7 +677,13 @@ impl MultiWorkspace {
 
         // The Project already emitted WorktreePathsChanged which the
         // sidebar handles for thread migration.
-        self.rekey_project_group(old_key, &new_key, cx);
+        let project = workspace.read(cx).project().read(cx);
+        let new_git_worktree_paths = project.git_worktree_paths(cx);
+        let sidebar_retains_old_key = project.is_local()
+            && self.sidebar.as_ref().is_some_and(|sidebar| {
+                sidebar.retains_project_group(old_worktree_paths, &new_git_worktree_paths, cx)
+            });
+        self.rekey_project_group(old_key, &new_key, sidebar_retains_old_key, cx);
         self.serialize(cx);
         cx.notify();
     }
@@ -709,6 +746,7 @@ impl MultiWorkspace {
         &mut self,
         old_key: &ProjectGroupKey,
         new_key: &ProjectGroupKey,
+        sidebar_retains_old_key: bool,
         cx: &App,
     ) {
         if old_key == new_key {
@@ -724,6 +762,32 @@ impl MultiWorkspace {
 
         if !old_key_exists {
             self.ensure_project_group_state(new_key.clone());
+            return;
+        }
+
+        // If another retained workspace still has the old key (e.g. a
+        // linked worktree workspace), re-create the old group so it
+        // remains reachable in the sidebar.
+        let other_workspace_needs_old_key = self
+            .held
+            .iter()
+            .any(|held| held.pinned && held.workspace.read(cx).project_group_key(cx) == *old_key);
+        if sidebar_retains_old_key && !other_workspace_needs_old_key {
+            let old_group = self
+                .project_groups
+                .iter()
+                .enumerate()
+                .find(|(_, group)| group.key == *old_key)
+                .map(|(index, group)| (index, group.expanded));
+            if !new_key_exists && let Some((old_index, expanded)) = old_group {
+                self.project_groups.insert(
+                    old_index,
+                    ProjectGroupState {
+                        key: new_key.clone(),
+                        expanded,
+                    },
+                );
+            }
             return;
         }
 
@@ -743,13 +807,6 @@ impl MultiWorkspace {
             }
         }
 
-        // If another retained workspace still has the old key (e.g. a
-        // linked worktree workspace), re-create the old group so it
-        // remains reachable in the sidebar.
-        let other_workspace_needs_old_key = self
-            .held
-            .iter()
-            .any(|held| held.pinned && held.workspace.read(cx).project_group_key(cx) == *old_key);
         if other_workspace_needs_old_key {
             self.ensure_project_group_state(old_key.clone());
         }
@@ -854,6 +911,31 @@ impl MultiWorkspace {
             }
         }
         self.project_groups = restored;
+    }
+
+    pub fn replace_project_group(
+        &mut self,
+        old_key: &ProjectGroupKey,
+        new_keys: Vec<ProjectGroupKey>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *old_key)
+        else {
+            return;
+        };
+        let ProjectGroupState { expanded, .. } = self.project_groups.remove(index);
+        for key in new_keys {
+            if self.project_groups.iter().all(|group| group.key != key) {
+                self.project_groups
+                    .insert(index, ProjectGroupState { key, expanded });
+                index += 1;
+            }
+        }
+        self.serialize(cx);
+        cx.notify();
     }
 
     pub fn project_group_keys(&self) -> Vec<ProjectGroupKey> {
@@ -1863,9 +1945,17 @@ impl MultiWorkspace {
                         .iter()
                         .map(|workspace| workspace.read(cx).project_group_key(cx))
                         .collect::<Vec<_>>();
+                    let retained_keys = this
+                        .held
+                        .iter()
+                        .filter(|held| held.pinned && !workspaces.contains(&held.workspace))
+                        .map(|held| held.workspace.read(cx).project_group_key(cx))
+                        .collect::<Vec<_>>();
 
-                    this.project_groups
-                        .retain(|group| !workspace_to_delete_keys.contains(&group.key));
+                    this.project_groups.retain(|group| {
+                        !workspace_to_delete_keys.contains(&group.key)
+                            || retained_keys.contains(&group.key)
+                    });
                     cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
                 }
 

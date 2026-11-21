@@ -141,7 +141,7 @@ impl Bind for i32 {
 }
 
 impl Column for i32 {
-    fn column<'a>(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let result = statement.column_int(start_index)?;
         Ok((result, start_index + 1))
     }
@@ -261,7 +261,7 @@ impl Column for Arc<str> {
 }
 
 impl Column for String {
-    fn column<'a>(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let result = statement.column_text(start_index)?;
         Ok((result.to_owned(), start_index + 1))
     }

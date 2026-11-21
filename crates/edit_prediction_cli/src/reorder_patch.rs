@@ -661,12 +661,6 @@ pub struct EditLocation {
     pub line_index_within_hunk: usize,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum EditType {
-    Deletion,
-    Insertion,
-}
-
 pub fn edit_locations(patch: &Patch) -> Vec<EditLocation> {
     let mut edit_locations = Vec::new();
 
