@@ -28,6 +28,7 @@ use remote::{
     RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
     remote_client::ConnectionIdentifier,
 };
+use rpc::proto;
 use settings::{
     RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
     watch_config_file,
@@ -94,6 +95,7 @@ impl CreateRemoteServer {
 enum DevContainerCreationProgress {
     SelectingConfig,
     Creating,
+    Rebuilding,
     Error(String),
 }
 
@@ -270,8 +272,15 @@ impl PickerDelegate for DevContainerPickerDelegate {
                     .ok()
                     .flatten()
                 {
-                    modal.open_dev_container(selected_config, app_state, context, window, cx);
-                    modal.view_in_progress_dev_container(window, cx);
+                    modal.open_dev_container(
+                        selected_config,
+                        app_state,
+                        context,
+                        false,
+                        window,
+                        cx,
+                    );
+                    modal.view_in_progress_dev_container(false, window, cx);
                 } else {
                     log::error!("No active project directory for Dev Container");
                 }
@@ -1455,12 +1464,39 @@ impl RemoteServerProjects {
                 Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded()));
         } else if let Some(context) = dev_container_context {
             let config = configs.into_iter().next();
-            this.open_dev_container(config, app_state, context, window, cx);
-            this.view_in_progress_dev_container(window, cx);
+            this.open_dev_container(config, app_state, context, false, window, cx);
+            this.view_in_progress_dev_container(false, window, cx);
         } else {
             log::error!("No active project directory for Dev Container");
         }
 
+        this
+    }
+
+    /// Recreates the dev container that `workspace` is connected to, then
+    /// reconnects the window to the new container.
+    pub fn rebuild_dev_container(
+        fs: Arc<dyn Fs>,
+        config: DevContainerConfig,
+        app_state: Arc<AppState>,
+        context: DevContainerContext,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(
+            Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
+                DevContainerCreationProgress::Rebuilding,
+                cx,
+            )),
+            false,
+            fs,
+            window,
+            workspace,
+            cx,
+        );
+        this.open_dev_container(Some(config), app_state, context, true, window, cx);
+        this.view_in_progress_dev_container(true, window, cx);
         this
     }
 
@@ -1768,12 +1804,19 @@ impl RemoteServerProjects {
         cx.notify();
     }
 
-    fn view_in_progress_dev_container(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn view_in_progress_dev_container(
+        &mut self,
+        rebuild: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.allow_dismissal = false;
-        self.mode = Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
-            DevContainerCreationProgress::Creating,
-            cx,
-        ));
+        let progress = if rebuild {
+            DevContainerCreationProgress::Rebuilding
+        } else {
+            DevContainerCreationProgress::Creating
+        };
+        self.mode = Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(progress, cx));
         self.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -2230,8 +2273,8 @@ impl RemoteServerProjects {
             .flatten()
         {
             let config = configs.into_iter().next();
-            self.open_dev_container(config, app_state, context, window, cx);
-            self.view_in_progress_dev_container(window, cx);
+            self.open_dev_container(config, app_state, context, false, window, cx);
+            self.view_in_progress_dev_container(false, window, cx);
         } else {
             log::error!("No active project directory for Dev Container");
         }
@@ -2242,42 +2285,45 @@ impl RemoteServerProjects {
         config: Option<DevContainerConfig>,
         app_state: Arc<AppState>,
         context: DevContainerContext,
+        rebuild: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let replace_window = window.window_handle().downcast::<MultiWorkspace>();
+        let workspace = self.workspace.clone();
         let app_state = Arc::downgrade(&app_state);
 
         cx.spawn_in(window, async move |entity, cx| {
             let environment = context.environment(cx).await;
 
-            let (dev_container_connection, starting_dir) =
-                match start_dev_container_with_config(context, config, environment).await {
-                    Ok((c, s)) => (c, s),
-                    Err(e) => {
-                        log::error!("Failed to start dev container: {:?}", e);
-                        cx.prompt(
-                            gpui::PromptLevel::Critical,
-                            "Failed to start Dev Container. See logs for details",
-                            Some(&format!("{e}")),
-                            &["OK"],
-                        )
-                        .await
+            let started =
+                start_dev_container_with_config(context, config, environment, rebuild).await;
+            let (dev_container_connection, starting_dir) = match started {
+                Ok((c, s)) => (c, s),
+                Err(e) => {
+                    log::error!("Failed to start dev container: {:?}", e);
+                    cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        "Failed to start Dev Container. See logs for details",
+                        Some(&format!("{e}")),
+                        &["OK"],
+                    )
+                    .await
+                    .ok();
+                    entity
+                        .update_in(cx, |remote_server_projects, window, cx| {
+                            remote_server_projects.allow_dismissal = true;
+                            remote_server_projects.mode =
+                                Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
+                                    DevContainerCreationProgress::Error(format!("{e}")),
+                                    cx,
+                                ));
+                            remote_server_projects.focus_handle(cx).focus(window, cx);
+                        })
                         .ok();
-                        entity
-                            .update_in(cx, |remote_server_projects, window, cx| {
-                                remote_server_projects.allow_dismissal = true;
-                                remote_server_projects.mode =
-                                    Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
-                                        DevContainerCreationProgress::Error(format!("{e}")),
-                                        cx,
-                                    ));
-                                remote_server_projects.focus_handle(cx).focus(window, cx);
-                            })
-                            .ok();
-                        return;
-                    }
-                };
+                    return;
+                }
+            };
             cx.update(|_, cx| {
                 ExtensionStore::global(cx).update(cx, |this, cx| {
                     for extension in &dev_container_connection.extension_ids {
@@ -2294,6 +2340,28 @@ impl RemoteServerProjects {
                     cx.emit(DismissEvent);
                 })
                 .log_err();
+
+            if rebuild {
+                // The window is still connected to the removed container. Shut that
+                // connection down so it stops reconnecting, and so that
+                // `open_remote_project` connects to the new container instead of
+                // reusing this window's workspace, which has the same identity.
+                let shutdown = workspace
+                    .update(cx, |workspace, cx| {
+                        let client = workspace.project().read(cx).remote_client()?;
+                        client.update(cx, |client, cx| {
+                            client.shutdown_processes::<proto::ShutdownRemoteServer>(
+                                None,
+                                cx.background_executor().clone(),
+                            )
+                        })
+                    })
+                    .ok()
+                    .flatten();
+                if let Some(shutdown) = shutdown {
+                    shutdown.await;
+                }
+            }
 
             let Some(app_state) = app_state.upgrade() else {
                 return;
@@ -2421,7 +2489,12 @@ impl RemoteServerProjects {
             DevContainerCreationProgress::SelectingConfig => {
                 self.render_config_selection(window, cx).into_any_element()
             }
-            DevContainerCreationProgress::Creating => {
+            DevContainerCreationProgress::Creating | DevContainerCreationProgress::Rebuilding => {
+                let label = if matches!(state.progress, DevContainerCreationProgress::Rebuilding) {
+                    "Rebuilding Dev Container"
+                } else {
+                    "Creating Dev Container"
+                };
                 self.focus_handle(cx).focus(window, cx);
                 div()
                     .track_focus(&self.focus_handle(cx))
@@ -2449,7 +2522,7 @@ impl RemoteServerProjects {
                                         h_flex()
                                             .opacity(0.6)
                                             .gap_1()
-                                            .child(Label::new("Creating Dev Container"))
+                                            .child(Label::new(label))
                                             .child(LoadingLabel::new("")),
                                     ),
                             ),
