@@ -2188,6 +2188,7 @@ impl PlatformWindow for MacWindow {
         let mut this = self.0.lock();
         let native_view_layout = native_views::plan_layout(&this, scene);
         native_views::update_background(&mut this, scene);
+        native_views::scene_drawn(&mut this);
         this.renderer.draw(scene);
         drop(this);
         native_views::apply_layout(&self.0, native_view_layout);
@@ -3592,6 +3593,8 @@ extern "C" fn display_layer(this: &AnyObject, _: Sel, _: *mut AnyObject) {
         lock.request_frame_callback = Some(callback);
         lock.renderer.set_presents_with_transaction(false);
         lock.start_display_link(&window_state);
+        drop(lock);
+        native_views::check_pointer_after_frame(&window_state);
     }
 }
 
@@ -3616,6 +3619,7 @@ extern "C" fn step(view: *mut c_void) {
             ..Default::default()
         });
         window_state.lock().request_frame_callback = Some(callback);
+        native_views::check_pointer_after_frame(&window_state);
     }
 }
 
@@ -3646,6 +3650,8 @@ fn metal_frame(
     // lets the link hand it out again.
     let used_drawable = lock.renderer.set_frame_drawable(None).is_none();
     metal_frames.end_frame(used_drawable);
+    drop(lock);
+    native_views::check_pointer_after_frame(window_state);
 }
 
 extern "C" fn valid_attributes_for_marked_text(_: &AnyObject, _: Sel) -> *mut AnyObject {

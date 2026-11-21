@@ -46,6 +46,9 @@ pub(super) struct NativeViews {
     clicked: Option<NativeViewId>,
     /// Whether the pointer is over a native view, which then sets the cursor.
     pointer_over_view: bool,
+    /// Whether a scene has been drawn since the pointer was last looked for.
+    /// What is under a pointer that isn't moving can change with any scene.
+    drew_since_pointer_check: bool,
     /// Set while the window routes a key equivalent between a native view and
     /// GPUI itself, so the GPUI view doesn't also handle it.
     routing_key_equivalent: bool,
@@ -189,7 +192,7 @@ impl Drop for Attachment {
         let Some(window_state) = self.window_state.upgrade() else {
             return;
         };
-        let (attached, native_window, gpui_view, restores_background) = {
+        let (attached, native_window, gpui_view) = {
             let mut lock = window_state.lock();
             let Some(index) = lock
                 .native_views
@@ -203,15 +206,7 @@ impl Drop for Attachment {
                 lock.native_views.focused = None;
             }
             let attached = lock.native_views.views.remove(index);
-            // No scene sets the background again once the last view is gone.
-            let restores_background =
-                lock.native_views.views.is_empty() && lock.native_views.background.take().is_some();
-            (
-                attached,
-                lock.native_window,
-                lock.native_view.as_ptr(),
-                restores_background,
-            )
+            (attached, lock.native_window, lock.native_view.as_ptr())
         };
         // SAFETY: The window and both views are live, and attachments are dropped on
         // the main thread because `gpui::NativeView` is not `Send`.
@@ -220,9 +215,6 @@ impl Drop for Attachment {
             give_up_first_responder(native_window, gpui_view, &attached.view);
             attached.container.removeFromSuperview();
             attached.view.removeFromSuperview();
-            if restores_background {
-                let _: () = msg_send![native_window, setBackgroundColor: &*background_color(None)];
-            }
         }
     }
 }
@@ -277,11 +269,13 @@ pub(super) unsafe fn attach(
 /// the views. That is the window's background, which is given the color the
 /// scene asks for. Presenting scenes in step with AppKit would close the gap,
 /// but costs every frame of a window that shows a native view.
+///
+/// The color stays until a scene without native views is drawn. The last
+/// view's opening is still on screen when the view goes, and would show the
+/// window's own black through it if the color went with the view.
 pub(super) fn update_background(state: &mut MacWindowState, scene: &Scene) {
     // The background of a transparent or blurred window is meant to show through.
-    if state.native_views.views.is_empty()
-        || state.background_appearance != WindowBackgroundAppearance::Opaque
-    {
+    if state.background_appearance != WindowBackgroundAppearance::Opaque {
         return;
     }
     let background = scene
@@ -546,12 +540,15 @@ fn input_target_for_focus(
 /// the view itself asks.
 ///
 /// `clicked` is the native view a mouse press is being delivered to.
+/// `voice_over_reaches_it` is whether VoiceOver is on and `requested` is a
+/// native view on screen, which is where its cursor can go. A hidden view
+/// asking for keyboard input is a page script, VoiceOver or not.
 fn may_take_input(
     requested: InputHolder,
     current: InputHolder,
     focused: Option<FocusedNativeView>,
     clicked: Option<NativeViewId>,
-    voice_over_enabled: bool,
+    voice_over_reaches_it: bool,
 ) -> bool {
     match requested {
         // AppKit offers the GPUI view keyboard input on every press inside it.
@@ -569,7 +566,7 @@ fn may_take_input(
         InputHolder::NativeView(requested) => {
             focused.is_some_and(|focused| focused.id == requested)
                 || clicked == Some(requested)
-                || voice_over_enabled
+                || voice_over_reaches_it
         }
         InputHolder::Window | InputHolder::Other => true,
     }
@@ -797,6 +794,35 @@ fn update_pointer_over_view(window_state: &Rc<Mutex<MacWindowState>>, position_i
     }
 }
 
+/// Notes that a scene was drawn, after which [`check_pointer_after_frame`]
+/// looks for the pointer again.
+pub(super) fn scene_drawn(state: &mut MacWindowState) {
+    let views = &mut state.native_views;
+    views.drew_since_pointer_check = views.pointer_over_view || !views.views.is_empty();
+}
+
+/// Looks again for whether the pointer is over a native view, if a scene was
+/// drawn since it last moved: something GPUI drew may now be under it, or
+/// may have gone from over the view.
+///
+/// This runs after a frame, not as its scene is drawn, because finding what
+/// is under the pointer calls back into the window.
+pub(super) fn check_pointer_after_frame(window_state: &Rc<Mutex<MacWindowState>>) {
+    let native_window = {
+        let Some(mut lock) = window_state.try_lock() else {
+            return;
+        };
+        if !std::mem::take(&mut lock.native_views.drew_since_pointer_check) {
+            return;
+        }
+        lock.native_window
+    };
+    // SAFETY: The window is live for as long as its state, and frames are
+    // drawn on the main thread.
+    let position: NSPoint = unsafe { msg_send![native_window, mouseLocationOutsideOfEventStream] };
+    update_pointer_over_view(window_state, position);
+}
+
 /// Whether a native view sets the cursor, because the pointer is over it.
 ///
 /// The GPUI view lies over every native view, so its own cursor would
@@ -828,11 +854,14 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
         let requested = views.holder(responder, native_window, gpui_view);
         let focused = views.focused();
         let clicked = views.clicked;
+        let requested_is_shown =
+            matches!(requested, InputHolder::NativeView(id) if views.shown(id).is_some());
         drop(lock);
 
         let voice_over_enabled: bool =
             msg_send![&*NSWorkspace::sharedWorkspace(), isVoiceOverEnabled];
-        if !may_take_input(requested, current, focused, clicked, voice_over_enabled) {
+        let voice_over_reaches_it = voice_over_enabled && requested_is_shown;
+        if !may_take_input(requested, current, focused, clicked, voice_over_reaches_it) {
             return Bool::NO;
         }
 
