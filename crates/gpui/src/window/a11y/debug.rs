@@ -81,7 +81,9 @@ impl A11yDebug {
         self.last_active_descendant = active_descendant;
         self.frame_number += 1;
         self.last_frame = Some(CapturedFrame {
-            rendered_at: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false),
+            rendered_at: jiff::Zoned::now()
+                .strftime("%Y-%m-%dT%H:%M:%S%.3f%:z")
+                .to_string(),
             frame_number: self.frame_number,
             window_title: window_title.cloned(),
             node_count: update.nodes.len(),
@@ -327,4 +329,42 @@ fn ephemeral_id(mut index: usize) -> String {
     }
     bytes.reverse();
     String::from_utf8(bytes).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rendered_at_is_rfc3339_local_time_with_milliseconds() {
+        let root = NodeId(0);
+        let update = TreeUpdate {
+            nodes: vec![(root, accesskit::Node::new(accesskit::Role::Window))],
+            tree: Some(accesskit::Tree::new(root)),
+            tree_id: accesskit::TreeId::ROOT,
+            focus: root,
+        };
+        let mut debug = A11yDebug::default();
+        debug.capture(&update, None, None, None, FrameDebugInfo::default());
+
+        let json: serde_json::Value =
+            serde_json::from_str(&debug.to_json().expect("a captured frame serializes"))
+                .expect("the dump is valid JSON");
+        let rendered_at = json["frame"]["rendered_at"]
+            .as_str()
+            .expect("the frame has a rendered_at string");
+
+        // `YYYY-MM-DDTHH:MM:SS.mmm+HH:MM`, the shape chrono's
+        // `to_rfc3339_opts(SecondsFormat::Millis, false)` produced.
+        assert_eq!(rendered_at.len(), 29, "{rendered_at}");
+        assert_eq!(&rendered_at[19..20], ".", "{rendered_at}");
+        assert!(matches!(&rendered_at[23..24], "+" | "-"), "{rendered_at}");
+
+        let rendered_at: jiff::Timestamp = rendered_at.parse().expect("rendered_at is RFC 3339");
+        let age = jiff::Timestamp::now().duration_since(rendered_at);
+        assert!(
+            age >= jiff::SignedDuration::ZERO && age < jiff::SignedDuration::from_secs(60),
+            "{age:?}"
+        );
+    }
 }
