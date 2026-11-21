@@ -11087,6 +11087,8 @@ dependencies = [
  "collections",
  "editor",
  "gpui",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -22635,6 +22637,7 @@ dependencies = [
  "migrator",
  "mimalloc",
  "miniprofiler_ui",
+ "modal_editor",
  "nix 0.30.1",
  "node_runtime",
  "notifications",

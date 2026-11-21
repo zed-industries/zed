@@ -136,7 +136,7 @@ impl VimTestContext {
                 })
             });
             workspace.status_bar().update(cx, |status_bar, cx| {
-                let vim_mode_indicator = cx.new(|cx| ModeIndicator::new(window, cx));
+                let vim_mode_indicator = cx.new(|cx| modal_editor::ModeIndicator::new(window, cx));
                 status_bar.add_right_item(vim_mode_indicator, window, cx);
             });
         });
