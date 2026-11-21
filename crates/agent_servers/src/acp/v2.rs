@@ -1832,6 +1832,7 @@ impl AgentConnection for AcpV2Connection {
             let sessions = self.sessions.borrow();
             return Some(Rc::new(ReadOnlyConfigOptions(
                 sessions.get(session_id)?.config_options.clone()?,
+                self.description_format(),
             )));
         }
         let sessions = self.sessions.borrow();
@@ -1988,6 +1989,10 @@ impl V2SessionConfigOptions {
 }
 
 impl AgentSessionConfigOptions for V2SessionConfigOptions {
+    fn description_format(&self) -> acp_thread::AgentDescriptionFormat {
+        acp_thread::AgentDescriptionFormat::Markdown
+    }
+
     fn config_options(&self) -> Vec<acp::SessionConfigOption> {
         self.options.config_options.borrow().clone()
     }
@@ -2651,6 +2656,10 @@ mod tests {
             .read(|cx| harness.client.session_config_options(&"child".into(), cx))
             .expect("the provider exists before the first config update");
         assert!(options.is_read_only());
+        assert_eq!(
+            options.description_format(),
+            harness.client.description_format()
+        );
         assert!(options.config_options().is_empty(), "no inherited values");
         let mut updates = cx
             .update(|cx| options.watch(cx))
@@ -2701,6 +2710,10 @@ mod tests {
                 .session_config_options(parent.session_id(), cx)
                 .expect("parent config");
             assert!(!options.is_read_only());
+            assert_eq!(
+                options.description_format(),
+                harness.client.description_format()
+            );
         });
     }
 

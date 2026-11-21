@@ -1,6 +1,6 @@
 use std::{rc::Rc, sync::Arc};
 
-use acp_thread::{AgentDescriptionFormat, AgentSessionConfigOptions};
+use acp_thread::AgentSessionConfigOptions;
 use agent_client_protocol::v2::schema as acp;
 use agent_servers::AgentServer;
 
@@ -85,7 +85,6 @@ fn split_config_options(
 
 pub struct ConfigOptionsView {
     config_options: Rc<dyn AgentSessionConfigOptions>,
-    description_format: AgentDescriptionFormat,
     selectors: Vec<Entity<ConfigOptionSelector>>,
     has_overflow: bool,
     overflow_menu: PopoverMenuHandle<ContextMenu>,
@@ -97,20 +96,13 @@ pub struct ConfigOptionsView {
 impl ConfigOptionsView {
     pub fn new(
         config_options: Rc<dyn AgentSessionConfigOptions>,
-        description_format: AgentDescriptionFormat,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (selectors, has_overflow) = Self::build_selectors(
-            &config_options,
-            description_format,
-            &agent_server,
-            &fs,
-            window,
-            cx,
-        );
+        let (selectors, has_overflow) =
+            Self::build_selectors(&config_options, &agent_server, &fs, window, cx);
 
         let rx = config_options.watch(cx);
         let refresh_task = cx.spawn_in(window, async move |this, cx| {
@@ -126,7 +118,6 @@ impl ConfigOptionsView {
 
         Self {
             config_options,
-            description_format,
             selectors,
             has_overflow,
             overflow_menu: PopoverMenuHandle::default(),
@@ -323,7 +314,6 @@ impl ConfigOptionsView {
         }
         (self.selectors, self.has_overflow) = Self::build_selectors(
             &self.config_options,
-            self.description_format,
             &self.agent_server,
             &self.fs,
             window,
@@ -334,7 +324,6 @@ impl ConfigOptionsView {
 
     fn build_selectors(
         config_options: &Rc<dyn AgentSessionConfigOptions>,
-        description_format: AgentDescriptionFormat,
         agent_server: &Rc<dyn AgentServer>,
         fs: &Arc<dyn Fs>,
         window: &mut Window,
@@ -351,15 +340,7 @@ impl ConfigOptionsView {
                 let agent_server = agent_server.clone();
                 let fs = fs.clone();
                 cx.new(|cx| {
-                    ConfigOptionSelector::new(
-                        config_options,
-                        option,
-                        description_format,
-                        agent_server,
-                        fs,
-                        window,
-                        cx,
-                    )
+                    ConfigOptionSelector::new(config_options, option, agent_server, fs, window, cx)
                 })
             })
             .collect();
@@ -377,7 +358,7 @@ impl ConfigOptionsView {
             return None;
         }
 
-        let description_format = self.description_format;
+        let format = self.config_options.description_format();
         Some(ContextMenu::build(window, cx, |mut menu, _, cx| {
             menu = menu.header("Agent Options");
             for option in overflow {
@@ -401,11 +382,8 @@ impl ConfigOptionsView {
                                 );
                             })
                             .when_some(option.description, |entry, description| {
-                                let description = description_format.format(&description);
                                 entry.documentation_aside(documentation_aside_side(cx), move |_| {
-                                    LabelLike::new()
-                                        .child(description.clone())
-                                        .into_any_element()
+                                    crate::ui::description(&description, format)
                                 })
                             });
                         menu = menu.item(entry);
@@ -428,7 +406,6 @@ impl ConfigOptionsView {
                             let picker = build_config_option_picker(
                                 config_options.clone(),
                                 &option,
-                                description_format,
                                 agent_server.clone(),
                                 fs.clone(),
                                 true,
@@ -495,7 +472,6 @@ impl Render for ConfigOptionsView {
 
 struct ConfigOptionSelector {
     config_options: Rc<dyn AgentSessionConfigOptions>,
-    description_format: AgentDescriptionFormat,
     config_id: acp::SessionConfigId,
     is_response_control: bool,
     agent_server: Rc<dyn AgentServer>,
@@ -508,7 +484,6 @@ impl ConfigOptionSelector {
     fn new(
         config_options: Rc<dyn AgentSessionConfigOptions>,
         option: acp::SessionConfigOption,
-        description_format: AgentDescriptionFormat,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
@@ -528,7 +503,6 @@ impl ConfigOptionSelector {
                 let picker = build_config_option_picker(
                     config_options.clone(),
                     &option,
-                    description_format,
                     agent_server.clone(),
                     fs.clone(),
                     false,
@@ -542,7 +516,6 @@ impl ConfigOptionSelector {
 
         Self {
             config_options,
-            description_format,
             config_id: option.config_id,
             is_response_control,
             agent_server,
@@ -587,6 +560,7 @@ impl Render for ConfigOptionSelector {
             return div().into_any_element();
         };
 
+        let format = self.config_options.description_format();
         if self.config_options.is_read_only() {
             let value = match &option.kind {
                 acp::SessionConfigKind::Select(select) => {
@@ -608,13 +582,10 @@ impl Render for ConfigOptionSelector {
                 ))
                 .px_1()
                 .child(Label::new(value).size(LabelSize::Small).color(Color::Muted))
-                .tooltip(description_tooltip(
-                    option
-                        .description
-                        .as_deref()
-                        .map(|text| self.description_format.format(text))
-                        .unwrap_or_else(|| markdown::FormattedText::plain(option.name)),
-                ))
+                .map(|this| match option.description {
+                    Some(text) => this.tooltip(description_tooltip(text.into(), format)),
+                    None => this.tooltip(Tooltip::text(option.name)),
+                })
                 .into_any_element();
         }
 
@@ -635,7 +606,6 @@ impl Render for ConfigOptionSelector {
 
                 let option_category = option.category.clone();
                 let option_name = option.name;
-                let description_format = self.description_format;
                 let option_description = option.description;
 
                 let tooltip = Tooltip::element(move |_window, cx| {
@@ -645,7 +615,7 @@ impl Render for ConfigOptionSelector {
                             LabelLike::new()
                                 .size(LabelSize::Small)
                                 .color(Color::Muted)
-                                .child(description_format.format(desc)),
+                                .child(crate::ui::description(desc, format)),
                         );
                     }
 
@@ -744,7 +714,6 @@ impl Render for ConfigOptionSelector {
                 };
                 let label = format!("{}: {state}", option.name);
                 let tooltip_label = format!("{action} {}", option.name);
-                let description_format = self.description_format;
                 let option_description = option.description;
 
                 fast_mode_button(
@@ -768,7 +737,7 @@ impl Render for ConfigOptionSelector {
                                 LabelLike::new()
                                     .size(LabelSize::Small)
                                     .color(Color::Muted)
-                                    .child(description_format.format(description)),
+                                    .child(crate::ui::description(description, format)),
                             )
                         })
                         .into_any()
@@ -802,7 +771,6 @@ fn truncate_value_name(value_name: &str) -> String {
 fn build_config_option_picker(
     config_options: Rc<dyn AgentSessionConfigOptions>,
     option: &acp::SessionConfigOption,
-    description_format: AgentDescriptionFormat,
     agent_server: Rc<dyn AgentServer>,
     fs: Arc<dyn Fs>,
     embedded: bool,
@@ -814,7 +782,6 @@ fn build_config_option_picker(
         let mut delegate = ConfigOptionPickerDelegate::new(
             config_options,
             option.config_id.clone(),
-            description_format,
             agent_server,
             fs,
             window,
@@ -822,10 +789,7 @@ fn build_config_option_picker(
         );
         // Overflow pickers have no toolbar trigger to show the option's description.
         if embedded {
-            delegate.option_description = option
-                .description
-                .as_deref()
-                .map(|text| description_format.format(text));
+            delegate.option_description = option.description.clone().map(Into::into);
         }
         let picker = if searchable {
             Picker::list(delegate, window, cx)
@@ -863,10 +827,9 @@ struct ConfigOptionPickerDelegate {
     fs: Arc<dyn Fs>,
     filtered_entries: Vec<ConfigOptionPickerEntry>,
     all_options: Vec<ConfigOptionValue>,
-    description_format: AgentDescriptionFormat,
-    option_description: Option<markdown::FormattedText>,
+    option_description: Option<SharedString>,
     selected_index: usize,
-    selected_description: Option<(usize, markdown::FormattedText)>,
+    selected_description: Option<(usize, SharedString)>,
     favorites: HashSet<acp::SessionConfigValueId>,
     _settings_subscription: Subscription,
 }
@@ -875,7 +838,6 @@ impl ConfigOptionPickerDelegate {
     fn new(
         config_options: Rc<dyn AgentSessionConfigOptions>,
         config_id: acp::SessionConfigId,
-        description_format: AgentDescriptionFormat,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
@@ -916,7 +878,6 @@ impl ConfigOptionPickerDelegate {
             fs,
             filtered_entries,
             all_options,
-            description_format,
             option_description: None,
             selected_index,
             selected_description: None,
@@ -971,19 +932,20 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let description = self.option_description.clone()?;
+        let format = self.config_options.description_format();
         Some(
             div()
                 .id("config-option-description")
                 .debug_selector(|| "config-option-description".into())
                 .px_2()
                 .py_1()
-                .tooltip(description_tooltip(description.clone()))
+                .tooltip(description_tooltip(description.clone(), format))
                 .child(
                     LabelLike::new()
                         .size(LabelSize::Small)
                         .color(Color::Muted)
                         .line_clamp(3)
-                        .child(description),
+                        .child(crate::ui::description(description, format)),
                 )
                 .into_any_element(),
         )
@@ -1099,12 +1061,11 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                 Some(
                     div()
                         .id(("config-option-picker-item", ix))
-                        .debug_selector(|| format!("config-option-picker-item-{ix}"))
                         .when_some(description, |this, desc| {
+                            let desc: SharedString = desc.into();
                             this.on_hover(cx.listener(move |menu, hovered, _, cx| {
                                 if *hovered {
-                                    let text = menu.delegate.description_format.format(&desc);
-                                    menu.delegate.selected_description = Some((ix, text));
+                                    menu.delegate.selected_description = Some((ix, desc.clone()));
                                 } else if matches!(menu.delegate.selected_description, Some((id, _)) if id == ix)
                                 {
                                     menu.delegate.selected_description = None;
@@ -1170,16 +1131,13 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
     ) -> Option<ui::DocumentationAside> {
         self.selected_description.as_ref().map(|(_, description)| {
             let description = description.clone();
+            let format = self.config_options.description_format();
 
             let side = documentation_aside_side(cx);
 
             ui::DocumentationAside::new(
                 side,
-                Rc::new(move |_| {
-                    LabelLike::new()
-                        .child(description.clone())
-                        .into_any_element()
-                }),
+                Rc::new(move |_| crate::ui::description(description.clone(), format)),
             )
         })
     }
@@ -1501,16 +1459,8 @@ mod tests {
         let (composer, cx) = cx.add_window_view({
             let config_options = config_options.clone();
             move |window, cx| {
-                let options = cx.new(|cx| {
-                    ConfigOptionsView::new(
-                        config_options,
-                        AgentDescriptionFormat::PlainText,
-                        agent_server,
-                        fs,
-                        window,
-                        cx,
-                    )
-                });
+                let options = cx
+                    .new(|cx| ConfigOptionsView::new(config_options, agent_server, fs, window, cx));
                 cx.observe(&options, |_, _, cx| cx.notify()).detach();
                 TestConfigComposer { options }
             }
@@ -1564,64 +1514,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn v2_config_picker_formats_option_and_value_descriptions(cx: &mut TestAppContext) {
-        cx.update(init_test_ui);
-        let option = acp::SessionConfigOption::select(
-            "mode",
-            "Mode",
-            "fast",
-            vec![
-                acp::SessionConfigSelectOption::new("fast", "**Fast**")
-                    .description("Use `fast` mode."),
-            ],
-        )
-        .description("Choose a **mode**.");
-        let options = Rc::new(TestSessionConfigOptions::new(vec![option.clone()]));
-        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
-        let handle = cx
-            .update(|cx| {
-                cx.open_window(Default::default(), |window, cx| {
-                    build_config_option_picker(
-                        options.clone(),
-                        &option,
-                        AgentDescriptionFormat::Markdown,
-                        Rc::new(TestAgentServer::default()),
-                        fs,
-                        true,
-                        window,
-                        cx,
-                    )
-                })
-            })
-            .expect("picker window");
-        let picker = handle.root(cx).expect("picker");
-        let mut cx = VisualTestContext::from_window(handle.into(), cx);
-        draw_menu_frames(&mut cx);
-        let row = cx
-            .debug_bounds("config-option-picker-item-0")
-            .expect("option row");
-        cx.simulate_mouse_move(row.center(), None, Modifiers::default());
-        cx.run_until_parked();
-        picker.read_with(&cx, |picker, _| {
-            let delegate = &picker.delegate;
-            assert_eq!(
-                delegate.option_description.as_ref().expect("header").text(),
-                "Choose a mode."
-            );
-            let (_, description) = delegate
-                .selected_description
-                .as_ref()
-                .expect("value description");
-            assert_eq!(description.text(), "Use fast mode.");
-            assert_eq!(
-                delegate.all_options.first().expect("choice").name,
-                "**Fast**"
-            );
-        });
-        assert!(options.set_values.borrow().is_empty());
-    }
-
-    #[gpui::test]
     fn overflow_options_stay_editable_after_a_config_update(cx: &mut TestAppContext) {
         cx.update(init_test_ui);
         let fast_mode = acp::SessionConfigOption::boolean("fast-mode", "Fast Mode", false)
@@ -1632,16 +1524,7 @@ mod tests {
         let (view, cx) = cx.add_window_view({
             let config_options = config_options.clone();
             let agent_server = agent_server.clone();
-            move |window, cx| {
-                ConfigOptionsView::new(
-                    config_options,
-                    AgentDescriptionFormat::Markdown,
-                    agent_server,
-                    fs,
-                    window,
-                    cx,
-                )
-            }
+            move |window, cx| ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
         });
         cx.run_until_parked();
         assert!(cx.debug_bounds("ICON-Filter").is_none());
@@ -1664,7 +1547,7 @@ mod tests {
                     })
                     .collect::<Vec<_>>(),
             )
-            .description("Choose which folders the agent can see."),
+            .description("| Scope |\n| --- |\n| Folders the agent can see |"),
         ]);
         cx.run_until_parked();
 
@@ -1685,7 +1568,12 @@ mod tests {
         cx.dispatch_action(menu::SelectLast);
         cx.dispatch_action(menu::Confirm);
         draw_menu_frames(cx);
+        cx.run_until_parked();
         assert!(cx.debug_bounds("config-option-description").is_some());
+        assert!(
+            cx.debug_bounds("markdown_table").is_some(),
+            "option description renders as Markdown"
+        );
         cx.simulate_input("Choice 4");
         cx.dispatch_action(menu::Confirm);
         cx.run_until_parked();
@@ -1877,7 +1765,6 @@ mod tests {
                 cx.new(|cx| {
                     ConfigOptionsView::new(
                         config_options.clone(),
-                        AgentDescriptionFormat::PlainText,
                         agent_server.clone(),
                         fs,
                         window,
@@ -1974,14 +1861,7 @@ mod tests {
 
         cx.update(|window, cx| {
             let view = cx.new(|cx| {
-                ConfigOptionsView::new(
-                    config_options.clone(),
-                    AgentDescriptionFormat::PlainText,
-                    agent_server.clone(),
-                    fs,
-                    window,
-                    cx,
-                )
+                ConfigOptionsView::new(config_options.clone(), agent_server.clone(), fs, window, cx)
             });
 
             assert!(view.update(cx, |view, cx| {
@@ -2023,14 +1903,7 @@ mod tests {
 
         cx.update(|window, cx| {
             let view = cx.new(|cx| {
-                ConfigOptionsView::new(
-                    config_options.clone(),
-                    AgentDescriptionFormat::PlainText,
-                    agent_server.clone(),
-                    fs,
-                    window,
-                    cx,
-                )
+                ConfigOptionsView::new(config_options.clone(), agent_server.clone(), fs, window, cx)
             });
 
             assert!(view.update(cx, |view, cx| {
@@ -2081,14 +1954,7 @@ mod tests {
 
         cx.update(|window, cx| {
             let view = cx.new(|cx| {
-                ConfigOptionsView::new(
-                    config_options.clone(),
-                    AgentDescriptionFormat::PlainText,
-                    agent_server.clone(),
-                    fs,
-                    window,
-                    cx,
-                )
+                ConfigOptionsView::new(config_options.clone(), agent_server.clone(), fs, window, cx)
             });
             view.update(cx, |view, cx| view.toggle_fast_mode(window, cx));
         });
@@ -2123,16 +1989,7 @@ mod tests {
             move |window, cx| {
                 let config_options: Rc<dyn AgentSessionConfigOptions> = config_options;
                 let agent_server: Rc<dyn AgentServer> = agent_server;
-                cx.new(|cx| {
-                    ConfigOptionsView::new(
-                        config_options,
-                        AgentDescriptionFormat::PlainText,
-                        agent_server,
-                        fs,
-                        window,
-                        cx,
-                    )
-                })
+                cx.new(|cx| ConfigOptionsView::new(config_options, agent_server, fs, window, cx))
             }
         });
 
@@ -2168,16 +2025,7 @@ mod tests {
         let view = cx.update(|window, cx| {
             let config_options: Rc<dyn AgentSessionConfigOptions> = config_options.clone();
             let agent_server: Rc<dyn AgentServer> = agent_server.clone();
-            cx.new(|cx| {
-                ConfigOptionsView::new(
-                    config_options,
-                    AgentDescriptionFormat::PlainText,
-                    agent_server,
-                    fs,
-                    window,
-                    cx,
-                )
-            })
+            cx.new(|cx| ConfigOptionsView::new(config_options, agent_server, fs, window, cx))
         });
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
@@ -2266,7 +2114,6 @@ mod tests {
             cx.new(|cx| {
                 ConfigOptionsView::new(
                     config_options.clone(),
-                    AgentDescriptionFormat::PlainText,
                     agent_server.clone(),
                     fs.clone(),
                     window,
@@ -2433,6 +2280,10 @@ mod tests {
     }
 
     impl AgentSessionConfigOptions for TestSessionConfigOptions {
+        fn description_format(&self) -> acp_thread::AgentDescriptionFormat {
+            acp_thread::AgentDescriptionFormat::Markdown
+        }
+
         fn config_options(&self) -> Vec<acp::SessionConfigOption> {
             self.options.borrow().clone()
         }

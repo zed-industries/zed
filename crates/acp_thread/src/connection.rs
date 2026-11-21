@@ -99,15 +99,6 @@ pub enum AgentDescriptionFormat {
     Markdown,
 }
 
-impl AgentDescriptionFormat {
-    pub fn format(self, source: &str) -> markdown::FormattedText {
-        match self {
-            Self::PlainText => markdown::FormattedText::plain(source),
-            Self::Markdown => markdown::FormattedText::from_markdown(source),
-        }
-    }
-}
-
 pub trait AgentConnection {
     fn agent_id(&self) -> AgentId;
 
@@ -117,8 +108,7 @@ pub trait AgentConnection {
         None
     }
 
-    /// The auth, command, config, permission, and subagent description fields share
-    /// v2 schema types in Zed even when their source was a v1 or native connection.
+    /// Native and v1 descriptions remain literal after conversion to v2 schema types.
     fn description_format(&self) -> AgentDescriptionFormat {
         AgentDescriptionFormat::PlainText
     }
@@ -452,6 +442,10 @@ pub trait AgentSessionModes {
 pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
     fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
+
+    fn description_format(&self) -> AgentDescriptionFormat {
+        AgentDescriptionFormat::PlainText
+    }
 
     /// Agent-owned sessions may report configuration without allowing the client to change it.
     fn is_read_only(&self) -> bool {

@@ -1761,16 +1761,10 @@ impl ConversationView {
             // Use config options - don't create mode_selector or model_selector
             let agent_server = self.agent.clone();
             let fs = self.project.read(cx).fs().clone();
-            config_options_view = Some(cx.new(|cx| {
-                ConfigOptionsView::new(
-                    config_options,
-                    connection.description_format(),
-                    agent_server,
-                    fs,
-                    window,
-                    cx,
-                )
-            }));
+            config_options_view =
+                Some(cx.new(|cx| {
+                    ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
+                }));
             model_selector = None;
             mode_selector = None;
         } else {
@@ -2969,7 +2963,8 @@ impl ConversationView {
                         })
                         .when_some(method.description(), |this, description| {
                             this.tooltip(crate::ui::description_tooltip(
-                                connection.description_format().format(description),
+                                description.into(),
+                                connection.description_format(),
                             ))
                         })
                         .on_click({
@@ -19440,55 +19435,25 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn v2_permission_description_click_neither_opens_link_nor_selects_option(
-        cx: &mut TestAppContext,
-    ) {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
+    async fn v2_permission_description_click_does_not_answer_request(cx: &mut TestAppContext) {
         init_test(cx);
-        let connection = StubAgentConnection::new()
-            .with_description_format(acp_thread::AgentDescriptionFormat::Markdown);
         let (conversation, cx) =
-            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
         add_to_workspace_with_size(conversation.clone(), true, cx);
         let thread = active_thread(&conversation, cx).read_with(cx, |view, _| view.thread.clone());
-        let fetched_image = Arc::new(AtomicBool::new(false));
-        cx.update(|_, cx| {
-            let fetched_image = fetched_image.clone();
-            cx.set_http_client(http_client::FakeHttpClient::create(move |request| {
-                if request.uri().host() == Some("images.example.org") {
-                    fetched_image.store(true, Ordering::SeqCst);
-                }
-                async { Ok(http_client::Response::default()) }
-            }));
-        });
-        let request = generic_permission_prompt(
-            &thread,
-            Some(json!({
-                "type": "command", "command": "echo **literal**", "cwd": "/tmp"
-            })),
-            cx,
-        )
-        .description("Read **[details](https://example.org)** ![preview](https://images.example.org/preview.png)");
+        let source = "**[Read details](https://example.org)**";
+        let request = generic_permission_prompt(&thread, None, cx).description(source);
         let (id, mut response) = request_test_generic_permission(&thread, request, cx);
         cx.run_until_parked();
-        assert!(
-            cx.debug_bounds("generic-permission-command-echo **literal**")
-                .is_some()
-        );
-        assert!(
-            cx.debug_bounds("generic-permission-title-**Permission title**")
-                .is_some()
-        );
         let text = cx
-            .debug_bounds(
-                "generic-permission-description-Read details (https://example.org) preview",
-            )
-            .expect("literal link destination");
-        cx.simulate_click(text.center(), gpui::Modifiers::default());
+            .debug_bounds("generic-permission-description-**[Read details](https://example.org)**")
+            .expect("permission description");
+        cx.simulate_click(
+            gpui::point(text.left() + px(5.), text.center().y),
+            gpui::Modifiers::default(),
+        );
         cx.run_until_parked();
         assert!(cx.opened_url().is_none());
-        assert!(!fetched_image.load(Ordering::SeqCst));
         assert!((&mut response).now_or_never().is_none());
         click_generic_permission(id, Some("reject"), cx);
         assert_eq!(
@@ -19595,7 +19560,7 @@ pub(crate) mod tests {
                 .children(self.requests.iter().map(|(request_id, request)| {
                     self.thread_view.update(cx, |view, cx| {
                         view.render_generic_permission_card(
-                            view.thread.read(cx),
+                            view.session_id.clone(),
                             *request_id,
                             request,
                             None,

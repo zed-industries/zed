@@ -465,9 +465,13 @@ impl ConfigOptions {
     }
 }
 
-struct ReadOnlyConfigOptions(ConfigOptions);
+struct ReadOnlyConfigOptions(ConfigOptions, acp_thread::AgentDescriptionFormat);
 
 impl acp_thread::AgentSessionConfigOptions for ReadOnlyConfigOptions {
+    fn description_format(&self) -> acp_thread::AgentDescriptionFormat {
+        self.1
+    }
+
     fn config_options(&self) -> Vec<acp_v2::SessionConfigOption> {
         self.0.config_options.borrow().clone()
     }

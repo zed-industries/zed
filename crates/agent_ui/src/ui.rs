@@ -17,13 +17,25 @@ pub use session_notice::*;
 pub use terminal_tool_header::*;
 pub use undo_reject_toast::*;
 
+use acp_thread::AgentDescriptionFormat;
 use gpui::{App, ElementId, SharedString};
 use ui::{ButtonLike, IconButton, TintColor, Tooltip, prelude::*};
 
+pub(crate) fn description(
+    text: impl Into<SharedString>,
+    format: AgentDescriptionFormat,
+) -> AnyElement {
+    match format {
+        AgentDescriptionFormat::PlainText => text.into().into_any_element(),
+        AgentDescriptionFormat::Markdown => markdown::MarkdownLabel(text.into()).into_any_element(),
+    }
+}
+
 pub(crate) fn description_tooltip(
-    text: markdown::FormattedText,
+    text: SharedString,
+    format: AgentDescriptionFormat,
 ) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
-    Tooltip::element(move |_, _| text.clone().into_any_element())
+    Tooltip::element(move |_, _| description(text.clone(), format))
 }
 
 pub(crate) fn fast_mode_button(id: impl Into<ElementId>, enabled: bool, cx: &App) -> IconButton {

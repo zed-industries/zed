@@ -16859,7 +16859,7 @@ pub enum CompletionDocumentation {
     MultiLinePlainText(SharedString),
     /// Markdown documentation.
     MultiLineMarkdown(SharedString),
-    /// Markdown displayed as styled text, without activating links or loading resources.
+    /// Markdown displayed as a noninteractive label.
     NonInteractiveMarkdown(SharedString),
     /// Both single line and multiple lines of plain text documentation.
     SingleLineAndMultiLinePlainText {

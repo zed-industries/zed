@@ -4454,7 +4454,13 @@ impl ThreadView {
                 let request = thread.permission_request(*request_id)?.generic_request()?;
                 let (_, subject) = Self::permission_tool_call(thread, request)?;
                 (subject.id == tool_call.id).then(|| {
-                    self.render_generic_permission_card(thread, *request_id, request, None, cx)
+                    self.render_generic_permission_card(
+                        self.session_id.clone(),
+                        *request_id,
+                        request,
+                        None,
+                        cx,
+                    )
                 })
             })
             .collect::<Vec<_>>();
@@ -4503,7 +4509,7 @@ impl ThreadView {
                     ))
                 };
                 cards.push(self.render_generic_permission_card(
-                    thread,
+                    session_id.clone(),
                     *request_id,
                     request,
                     source,
@@ -4527,13 +4533,12 @@ impl ThreadView {
 
     pub(super) fn render_generic_permission_card(
         &self,
-        thread: &AcpThread,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
         request: &acp_v2::RequestPermissionRequest,
         source: Option<String>,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let session_id = thread.session_id().clone();
         let subject = match &request.subject {
             Some(acp_v2::RequestPermissionSubject::Command(command)) => Some(
                 v_flex()
@@ -4576,12 +4581,9 @@ impl ThreadView {
                     .child(request.title.clone()),
             )
             .children(request.description.as_ref().map(|description| {
-                let description = thread.connection().description_format().format(description);
                 div()
-                    .debug_selector(|| {
-                        format!("generic-permission-description-{}", description.text())
-                    })
-                    .child(description)
+                    .debug_selector(|| format!("generic-permission-description-{description}"))
+                    .child(markdown::MarkdownLabel(description.into()))
             }))
             .children(subject)
             .child(
@@ -12796,7 +12798,7 @@ impl ThreadView {
                         .py_1()
                         .text_ui_sm(cx)
                         .text_color(cx.theme().colors().text_muted)
-                        .child(markdown::FormattedText::from_markdown(description)),
+                        .child(markdown::MarkdownLabel(description.clone())),
                 )
             })
             .when_some(thread_view, |this, thread_view| {
