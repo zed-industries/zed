@@ -33,10 +33,9 @@ Alternatively, you can reach for the Remote Projects modal (through the {#kb pro
 
 ## Editing the dev container configuration
 
-If you modify `.devcontainer/devcontainer.json`, Zed does not currently rebuild or reload the container automatically. After changing configuration:
+If you modify `.devcontainer/devcontainer.json` or the files it references (such as a `Dockerfile` or Docker Compose file), Zed doesn't rebuild the container automatically. To apply your changes, run {#action projects::RebuildDevContainer} from the command palette while connected to the dev container. Zed removes the existing container, builds a new one from the current configuration, and reconnects the window to it.
 
-- Stop or kill the existing container manually (e.g., via `docker kill <container>`).
-- Reopen the project in the container.
+For Docker Compose configurations, Rebuild takes down all of the project's services, like `docker compose down`. Named volumes are kept, so data such as a database's survives the rebuild.
 
 ## Working in a Dev Container
 
@@ -70,7 +69,7 @@ Note that extensions load for the Zed session, so these extensions will exist on
 
 > **Note:** This feature is still in development.
 
-- **Configuration changes:** Updates to `devcontainer.json` do not trigger automatic rebuilds or reloads; containers must be manually restarted.
+- **Configuration changes:** Updates to `devcontainer.json` do not trigger automatic rebuilds or reloads. Run {#action projects::RebuildDevContainer} to apply them.
 
 ## See also
 

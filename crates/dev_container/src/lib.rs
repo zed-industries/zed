@@ -107,20 +107,31 @@ pub struct DevContainerContext {
 impl DevContainerContext {
     pub fn from_workspace(workspace: &Workspace, cx: &App) -> Option<Self> {
         let project_directory = workspace.project().read(cx).active_project_directory(cx)?;
+        Some(Self::for_local_directory(project_directory, workspace, cx))
+    }
+
+    /// A context for a dev container whose project lives in `project_directory`
+    /// on this machine, even when `workspace` itself is connected to that
+    /// dev container.
+    pub fn for_local_directory(
+        project_directory: Arc<Path>,
+        workspace: &Workspace,
+        cx: &App,
+    ) -> Self {
         let settings = DevContainerSettings::get_global(cx);
         let use_podman = settings.use_podman;
         let use_buildkit = settings.use_buildkit;
         let http_client = cx.http_client().clone();
         let fs = workspace.app_state().fs.clone();
         let environment = workspace.project().read(cx).environment().downgrade();
-        Some(Self {
+        Self {
             project_directory,
             use_podman,
             use_buildkit,
             fs,
             http_client,
             environment,
-        })
+        }
     }
 
     pub async fn environment(&self, cx: &mut impl AppContext) -> HashMap<String, String> {

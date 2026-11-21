@@ -38,7 +38,7 @@ pub use remote_servers::RemoteServerProjects;
 use settings::{DefaultOpenBehavior, Settings, WorktreeId};
 use workspace::{OpenPathPromptMode, ProjectGroupKey};
 
-use dev_container::{DevContainerContext, find_devcontainer_configs};
+use dev_container::{DevContainerConfig, DevContainerContext, find_devcontainer_configs};
 use ui::{
     ButtonLike, ContextMenu, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
     ListSubHeader, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
@@ -52,7 +52,7 @@ use workspace::{
     SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
-use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
+use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote, RebuildDevContainer};
 
 actions!(
     recent_projects,
@@ -458,6 +458,53 @@ pub fn init(cx: &mut App) {
                     window,
                     handle,
                     cx,
+                )
+            });
+        });
+    });
+
+    cx.on_action(|_: &RebuildDevContainer, cx| {
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            // Connections saved before dev containers recorded these labels can't be
+            // traced back to their `devcontainer.json`.
+            let labels = match workspace.project().read(cx).remote_connection_options(cx) {
+                Some(RemoteConnectionOptions::Docker(options)) => options
+                    .local_folder
+                    .clone()
+                    .zip(options.config_file.clone()),
+                _ => None,
+            };
+            let Some((local_folder, config_file)) = labels else {
+                cx.spawn_in(window, async move |_, cx| {
+                    cx.prompt(
+                        gpui::PromptLevel::Info,
+                        "Rebuild Dev Container is only available in a dev container",
+                        Some(
+                            "Open the project with \"Open Dev Container\" first. \
+                             Dev containers opened with an older version of Zed need to be \
+                             opened this way once.",
+                        ),
+                        &["OK"],
+                    )
+                    .await
+                    .ok();
+                })
+                .detach();
+                return;
+            };
+
+            let fs = workspace.project().read(cx).fs().clone();
+            let app_state = workspace.app_state().clone();
+            let config = DevContainerConfig::from_config_file(Path::new(&config_file));
+            let context = DevContainerContext::for_local_directory(
+                Path::new(&local_folder).into(),
+                workspace,
+                cx,
+            );
+            let handle = cx.entity().downgrade();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::rebuild_dev_container(
+                    fs, config, app_state, context, window, handle, cx,
                 )
             });
         });

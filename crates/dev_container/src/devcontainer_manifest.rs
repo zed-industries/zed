@@ -2499,6 +2499,48 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         }
     }
 
+    /// Removes this dev container so that `build_and_run` creates it from scratch.
+    /// For Docker Compose, this takes down every service of the project, like
+    /// the reference CLI's `--remove-existing-container`. Named volumes are
+    /// kept, so data such as a database's survives the rebuild.
+    async fn remove_existing_devcontainer(&self) -> Result<(), DevContainerError> {
+        let mut command = Command::new(self.docker_client.docker_cli());
+        match self.dev_container().build_type() {
+            DevContainerBuildType::DockerCompose => {
+                let resources = self.docker_compose_manifest().await?;
+                let project_name = self.project_name().await?;
+                command.args(&["compose", "--project-name", &project_name]);
+                for docker_compose_file in &resources.files {
+                    command.args(&["-f", &docker_compose_file.display().to_string()]);
+                }
+                command.arg("down");
+            }
+            _ => {
+                let Some(container) = self.check_for_existing_container().await? else {
+                    return Ok(());
+                };
+                command.args(&["rm", "-f", &container.id]);
+            }
+        }
+
+        let output = self
+            .command_runner
+            .run_command(&mut command)
+            .await
+            .map_err(|e| {
+                log::error!("Error removing existing dev container: {e}");
+                DevContainerError::CommandFailed(command.get_program().display().to_string())
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success status removing existing dev container: {stderr}");
+            return Err(DevContainerError::CommandFailed(
+                command.get_program().display().to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn check_for_existing_container(&self) -> Result<Option<DockerPs>, DevContainerError> {
         self.docker_client
             .find_process_by_filters(
@@ -2718,6 +2760,7 @@ pub(crate) async fn spawn_dev_container(
     environment: HashMap<String, String>,
     config: DevContainerConfig,
     local_project_path: &Path,
+    rebuild: bool,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker = if context.use_podman {
         Docker::new("podman", context.use_buildkit).await
@@ -2739,17 +2782,21 @@ pub(crate) async fn spawn_dev_container(
         .dev_container()
         .validate_environment_names()?;
 
-    log::debug!("Checking for existing container");
-    if let Some(devcontainer) = devcontainer_manifest
-        .check_for_existing_devcontainer()
-        .await?
-    {
-        Ok(devcontainer)
+    if rebuild {
+        log::debug!("Removing existing container before rebuilding");
+        devcontainer_manifest.remove_existing_devcontainer().await?;
     } else {
+        log::debug!("Checking for existing container");
+        if let Some(devcontainer) = devcontainer_manifest
+            .check_for_existing_devcontainer()
+            .await?
+        {
+            return Ok(devcontainer);
+        }
         log::debug!("Existing container not found. Building");
-
-        devcontainer_manifest.build_and_run().await
     }
+
+    devcontainer_manifest.build_and_run().await
 }
 
 #[derive(Debug)]
@@ -5999,6 +6046,85 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             ]),
             "compose resume should target requested services without recreating them, got: {:?}",
             command.args
+        );
+    }
+
+    #[gpui::test]
+    async fn test_rebuild_removes_existing_container(cx: &mut TestAppContext) {
+        let (test_dependencies, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{ "image": "mcr.microsoft.com/devcontainers/base:ubuntu" }"#,
+        )
+        .await
+        .unwrap();
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        devcontainer_manifest
+            .remove_existing_devcontainer()
+            .await
+            .unwrap();
+
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+        assert_eq!(docker_commands.len(), 1);
+        assert_eq!(docker_commands[0].args, ["rm", "-f", "found_docker_ps"]);
+    }
+
+    #[gpui::test]
+    async fn test_rebuild_takes_down_compose_project_but_keeps_volumes(cx: &mut TestAppContext) {
+        let (test_dependencies, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"
+            {
+              "dockerComposeFile": "docker-compose.yml",
+              "service": "devcontainer",
+              "runServices": ["devcontainer"],
+              "workspaceFolder": "/workspaces/project"
+            }
+            "#,
+        )
+        .await
+        .unwrap();
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose.yml"),
+                indoc! {r#"
+                    services:
+                        devcontainer:
+                            image: test_image:latest
+                        db:
+                            image: postgres:18.4
+                "# }
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        devcontainer_manifest
+            .remove_existing_devcontainer()
+            .await
+            .unwrap();
+
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+        assert_eq!(docker_commands.len(), 1);
+        let args = &docker_commands[0].args;
+        assert_eq!(args.first().map(String::as_str), Some("compose"));
+        assert_eq!(args.last().map(String::as_str), Some("down"));
+        assert!(
+            args.iter()
+                .any(|argument| argument.ends_with("docker-compose.yml")),
+            "compose down should use the project's compose files, got: {args:?}"
+        );
+        assert!(
+            !args
+                .iter()
+                .any(|argument| argument == "-v" || argument == "--volumes"),
+            "compose down must keep named volumes, got: {args:?}"
         );
     }
 
