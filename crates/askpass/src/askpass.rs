@@ -6,6 +6,7 @@ use net::async_net::UnixListener;
 use smol::lock::Mutex;
 #[cfg(not(target_os = "windows"))]
 use util::fs::make_file_executable;
+use util::get_zed_path;
 
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
@@ -275,8 +276,7 @@ impl PasswordProxy {
     ) -> Result<Self> {
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
-        let current_exec =
-            std::env::current_exe().context("Failed to determine current zed executable path.")?;
+        let current_exec = get_zed_path()?;
 
         let askpass_program = ASKPASS_PROGRAM.get_or_init(|| current_exec);
 
