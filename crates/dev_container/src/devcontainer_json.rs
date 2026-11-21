@@ -408,14 +408,17 @@ impl LifecycleScript {
                     log::error!("Error running command {command_name}: {e}");
                     DevContainerError::CommandFailed(command_name.clone())
                 })?;
+            let std_out = String::from_utf8_lossy(&output.stdout);
+            log::debug!("Command {command_name} output:\n {std_out}");
+
             if !output.status.success() {
                 let std_err = String::from_utf8_lossy(&output.stderr);
                 log::error!(
-                    "Command {command_name} produced a non-successful output. StdErr: {std_err}"
+                    "Command {command_name} failed with {}. StdErr: {std_err}",
+                    output.status
                 );
+                return Err(DevContainerError::DevContainerScriptsFailed);
             }
-            let std_out = String::from_utf8_lossy(&output.stdout);
-            log::debug!("Command {command_name} output:\n {std_out}");
         }
         Ok(())
     }
@@ -650,9 +653,19 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
+    use std::{
+        collections::{HashMap, VecDeque},
+        io,
+        path::Path,
+        process::{ExitStatus, Output},
+        sync::{Arc, Mutex},
+    };
+
+    use async_trait::async_trait;
+    use util::command::Command;
 
     use crate::{
+        command_json::CommandRunner,
         devcontainer_api::DevContainerError,
         devcontainer_json::{
             ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
@@ -661,6 +674,166 @@ mod test {
             ZedCustomizationsWrapper, deserialize_devcontainer_json,
         },
     };
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct RecordedCommand {
+        program: String,
+    }
+
+    struct TestLifecycleCommandRunner {
+        results: Mutex<VecDeque<Result<Output, io::Error>>>,
+        commands: Mutex<Vec<RecordedCommand>>,
+    }
+
+    impl TestLifecycleCommandRunner {
+        fn new(results: impl IntoIterator<Item = Result<Output, io::Error>>) -> Self {
+            Self {
+                results: Mutex::new(results.into_iter().collect()),
+                commands: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn command_count(&self) -> usize {
+            self.commands.lock().expect("poisoned").len()
+        }
+
+        fn commands(&self) -> Vec<RecordedCommand> {
+            self.commands.lock().expect("poisoned").clone()
+        }
+    }
+
+    #[async_trait]
+    impl CommandRunner for TestLifecycleCommandRunner {
+        async fn run_command(&self, command: &mut Command) -> Result<Output, io::Error> {
+            let recorded = RecordedCommand {
+                program: command.get_program().display().to_string(),
+            };
+            self.commands.lock().expect("poisoned").push(recorded);
+
+            self.results
+                .lock()
+                .expect("poisoned")
+                .pop_front()
+                .expect("test runner has a queued result")
+        }
+    }
+
+    #[cfg(unix)]
+    fn failed_exit_status() -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        ExitStatus::from_raw(1 << 8)
+    }
+
+    #[cfg(windows)]
+    fn failed_exit_status() -> ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+        ExitStatus::from_raw(1)
+    }
+
+    fn success_output(stdout: &str) -> Output {
+        Output {
+            status: ExitStatus::default(),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn failed_output(stderr: &str) -> Output {
+        Output {
+            status: failed_exit_status(),
+            stdout: Vec::new(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn initialize_command_succeeds_when_exit_status_is_success() {
+        let script = LifecycleScript::from_args(vec!["echo".to_string(), "hello".to_string()]);
+        let runner = Arc::new(TestLifecycleCommandRunner::new([Ok(success_output(
+            "hello",
+        ))]));
+
+        let result = gpui::block_on(script.run(&runner, Path::new(".")));
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(runner.command_count(), 1);
+    }
+
+    #[test]
+    fn initialize_command_fails_on_nonzero_exit_status() {
+        let script = LifecycleScript::from_args(vec!["false".to_string()]);
+        let runner = Arc::new(TestLifecycleCommandRunner::new([Ok(failed_output(
+            "command failed",
+        ))]));
+
+        let result = gpui::block_on(script.run(&runner, Path::new(".")));
+
+        assert_eq!(result, Err(DevContainerError::DevContainerScriptsFailed));
+        assert_eq!(runner.command_count(), 1);
+    }
+
+    #[test]
+    fn initialize_command_propagates_launch_failure() {
+        let script = LifecycleScript::from_args(vec!["missing-program".to_string()]);
+        let runner = Arc::new(TestLifecycleCommandRunner::new([Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "program not found",
+        ))]));
+
+        let result = gpui::block_on(script.run(&runner, Path::new(".")));
+
+        assert!(matches!(
+            result,
+            Err(DevContainerError::CommandFailed(program)) if program == "default"
+        ));
+        assert_eq!(runner.command_count(), 1);
+    }
+
+    #[test]
+    fn initialize_command_stops_after_first_nonzero_exit() {
+        let script = LifecycleScript::from_map(HashMap::from([
+            ("first".to_string(), vec!["first-command".to_string()]),
+            ("second".to_string(), vec!["second-command".to_string()]),
+        ]));
+        let runner = Arc::new(TestLifecycleCommandRunner::new([
+            Ok(failed_output("first failed")),
+            Ok(failed_output("second failed")),
+        ]));
+
+        let result = gpui::block_on(script.run(&runner, Path::new(".")));
+
+        assert_eq!(result, Err(DevContainerError::DevContainerScriptsFailed));
+        assert_eq!(
+            runner.command_count(),
+            1,
+            "execution must stop after the first failing command"
+        );
+    }
+
+    #[test]
+    fn successful_named_initialize_commands_all_execute() {
+        let script = LifecycleScript::from_map(HashMap::from([
+            ("first".to_string(), vec!["first-command".to_string()]),
+            ("second".to_string(), vec!["second-command".to_string()]),
+        ]));
+        let runner = Arc::new(TestLifecycleCommandRunner::new([
+            Ok(success_output("")),
+            Ok(success_output("")),
+        ]));
+
+        let result = gpui::block_on(script.run(&runner, Path::new(".")));
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(runner.command_count(), 2);
+
+        let programs: Vec<String> = runner
+            .commands()
+            .into_iter()
+            .map(|command| command.program)
+            .collect();
+        assert!(programs.contains(&"first-command".to_string()));
+        assert!(programs.contains(&"second-command".to_string()));
+    }
 
     #[test]
     fn override_command_defaults_depend_on_build_type() {
