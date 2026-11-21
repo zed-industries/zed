@@ -1444,6 +1444,8 @@ pub struct DevContainerConnection {
     pub name: String,
     pub remote_user: String,
     pub container_id: String,
+    pub local_folder: String,
+    pub config_file: String,
     pub use_podman: bool,
     pub extension_ids: Vec<String>,
     pub remote_env: BTreeMap<String, String>,
