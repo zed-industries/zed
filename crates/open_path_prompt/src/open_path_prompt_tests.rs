@@ -859,7 +859,7 @@ fn build_open_path_prompt(
         workspace.update_in(cx, |workspace, window, cx| {
             let relative_to = OpenPathPrompt::relative_to(workspace, &lister, creating_path, cx);
             let delegate =
-                OpenPathDelegate::new(tx, lister.clone(), creating_path, relative_to, cx);
+                OpenPathDelegate::new(tx, lister.clone(), creating_path, relative_to.directory, cx);
             let delegate = if show_hidden {
                 delegate.show_hidden()
             } else {
@@ -1042,8 +1042,9 @@ async fn test_open_path_prompt_relative_to_file_root(cx: &mut TestAppContext) {
                 let lister = project::DirectoryLister::Project(workspace.project().clone());
                 OpenPathPrompt::relative_to(workspace, &lister, creating_path, cx)
             });
+            assert!(relative_to.unresolved_root.is_none());
             assert_eq!(
-                relative_to,
+                relative_to.directory,
                 std::path::PathBuf::from(path!("/repro")),
                 "root: {root}, creating_path: {creating_path}"
             );
@@ -1074,11 +1075,12 @@ async fn test_relative_base_for_remote_root_before_and_after_initialization(
         )
     });
 
-    // Until the first update arrives, the root has no entries, but it is not a single file.
+    // Until the first update arrives, the root has no entries, so whether it is a single file
+    // is not known yet.
     worktree.read_with(cx, |worktree, _| {
         assert_eq!(
             OpenPathPrompt::root_directory(worktree, PathStyle::Unix),
-            PathBuf::from("/srv/project")
+            None
         );
     });
 
@@ -1106,7 +1108,104 @@ async fn test_relative_base_for_remote_root_before_and_after_initialization(
     worktree.read_with(cx, |worktree, _| {
         assert_eq!(
             OpenPathPrompt::root_directory(worktree, PathStyle::Unix),
-            PathBuf::from("/srv")
+            Some(PathBuf::from("/srv"))
         );
     });
+}
+
+#[gpui::test]
+async fn test_relative_base_follows_remote_file_root_once_initialized(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/srv/repro"),
+            json!({
+                "a.txt": "Content",
+                "b.txt": "Content",
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let root = cx.update(|cx| {
+        project::Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            rpc::proto::WorktreeMetadata {
+                id: 1,
+                root_name: "a.txt".to_string(),
+                visible: true,
+                abs_path: path!("/srv/repro/a.txt").to_string(),
+                root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
+            },
+            rpc::AnyProtoClient::new(rpc::NoopProtoClient::new()),
+            PathStyle::local(),
+            cx,
+        )
+    });
+
+    // Before its first update, the root is assumed to be a directory, as most roots are.
+    let relative_to = root.read_with(cx, |root, _| {
+        assert_eq!(
+            OpenPathPrompt::root_directory(root, PathStyle::local()),
+            None
+        );
+        root.abs_path().to_path_buf()
+    });
+
+    let (tx, _) = futures::channel::oneshot::channel();
+    let lister = DirectoryLister::Local(project, app_state.fs.clone());
+    let delegate = cx.update(|cx| OpenPathDelegate::new(tx, lister, false, relative_to, cx));
+    let window = cx.add_window(|window, cx| {
+        let mut picker = Picker::uniform_list(delegate, window, cx).embedded();
+        OpenPathDelegate::track_unresolved_root(&mut picker, root.clone(), window, cx);
+        picker.set_query("./", window, cx);
+        picker
+    });
+    let picker = window.root(cx).unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        Vec::<String>::new(),
+        "a file cannot be listed as a directory"
+    );
+
+    // Once the root turns out to be a file, `./` resolves against its directory without
+    // needing to edit the query.
+    root.update(cx, |root, _| {
+        root.as_remote()
+            .unwrap()
+            .update_from_remote(rpc::proto::UpdateWorktree {
+                project_id: 1,
+                worktree_id: 1,
+                abs_path: path!("/srv/repro/a.txt").to_string(),
+                root_name: "a.txt".to_string(),
+                updated_entries: vec![rpc::proto::Entry {
+                    id: 1,
+                    is_dir: false,
+                    path: String::new(),
+                    ..Default::default()
+                }],
+                removed_entries: Vec::new(),
+                scan_id: 1,
+                is_last_update: true,
+                updated_repositories: Vec::new(),
+                removed_repositories: Vec::new(),
+                root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
+            });
+    });
+    cx.run_until_parked();
+
+    #[cfg(not(windows))]
+    let expected_separator = "./";
+    #[cfg(windows)]
+    let expected_separator = ".\\";
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec![expected_separator, "a.txt", "b.txt"]
+    );
 }

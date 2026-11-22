@@ -7,7 +7,7 @@ use file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use futures::channel::oneshot;
 use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
-use gpui::{Action, HighlightStyle, StyledText, Task};
+use gpui::{Action, Entity, HighlightStyle, StyledText, Subscription, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister, Worktree};
 use settings::SettingsStore;
@@ -46,6 +46,9 @@ pub struct OpenPathDelegate {
     hidden_entries: bool,
     sort_mode: ProjectPanelSortMode,
     relative_to: PathBuf,
+    /// Watches a project root that `relative_to` was derived from before it was known whether
+    /// the root is a directory or a single file.
+    unresolved_root: Option<Subscription>,
 }
 
 impl OpenPathDelegate {
@@ -232,7 +235,39 @@ impl OpenPathDelegate {
             hidden_entries: false,
             sort_mode,
             relative_to,
+            unresolved_root: None,
         }
+    }
+
+    /// Resolves `./` and `../` against the directory of `root` once it is known whether `root`
+    /// is a single file, refreshing the listing when that changes the base directory.
+    fn track_unresolved_root(
+        picker: &mut Picker<Self>,
+        root: Entity<Worktree>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let subscription = cx.observe_in(&root, window, |picker, root, window, cx| {
+            let delegate = &mut picker.delegate;
+            let Some(directory) =
+                OpenPathPrompt::root_directory(root.read(cx), delegate.path_style)
+            else {
+                return;
+            };
+            delegate.unresolved_root = None;
+            if directory == delegate.relative_to {
+                return;
+            }
+            delegate.relative_to = directory;
+            // The listing is cached by the query, which no longer resolves to the same directory.
+            let create = matches!(
+                delegate.directory_state,
+                DirectoryState::Create { .. } | DirectoryState::None { create: true }
+            );
+            delegate.directory_state = DirectoryState::None { create };
+            picker.refresh(window, cx);
+        });
+        picker.delegate.unresolved_root = Some(subscription);
     }
 
     fn resolve_path(&self, path: &str) -> String {
@@ -243,6 +278,23 @@ impl OpenPathDelegate {
         match self.path_style {
             PathStyle::Unix => "./",
             PathStyle::Windows => ".\\",
+        }
+    }
+}
+
+/// Directory that `./` and `../` queries resolve against, see [`OpenPathPrompt::relative_to`].
+struct RelativeBase {
+    directory: PathBuf,
+    /// The project root `directory` was derived from, when it was not known yet whether that
+    /// root is a single file.
+    unresolved_root: Option<Entity<Worktree>>,
+}
+
+impl RelativeBase {
+    fn resolved(directory: PathBuf) -> Self {
+        Self {
+            directory,
+            unresolved_root: None,
         }
     }
 }
@@ -286,8 +338,15 @@ impl OpenPathPrompt {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, mode, window, cx| {
             let (tx, rx) = oneshot::channel();
             let relative_to = Self::relative_to(workspace, &lister, false, cx);
-            let delegate = OpenPathDelegate::for_open(tx, lister, mode, relative_to, cx);
-            Self::prompt_for_path(workspace, delegate, None, window, cx);
+            let delegate = OpenPathDelegate::for_open(tx, lister, mode, relative_to.directory, cx);
+            Self::prompt_for_path(
+                workspace,
+                delegate,
+                relative_to.unresolved_root,
+                None,
+                window,
+                cx,
+            );
             rx
         }));
     }
@@ -306,17 +365,13 @@ impl OpenPathPrompt {
         lister: &DirectoryLister,
         creating_path: bool,
         cx: &App,
-    ) -> PathBuf {
+    ) -> RelativeBase {
         let current_dir = || std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let project = workspace.project().read(cx);
         if matches!(lister, DirectoryLister::Local(..)) && !project.is_local() {
-            return current_dir();
+            return RelativeBase::resolved(current_dir());
         }
         let path_style = project.path_style(cx);
-        let project_root = workspace
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| Self::root_directory(worktree.read(cx), path_style));
         let active_file_directory = (!creating_path)
             .then(|| workspace.active_item(cx))
             .flatten()
@@ -328,34 +383,45 @@ impl OpenPathPrompt {
                     .absolute_path(&project_path, cx)
             })
             .and_then(|path| path_style.parent(&path).map(Path::to_path_buf));
-        active_file_directory.or(project_root).unwrap_or_else(|| {
-            if project.is_local() {
-                current_dir()
-            } else {
-                PathBuf::from(REMOTE_HOME)
-            }
+        if let Some(directory) = active_file_directory {
+            return RelativeBase::resolved(directory);
+        }
+        if let Some(root) = workspace.visible_worktrees(cx).next() {
+            return match Self::root_directory(root.read(cx), path_style) {
+                Some(directory) => RelativeBase::resolved(directory),
+                // Assume a directory, as most roots are, until the root's entries arrive.
+                None => RelativeBase {
+                    directory: root.read(cx).abs_path().to_path_buf(),
+                    unresolved_root: Some(root),
+                },
+            };
+        }
+        RelativeBase::resolved(if project.is_local() {
+            current_dir()
+        } else {
+            PathBuf::from(REMOTE_HOME)
         })
     }
 
     /// Directory of a project root: the root itself, or its parent directory when the root is
-    /// a single file, even one not saved yet.
-    fn root_directory(worktree: &Worktree, path_style: PathStyle) -> PathBuf {
+    /// a single file, even one not saved yet. Returns `None` while that is not known yet.
+    fn root_directory(worktree: &Worktree, path_style: PathStyle) -> Option<PathBuf> {
         let abs_path = worktree.abs_path();
         let is_file = match worktree.root_entry() {
             Some(entry) => entry.is_file(),
             // A local worktree gets its root entry on creation and a remote one with its first
             // complete update, so a root still missing after that is a file not saved yet.
-            // Before that, a remote root is most likely a directory whose entries are on the way.
-            None => worktree.is_local() || worktree.completed_scan_id() > 0,
+            None if worktree.is_local() || worktree.completed_scan_id() > 0 => true,
+            None => return None,
         };
-        if is_file {
+        Some(if is_file {
             path_style
                 .parent(&abs_path)
                 .unwrap_or(&abs_path)
                 .to_path_buf()
         } else {
             abs_path.to_path_buf()
-        }
+        })
     }
 
     pub fn register_new_path(
@@ -367,8 +433,15 @@ impl OpenPathPrompt {
             |workspace, lister, suggested_name, window, cx| {
                 let (tx, rx) = oneshot::channel();
                 let relative_to = Self::relative_to(workspace, &lister, true, cx);
-                let delegate = OpenPathDelegate::new(tx, lister, true, relative_to, cx);
-                Self::prompt_for_path(workspace, delegate, suggested_name, window, cx);
+                let delegate = OpenPathDelegate::new(tx, lister, true, relative_to.directory, cx);
+                Self::prompt_for_path(
+                    workspace,
+                    delegate,
+                    relative_to.unresolved_root,
+                    suggested_name,
+                    window,
+                    cx,
+                );
                 rx
             },
         ));
@@ -377,13 +450,17 @@ impl OpenPathPrompt {
     fn prompt_for_path(
         workspace: &mut Workspace,
         delegate: OpenPathDelegate,
+        unresolved_root: Option<Entity<Worktree>>,
         suggested_name: Option<String>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
             let mut query = delegate.lister.default_query(cx);
-            let picker = Picker::uniform_list(delegate.show_hidden(), window, cx);
+            let mut picker = Picker::uniform_list(delegate.show_hidden(), window, cx);
+            if let Some(root) = unresolved_root {
+                OpenPathDelegate::track_unresolved_root(&mut picker, root, window, cx);
+            }
             if let Some(suggested_name) = suggested_name {
                 query.push_str(&suggested_name);
             }
