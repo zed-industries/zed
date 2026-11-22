@@ -8094,11 +8094,14 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
+ "language",
  "release_channel",
  "semver",
  "settings",
+ "text",
  "theme",
  "theme_settings",
+ "unicode-segmentation",
  "vim_mode_setting",
 ]
 

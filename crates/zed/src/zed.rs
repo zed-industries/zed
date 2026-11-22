@@ -6294,6 +6294,7 @@ mod tests {
                 "git_panel",
                 "git_picker",
                 "go_to_line",
+                "helix",
                 "highlights_tree_view",
                 "icon_theme_selector",
                 "image_viewer",

@@ -1,10 +1,13 @@
 use editor::test::editor_test_context::EditorTestContext;
 use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _};
-use gpui::{TestAppContext, UpdateGlobal as _};
+use gpui::{KeyContext, TestAppContext, UpdateGlobal as _};
 use settings::SettingsStore;
 use vim_mode_setting::HelixNextFeatureFlag;
 
-use crate::HelixAddon;
+use crate::{
+    HelixAddon, Mode,
+    mode::{InsertMode, NormalMode, SelectMode},
+};
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -65,4 +68,64 @@ async fn test_addon_follows_setting_and_flag(cx: &mut TestAppContext) {
 
     set_helix_next_flag(false, &mut cx);
     assert!(!has_helix_addon(&mut cx));
+}
+
+async fn helix_editor(cx: &mut TestAppContext) -> EditorTestContext {
+    init_test(cx);
+    let mut cx = EditorTestContext::new(cx).await;
+    set_helix_mode(true, &mut cx);
+    set_helix_next_flag(true, &mut cx);
+    cx
+}
+
+fn mode(cx: &mut EditorTestContext) -> Option<Mode> {
+    cx.editor(|editor, _, cx| {
+        editor
+            .addon::<HelixAddon>()
+            .map(|addon| addon.entity.read(cx).mode)
+    })
+}
+
+fn key_context(cx: &mut EditorTestContext) -> KeyContext {
+    cx.update_editor(|editor, window, cx| editor.key_context(window, cx))
+}
+
+#[gpui::test]
+async fn test_mode_switching(cx: &mut TestAppContext) {
+    let mut cx = helix_editor(cx).await;
+    cx.set_state("ˇabc");
+    assert_eq!(mode(&mut cx), Some(Mode::Normal));
+    cx.assert_editor_state("«aˇ»bc");
+    let context = key_context(&mut cx);
+    assert!(context.contains("Helix"));
+    assert_eq!(
+        context.get("helix_mode").map(|mode| mode.as_ref()),
+        Some("normal")
+    );
+
+    cx.dispatch_action(SelectMode);
+    assert_eq!(mode(&mut cx), Some(Mode::Select));
+    assert_eq!(
+        key_context(&mut cx)
+            .get("helix_mode")
+            .map(|mode| mode.as_ref()),
+        Some("select")
+    );
+
+    cx.dispatch_action(NormalMode);
+    assert_eq!(mode(&mut cx), Some(Mode::Normal));
+
+    cx.dispatch_action(InsertMode);
+    assert_eq!(mode(&mut cx), Some(Mode::Insert));
+    let context = key_context(&mut cx);
+    assert!(!context.contains("Helix"));
+    assert_eq!(
+        context.get("helix_mode").map(|mode| mode.as_ref()),
+        Some("insert")
+    );
+    cx.assert_editor_state("ˇabc");
+
+    cx.dispatch_action(NormalMode);
+    assert_eq!(mode(&mut cx), Some(Mode::Normal));
+    cx.assert_editor_state("«ˇa»bc");
 }

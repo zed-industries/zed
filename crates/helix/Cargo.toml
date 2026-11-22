@@ -18,7 +18,10 @@ test-support = []
 [dependencies]
 editor.workspace = true
 gpui.workspace = true
+language.workspace = true
 settings.workspace = true
+text.workspace = true
+unicode-segmentation.workspace = true
 vim_mode_setting.workspace = true
 
 [dev-dependencies]
