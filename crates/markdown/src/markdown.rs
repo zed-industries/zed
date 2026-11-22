@@ -1312,7 +1312,7 @@ impl Markdown {
                 should_parse_metadata_blocks,
             );
             let events = parsed.events;
-            let language_names = parsed.language_names;
+            let code_block_language_names = parsed.language_names;
             let paths = parsed.language_paths;
             let root_block_starts = parsed.root_block_starts;
             let html_blocks = parsed.html_blocks;
@@ -1331,12 +1331,12 @@ impl Markdown {
             let mut languages_by_path = TreeMap::default();
             let mut fallback_code_block_language = None;
             if let Some(registry) = language_registry.as_ref() {
-                for name in language_names {
-                    let mut language = registry.language_for_name_or_extension(&name).await;
+                for name in code_block_language_names {
+                    let mut language = registry.language_for_code_fence_name(&name).await;
                     if language.is_err()
                         && let Some((first_word, _)) = name.split_once(char::is_whitespace)
                     {
-                        language = registry.language_for_name_or_extension(first_word).await;
+                        language = registry.language_for_code_fence_name(first_word).await;
                     }
                     if let Ok(language) = language {
                         languages_by_name.insert(name, language);

@@ -185,6 +185,7 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
                     SharedString::new_static("text"),
                     SharedString::new_static("txt"),
                 ],
+                code_fence_block_names: vec![],
             })
             .into(),
             brackets: BracketPairConfig {
@@ -1107,8 +1108,10 @@ impl Language {
 
     pub fn code_fence_block_name(&self) -> Arc<str> {
         self.config
-            .code_fence_block_name
-            .clone()
+            .matcher
+            .code_fence_block_names
+            .first()
+            .map(|name| Arc::from(name.as_ref()))
             .unwrap_or_else(|| self.config.name.as_ref().to_lowercase().into())
     }
 

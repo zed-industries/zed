@@ -666,6 +666,25 @@ impl LanguageRegistry {
         async move { rx.await? }
     }
 
+    /// Look up a language by the info string of a Markdown fenced code block.
+    ///
+    /// This performs a case-insensitive match against:
+    /// 1. The language name
+    /// 2. The language's path suffixes
+    /// 3. Explicit code fence names defined in the language config
+    pub fn language_for_code_fence_name(
+        self: &Arc<Self>,
+        string: &str,
+    ) -> impl Future<Output = Result<Arc<Language>>> {
+        let language_id = self
+            .state
+            .read()
+            .available_languages
+            .find_by_code_fence_name(string);
+        let rx = self.get_or_load_language(language_id);
+        async move { rx.await? }
+    }
+
     pub fn available_language_for_name(self: &Arc<Self>, name: &str) -> Option<AvailableLanguage> {
         let state = self.state.read();
         state.available_languages.find_by_exact_name(name)

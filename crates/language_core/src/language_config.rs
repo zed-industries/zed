@@ -28,8 +28,6 @@ pub enum SoftWrap {
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
-    /// The name of this language for a Markdown code fence block
-    pub code_fence_block_name: Option<Arc<str>>,
     /// Alternative language names that Jupyter kernels may report for this language.
     /// Used when a kernel's `language` field differs from Zed's language name.
     /// For example, the Nu extension would set this to `["nushell"]`.
@@ -165,7 +163,6 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: LanguageName::new_static(""),
-            code_fence_block_name: None,
             kernel_language_names: Default::default(),
             grammar: None,
             matcher: Arc::default(),
@@ -246,6 +243,19 @@ pub struct LanguageMatcher {
     /// `filetype`/`ft` (vim) specified in the modeline.
     #[serde(default)]
     pub modeline_aliases: Vec<SharedString>,
+    /// Names used to identify this language in Markdown fenced code blocks and
+    /// syntax injections. Accepts either a single string or a list of strings.
+    /// The first entry is used as the canonical name when Zed generates Markdown
+    /// (e.g. when the assistant creates a code block); if omitted, the lowercase
+    /// language name is used. All entries are matched case-insensitively for
+    /// lookup. The old key `code_fence_block_name` is accepted as an alias.
+    #[serde(
+        default,
+        alias = "code_fence_block_name",
+        deserialize_with = "deserialize_string_or_vec"
+    )]
+    #[schemars(schema_with = "string_or_vec_json_schema")]
+    pub code_fence_block_names: Vec<SharedString>,
 }
 
 impl Ord for LanguageMatcher {
@@ -259,6 +269,10 @@ impl Ord for LanguageMatcher {
                     .cmp(&other.first_line_pattern.as_ref().map(Regex::as_str))
             })
             .then_with(|| self.modeline_aliases.cmp(&other.modeline_aliases))
+            .then_with(|| {
+                self.code_fence_block_names
+                    .cmp(&other.code_fence_block_names)
+            })
     }
 }
 
@@ -276,6 +290,7 @@ impl PartialEq for LanguageMatcher {
             && self.first_line_pattern.as_ref().map(Regex::as_str)
                 == other.first_line_pattern.as_ref().map(Regex::as_str)
             && self.modeline_aliases == other.modeline_aliases
+            && self.code_fence_block_names == other.code_fence_block_names
     }
 }
 
@@ -484,6 +499,37 @@ pub struct WrapCharactersConfig {
     pub end_suffix: String,
 }
 
+/// Deserializes either a single string or a list of strings, for config
+/// fields that accept `"value"` as shorthand for `["value"]`.
+fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Vec<SharedString>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StringOrVec;
+
+    impl<'de> de::Visitor<'de> for StringOrVec {
+        type Value = Vec<SharedString>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or list of strings")
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+            Ok(vec![SharedString::from(value.to_owned())])
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut values = Vec::new();
+            while let Some(value) = seq.next_element::<String>()? {
+                values.push(SharedString::from(value));
+            }
+            Ok(values)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrVec)
+}
+
 pub fn default_true() -> bool {
     true
 }
@@ -527,4 +573,37 @@ pub fn regex_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
         "type": "array",
         "items": { "type": "string" }
     })
+}
+
+pub fn string_or_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
+    json_schema!({
+        "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+        ]
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_code_fence_block_names_deserialization() {
+        let config: LanguageConfig =
+            toml::from_str("name = \"A\"\ncode_fence_block_names = [\"a\", \"b\"]").unwrap();
+        assert_eq!(config.matcher.code_fence_block_names, vec!["a", "b"]);
+
+        let config: LanguageConfig =
+            toml::from_str("name = \"A\"\ncode_fence_block_names = \"a\"").unwrap();
+        assert_eq!(config.matcher.code_fence_block_names, vec!["a"]);
+
+        // Older configs and extensions use the singular key.
+        let config: LanguageConfig =
+            toml::from_str("name = \"A\"\ncode_fence_block_name = \"a\"").unwrap();
+        assert_eq!(config.matcher.code_fence_block_names, vec!["a"]);
+
+        let config: LanguageConfig = toml::from_str("name = \"A\"").unwrap();
+        assert!(config.matcher.code_fence_block_names.is_empty());
+    }
 }
