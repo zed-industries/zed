@@ -337,18 +337,19 @@ impl<'a> ChunkBrackets<'a> {
                     open_ranges.last(),
                     close_ranges.first(),
                     close_ranges.last(),
-                ) else {
+                )
+                else {
                     continue;
                 };
-                
+
                 let open_range = first_open_range.start..last_open_range.end;
                 let close_range = first_close_range.start..last_close_range.end;
-                
+
                 let bracket_range = open_range.start..=close_range.end;
                 if !bracket_range.overlaps(&self.chunk_range) {
                     continue;
                 }
-                
+
                 let candidate = BracketMatchCandidate {
                     bracket_match: BracketMatch {
                         open_range,
