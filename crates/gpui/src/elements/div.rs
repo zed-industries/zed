@@ -2241,6 +2241,7 @@ pub struct Interactivity {
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
+    pub(crate) scroll_max: Point<Pixels>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
@@ -2530,7 +2531,7 @@ impl Interactivity {
     }
 
     fn clamp_scroll_position(
-        &self,
+        &mut self,
         bounds: Bounds<Pixels>,
         style: &Style,
         window: &mut Window,
@@ -2587,6 +2588,7 @@ impl Interactivity {
                 scroll_handle_state.max_offset = scroll_max;
                 scroll_handle_state.bounds = bounds;
             }
+            self.scroll_max = scroll_max;
 
             *scroll_offset
         } else {
@@ -3439,6 +3441,7 @@ impl Interactivity {
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
             let line_height = window.line_height();
+            let scroll_max = self.scroll_max;
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
@@ -3481,8 +3484,11 @@ impl Interactivity {
                             delta_x = Pixels::ZERO;
                         }
                     }
-                    scroll_offset.y += delta_y;
-                    scroll_offset.x += delta_x;
+                    // Clamp here rather than leaving it to the next prepaint, so that
+                    // views reading the offset while rendering never see a value
+                    // outside of the scrollable range.
+                    scroll_offset.y = (scroll_offset.y + delta_y).clamp(-scroll_max.y, px(0.));
+                    scroll_offset.x = (scroll_offset.x + delta_x).clamp(-scroll_max.x, px(0.));
                     if *scroll_offset != old_scroll_offset {
                         cx.notify(current_view);
                     }
@@ -5776,6 +5782,69 @@ mod tests {
             .unwrap();
 
         assert_eq!(scroll_handle.max_offset().y, px(0.));
+    }
+
+    #[gpui::test]
+    fn test_scroll_wheel_keeps_offset_within_scroll_range(cx: &mut TestAppContext) {
+        struct ScrollRow {
+            scroll_handle: ScrollHandle,
+            content_width: Pixels,
+            offsets_seen_in_render: Rc<RefCell<Vec<Point<Pixels>>>>,
+        }
+
+        impl Render for ScrollRow {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                self.offsets_seen_in_render
+                    .borrow_mut()
+                    .push(self.scroll_handle.offset());
+                div().size_full().child(
+                    div()
+                        .id("row")
+                        .w(px(100.))
+                        .h(px(20.))
+                        .overflow_x_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .child(div().flex_none().w(self.content_width).h(px(20.))),
+                )
+            }
+        }
+
+        for (content_width, expected_max) in [(px(300.), px(200.)), (px(50.), px(0.))] {
+            let scroll_handle = ScrollHandle::new();
+            let offsets_seen_in_render = Rc::new(RefCell::new(Vec::new()));
+            let (_, cx) = cx.add_window_view({
+                let scroll_handle = scroll_handle.clone();
+                let offsets_seen_in_render = offsets_seen_in_render.clone();
+                move |_, _| ScrollRow {
+                    scroll_handle,
+                    content_width,
+                    offsets_seen_in_render,
+                }
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert_eq!(scroll_handle.max_offset().x, expected_max);
+
+            for (delta_x, expected_offset) in [(px(-500.), -expected_max), (px(500.), px(0.))] {
+                cx.simulate_event(ScrollEvent {
+                    position: point(px(10.), px(10.)),
+                    delta: crate::ScrollDelta::Pixels(point(delta_x, px(0.))),
+                    ..Default::default()
+                });
+                assert_eq!(scroll_handle.offset().x, expected_offset);
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+            }
+
+            for offset in offsets_seen_in_render.borrow().iter() {
+                assert!(
+                    offset.x >= -expected_max && offset.x <= px(0.),
+                    "render saw out-of-range offset {offset:?}"
+                );
+            }
+        }
     }
 
     struct ContentSizedGrid;
