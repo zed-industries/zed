@@ -739,7 +739,16 @@ impl WgpuContext {
     }
 
     pub fn uses_webgl_instance_data(&self) -> bool {
-        matches!(self.backend, WgpuBackend::Gl) && cfg!(target_family = "wasm")
+        match self.backend {
+            WgpuBackend::Gl => true,
+            WgpuBackend::Native(wgpu::Backend::Gl) => {
+                let flags = self.adapter.get_downlevel_capabilities().flags;
+                !flags.contains(
+                    wgpu::DownlevelFlags::VERTEX_STORAGE | wgpu::DownlevelFlags::FRAGMENT_STORAGE,
+                )
+            }
+            _ => false,
+        }
     }
 
     pub fn supports_dual_source_blending(&self) -> bool {
