@@ -10,7 +10,7 @@
 //! receives the keys that no view used, as AppKit passes them back up.
 
 use super::{
-    MacWindowState, convert_mouse_position, current_capslock, current_modifiers, get_window_state,
+    MacWindowState, convert_mouse_position, current_capslock, current_modifiers,
     window_state_if_set, with_input_handler,
 };
 use crate::events::platform_input_from_native;
@@ -44,6 +44,9 @@ pub(super) struct NativeViews {
     /// The view a mouse-down event is being delivered to, which may take
     /// first responder even though GPUI has not focused it yet.
     clicked: Option<NativeViewId>,
+    /// Whether GPUI was told of a mouse press that went to a native view, and
+    /// is owed the release.
+    pressed_in_view: bool,
     /// Whether the pointer is over a native view, which then sets the cursor.
     pointer_over_view: bool,
     /// Whether a scene has been drawn since the pointer was last looked for.
@@ -707,12 +710,17 @@ fn hit_test_native_view(
 extern "C" fn hit_test(this: &AnyObject, _: Sel, point: NSPoint) -> *mut AnyObject {
     // SAFETY: `this` is the live GPUI view, whose state outlives it.
     unsafe {
-        let window_state = get_window_state(this);
+        // AppKit can ask while the view is being torn down, after its state
+        // has gone and it has left its superview.
         let superview: *mut AnyObject = msg_send![this, superview];
-        let position_in_window: NSPoint =
-            msg_send![superview, convertPoint: point, toView: ptr::null::<AnyObject>()];
-        if hit_test_native_view(&window_state, position_in_window).is_some() {
-            return ptr::null_mut();
+        if let Some(window_state) = window_state_if_set(this)
+            && !superview.is_null()
+        {
+            let position_in_window: NSPoint =
+                msg_send![superview, convertPoint: point, toView: ptr::null::<AnyObject>()];
+            if hit_test_native_view(&window_state, position_in_window).is_some() {
+                return ptr::null_mut();
+            }
         }
         msg_send![super(this, class!(NSView)), hitTest: point]
     }
@@ -756,11 +764,30 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
             None
         };
         if clicked.is_none() {
-            return msg_send![super(this, superclass), sendEvent: event];
+            let is_release = matches!(
+                event_type,
+                NSEventType::LeftMouseUp | NSEventType::RightMouseUp | NSEventType::OtherMouseUp
+            );
+            // GPUI was told of the press, so it is told of the release too, or
+            // it would go on treating the button as held.
+            let release = is_release
+                .then(|| {
+                    let mut lock = window_state.try_lock()?;
+                    std::mem::take(&mut lock.native_views.pressed_in_view)
+                        .then(|| lock.content_size().height)
+                })
+                .flatten()
+                .and_then(|window_height| platform_input_from_native(event, Some(window_height)));
+            let _: () = msg_send![super(this, superclass), sendEvent: event];
+            if let Some(release) = release {
+                pass_input_to_gpui(&window_state, release);
+            }
+            return;
         }
         let window_height = {
             let mut lock = window_state.lock();
             lock.native_views.clicked = clicked;
+            lock.native_views.pressed_in_view = true;
             lock.content_size().height
         };
         // GPUI goes first, so that focus it moves in response, such as a dismissed
@@ -788,7 +815,8 @@ fn update_pointer_over_view(window_state: &Rc<Mutex<MacWindowState>>, position_i
     let gpui_view = lock.native_view.as_ptr();
     drop(lock);
     // SAFETY: The window and the GPUI view are live, and events are sent on the main
-    // thread. The state is unlocked because AppKit rebuilds the rectangles synchronously.
+    // thread. The state is unlocked in case AppKit rebuilds the rectangles at once,
+    // which calls back into the view.
     unsafe {
         let _: () = msg_send![native_window, invalidateCursorRectsForView: gpui_view];
     }
@@ -1078,7 +1106,9 @@ extern "C" fn become_first_responder(this: &AnyObject, _: Sel) -> Bool {
     // SAFETY: `this` is the live GPUI view, whose state outlives it.
     unsafe {
         let accepted: Bool = msg_send![super(this, class!(NSView)), becomeFirstResponder];
-        let window_state = get_window_state(this);
+        let Some(window_state) = window_state_if_set(this) else {
+            return accepted;
+        };
         // The state is locked while the window is still being set up.
         let Some(lock) = window_state.try_lock() else {
             return accepted;
@@ -1125,7 +1155,9 @@ extern "C" fn resign_first_responder(this: &AnyObject, _: Sel) -> Bool {
     // SAFETY: `this` is the live GPUI view, whose state outlives it.
     unsafe {
         let accepted: Bool = msg_send![super(this, class!(NSView)), resignFirstResponder];
-        let window_state = get_window_state(this);
+        let Some(window_state) = window_state_if_set(this) else {
+            return accepted;
+        };
         let has_native_views = window_state
             .try_lock()
             .is_some_and(|lock| !lock.native_views.views.is_empty());

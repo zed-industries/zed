@@ -37,8 +37,9 @@ impl NativeViewId {
 /// cover it like they would cover any other element. The view is treated as
 /// opaque, and is not affected by element opacity or transformations.
 ///
-/// Mouse input over the uncovered part of the view goes to the view, and to
-/// nothing behind it. The window's own content is still told of a mouse press
+/// Mouse input over the view goes to the view, and to nothing behind it,
+/// wherever no element painted after the view takes mouse input. An element
+/// that is only drawn over the view covers it without taking its mouse input. The window's own content is still told of a mouse press
 /// there, as a press outside every element. An element behind the view hears
 /// no mouse moves while the pointer is over it, so follow a drag that can cross
 /// the view with `on_drag_move`, or with an element in front of the view.
@@ -244,7 +245,8 @@ impl Window {
     ///
     /// The platform also asks for this as its own view loses keyboard input, but
     /// that request needs the app, which is already borrowed when focus is moved
-    /// from inside an update.
+    /// from inside an update. The entity being updated may also be the one that
+    /// holds the composition, so this waits for the update to end.
     pub(super) fn end_composition_before_focusing_native_view(
         &mut self,
         focus: FocusId,
@@ -253,10 +255,12 @@ impl Window {
         if self.native_view_for_focus(focus).is_none() {
             return;
         }
-        if let Some(mut input_handler) = self.platform_window.take_input_handler() {
-            input_handler.unmark_text_during_update(self, cx);
-            self.platform_window.set_input_handler(input_handler);
-        }
+        self.defer(cx, |window, cx| {
+            if let Some(mut input_handler) = window.platform_window.take_input_handler() {
+                input_handler.unmark_text_during_update(window, cx);
+                window.platform_window.set_input_handler(input_handler);
+            }
+        });
     }
 
     fn native_view_for_focus(&self, focus: FocusId) -> Option<NativeViewId> {
@@ -295,11 +299,21 @@ impl Window {
         else {
             return false;
         };
-        if !self.has_pending_keystrokes() {
-            let node_id = self.focus_node_id_in_rendered_frame(self.focus);
-            let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        // A key that doesn't continue what is pending is left for the view like
+        // any other. Dispatching it here as well would dispatch it twice when
+        // the view then leaves it.
+        let continues_pending = self.pending_input_keystrokes().is_some_and(|pending| {
+            let mut input = pending.to_vec();
+            input.push(event.keystroke.clone());
+            let (bindings, is_pending, _) =
+                dispatch_tree.bindings_for_input(&input, &dispatch_path);
+            is_pending || !bindings.is_empty()
+        });
+        if !continues_pending {
             let input = std::slice::from_ref(&event.keystroke);
-            let dispatch_tree = &self.rendered_frame.dispatch_tree;
             let (bindings, _, context_stack) =
                 dispatch_tree.bindings_for_input(input, &dispatch_path);
             let reserved_actions = view.reserved_actions.borrow();
@@ -339,9 +353,9 @@ impl Window {
 mod tests {
     use super::*;
     use crate::{
-        Context, FocusHandle, InputHandler, KeyBinding, Keystroke, Modifiers, MouseButton, Render,
-        ScaledPixels, TestAppContext, UTF16Selection, VisualTestContext, WindowHandle, canvas,
-        point, prelude::*, px, rgb,
+        Context, Entity, FocusHandle, InputHandler, KeyBinding, Keystroke, Modifiers, MouseButton,
+        Render, ScaledPixels, TestAppContext, UTF16Selection, VisualTestContext, WindowHandle,
+        canvas, point, prelude::*, px, rgb,
     };
     use std::ops::Range;
 
@@ -434,6 +448,15 @@ mod tests {
         // of that binding's keys are GPUI's.
         assert!(!platform_window.simulate_key_down_before_native_view(press("cmd-k")));
         cx.simulate_keystrokes(window.into(), "cmd-k");
+        // A key that doesn't continue the binding is the view's to see first,
+        // and isn't dispatched here, which would dispatch it twice if the view
+        // then left it.
+        assert!(!platform_window.simulate_key_down_before_native_view(press("x")));
+        assert!(
+            window
+                .update(cx, |_, window, _| window.has_pending_keystrokes())
+                .unwrap()
+        );
         assert!(platform_window.simulate_key_down_before_native_view(press("o")));
         assert_eq!(actions(cx), ["ordinary"]);
 
@@ -589,7 +612,7 @@ mod tests {
             actions: Vec::new(),
             presses: Vec::new(),
             paints_native_view_twice: false,
-            unmark_count: Rc::default(),
+            unmark_count: 0,
         });
         cx.run_until_parked();
 
@@ -612,16 +635,16 @@ mod tests {
             .update(cx, |view, window, cx| window.focus(&view.other_focus, cx))
             .unwrap();
         cx.run_until_parked();
-        let unmark_count = window
-            .update(cx, |view, _, _| view.unmark_count.clone())
-            .unwrap();
 
+        // The view that holds the composition moves focus from inside its own
+        // update, so the composition can only be ended once that is over.
         window
             .update(cx, |view, window, cx| {
                 window.focus(&view.native_view.focus_handle(cx), cx);
             })
             .unwrap();
-        assert_eq!(unmark_count.get(), 1);
+        let unmark_count = window.update(cx, |view, _, _| view.unmark_count).unwrap();
+        assert_eq!(unmark_count, 1);
     }
 
     actions!(native_view_tests, [Reserved, Ordinary]);
@@ -634,7 +657,7 @@ mod tests {
         paints_native_view_twice: bool,
         /// How many times the input handler of the "cover" element was told to
         /// end its composition.
-        unmark_count: Rc<Cell<usize>>,
+        unmark_count: usize,
     }
 
     impl Render for TestView {
@@ -681,11 +704,11 @@ mod tests {
                         )
                         .child({
                             let focus = self.other_focus.clone();
-                            let unmark_count = self.unmark_count.clone();
+                            let view = cx.entity();
                             canvas(
                                 |_, _, _| {},
                                 move |_, _, window, cx| {
-                                    window.handle_input(&focus, TestInput { unmark_count }, cx);
+                                    window.handle_input(&focus, TestInput { view }, cx);
                                 },
                             )
                             .size_full()
@@ -694,8 +717,9 @@ mod tests {
         }
     }
 
+    /// Reaches its view as an element's input handler does, by updating it.
     struct TestInput {
-        unmark_count: Rc<Cell<usize>>,
+        view: Entity<TestView>,
     }
 
     impl InputHandler for TestInput {
@@ -741,8 +765,8 @@ mod tests {
         ) {
         }
 
-        fn unmark_text(&mut self, _: &mut Window, _: &mut App) {
-            self.unmark_count.set(self.unmark_count.get() + 1);
+        fn unmark_text(&mut self, _: &mut Window, cx: &mut App) {
+            self.view.update(cx, |view, _| view.unmark_count += 1);
         }
 
         fn bounds_for_range(
@@ -771,7 +795,7 @@ mod tests {
             actions: Vec::new(),
             presses: Vec::new(),
             paints_native_view_twice: false,
-            unmark_count: Rc::default(),
+            unmark_count: 0,
         })
     }
 

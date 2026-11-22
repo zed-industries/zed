@@ -549,7 +549,9 @@ impl<'a> Iterator for BatchIterator<'a> {
                 PrimitiveKind::Surface,
             ),
             (
-                self.native_views_iter.peek().map(|v| v.order),
+                self.native_views_iter
+                    .peek()
+                    .map(|native_view| native_view.order),
                 PrimitiveKind::NativeView,
             ),
         ];
