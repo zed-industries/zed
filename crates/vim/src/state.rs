@@ -24,7 +24,7 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::path::Path;
@@ -37,6 +37,7 @@ use ui::{
 };
 use util::ResultExt;
 use util::rel_path::RelPath;
+use vim_mode_setting::{HelixModeSetting, VimModeSetting, observe_modal_editing_changes};
 use workspace::searchable::Direction;
 use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
 
@@ -730,14 +731,17 @@ impl VimGlobals {
 
         let mut was_enabled = None;
 
-        cx.observe_global::<SettingsStore>(move |cx| {
+        observe_modal_editing_changes(cx, move |cx| {
+            KeyBinding::set_vim_mode(
+                cx,
+                VimModeSetting::is_enabled(cx) || HelixModeSetting::is_enabled(cx),
+            );
             let is_enabled = Vim::enabled(cx);
             if was_enabled == Some(is_enabled) {
                 return;
             }
             was_enabled = Some(is_enabled);
             if is_enabled {
-                KeyBinding::set_vim_mode(cx, true);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
@@ -758,7 +762,6 @@ impl VimGlobals {
                     }
                 }
             } else {
-                KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
                 GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {

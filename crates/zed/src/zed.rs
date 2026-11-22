@@ -2150,12 +2150,14 @@ pub fn handle_keymap_file_changes(
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
     let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
     let mut old_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+    let mut old_helix_crate_enabled = vim_mode_setting::HelixModeSetting::uses_helix_crate(cx);
     let mut old_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
 
-    cx.observe_global::<SettingsStore>(move |cx| {
+    vim_mode_setting::observe_modal_editing_changes(cx, move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
         let new_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+        let new_helix_crate_enabled = vim_mode_setting::HelixModeSetting::uses_helix_crate(cx);
         let new_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
 
         if new_disable_ai != old_disable_ai {
@@ -2165,11 +2167,13 @@ pub fn handle_keymap_file_changes(
         if new_base_keymap != old_base_keymap
             || new_vim_enabled != old_vim_enabled
             || new_helix_enabled != old_helix_enabled
+            || new_helix_crate_enabled != old_helix_crate_enabled
             || new_disable_ai != old_disable_ai
         {
             old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
             old_helix_enabled = new_helix_enabled;
+            old_helix_crate_enabled = new_helix_crate_enabled;
             old_disable_ai = new_disable_ai;
 
             base_keymap_tx.unbounded_send(()).unwrap();
@@ -2374,7 +2378,10 @@ pub fn load_default_keymap(cx: &mut App) {
         ));
     }
 
-    if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
+    let helix_crate_enabled = vim_mode_setting::HelixModeSetting::uses_helix_crate(cx);
+    if (VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0)
+        && !helix_crate_enabled
+    {
         cx.bind_keys(filter_disabled_ai_bindings(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
             cx,

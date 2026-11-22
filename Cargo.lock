@@ -8088,6 +8088,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "helix"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "feature_flags",
+ "gpui",
+ "release_channel",
+ "semver",
+ "settings",
+ "theme",
+ "theme_settings",
+ "vim_mode_setting",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19779,6 +19794,7 @@ dependencies = [
 name = "vim_mode_setting"
 version = "0.1.0"
 dependencies = [
+ "feature_flags",
  "gpui",
  "settings",
 ]
@@ -22613,6 +22629,7 @@ dependencies = [
  "gpui_platform",
  "gpui_tokio",
  "hang_telemetry",
+ "helix",
  "http_client",
  "image",
  "image_viewer",

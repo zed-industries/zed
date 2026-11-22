@@ -1,0 +1,32 @@
+[package]
+name = "helix"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/helix.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+editor.workspace = true
+gpui.workspace = true
+settings.workspace = true
+vim_mode_setting.workspace = true
+
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+feature_flags.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
+semver.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+theme_settings.workspace = true

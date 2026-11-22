@@ -54,6 +54,7 @@ use theme_settings::ThemeSettings;
 use ui::{ActiveTheme, IntoElement, SharedString, px};
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::observe_modal_editing_changes_in;
 use workspace::{self, Pane, Workspace};
 
 use crate::{
@@ -671,7 +672,7 @@ impl Vim {
         let mut was_enabled = Vim::enabled(cx);
         let mut was_helix_enabled = HelixModeSetting::get_global(cx).0;
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-        cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
+        observe_modal_editing_changes_in(window, cx, move |editor, window, cx| {
             let enabled = Vim::enabled(cx);
             let helix_enabled = HelixModeSetting::get_global(cx).0;
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
@@ -1119,7 +1120,8 @@ impl Vim {
     }
 
     pub fn enabled(cx: &mut App) -> bool {
-        VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
+        (VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0)
+            && !HelixModeSetting::uses_helix_crate(cx)
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions
