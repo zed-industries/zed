@@ -334,8 +334,8 @@ fn sign_mantle_request_sigv4_at(
 pub struct State {
     /// The resolved authentication method. Settings take priority over UX credentials.
     auth: Option<BedrockAuth>,
-    /// Updated atomically with auth and listing invalidation, before requests
-    /// take their routing and header snapshot.
+    /// A copy of the provider settings, replaced by the settings observer
+    /// together with the auth and listing that depend on them.
     settings: AmazonBedrockSettings,
     /// Whether credentials came from environment variables (only relevant for static credentials)
     credentials_from_env: bool,
@@ -354,7 +354,6 @@ pub struct State {
     plain_http_client: Arc<dyn HttpClient>,
     fs: Arc<dyn Fs>,
     listing: ModelListing,
-    listing_generation: u64,
     fetch_models_task: Option<Task<()>>,
     /// What the public capability catalog says about Bedrock's models. It is
     /// empty until the catalog has loaded.
@@ -505,51 +504,6 @@ impl State {
         cx.notify();
     }
 
-    fn fetch_models(&self, cx: &mut Context<Self>) -> Task<Result<ModelCatalog>> {
-        let http_client = self.http_client.clone();
-        let profile_name = aws_profile_name(&self.auth);
-        let region = self.get_region();
-        let generation = self.listing_generation;
-        // One deadline covers credential resolution and every listing call and
-        // page, so a stalled call cannot leave the model list loading forever.
-        let deadline = cx
-            .background_executor()
-            .timer(LIST_MODELS_TIMEOUT)
-            .boxed()
-            .shared();
-        cx.spawn(async move |this, cx| {
-            this.update(cx, |state, cx| {
-                state.sync_settings(cx);
-                anyhow::ensure!(state.listing_generation == generation, "Bedrock model listing configuration changed");
-                Ok::<_, anyhow::Error>(())
-            })??;
-            let setup = async {
-                let request_auth = {
-                    let state = this.upgrade().context("Bedrock provider state was dropped")?;
-                    let http_client = http_client.clone();
-                    resolve_cached_request_auth(
-                        &state,
-                        cx,
-                        |name| std::env::var(name).ok(),
-                        move |auth, region| resolve_request_auth(http_client, auth, region),
-                    )
-                }
-                .await?;
-                Tokio::spawn_result(cx, async move {
-                    Ok(build_control_plane_client(http_client, request_auth, profile_name, region).await)
-                })
-                .await
-            };
-            let client = futures::select_biased! {
-                result = setup.fuse() => result?,
-                _ = deadline.clone().fuse() => anyhow::bail!("model listing exceeded the {LIST_MODELS_TIMEOUT:?} deadline"),
-            };
-            Tokio::spawn_result(cx, async move {
-                bedrock::list_models(&client, deadline).await
-            }).await
-        })
-    }
-
     /// Whether requests go to a custom endpoint, which stands in for
     /// `bedrock-runtime` only. It does not serve the listing APIs, and
     /// credentials for it need not be valid for AWS.
@@ -561,11 +515,12 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        // Dropping the previous task cancels its requests, so a listing for
+        // earlier auth or settings is never applied.
         self.fetch_models_task = None;
-        self.listing_generation += 1;
         if !self.is_authenticated() {
-            // Dropping both tasks cancels their requests in flight, so nothing
-            // fetched for the old sign-in is applied afterwards.
+            // Dropping the catalog task as well cancels its fetch in flight, so
+            // nothing fetched for the old sign-in is applied afterwards.
             self.listing = ModelListing::Unauthenticated;
             self.refresh_capability_catalog_task = None;
             self.last_capability_catalog_error = None;
@@ -586,15 +541,37 @@ impl State {
                 previous: std::mem::take(&mut self.listing).into_catalog(),
             }
         };
-        let generation = self.listing_generation;
-        let fetch_task = self.fetch_models(cx);
-        let task = cx.spawn(async move |this, cx| {
-            let result = fetch_task.await;
-            this.update(cx, |this, cx| {
-                this.sync_settings(cx);
-                if this.listing_generation != generation {
-                    return;
+        let http_client = self.http_client.clone();
+        let profile_name = aws_profile_name(&self.auth);
+        let region = self.get_region();
+        // One deadline covers every listing call and page, so a stalled call
+        // cannot leave the model list loading forever.
+        let deadline = cx.background_executor().timer(LIST_MODELS_TIMEOUT);
+        self.fetch_models_task = Some(cx.spawn(async move |this, cx| {
+            let result = async {
+                let request_auth = {
+                    let state = this
+                        .upgrade()
+                        .context("Bedrock provider state was dropped")?;
+                    let http_client = http_client.clone();
+                    resolve_cached_request_auth(
+                        &state,
+                        cx,
+                        |name| std::env::var(name).ok(),
+                        move |auth, region| resolve_request_auth(http_client, auth, region),
+                    )
                 }
+                .await?;
+                Tokio::spawn_result(cx, async move {
+                    let client =
+                        build_control_plane_client(http_client, request_auth, profile_name, region)
+                            .await;
+                    bedrock::list_models(&client, deadline).await
+                })
+                .await
+            }
+            .await;
+            this.update(cx, |this, cx| {
                 this.listing = match result {
                     Ok(catalog) => ModelListing::Listed(catalog),
                     Err(error) => {
@@ -608,8 +585,7 @@ impl State {
                 cx.notify();
             })
             .log_err();
-        });
-        self.fetch_models_task.replace(task);
+        }));
     }
 
     /// Loads the capability catalog from disk, fetches it when that copy is
@@ -751,7 +727,6 @@ impl State {
                 .await?;
             this.update(cx, |this, cx| {
                 this.credential_delete_error = None;
-                this.sync_settings(cx);
                 if this.auth_generation == generation {
                     this.change_auth(auth, false, cx);
                 }
@@ -765,7 +740,6 @@ impl State {
 
     /// Resolve authentication. Settings take priority over UX-provided credentials.
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        self.sync_settings(cx);
         if self.is_authenticated() {
             return Task::ready(Ok(()));
         }
@@ -829,7 +803,6 @@ impl State {
             // If we got auth from env vars, use it
             if let Some(auth) = auth {
                 this.update(cx, |this, cx| {
-                    this.sync_settings(cx);
                     if this.auth_generation == generation {
                         this.change_auth(Some(auth), from_env, cx);
                     }
@@ -843,10 +816,7 @@ impl State {
                     .await;
             // A sign-out or newer sign-in may have happened while the keychain
             // was read.
-            let is_current = this.update(cx, |this, cx| {
-                this.sync_settings(cx);
-                this.auth_generation == generation
-            })?;
+            let is_current = this.read_with(cx, |this, _| this.auth_generation == generation)?;
             if !is_current {
                 return Ok(());
             }
@@ -864,7 +834,6 @@ impl State {
                 .ok_or(AuthenticateError::CredentialsNotFound)?;
 
             this.update(cx, |this, cx| {
-                this.sync_settings(cx);
                 if this.auth_generation == generation {
                     this.change_auth(Some(auth), false, cx);
                 }
@@ -975,7 +944,6 @@ impl BedrockLanguageModelProvider {
             plain_http_client: plain_http_client.clone(),
             fs,
             listing: ModelListing::default(),
-            listing_generation: 0,
             fetch_models_task: None,
             capability_catalog: CapabilityCatalog::default(),
             capability_catalog_cache_path,
@@ -1217,7 +1185,6 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 
     fn refresh_models(&self, cx: &mut App) {
         self.state.update(cx, |state, cx| {
-            state.sync_settings(cx);
             // The loop is replaced rather than added to: dropping the task
             // cancels its hourly timer.
             state.refresh_capability_catalog_task = None;
@@ -1252,10 +1219,7 @@ impl LanguageModelClient for BedrockLanguageModelProvider {
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
     {
-        let config = match cx.update(|cx| {
-            self.state.update(cx, |state, cx| state.sync_settings(cx));
-            self.config(model, cx)
-        }) {
+        let config = match cx.update(|cx| self.config(model, cx)) {
             Ok(config) => config,
             Err(error) => return async move { Err(error) }.boxed(),
         };
@@ -1347,7 +1311,6 @@ fn resolve_cached_request_auth<ResolveFuture>(
 where
     ResolveFuture: Future<Output = Result<BedrockRequestAuth>> + Send + 'static,
 {
-    cx.update(|cx| state.update(cx, |state, cx| state.sync_settings(cx)));
     let (auth, region, auth_generation, cached_credentials) =
         cx.read_entity(state, |state, _cx| {
             let (auth, region) = (state.auth.clone(), state.get_region());
