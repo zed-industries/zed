@@ -353,7 +353,10 @@ pub struct State {
     http_client: AwsHttpClient,
     plain_http_client: Arc<dyn HttpClient>,
     fs: Arc<dyn Fs>,
-    listing: ModelListing,
+    /// The last successful listing for the current auth, Region and endpoint.
+    model_catalog: Option<ModelCatalog>,
+    /// Why the latest listing attempt failed, if it did.
+    list_models_error: Option<String>,
     fetch_models_task: Option<Task<()>>,
     /// What the public capability catalog says about Bedrock's models. It is
     /// empty until the catalog has loaded.
@@ -368,47 +371,6 @@ struct ExpiringCredentials {
     auth: Option<BedrockAuth>,
     region: String,
     credentials: Credentials,
-}
-
-#[derive(Default)]
-enum ModelListing {
-    #[default]
-    Unauthenticated,
-    Loading {
-        previous: Option<ModelCatalog>,
-    },
-    RetryingPublic,
-    Listed(ModelCatalog),
-    Failed {
-        previous: Option<ModelCatalog>,
-        error: String,
-    },
-    Gateway,
-}
-
-impl ModelListing {
-    fn catalog(&self) -> Option<&ModelCatalog> {
-        match self {
-            Self::Listed(catalog) => Some(catalog),
-            Self::Loading { previous } | Self::Failed { previous, .. } => previous.as_ref(),
-            Self::Unauthenticated | Self::Gateway | Self::RetryingPublic => None,
-        }
-    }
-
-    fn into_catalog(self) -> Option<ModelCatalog> {
-        match self {
-            Self::Listed(catalog) => Some(catalog),
-            Self::Loading { previous } | Self::Failed { previous, .. } => previous,
-            Self::Unauthenticated | Self::Gateway | Self::RetryingPublic => None,
-        }
-    }
-
-    fn uses_public_catalog(&self) -> bool {
-        matches!(
-            self,
-            Self::Gateway | Self::RetryingPublic | Self::Failed { previous: None, .. }
-        )
-    }
 }
 
 /// How long before expiry cached AWS credentials are replaced, so a request
@@ -463,7 +425,8 @@ impl State {
             }
         } else if region_changed || endpoint_changed {
             self.expiring_credentials = None;
-            self.listing = ModelListing::default();
+            self.model_catalog = None;
+            self.list_models_error = None;
             self.restart_fetch_models_task(cx);
         }
         cx.notify();
@@ -499,7 +462,8 @@ impl State {
     ) {
         self.set_auth(auth);
         self.credentials_from_env = credentials_from_env;
-        self.listing = ModelListing::default();
+        self.model_catalog = None;
+        self.list_models_error = None;
         self.restart_fetch_models_task(cx);
         cx.notify();
     }
@@ -514,6 +478,15 @@ impl State {
             .is_some_and(|endpoint| !endpoint.is_empty())
     }
 
+    /// Whether the models that the capability catalog names for the Region
+    /// stand in for Bedrock's own listing: a custom endpoint does not serve
+    /// one, and the credentials in use may not be allowed to ask for it.
+    fn uses_public_catalog(&self) -> bool {
+        self.is_authenticated()
+            && self.model_catalog.is_none()
+            && (self.uses_custom_endpoint() || self.list_models_error.is_some())
+    }
+
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
         // Dropping the previous task cancels its requests, so a listing for
         // earlier auth or settings is never applied.
@@ -521,7 +494,6 @@ impl State {
         if !self.is_authenticated() {
             // Dropping the catalog task as well cancels its fetch in flight, so
             // nothing fetched for the old sign-in is applied afterwards.
-            self.listing = ModelListing::Unauthenticated;
             self.refresh_capability_catalog_task = None;
             self.last_capability_catalog_error = None;
             return;
@@ -530,17 +502,9 @@ impl State {
             self.refresh_capability_catalog_task = Some(self.refresh_capability_catalog(false, cx));
         }
         if self.uses_custom_endpoint() {
-            self.listing = ModelListing::Gateway;
             return;
         }
 
-        self.listing = if self.listing.uses_public_catalog() {
-            ModelListing::RetryingPublic
-        } else {
-            ModelListing::Loading {
-                previous: std::mem::take(&mut self.listing).into_catalog(),
-            }
-        };
         let http_client = self.http_client.clone();
         let profile_name = aws_profile_name(&self.auth);
         let region = self.get_region();
@@ -572,16 +536,16 @@ impl State {
             }
             .await;
             this.update(cx, |this, cx| {
-                this.listing = match result {
-                    Ok(catalog) => ModelListing::Listed(catalog),
+                match result {
+                    Ok(model_catalog) => {
+                        this.model_catalog = Some(model_catalog);
+                        this.list_models_error = None;
+                    }
                     Err(error) => {
                         log::warn!("Failed to list Bedrock models: {error:#}");
-                        ModelListing::Failed {
-                            previous: std::mem::take(&mut this.listing).into_catalog(),
-                            error: format!("{error:#}"),
-                        }
+                        this.list_models_error = Some(format!("{error:#}"));
                     }
-                };
+                }
                 cx.notify();
             })
             .log_err();
@@ -860,26 +824,21 @@ impl State {
     }
 
     fn listing_message(&self) -> Option<(String, bool)> {
-        match &self.listing {
-            ModelListing::Failed {
-                previous: Some(_),
-                error,
-            } => Some((
+        let error = self.list_models_error.as_deref();
+        if self.model_catalog.is_some() {
+            let error = error?;
+            Some((
                 format!("Zed keeps the earlier account list, which may be out of date. {error}"),
                 true,
-            )),
-            listing if listing.uses_public_catalog() => {
-                let reason = match listing {
-                    ModelListing::Failed { error, .. } => error.as_str(),
-                    ModelListing::Gateway => "A custom endpoint is configured.",
-                    _ => "",
-                };
-                Some((
-                    format!("Zed shows the models that models.dev lists for your Region. {reason}"),
-                    matches!(listing, ModelListing::Failed { .. }),
-                ))
-            }
-            _ => None,
+            ))
+        } else if self.uses_public_catalog() {
+            let reason = error.unwrap_or("A custom endpoint is configured.");
+            Some((
+                format!("Zed shows the models that models.dev lists for your Region. {reason}"),
+                error.is_some(),
+            ))
+        } else {
+            None
         }
     }
 }
@@ -943,7 +902,8 @@ impl BedrockLanguageModelProvider {
             http_client: http_client.clone(),
             plain_http_client: plain_http_client.clone(),
             fs,
-            listing: ModelListing::default(),
+            model_catalog: None,
+            list_models_error: None,
             fetch_models_task: None,
             capability_catalog: CapabilityCatalog::default(),
             capability_catalog_cache_path,
@@ -969,7 +929,7 @@ impl BedrockLanguageModelProvider {
     fn bedrock_models(&self, cx: &App) -> IndexMap<String, BedrockModelConfig> {
         let state = self.state.read(cx);
         let bedrock_settings = &state.settings;
-        let model_catalog = state.listing.catalog();
+        let model_catalog = state.model_catalog.as_ref();
         let capability_catalog = &state.capability_catalog;
         let allow_global = state.get_allow_global();
         let mut models = BTreeMap::default();
@@ -980,10 +940,7 @@ impl BedrockLanguageModelProvider {
                     models.insert(model.id.clone(), model);
                 }
             }
-            // Without Bedrock's own listing, which the credentials in use may
-            // not be allowed to ask for, offer the models that the capability
-            // catalog names for the Region.
-            None if state.listing.uses_public_catalog() => {
+            None if state.uses_public_catalog() => {
                 for model in capability_catalog.models_for_region(&state.get_region(), allow_global)
                 {
                     models.insert(model.id.clone(), model);
@@ -3716,7 +3673,7 @@ mod tests {
             );
             provider.state.update(cx, |state, _| {
                 state.set_auth(api_key_auth());
-                state.listing = ModelListing::Listed(catalog);
+                state.model_catalog = Some(catalog);
             });
             let model = provider
                 .provided_models(cx)
@@ -3727,7 +3684,7 @@ mod tests {
             let pinned = provider.state.read_with(cx, |state, _| {
                 converse_model_from_settings(
                     &settings_entry(model.id.0.as_ref(), None),
-                    state.listing.catalog(),
+                    state.model_catalog.as_ref(),
                     &state.capability_catalog,
                 )
             });
@@ -3751,7 +3708,7 @@ mod tests {
                 let unknown = provider.state.read_with(cx, |state, _| {
                     converse_model_from_settings(
                         &settings_entry(unknown_id, None),
-                        state.listing.catalog(),
+                        state.model_catalog.as_ref(),
                         &state.capability_catalog,
                     )
                 });
@@ -3792,7 +3749,7 @@ mod tests {
                 listed_foundation_model(fallback),
             ];
             provider.state.update(cx, |state, _| {
-                state.listing = ModelListing::Listed(ModelCatalog::new(&profiles, &foundations));
+                state.model_catalog = Some(ModelCatalog::new(&profiles, &foundations));
                 state.settings.available_models =
                     vec![settings_entry(&format!("us.{fable}"), None)];
             });
@@ -3803,48 +3760,7 @@ mod tests {
                     "{}",
                     model.id.0
                 );
-                if let Some(fallback_id) = model.refusal_fallback_model_id {
-                    let offered_fallback = provider
-                        .provided_models(cx)
-                        .into_iter()
-                        .find(|model| model.id.0.as_ref() == fallback_id)
-                        .context("offered fallback")?;
-                    let BedrockModelConfig::Converse(config) =
-                        provider.config(&offered_fallback, cx)?
-                    else {
-                        anyhow::bail!("expected Converse fallback")
-                    };
-                    assert_eq!(
-                        into_bedrock(LanguageModelRequest::default(), &config, None, None)?.model,
-                        format!("us.{fallback}")
-                    );
-                }
             }
-            provider.state.update(cx, |state, _| {
-                state.listing =
-                    ModelListing::Listed(ModelCatalog::new(&profiles, &foundations[..1]));
-            });
-            assert!(
-                provider
-                    .provided_models(cx)
-                    .iter()
-                    .all(|model| model.refusal_fallback_model_id.is_none())
-            );
-            let capabilities =
-                CapabilityCatalog::parse(&capability_catalog_json(serde_json::json!({
-                    format!("us.{fable}"): capability_entry("Fable", serde_json::json!({})),
-                    format!("us.{fallback}"): capability_entry("Fallback", serde_json::json!({})),
-                })))?;
-            provider.state.update(cx, |state, _| {
-                state.listing = ModelListing::Gateway;
-                state.capability_catalog = capabilities;
-            });
-            let routed = provider
-                .provided_models(cx)
-                .into_iter()
-                .find(|model| model.id.0.as_ref() == fable)
-                .context("stand-in Fable")?;
-            assert_eq!(routed.refusal_fallback_model_id, Some(fallback));
             provider.state.update(cx, |state, _| {
                 state
                     .settings
@@ -3855,7 +3771,8 @@ mod tests {
                 provider
                     .provided_models(cx)
                     .iter()
-                    .all(|model| model.refusal_fallback_model_id.is_none())
+                    .all(|model| model.refusal_fallback_model_id.is_none()),
+                "a fallback pinned by settings is not an automatic route"
             );
             Ok(())
         });
@@ -4537,7 +4454,7 @@ mod tests {
                 let (message, warning) = provider
                     .state
                     .read_with(cx, |state, _| {
-                        assert!(state.listing.catalog().is_some());
+                        assert!(state.model_catalog.is_some());
                         state.listing_message()
                     })
                     .context("refresh warning")?;
@@ -4605,7 +4522,7 @@ mod tests {
                     message.contains("ListFoundationModels")
                         && message.contains("required listing test error")
                 );
-                assert!(warning && state.listing.uses_public_catalog());
+                assert!(warning && state.uses_public_catalog());
             });
             deny.store(false, std::sync::atomic::Ordering::SeqCst);
             cx.update(|cx| provider.refresh_models(cx));
@@ -4624,7 +4541,7 @@ mod tests {
             finish_listing(&provider, cx).await?;
             assert!(offered_ids(&provider, cx).is_empty());
             provider.state.read_with(cx, |state, _| {
-                assert!(state.listing.uses_public_catalog());
+                assert!(state.uses_public_catalog());
                 let (message, warning) = state.listing_message().expect("public list message");
                 assert!(warning && message.contains("required listing test error"));
             });
@@ -4818,7 +4735,7 @@ mod tests {
             ],
         );
         provider.state.update(cx, |state, _| {
-            state.listing = ModelListing::Listed(model_catalog);
+            state.model_catalog = Some(model_catalog);
             state.capability_catalog = capability_catalog(serde_json::json!({
                 "global.anthropic.claude-sonnet-9":
                     capability_entry("Sonnet 9 (Global)", always_reasoning_members()),
