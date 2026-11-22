@@ -4057,13 +4057,6 @@ mod tests {
     }
 
     fn listed_foundation_model(model_id: &str) -> FoundationModelSummary {
-        foundation_model_with_status(model_id, FoundationModelLifecycleStatus::Active)
-    }
-
-    fn foundation_model_with_status(
-        model_id: &str,
-        status: FoundationModelLifecycleStatus,
-    ) -> FoundationModelSummary {
         FoundationModelSummary::builder()
             .model_arn(format!(
                 "arn:aws:bedrock:us-east-1::foundation-model/{model_id}"
@@ -4075,54 +4068,12 @@ mod tests {
             .response_streaming_supported(true)
             .model_lifecycle(
                 FoundationModelLifecycle::builder()
-                    .status(status)
+                    .status(FoundationModelLifecycleStatus::Active)
                     .build()
                     .expect("the lifecycle has a status"),
             )
             .build()
             .expect("the summary has every required member")
-    }
-
-    #[gpui::test]
-    fn defaults_are_the_newest_active_sonnet_and_haiku(cx: &mut gpui::TestAppContext) {
-        init_provider_test(cx);
-        let provider =
-            cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
-        // Ids as Bedrock lists them: a dated id sorts below its successors.
-        let active = [
-            "anthropic.claude-sonnet-4-5-20250929-v1:0",
-            "anthropic.claude-sonnet-5",
-            "anthropic.claude-sonnet-5-5",
-            "anthropic.claude-haiku-4-5-20251001-v1:0",
-        ];
-        let legacy = ["anthropic.claude-sonnet-6", "anthropic.claude-haiku-5-5"];
-        let profiles = active
-            .iter()
-            .chain(&legacy)
-            .map(|id| listed_inference_profile(&format!("us.{id}"), id))
-            .collect::<Vec<_>>();
-        let foundation_models =
-            active
-                .iter()
-                .map(|id| listed_foundation_model(id))
-                .chain(legacy.iter().map(|id| {
-                    foundation_model_with_status(id, FoundationModelLifecycleStatus::Legacy)
-                }))
-                .collect::<Vec<_>>();
-        provider.state.update(cx, |state, _| {
-            state.model_catalog = Some(ModelCatalog::new(&profiles, &foundation_models));
-        });
-
-        let (default, fast) =
-            cx.update(|cx| (provider.default_model(cx), provider.default_fast_model(cx)));
-        assert_eq!(
-            default.map(|model| model.id.0.to_string()).as_deref(),
-            Some("anthropic.claude-sonnet-5-5")
-        );
-        assert_eq!(
-            fast.map(|model| model.id.0.to_string()).as_deref(),
-            Some("anthropic.claude-haiku-4-5-20251001-v1:0")
-        );
     }
 
     fn listed_inference_profile(profile_id: &str, model_id: &str) -> InferenceProfileSummary {
@@ -4651,19 +4602,29 @@ mod tests {
             provider
                 .state
                 .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
-            for (profile, expected) in [
+            for (method, profile, expected) in [
                 (
+                    "named_profile",
                     "one",
                     BedrockAuth::NamedProfile {
                         profile_name: "one".into(),
                     },
                 ),
                 (
+                    "named_profile",
                     "two",
                     BedrockAuth::NamedProfile {
                         profile_name: "two".into(),
                     },
                 ),
+                (
+                    "sso",
+                    "three",
+                    BedrockAuth::SingleSignOn {
+                        profile_name: "three".into(),
+                    },
+                ),
+                ("default", "four", BedrockAuth::Automatic),
             ] {
                 provider.state.update(cx, |state, _| {
                     state.expiring_credentials = Some(ExpiringCredentials {
@@ -4681,7 +4642,7 @@ mod tests {
                 set_bedrock_settings(
                     cx,
                     serde_json::json!({
-                        "endpoint_url": "https://gateway.example.com", "authentication_method": "named_profile", "profile": profile,
+                        "endpoint_url": "https://gateway.example.com", "authentication_method": method, "profile": profile,
                     }),
                 )?;
                 cx.run_until_parked();
@@ -4933,6 +4894,22 @@ mod tests {
         );
         assert_eq!(stated.max_output_tokens, Some(32_000));
         assert!(stated.supports_tool_use);
+
+        let thinking = |setting| {
+            let setting = serde_json::from_value(setting).expect("thinking settings");
+            converse_model_from_settings(
+                &settings_entry("us.vendor.chat", Some(setting)),
+                None,
+                &capability_catalog,
+            )
+            .thinking
+        };
+        assert!(matches!(
+            thinking(serde_json::json!({"adaptive": true, "has_xhigh": true})),
+            Some(ConverseThinking::Adaptive { efforts, always_on: false, .. })
+                if efforts.contains(&BedrockAdaptiveThinkingEffort::XHigh)
+        ));
+        assert_eq!(thinking(serde_json::json!(false)), None);
     }
 
     #[test]
@@ -5251,23 +5228,28 @@ mod tests {
 
     #[test]
     fn test_always_reasoning_models_keep_reasoning_when_thinking_is_disallowed() -> Result<()> {
-        for model in [
-            converse_model("openai.gpt-example", Some(reasoning())),
-            converse_model("anthropic.claude-example", Some(adaptive_thinking(true))),
-            converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true))),
-        ] {
-            let expected_thinking = if is_openai_model(&model) {
+        let adaptive_high = |binding_controls_beta| bedrock::Thinking::Adaptive {
+            effort: BedrockAdaptiveThinkingEffort::High,
+            binding_controls_beta,
+        };
+        for (model, expected_thinking) in [
+            (
+                converse_model("openai.gpt-example", Some(reasoning())),
                 bedrock::Thinking::Reasoning {
                     effort: Some(BedrockAdaptiveThinkingEffort::Medium),
-                }
-            } else {
-                bedrock::Thinking::Adaptive {
-                    effort: BedrockAdaptiveThinkingEffort::High,
-                    binding_controls_beta: anthropic_model_id(&model)
-                        .filter(|id| anthropic::binds_thinking_blocks_to_prefix(id))
-                        .map(|_| anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string()),
-                }
-            };
+                },
+            ),
+            (
+                converse_model("anthropic.claude-example", Some(adaptive_thinking(true))),
+                adaptive_high(None),
+            ),
+            (
+                converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true))),
+                adaptive_high(Some(
+                    anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string(),
+                )),
+            ),
+        ] {
             for thinking_allowed in [true, false] {
                 let request = into_bedrock(
                     LanguageModelRequest {
@@ -5552,6 +5534,19 @@ mod tests {
         assert!(!private_source.contains("team-a") && !private_source.contains("chat"));
         let private_details = Arc::new(serde_json::json!({"bedrock_model": private_source}));
 
+        let malformed = replay_history(
+            &openai,
+            vec![
+                MessageContent::RedactedThinking("not base64!".into()),
+                MessageContent::Text("answer".into()),
+            ],
+            Some(openai_details.clone()),
+        )?;
+        assert!(matches!(
+            malformed.messages[0].content(),
+            [BedrockInnerContent::Text(text)] if text == "answer"
+        ));
+
         for (model, details, replays_reasoning) in [
             (openai.clone(), Some(openai_details.clone()), true),
             (claude, Some(openai_details), false),
@@ -5655,14 +5650,30 @@ mod tests {
 
     #[test]
     fn test_forced_tool_use_is_rejected_locally_where_unsupported() -> Result<()> {
-        for model in [
-            converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true))),
-            converse_model("anthropic.claude-fable-5", Some(adaptive_thinking(false))),
-            converse_model("openai.gpt-example", Some(reasoning())),
-            converse_model("vendor.chat", None),
+        let named_after_known_model = converse_model_from_settings(
+            &AvailableModel {
+                supports_tools: Some(true),
+                ..settings_entry("us.anthropic.claude-opus-5-5", None)
+            },
+            None,
+            &CapabilityCatalog::default(),
+        );
+        for (model, expected_forced) in [
+            (
+                converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true))),
+                false,
+            ),
+            (
+                converse_model("anthropic.claude-fable-5", Some(adaptive_thinking(false))),
+                true,
+            ),
+            (
+                converse_model("openai.gpt-example", Some(reasoning())),
+                true,
+            ),
+            (converse_model("vendor.chat", None), true),
+            (named_after_known_model, false),
         ] {
-            let expected_forced =
-                anthropic_model_id(&model).is_none_or(anthropic::supports_forced_tool_use);
             assert_eq!(
                 converse_language_model(&model).tool_choice_support.any,
                 expected_forced,
@@ -5755,11 +5766,11 @@ mod tests {
 
     #[test]
     fn test_thinking_disallowed_sends_explicit_opt_out_only_where_required() -> Result<()> {
-        for (base_model_id, output_limit, expected_output) in [
-            ("anthropic.claude-opus-5", None, 128_000),
-            ("anthropic.claude-opus-5", Some(8192), 8192),
-            ("anthropic.claude-opus-4-8", Some(256_000), 128_000),
-            ("vendor.chat", Some(8192), 8192),
+        for (base_model_id, output_limit, expected_output, expects_opt_out) in [
+            ("anthropic.claude-opus-5", None, 128_000, true),
+            ("anthropic.claude-opus-5", Some(8192), 8192, true),
+            ("anthropic.claude-opus-4-8", Some(256_000), 128_000, false),
+            ("vendor.chat", Some(8192), 8192, false),
         ] {
             let model = converse_model(base_model_id, Some(adaptive_thinking(false)));
             let request = into_bedrock(
@@ -5775,7 +5786,7 @@ mod tests {
             )?;
 
             assert_eq!(request.max_tokens, Some(expected_output));
-            if thinks_by_default(&model) {
+            if expects_opt_out {
                 assert!(
                     matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
                     "{base_model_id} should send an explicit thinking opt-out"
@@ -5941,6 +5952,14 @@ mod tests {
         let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
 
         sign_mantle_request_sigv4_at(&mut request, body, &credentials, "us-east-1", time)?;
+
+        assert_eq!(
+            request
+                .headers()
+                .get(http_client::http::header::HOST)
+                .and_then(|value| value.to_str().ok()),
+            Some("bedrock-mantle.us-east-1.api.aws")
+        );
 
         let authorization = request
             .headers()

@@ -659,6 +659,9 @@ pub(crate) mod tests {
             "us.vendor.american": entry("American (US)", json!({})),
             "global.vendor.global-only": entry("Global only", json!({})),
             "eu.vendor.european": entry("European (EU)", json!({})),
+            "au.vendor.pacific": entry("Pacific (AU)", json!({})),
+            "jp.vendor.pacific": entry("Pacific (JP)", json!({})),
+            "apac.vendor.pacific": entry("Pacific (APAC)", json!({})),
             "vendor.no-profile": entry("No profile", json!({})),
             "us.vendor.retired": entry("Retired (US)", json!({"status": "deprecated"})),
             "us.vendor.embedding": entry("Embedding (US)", json!({
@@ -698,6 +701,17 @@ pub(crate) mod tests {
                 pair("vendor.global-only", "global.vendor.global-only"),
             ]
         );
+        for (region, id, request_id) in [
+            ("eu-west-1", "vendor.european", "eu.vendor.european"),
+            ("ap-southeast-2", "vendor.pacific", "au.vendor.pacific"),
+            ("ap-northeast-1", "vendor.pacific", "jp.vendor.pacific"),
+            ("ap-southeast-1", "vendor.pacific", "apac.vendor.pacific"),
+        ] {
+            assert!(
+                offered(region, false).contains(&pair(id, request_id)),
+                "{region}"
+            );
+        }
         Ok(())
     }
 
