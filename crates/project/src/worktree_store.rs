@@ -1073,6 +1073,7 @@ impl WorktreeStore {
                         worktree_id,
                     ));
                 }
+                worktree::Event::UpdatedRootAbsPath { .. } => {}
             }
         })
         .detach();

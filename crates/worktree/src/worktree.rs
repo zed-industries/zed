@@ -485,6 +485,11 @@ pub enum Event {
     UpdatedRootRepoCommonDir {
         old: Option<Arc<SanitizedPath>>,
     },
+    /// The worktree root was moved. Entry paths are unchanged, but their
+    /// absolute paths now resolve against the new root.
+    UpdatedRootAbsPath {
+        old: Arc<SanitizedPath>,
+    },
     DeletedEntry(ProjectEntryId),
     /// The worktree root itself has been deleted (for single-file worktrees)
     Deleted,
@@ -2264,8 +2269,9 @@ impl LocalWorktree {
     pub fn update_abs_path_and_refresh(
         &mut self,
         new_path: Arc<SanitizedPath>,
-        cx: &Context<Worktree>,
+        cx: &mut Context<Worktree>,
     ) {
+        let old_path = self.snapshot.abs_path.clone();
         self.snapshot.git_repositories = Default::default();
         self.snapshot.ignores_by_parent_abs_path = Default::default();
         let root_name = new_path
@@ -2277,6 +2283,9 @@ impl LocalWorktree {
             });
         self.snapshot.update_abs_path(new_path, root_name);
         self.restart_background_scanners(cx);
+        if self.snapshot.abs_path != old_path {
+            cx.emit(Event::UpdatedRootAbsPath { old: old_path });
+        }
     }
     #[cfg(feature = "test-support")]
     pub fn set_defer_watch(&mut self, defer: bool, cx: &mut Context<Worktree>) {

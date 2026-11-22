@@ -1633,6 +1633,141 @@ async fn test_single_file_worktree_is_not_an_lsp_workspace_folder(cx: &mut gpui:
 }
 
 #[gpui::test]
+async fn test_moving_single_file_worktree_reopens_buffer_in_language_server(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "old": { "main.rs": "fn main() {}" },
+            "new": {},
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir/old/main.rs").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/old/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let notifications = Arc::new(Mutex::new(Vec::new()));
+    fake_server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
+        let notifications = notifications.clone();
+        move |params, _| {
+            notifications
+                .lock()
+                .push(format!("open {}", params.text_document.uri.as_str()))
+        }
+    });
+    fake_server.handle_notification::<lsp::notification::DidCloseTextDocument, _>({
+        let notifications = notifications.clone();
+        move |params, _| {
+            notifications
+                .lock()
+                .push(format!("close {}", params.text_document.uri.as_str()))
+        }
+    });
+
+    fs.rename(
+        Path::new(path!("/dir/old/main.rs")),
+        Path::new(path!("/dir/new/main.rs")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor()
+        .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+    cx.executor().run_until_parked();
+
+    let uri = |path: &str| lsp::Uri::from_file_path(path).unwrap();
+    assert_eq!(
+        *notifications.lock(),
+        vec![
+            format!("close {}", uri(path!("/dir/old/main.rs")).as_str()),
+            format!("open {}", uri(path!("/dir/new/main.rs")).as_str()),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_moving_directory_worktree_reopens_buffers_in_language_server(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "old": { "src": { "main.rs": "fn main() {}" } },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir/old").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/old/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let notifications = Arc::new(Mutex::new(Vec::new()));
+    fake_server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
+        let notifications = notifications.clone();
+        move |params, _| {
+            notifications
+                .lock()
+                .push(format!("open {}", params.text_document.uri.as_str()))
+        }
+    });
+    fake_server.handle_notification::<lsp::notification::DidCloseTextDocument, _>({
+        let notifications = notifications.clone();
+        move |params, _| {
+            notifications
+                .lock()
+                .push(format!("close {}", params.text_document.uri.as_str()))
+        }
+    });
+
+    fs.rename(
+        Path::new(path!("/dir/old")),
+        Path::new(path!("/dir/new")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor()
+        .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+    cx.executor().run_until_parked();
+
+    let uri = |path: &str| lsp::Uri::from_file_path(path).unwrap();
+    assert_eq!(
+        *notifications.lock(),
+        vec![
+            format!("close {}", uri(path!("/dir/old/src/main.rs")).as_str()),
+            format!("open {}", uri(path!("/dir/new/src/main.rs")).as_str()),
+        ],
+    );
+}
+
+#[gpui::test]
 async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     cx: &mut gpui::TestAppContext,
 ) {

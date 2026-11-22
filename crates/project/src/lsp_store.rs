@@ -5166,6 +5166,9 @@ impl LspStore {
                     worktree::Event::UpdatedEntries(changes) => {
                         this.update_local_worktree_language_servers(&worktree, changes, cx);
                     }
+                    worktree::Event::UpdatedRootAbsPath { old } => {
+                        this.reopen_buffers_after_root_move(&worktree, old, cx);
+                    }
                     worktree::Event::UpdatedGitRepositories(_)
                     | worktree::Event::DeletedEntry(_)
                     | worktree::Event::Deleted
@@ -5185,6 +5188,52 @@ impl LspStore {
             | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
             | WorktreeStoreEvent::WorktreeDeletedEntry(..)
             | WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(..) => {}
+        }
+    }
+
+    /// Buffers of a moved worktree root keep their worktree-relative paths, so
+    /// no `BufferChangedFilePath` is emitted for them, yet their URIs change.
+    /// Close each one under its old URI and reopen it under the new one.
+    fn reopen_buffers_after_root_move(
+        &mut self,
+        worktree: &Entity<Worktree>,
+        old_root: &SanitizedPath,
+        cx: &mut Context<Self>,
+    ) {
+        let buffers = self
+            .buffer_store
+            .read(cx)
+            .buffers()
+            .filter_map(|buffer| {
+                let file = File::from_dyn(buffer.read(cx).file())?;
+                (file.worktree == *worktree).then(|| (buffer, file.path.clone()))
+            })
+            .collect::<Vec<_>>();
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+        for (buffer, path) in buffers {
+            if !local
+                .registered_buffers
+                .contains_key(&buffer.read(cx).remote_id())
+            {
+                continue;
+            }
+            let old_abs_path = if path.is_empty() {
+                old_root.as_path().to_path_buf()
+            } else {
+                old_root.as_path().join(path.as_std_path())
+            };
+            let Some(old_uri) = file_path_to_lsp_url(&old_abs_path).log_err() else {
+                continue;
+            };
+            local.unregister_buffer_from_language_servers(&buffer, &old_uri, cx);
+            local.register_buffer_with_language_servers(
+                &buffer,
+                HashSet::default(),
+                LanguageServerStartMode::Automatic,
+                cx,
+            );
         }
     }
 
