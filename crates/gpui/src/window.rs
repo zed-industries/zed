@@ -8,8 +8,8 @@ use crate::subscription::SingleSubscriberSet;
 use crate::taffy::TaffyLayoutEngine;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
-    Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    AsyncApp, AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds,
+    BoxShadow, Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
@@ -1641,6 +1641,33 @@ fn default_bounds(
     window_bounds_ctor(Bounds::new(final_origin, base_size))
 }
 
+/// Updates the window from a platform callback. If the App is already borrowed, because the
+/// platform delivered the event synchronously from a call made within an update (e.g.
+/// `ShowWindow` or `SetWindowPos` on Windows), the update runs on the foreground executor once
+/// that borrow ends, instead of failing and dropping the event.
+fn update_window_or_defer(
+    handle: AnyWindowHandle,
+    cx: &AsyncApp,
+    description: &'static str,
+    f: impl FnOnce(&mut Window, &mut App) + 'static,
+) {
+    let mut cx = cx.clone();
+    let update = move |cx: &mut AsyncApp| {
+        handle
+            .update(cx, |_, window, cx| f(window, cx))
+            .with_context(|| format!("{description} for window {:?}", handle.window_id()))
+            .log_err();
+    };
+    if cx.app.upgrade().is_some_and(|app| app.is_borrowed()) {
+        cx.foreground_executor()
+            .clone()
+            .spawn(async move { update(&mut cx) })
+            .detach();
+    } else {
+        update(&mut cx);
+    }
+}
+
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
@@ -1950,6 +1977,16 @@ impl Window {
                     profiler::journal::record_reentrant_frame_skipped(window_id, Instant::now());
                     return;
                 }
+                // Likewise when the App is already borrowed: a platform call made within an update
+                // (e.g. `ShowWindow` or `SetWindowPos` on Windows) can request a frame
+                // synchronously. Every update below would fail, dropping the pending next-frame
+                // callbacks. Skip and ask the frame source to retry once the update has ended.
+                if cx.app.upgrade().is_some_and(|app| app.is_borrowed()) {
+                    log::debug!("deferring window draw request made while the app is borrowed");
+                    deferred_force_render |= request_frame_options.force_render;
+                    invalidator.wake_platform();
+                    return;
+                }
                 // Take the deferred flag first: `||` short-circuits, and leaving
                 // the flag set when this request already forces a render would
                 // force a second, redundant render on the next frame.
@@ -2167,21 +2204,19 @@ impl Window {
             }
         }));
         platform_window.on_resize(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move |_, _| {
-                handle
-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .with_context(|| format!("handling resize for window {:?}", handle.window_id()))
-                    .log_err();
+                update_window_or_defer(handle, &cx, "handling resize", |window, cx| {
+                    window.bounds_changed(cx)
+                });
             }
         }));
         platform_window.on_moved(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .with_context(|| format!("handling move for window {:?}", handle.window_id()))
-                    .log_err();
+                update_window_or_defer(handle, &cx, "handling move", |window, cx| {
+                    window.bounds_changed(cx)
+                });
             }
         }));
         platform_window.on_display_changed(Box::new({
@@ -2225,10 +2260,13 @@ impl Window {
             }
         }));
         platform_window.on_active_status_change(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move |active| {
-                handle
-                    .update(&mut cx, |_, window, cx| {
+                update_window_or_defer(
+                    handle,
+                    &cx,
+                    "handling active status change",
+                    move |window, cx| {
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
@@ -2241,14 +2279,8 @@ impl Window {
                         window.refresh();
 
                         SystemWindowTabController::update_last_active(cx, window.handle.id);
-                    })
-                    .with_context(|| {
-                        format!(
-                            "handling active status change for window {:?}",
-                            handle.window_id()
-                        )
-                    })
-                    .log_err();
+                    },
+                );
             }
         }));
         platform_window.on_visibility_change(Box::new({
@@ -9417,6 +9449,57 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(observed_appearance.get(), Some(WindowAppearance::Dark));
+    }
+
+    #[gpui::test]
+    fn test_window_callbacks_while_app_is_borrowed_are_deferred(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let mut test_window = cx.test_window(window.into());
+        test_window.simulate_active_status_change(false);
+        let new_size = size(px(321.), px(123.));
+
+        cx.update(|_| {
+            test_window.simulate_resize(new_size);
+            test_window.simulate_active_status_change(true);
+        });
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, _| {
+                assert_eq!(window.viewport_size(), new_size);
+                assert!(window.is_window_active());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_frame_request_while_app_is_borrowed_keeps_next_frame_callbacks(
+        cx: &mut TestAppContext,
+    ) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let test_window = cx.test_window(window.into());
+        test_window.simulate_active_status_change(true);
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        let ran = Rc::new(Cell::new(false));
+
+        window
+            .update(cx, |_, window, _| {
+                window.on_next_frame({
+                    let ran = ran.clone();
+                    move |_, _| ran.set(true)
+                });
+                let wake_count = test_window.frame_wake_count();
+                test_window.simulate_frame_request(RequestFrameOptions::default());
+                assert!(!ran.get());
+                assert!(
+                    test_window.frame_wake_count() > wake_count,
+                    "a skipped frame request must wake the frame source"
+                );
+            })
+            .unwrap();
+
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        assert!(ran.get());
     }
 
     #[gpui::test]

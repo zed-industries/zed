@@ -821,19 +821,23 @@ impl WindowsWindowInner {
         if activated {
             this.state.last_reported_modifiers.set(None);
             this.state.last_reported_capslock.set(None);
-
-            if let Some(mut func) = this.state.callbacks.input.take() {
-                let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                    modifiers: current_modifiers(),
-                    capslock: current_capslock(),
-                });
-                func(input);
-                this.state.callbacks.input.set(Some(func));
-            }
         }
 
+        // `WM_ACTIVATE` is sent synchronously by calls such as `ShowWindow` and
+        // `SetForegroundWindow`, which can be made while GPUI is updating a window,
+        // so report the modifiers along with the activation once that update completes.
+        let modifiers_changed = activated.then(|| ModifiersChangedEvent {
+            modifiers: current_modifiers(),
+            capslock: current_capslock(),
+        });
         self.executor
             .spawn(async move {
+                if let Some(event) = modifiers_changed
+                    && let Some(mut func) = this.state.callbacks.input.take()
+                {
+                    func(PlatformInput::ModifiersChanged(event));
+                    this.state.callbacks.input.set(Some(func));
+                }
                 if let Some(mut func) = this.state.callbacks.active_status_change.take() {
                     func(activated);
                     this.state.callbacks.active_status_change.set(Some(func));
