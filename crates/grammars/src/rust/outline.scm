@@ -79,3 +79,34 @@
 (field_declaration
   (visibility_modifier)? @context
   name: (_) @name) @item
+
+; GPUI's `actions!(namespace, [A, B])` declares one unit struct per listed name.
+; tree-sitter-rust leaves macro arguments as a `token_tree`, so match its tokens.
+(macro_invocation
+  macro: [
+    (identifier) @_macro @name
+    (scoped_identifier
+      name: (identifier) @_macro @name)
+  ]
+  "!" @context
+  (token_tree
+    .
+    "("
+    .
+    (identifier)? @context)
+  (#eq? @_macro "actions")) @item
+
+(macro_invocation
+  macro: [
+    (identifier) @_macro
+    (scoped_identifier
+      name: (identifier) @_macro)
+  ]
+  (token_tree
+    .
+    "("
+    (token_tree
+      .
+      "["
+      (identifier) @name @item))
+  (#eq? @_macro "actions"))

@@ -1252,6 +1252,63 @@ fn test_outline_annotations(cx: &mut App) {
 }
 
 #[gpui::test]
+async fn test_outline_gpui_actions_macro(cx: &mut gpui::TestAppContext) {
+    let text = r#"
+        actions!(
+            agent,
+            [
+                /// Toggles the menu to create new agent threads.
+                ToggleNewThreadMenu,
+                #[action(deprecated_aliases = ["agent::OldName"])]
+                ToggleOptionsMenu,
+                CycleModeSelector
+            ]
+        );
+
+        gpui::actions!(zed, [Quit, Hide,]);
+
+        fn build() {
+            let items = vec![First, Second];
+            let value = json!([Third, Fourth]);
+        }
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let outline = snapshot.outline(None);
+
+    assert_eq!(
+        outline
+            .items
+            .iter()
+            .map(|item| (item.text.as_str(), item.depth))
+            .collect::<Vec<_>>(),
+        &[
+            ("actions! agent", 0),
+            ("ToggleNewThreadMenu", 1),
+            ("ToggleOptionsMenu", 1),
+            ("CycleModeSelector", 1),
+            ("actions! zed", 0),
+            ("Quit", 1),
+            ("Hide", 1),
+            ("fn build", 0),
+        ]
+    );
+
+    // The breadcrumbs for a cursor on an action name show the macro, then the action.
+    let offset = snapshot.text().find("ToggleOptionsMenu").unwrap();
+    let symbols = snapshot.symbols_containing(offset, None);
+    assert_eq!(
+        symbols
+            .iter()
+            .map(|item| (item.text.as_str(), item.depth))
+            .collect::<Vec<_>>(),
+        &[("actions! agent", 0), ("ToggleOptionsMenu", 1)]
+    );
+}
+
+#[gpui::test]
 async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     let text = r#"
         impl Person {
