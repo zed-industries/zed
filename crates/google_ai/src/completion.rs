@@ -7,7 +7,6 @@ use language_model_core::{
     StopReason, TokenUsage,
 };
 use std::sync::Arc;
-use std::sync::atomic::{self, AtomicU64};
 
 use crate::{
     Content, FunctionCallingConfig, FunctionCallingMode, FunctionDeclaration,
@@ -292,8 +291,6 @@ impl GoogleEventMapper {
         &mut self,
         event: GenerateContentResponse,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
         let mut events: Vec<_> = Vec::new();
         let mut wants_to_use_tool = false;
         let mut stop_reason = None;
@@ -401,9 +398,7 @@ impl GoogleEventMapper {
                                 if let Some(ref call_id) = function_call_part.function_call.id {
                                     call_id.clone().into()
                                 } else {
-                                    let next_tool_id =
-                                        TOOL_CALL_COUNTER.fetch_add(1, atomic::Ordering::SeqCst);
-                                    format!("{}-{}", name, next_tool_id).into()
+                                    format!("{}-{}", name, uuid::Uuid::new_v4().simple()).into()
                                 };
 
                             // Normalize empty string signatures to None
@@ -486,7 +481,8 @@ fn convert_usage(usage: &UsageMetadata) -> TokenUsage {
     let prompt_tokens = usage.prompt_token_count.unwrap_or(0);
     let cached_tokens = usage.cached_content_token_count.unwrap_or(0);
     let input_tokens = prompt_tokens - cached_tokens;
-    let output_tokens = usage.candidates_token_count.unwrap_or(0);
+    let output_tokens =
+        usage.candidates_token_count.unwrap_or(0) + usage.thoughts_token_count.unwrap_or(0);
 
     TokenUsage {
         input_tokens,
@@ -840,7 +836,8 @@ mod tests {
                     "promptTokenCount": 33732,
                     "cachedContentTokenCount": 30436,
                     "candidatesTokenCount": 107,
-                    "totalTokenCount": 33839
+                    "thoughtsTokenCount": 250,
+                    "totalTokenCount": 34089
                 }
             }),
         ];
@@ -858,7 +855,7 @@ mod tests {
             usage_updates,
             vec![TokenUsage {
                 input_tokens: 3296,
-                output_tokens: 107,
+                output_tokens: 357,
                 cache_read_input_tokens: 30436,
                 cache_creation_input_tokens: 0,
             }]
