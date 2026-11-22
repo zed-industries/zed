@@ -799,8 +799,22 @@ impl Broker<'_> {
         }
     }
 
+    /// Fails with `EEXIST`, before asking, when the entry a call would create
+    /// is already there. The kernel checks this before write access too, and
+    /// `mkdir -p` relies on it for every directory above the one it creates.
+    ///
+    /// This reveals nothing new: read rules protect contents, not names, and
+    /// `stat` and directory listings already show what exists.
+    fn refuse_existing_entry(&self, parent: &OwnedFd, name: &CString) -> io::Result<()> {
+        if entry_exists(parent, name)? {
+            return Err(errno(libc::EEXIST));
+        }
+        Ok(())
+    }
+
     fn mkdir(&self, dirfd: i32, path_arg: usize, mode: u32) -> io::Result<Response> {
         let (parent, name, path) = self.entry(dirfd, path_arg)?;
+        self.refuse_existing_entry(&parent, &name)?;
         self.authorize(&[(Permission::Write, &path)])?;
         let mode = mode & 0o7777 & !self.request.umask();
         // SAFETY: *at calls on a directory fd we own with a single name.
@@ -876,6 +890,7 @@ impl Broker<'_> {
             return Err(errno(libc::EPERM));
         }
         let (new_parent, new_name, new_path) = self.entry(new.0, new.1)?;
+        self.refuse_existing_entry(&new_parent, &new_name)?;
         // A new name must not reach the file with access its old one lacked.
         let check_source = |source: &Path| {
             self.authorize(&[(Permission::Write, &new_path)])?;
@@ -930,6 +945,7 @@ impl Broker<'_> {
         // The link's content is never resolved by us.
         let content = sys::cstring(&self.request.read_string(content_arg)?)?;
         let (parent, name, path) = self.entry(link.0, link.1)?;
+        self.refuse_existing_entry(&parent, &name)?;
         self.authorize(&[(Permission::Write, &path)])?;
         // SAFETY: symlinkat on a directory fd we own with a single name.
         cvt(unsafe { libc::symlinkat(content.as_ptr(), parent.as_raw_fd(), name.as_ptr()) })?;
@@ -1121,6 +1137,24 @@ fn is_deleted(path: &Path) -> bool {
 
 fn is_controlling_terminal_device(stat: &libc::stat) -> bool {
     stat.st_mode & libc::S_IFMT == libc::S_IFCHR && stat.st_rdev == libc::makedev(5, 0)
+}
+
+fn entry_exists(parent: &OwnedFd, name: &CString) -> io::Result<bool> {
+    // SAFETY: plain old data, filled in by the kernel.
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: valid directory fd, NUL-terminated name and stat pointer.
+    match cvt(unsafe {
+        libc::fstatat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            &mut stat,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    }) {
+        Ok(_) => Ok(true),
+        Err(error) if error.raw_os_error() == Some(libc::ENOENT) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn is_directory_entry(parent: &OwnedFd, name: &CString) -> io::Result<bool> {
