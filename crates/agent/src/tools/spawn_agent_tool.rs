@@ -14,6 +14,8 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 /// Spawn a sub-agent for a well-scoped task.
 ///
+/// By default this call blocks: your turn waits until the agent finishes, and its final message is the result of the call. To keep working, or to end your turn, while the agent runs, set `run_in_background` to true (see "Background agents" below).
+///
 /// ### Designing delegated subtasks
 /// - An agent does not see your conversation history. Include all relevant context (file paths, requirements, constraints) in the message.
 /// - Subtasks must be concrete, well-defined, and self-contained.
@@ -31,6 +33,15 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - Split implementation into disjoint codebase slices and spawn multiple agents for them in parallel when the write scopes do not overlap.
 /// - When a plan has multiple independent steps, prefer delegating those steps in parallel rather than serializing them unnecessarily.
 /// - Reuse the returned session_id when you want to follow up on the same delegated subproblem instead of creating a duplicate session.
+/// - Agents spawned in the same response run at the same time, but without `run_in_background` your turn still waits until all of them finish.
+///
+/// ### Background agents
+/// - Set `run_in_background` to true when the user asks for a background agent, or for work to run in parallel with yours or while you do something else. Also set it for work that takes a while and whose result you do not need before continuing.
+/// - The call returns immediately with the session_id; keep working on other things, or end your turn.
+/// - When a background agent finishes, its final message arrives as a new message wrapped in `<background_agent_result session_id="...">`. That message is generated automatically; it is not written by the user. Do not wait for it, poll it, or spawn another agent to check on it.
+/// - A background agent that needs something from you ends its turn with a question, which arrives the same way. Answer it by calling `spawn_agent` with its session_id: the agent keeps its context and carries on from your answer.
+/// - Sending a follow-up to a background agent that is still running interrupts what it is doing.
+/// - To stop a background agent without giving it new work, use `stop_agent`.
 ///
 /// ### Model selection
 /// - When the user requests a particular model or asks you to choose based on cost or capability, call `list_agents_and_models` first, then pass the exact `models[].id` from the native Zed agent entry (`is_native: true`) in `model`.
@@ -38,15 +49,8 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - Do not silently choose a different model when an explicit model is unavailable unless the user allowed fallback.
 /// - A resumed session keeps its existing model, so `model` cannot be combined with `session_id`.
 ///
-/// ### Background agents
-/// - Set `run_in_background` to true for work that takes a while and whose result you do not need before continuing. The call returns immediately with the session_id; keep working on other things, or end your turn.
-/// - When a background agent finishes, its final message arrives as a new message wrapped in `<background_agent_result session_id="...">`. That message is generated automatically; it is not written by the user. Do not wait for it, poll it, or spawn another agent to check on it.
-/// - A background agent that needs something from you ends its turn with a question, which arrives the same way. Answer it by calling `spawn_agent` with its session_id: the agent keeps its context and carries on from your answer.
-/// - Sending a follow-up to a background agent that is still running interrupts what it is doing.
-/// - To stop a background agent without giving it new work, use `stop_agent`.
-///
 /// ### Output
-/// - You will receive only the agent's final message as output.
+/// - Without `run_in_background`, you will receive only the agent's final message as output.
 /// - Successful calls return a session_id that you can use for follow-up messages.
 /// - Error results may also include a session_id if a session was already created.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -67,7 +71,8 @@ pub struct SpawnAgentToolInput {
     pub model: Option<String>,
     /// Set to true to start the agent without waiting for it. The call returns
     /// right away, and the agent's final message is delivered to you later as
-    /// a new message. Defaults to false.
+    /// a new message. Defaults to false, in which case your turn waits until
+    /// the agent finishes.
     #[serde(default, skip_serializing_if = "is_false")]
     pub run_in_background: bool,
 }
