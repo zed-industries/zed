@@ -5734,7 +5734,7 @@ impl ThreadView {
                                     .flex_wrap()
                                     .gap_1()
                                     .children(self.render_running_agents(cx))
-                                    .children(self.render_background_commands(cx))
+                                    .children(self.render_running_commands(cx))
                                     .children(self.render_activity_status_label(cx))
                                     .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
@@ -5752,8 +5752,9 @@ impl ThreadView {
             .into_any()
     }
 
-    /// Lists the agents working for this thread; picking one opens its thread,
-    /// like the "expand" button of a subagent card does.
+    /// Lists the agents working for this thread, both those the current turn
+    /// is waiting for and those started in the background; picking one opens
+    /// its thread, like the "expand" button of a subagent card does.
     fn render_running_agents(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
         let agents = self.as_native_thread(cx)?.read(cx).active_subagents(cx);
         if agents.is_empty() {
@@ -5773,34 +5774,37 @@ impl ThreadView {
                     Tooltip::text("Agents working for this thread"),
                 )
                 .menu(move |window, cx| {
-                    let agents = agents.clone();
+                    let agents = agents
+                        .iter()
+                        .map(|agent| {
+                            (
+                                (agent.session_id.clone(), agent.title.clone()),
+                                agent.in_background,
+                            )
+                        })
+                        .collect::<Vec<_>>();
                     let server_view = server_view.clone();
-                    Some(ContextMenu::build(
-                        window,
-                        cx,
-                        move |mut menu, _window, _cx| {
-                            menu = menu.header("Running Agents");
-                            for (session_id, title) in agents {
-                                let server_view = server_view.clone();
-                                menu = menu.entry(title, None, move |window, cx| {
-                                    server_view
-                                        .update(cx, |view, cx| {
-                                            view.navigate_to_thread(session_id.clone(), window, cx)
-                                        })
-                                        .ok();
-                                });
-                            }
-                            menu
-                        },
-                    ))
+                    Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                        Self::running_work_menu(menu, agents, |menu, (session_id, title)| {
+                            let server_view = server_view.clone();
+                            menu.entry(title, None, move |window, cx| {
+                                server_view
+                                    .update(cx, |view, cx| {
+                                        view.navigate_to_thread(session_id.clone(), window, cx)
+                                    })
+                                    .ok();
+                            })
+                        })
+                    }))
                 }),
         )
     }
 
-    /// Lists the commands this thread left running in the background; picking
-    /// one scrolls to its terminal.
-    fn render_background_commands(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
-        let commands = self.as_native_thread(cx)?.read(cx).background_commands();
+    /// Lists the commands that the thread's terminal tool calls are running,
+    /// both those the current turn is waiting for and those left running in
+    /// the background; picking one scrolls to its terminal.
+    fn render_running_commands(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let commands = self.running_commands(cx);
         if commands.is_empty() {
             return None;
         }
@@ -5809,54 +5813,148 @@ impl ThreadView {
         } else {
             format!("{} commands running", commands.len()).into()
         };
-        let thread = self.thread.read(cx);
-        let commands = commands
-            .into_iter()
-            .map(|(terminal_id, command)| {
-                let entry_ix = thread.entries().iter().position(|entry| {
-                    matches!(entry, AgentThreadEntry::ToolCall(tool_call)
-                        if tool_call
-                            .terminals()
-                            .any(|terminal| terminal.read(cx).id() == &terminal_id))
-                });
-                let title: SharedString =
-                    util::truncate_and_trailoff(command.lines().next().unwrap_or_default(), 60)
-                        .into();
-                (title, entry_ix)
-            })
-            .collect::<Vec<_>>();
         let this = cx.weak_entity();
         Some(
-            PopoverMenu::new("background-commands")
+            PopoverMenu::new("running-commands")
                 .trigger_with_tooltip(
-                    ButtonLike::new("background-commands-trigger")
+                    ButtonLike::new("running-commands-trigger")
                         .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
-                    Tooltip::text("Commands running in the background"),
+                    Tooltip::text("Commands running for this thread"),
                 )
                 .menu(move |window, cx| {
-                    let commands = commands.clone();
+                    let commands = commands
+                        .iter()
+                        .map(|command| {
+                            (
+                                (command.title.clone(), command.entry_ix),
+                                command.in_background,
+                            )
+                        })
+                        .collect::<Vec<_>>();
                     let this = this.clone();
-                    Some(ContextMenu::build(
-                        window,
-                        cx,
-                        move |mut menu, _window, _cx| {
-                            menu = menu.header("Background Commands");
-                            for (title, entry_ix) in commands {
-                                let this = this.clone();
-                                menu = menu.entry(title, None, move |_window, cx| {
-                                    if let Some(entry_ix) = entry_ix {
-                                        this.update(cx, |this, cx| {
-                                            this.scroll_to_entry(entry_ix, cx)
-                                        })
+                    Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                        Self::running_work_menu(menu, commands, |menu, (title, entry_ix)| {
+                            let this = this.clone();
+                            menu.entry(title, None, move |_window, cx| {
+                                if let Some(entry_ix) = entry_ix {
+                                    this.update(cx, |this, cx| this.scroll_to_entry(entry_ix, cx))
                                         .ok();
-                                    }
-                                });
-                            }
-                            menu
-                        },
-                    ))
+                                }
+                            })
+                        })
+                    }))
                 }),
         )
+    }
+
+    /// Adds `items` to `menu`, the ones the current turn is waiting for apart
+    /// from the ones running in the background.
+    fn running_work_menu<T>(
+        mut menu: ContextMenu,
+        items: Vec<(T, bool)>,
+        mut add_entry: impl FnMut(ContextMenu, T) -> ContextMenu,
+    ) -> ContextMenu {
+        let (in_background, in_turn): (Vec<_>, Vec<_>) = items
+            .into_iter()
+            .partition(|(_, in_background)| *in_background);
+        let has_in_turn = !in_turn.is_empty();
+        if has_in_turn {
+            menu = menu.header("In This Turn");
+            for (item, _) in in_turn {
+                menu = add_entry(menu, item);
+            }
+        }
+        if !in_background.is_empty() {
+            if has_in_turn {
+                menu = menu.separator();
+            }
+            menu = menu.header("In the Background");
+            for (item, _) in in_background {
+                menu = add_entry(menu, item);
+            }
+        }
+        menu
+    }
+
+    /// The commands this thread's terminal tool calls started that have not
+    /// exited yet, in the order of the tool calls.
+    fn running_commands(&self, cx: &App) -> Vec<RunningCommand> {
+        let thread = self.thread.read(cx);
+        let mut commands = Vec::new();
+        let mut terminal_ids = Vec::new();
+        for (entry_ix, entry) in thread.entries().iter().enumerate() {
+            let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                continue;
+            };
+            // A command can outlive its tool call, when it was started with
+            // `run_in_background` or left running when the call ended; the
+            // turn no longer waits for it then.
+            let in_background = !matches!(
+                tool_call.status(),
+                ToolCallStatus::Pending
+                    | ToolCallStatus::WaitingForConfirmation
+                    | ToolCallStatus::InProgress
+                    | ToolCallStatus::Paused
+            );
+            for terminal in tool_call.terminals() {
+                let terminal = terminal.read(cx);
+                // Only a terminal that owns a process can be running: one an
+                // external agent reports is only displayed.
+                if !terminal.is_process_backed() || terminal.output().is_some() {
+                    continue;
+                }
+                terminal_ids.push(terminal.id().clone());
+                commands.push(RunningCommand {
+                    title: Self::running_command_title(tool_call, terminal, cx),
+                    entry_ix: Some(entry_ix),
+                    in_background,
+                });
+            }
+        }
+        // A background command outlives its tool call, which may no longer be
+        // in the thread, e.g. after the user edited an earlier message.
+        if let Some(native_thread) = self.as_native_thread(cx) {
+            for (terminal_id, command) in native_thread.read(cx).background_commands() {
+                if !terminal_ids.contains(&terminal_id) {
+                    commands.push(RunningCommand {
+                        title: util::truncate_and_trailoff(
+                            command.lines().next().unwrap_or_default(),
+                            60,
+                        )
+                        .into(),
+                        entry_ix: None,
+                        in_background: true,
+                    });
+                }
+            }
+        }
+        commands
+    }
+
+    fn running_command_title(
+        tool_call: &ToolCall,
+        terminal: &acp_thread::Terminal,
+        cx: &App,
+    ) -> SharedString {
+        let command = tool_call
+            .raw_input
+            .as_ref()
+            .and_then(|input| input.get("command"))
+            .and_then(|command| command.as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                // The terminal shows its command as a fenced code block.
+                terminal
+                    .command()
+                    .read(cx)
+                    .source()
+                    .trim()
+                    .trim_start_matches("```")
+                    .trim_end_matches("```")
+                    .trim()
+                    .to_owned()
+            });
+        util::truncate_and_trailoff(command.lines().next().unwrap_or_default(), 60).into()
     }
 
     fn render_activity_status_label(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
@@ -7184,6 +7282,14 @@ impl ThreadView {
                 this.toggle_following(window, cx);
             }))
     }
+}
+
+/// A command listed by the "commands running" indicator.
+struct RunningCommand {
+    title: SharedString,
+    /// The entry of its tool call, when that is still in the thread.
+    entry_ix: Option<usize>,
+    in_background: bool,
 }
 
 struct TokenUsageTooltip {

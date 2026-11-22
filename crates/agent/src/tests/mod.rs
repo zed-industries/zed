@@ -6243,6 +6243,12 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
             .expect("subagent thread should be running")
             .clone()
     });
+    thread.read_with(cx, |thread, cx| {
+        let active = thread.active_subagents(cx);
+        assert_eq!(active.len(), 1, "an agent within the turn is listed too");
+        assert_eq!(active[0].session_id, subagent_session_id);
+        assert!(!active[0].in_background);
+    });
 
     let subagent_thread = agent.read_with(cx, |agent, _cx| {
         agent
@@ -6489,7 +6495,7 @@ async fn test_stop_agent_after_current_step_reports_the_agent_as_stopped(cx: &mu
     let subagent_session_id = thread.read_with(cx, |thread, cx| {
         let active = thread.active_subagents(cx);
         assert_eq!(active.len(), 1);
-        active[0].0.clone()
+        active[0].session_id.clone()
     });
     let pending = fake.pending_completions_for(&model);
     assert!(
@@ -6685,7 +6691,7 @@ async fn test_stop_agent_stops_a_background_subagent_without_a_result_message(
     let subagent_session_id = thread.read_with(cx, |thread, cx| {
         let active = thread.active_subagents(cx);
         assert_eq!(active.len(), 1);
-        active[0].0.clone()
+        active[0].session_id.clone()
     });
     let pending = fake.pending_completions_for(&model);
     assert!(
@@ -6852,7 +6858,9 @@ async fn test_background_subagent_result_starts_a_turn_on_the_idle_parent(cx: &m
             thread.running_subagent_ids(cx).is_empty(),
             "a background subagent is not tied to the parent's turn"
         );
-        assert_eq!(thread.active_subagents(cx).len(), 1);
+        let active = thread.active_subagents(cx);
+        assert_eq!(active.len(), 1);
+        assert!(active[0].in_background);
     });
 
     // The tool call returned without waiting, so the parent's turn goes on
@@ -7015,7 +7023,7 @@ async fn test_stopping_background_work_stops_a_subagent_on_the_idle_parent(
         assert!(thread.has_background_work());
         let active = thread.active_subagents(cx);
         assert_eq!(active.len(), 1);
-        active[0].0.clone()
+        active[0].session_id.clone()
     });
 
     thread

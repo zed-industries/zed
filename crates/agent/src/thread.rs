@@ -782,6 +782,16 @@ struct BackgroundCommand {
     stopped_by_agent: bool,
 }
 
+/// A subagent working for a thread, as listed by [`Thread::active_subagents`].
+#[derive(Clone, Debug)]
+pub struct ActiveSubagent {
+    pub session_id: acp_v2::SessionId,
+    pub title: SharedString,
+    /// Whether it was started with `run_in_background`, rather than within the
+    /// turn that is waiting for it.
+    pub in_background: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SubagentStopRequest {
     Immediately,
@@ -4953,18 +4963,26 @@ impl Thread {
     }
 
     /// The subagents currently working for this thread, whether within its
-    /// turn or in the background, as session id and title.
-    pub fn active_subagents(&self, cx: &App) -> Vec<(acp_v2::SessionId, SharedString)> {
-        self.running_subagents
+    /// turn or in the background.
+    pub fn active_subagents(&self, cx: &App) -> Vec<ActiveSubagent> {
+        let in_turn = self
+            .running_subagents
             .iter()
-            .chain(&self.background_subagents)
-            .filter_map(|subagent| subagent.upgrade())
-            .map(|subagent| {
+            .map(|subagent| (subagent, false));
+        let in_background = self
+            .background_subagents
+            .iter()
+            .map(|subagent| (subagent, true));
+        in_turn
+            .chain(in_background)
+            .filter_map(|(subagent, in_background)| Some((subagent.upgrade()?, in_background)))
+            .map(|(subagent, in_background)| {
                 let subagent = subagent.read(cx);
-                (
-                    subagent.id().clone(),
-                    subagent.title().unwrap_or_else(|| "Agent".into()),
-                )
+                ActiveSubagent {
+                    session_id: subagent.id().clone(),
+                    title: subagent.title().unwrap_or_else(|| "Agent".into()),
+                    in_background,
+                }
             })
             .collect()
     }
