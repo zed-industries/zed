@@ -9,7 +9,7 @@ use picker::{Picker, PickerDelegate};
 use project::{DirectoryLister, DisableAiSettings, Project};
 use serde_json::json;
 use settings::{Settings, SettingsStore};
-use util::path;
+use util::{path, paths::PathStyle};
 use workspace::{
     AppState, MultiWorkspace, OpenOptions, OpenPathPromptMode, Workspace, item::test::TestItem,
     prompt_for_open_path_and_open,
@@ -1049,4 +1049,64 @@ async fn test_open_path_prompt_relative_to_file_root(cx: &mut TestAppContext) {
             );
         }
     }
+}
+
+#[gpui::test]
+async fn test_relative_base_for_remote_root_before_and_after_initialization(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let worktree = cx.update(|cx| {
+        project::Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            rpc::proto::WorktreeMetadata {
+                id: 1,
+                root_name: "project".to_string(),
+                visible: true,
+                abs_path: "/srv/project".to_string(),
+                root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
+            },
+            rpc::AnyProtoClient::new(rpc::NoopProtoClient::new()),
+            PathStyle::Unix,
+            cx,
+        )
+    });
+
+    // Until the first update arrives, the root has no entries, but it is not a single file.
+    worktree.read_with(cx, |worktree, _| {
+        assert_eq!(
+            OpenPathPrompt::root_directory(worktree, PathStyle::Unix),
+            PathBuf::from("/srv/project")
+        );
+    });
+
+    // A root still missing once the worktree is initialized is a file not saved yet.
+    worktree.update(cx, |worktree, _| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(rpc::proto::UpdateWorktree {
+                project_id: 1,
+                worktree_id: 1,
+                abs_path: "/srv/project".to_string(),
+                root_name: "project".to_string(),
+                updated_entries: Vec::new(),
+                removed_entries: Vec::new(),
+                scan_id: 1,
+                is_last_update: true,
+                updated_repositories: Vec::new(),
+                removed_repositories: Vec::new(),
+                root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
+            });
+    });
+    cx.run_until_parked();
+    worktree.read_with(cx, |worktree, _| {
+        assert_eq!(
+            OpenPathPrompt::root_directory(worktree, PathStyle::Unix),
+            PathBuf::from("/srv")
+        );
+    });
 }

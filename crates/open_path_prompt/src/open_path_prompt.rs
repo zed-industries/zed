@@ -9,7 +9,7 @@ use futures::channel::oneshot;
 use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
 use gpui::{Action, HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
-use project::{DirectoryItem, DirectoryLister};
+use project::{DirectoryItem, DirectoryLister, Worktree};
 use settings::SettingsStore;
 use settings::{ProjectPanelSortMode, Settings};
 use std::{
@@ -294,8 +294,9 @@ impl OpenPathPrompt {
 
     /// Directory that `./` and `../` queries resolve against: the active file's directory
     /// when opening, otherwise the first project root (or its parent directory when the root
-    /// is a single file, even one not saved yet), falling back to the process cwd, or to the remote home directory
-    /// for a remote project, whose lister must never be asked for a client path.
+    /// is a single file, even one not saved yet), falling back to the process cwd, or to the
+    /// remote home directory for a remote project, whose lister must never be asked for a client
+    /// path.
     ///
     /// Workspace paths are only used when `lister` browses the project's own file system: a
     /// [`DirectoryLister::Local`] lister for a remote project lists the local machine, where the
@@ -312,19 +313,10 @@ impl OpenPathPrompt {
             return current_dir();
         }
         let path_style = project.path_style(cx);
-        let project_root = workspace.visible_worktrees(cx).next().map(|worktree| {
-            let worktree = worktree.read(cx);
-            let abs_path = worktree.abs_path();
-            // A single-file root has no root entry until its file exists on disk.
-            if worktree.is_single_file() {
-                path_style
-                    .parent(&abs_path)
-                    .unwrap_or(&abs_path)
-                    .to_path_buf()
-            } else {
-                abs_path.to_path_buf()
-            }
-        });
+        let project_root = workspace
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| Self::root_directory(worktree.read(cx), path_style));
         let active_file_directory = (!creating_path)
             .then(|| workspace.active_item(cx))
             .flatten()
@@ -343,6 +335,27 @@ impl OpenPathPrompt {
                 PathBuf::from(REMOTE_HOME)
             }
         })
+    }
+
+    /// Directory of a project root: the root itself, or its parent directory when the root is
+    /// a single file, even one not saved yet.
+    fn root_directory(worktree: &Worktree, path_style: PathStyle) -> PathBuf {
+        let abs_path = worktree.abs_path();
+        let is_file = match worktree.root_entry() {
+            Some(entry) => entry.is_file(),
+            // A local worktree gets its root entry on creation and a remote one with its first
+            // complete update, so a root still missing after that is a file not saved yet.
+            // Before that, a remote root is most likely a directory whose entries are on the way.
+            None => worktree.is_local() || worktree.completed_scan_id() > 0,
+        };
+        if is_file {
+            path_style
+                .parent(&abs_path)
+                .unwrap_or(&abs_path)
+                .to_path_buf()
+        } else {
+            abs_path.to_path_buf()
+        }
     }
 
     pub fn register_new_path(
