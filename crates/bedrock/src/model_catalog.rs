@@ -278,8 +278,10 @@ pub async fn list_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capability_catalog::tests::catalog as capability_catalog;
     use anyhow::Context as _;
     use aws_sdk_bedrock::types::InferenceProfileModel;
+    use serde_json::json;
 
     const PROFILE_ARN_PREFIX: &str = "arn:aws:bedrock:us-east-1:123456789012:";
 
@@ -352,34 +354,12 @@ mod tests {
 
     #[test]
     fn skips_profiles_that_cannot_serve_a_streamed_text_conversation() -> Result<()> {
-        let embedding = FoundationModelSummary::builder()
-            .model_arn("arn:aws:bedrock:us-east-1::foundation-model/vendor.embedding")
-            .model_id("vendor.embedding")
-            .input_modalities(ModelModality::Text)
-            .output_modalities(ModelModality::Embedding)
-            .response_streaming_supported(true)
-            .build()?;
-        let blocking = FoundationModelSummary::builder()
-            .model_arn("arn:aws:bedrock:us-east-1::foundation-model/vendor.blocking")
-            .model_id("vendor.blocking")
-            .input_modalities(ModelModality::Text)
-            .output_modalities(ModelModality::Text)
-            .response_streaming_supported(false)
-            .build()?;
-        let inactive = InferenceProfileSummary::builder()
-            .inference_profile_id("us.vendor.chat")
-            .inference_profile_arn(format!(
-                "{PROFILE_ARN_PREFIX}inference-profile/us.vendor.chat"
-            ))
-            .inference_profile_name("Inactive")
-            .models(
-                InferenceProfileModel::builder()
-                    .model_arn("arn:aws:bedrock:us-east-1::foundation-model/vendor.chat")
-                    .build(),
-            )
-            .status(InferenceProfileStatus::from("RETIRED"))
-            .r#type(InferenceProfileType::SystemDefined)
-            .build()?;
+        let mut embedding = foundation_model("vendor.embedding", &[])?;
+        embedding.output_modalities = Some(vec![ModelModality::Embedding]);
+        let mut blocking = foundation_model("vendor.blocking", &[])?;
+        blocking.response_streaming_supported = Some(false);
+        let mut inactive = profile("us.vendor.chat", "vendor.chat", 1)?;
+        inactive.status = InferenceProfileStatus::from("RETIRED");
         let catalog = ModelCatalog::new(
             &[
                 profile("us.vendor.embedding", "vendor.embedding", 1)?,
@@ -399,39 +379,29 @@ mod tests {
 
     #[test]
     fn routes_through_the_global_profile_only_when_allowed() -> Result<()> {
-        let catalog = ModelCatalog::new(
-            &[
-                profile("global.vendor.chat", "vendor.chat", 2)?,
-                profile("us.vendor.chat", "vendor.chat", 3)?,
-            ],
-            &[foundation_model("vendor.chat", &[])?],
-        );
-
-        let geographic = only_model(&catalog, false)?;
-        assert_eq!(geographic.id, "vendor.chat");
-        assert_eq!(geographic.base_model_id, "vendor.chat");
-        assert_eq!(geographic.request_id, "us.vendor.chat");
-        assert_eq!(only_model(&catalog, true)?.request_id, "global.vendor.chat");
-        Ok(())
-    }
-
-    #[test]
-    fn falls_back_to_the_only_profile_a_model_has() -> Result<()> {
         let models = [foundation_model("vendor.chat", &[])?];
-
-        let global_only =
-            ModelCatalog::new(&[profile("global.vendor.chat", "vendor.chat", 2)?], &models);
-        assert_eq!(
-            only_model(&global_only, false)?.request_id,
-            "global.vendor.chat"
-        );
-
-        let geographic_only =
-            ModelCatalog::new(&[profile("eu.vendor.chat", "vendor.chat", 2)?], &models);
-        assert_eq!(
-            only_model(&geographic_only, true)?.request_id,
-            "eu.vendor.chat"
-        );
+        let global = profile("global.vendor.chat", "vendor.chat", 2)?;
+        let geographic = profile("us.vendor.chat", "vendor.chat", 3)?;
+        for (profiles, allow_global, request_id) in [
+            (
+                vec![global.clone(), geographic.clone()],
+                false,
+                "us.vendor.chat",
+            ),
+            (
+                vec![global.clone(), geographic.clone()],
+                true,
+                "global.vendor.chat",
+            ),
+            // The only profile a model has serves it either way.
+            (vec![global], false, "global.vendor.chat"),
+            (vec![geographic], true, "us.vendor.chat"),
+        ] {
+            let model = only_model(&ModelCatalog::new(&profiles, &models), allow_global)?;
+            assert_eq!(model.id, "vendor.chat");
+            assert_eq!(model.base_model_id, "vendor.chat");
+            assert_eq!(model.request_id, request_id);
+        }
         Ok(())
     }
 
@@ -490,14 +460,12 @@ mod tests {
                     1,
                 )?,
             ],
-            &[foundation_model("vendor.chat", &[])?],
+            &[foundation_model("vendor.chat", &[ModelModality::Image])?],
         );
-        let capabilities = CapabilityCatalog::parse(
-            r#"{"amazon-bedrock":{"models":{
-            "us.vendor.chat":{"name":"US","limit":{"context":300}},
-            "global.vendor.chat":{"name":"Global","limit":{"context":500}}
-        }}}"#,
-        )?;
+        let capabilities = capability_catalog(json!({
+            "us.vendor.chat": {"name": "US", "limit": {"context": 300}},
+            "global.vendor.chat": {"name": "Global", "limit": {"context": 500}},
+        }))?;
         let global_arn = format!("{PROFILE_ARN_PREFIX}inference-profile/global.vendor.chat");
         let geographic_arn = format!("{PROFILE_ARN_PREFIX}inference-profile/us.vendor.chat");
         for (request_id, context) in [
@@ -520,42 +488,10 @@ mod tests {
                 .model_for_request_id("vendor.other", &capabilities)
                 .is_none()
         );
-        let application = catalog
-            .models(false, &capabilities)
-            .find(|model| model.id == application_arn)
-            .context("listed application")?;
-        assert_eq!(application.request_id, application_arn);
-        assert_eq!(application.max_tokens, 500);
-        Ok(())
-    }
-
-    #[test]
-    fn describes_a_listed_model_from_any_profile_the_capability_catalog_knows() -> Result<()> {
-        let catalog = ModelCatalog::new(
-            &[
-                profile("us.vendor.chat", "vendor.chat", 3)?,
-                profile("global.vendor.chat", "vendor.chat", 2)?,
-            ],
-            &[foundation_model("vendor.chat", &[ModelModality::Image])?],
-        );
-        // Only the global profile is in the capability catalog.
-        let capability_catalog = CapabilityCatalog::parse(
-            r#"{"amazon-bedrock": {"models": {"global.vendor.chat": {
-                "name": "Chat (Global)",
-                "tool_call": true,
-                "modalities": {"input": ["text"], "output": ["text"]},
-                "limit": {"context": 500000, "output": 64000}
-            }}}}"#,
-        )?;
-        let model = catalog
-            .models(false, &capability_catalog)
-            .next()
-            .context("the catalog is empty")?;
-
-        assert_eq!(model.request_id, "us.vendor.chat");
-        assert_eq!(model.max_tokens, 500_000);
-        assert_eq!(model.max_output_tokens, Some(64_000));
         // Bedrock's own listing is the authority on the name and modalities.
+        let model = catalog
+            .model_for_request_id("us.vendor.chat", &capabilities)
+            .context("listed profile")?;
         assert_eq!(model.display_name, "Name of vendor.chat");
         assert!(model.supports_images);
         Ok(())

@@ -441,12 +441,12 @@ impl ConverseModel {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use BedrockAdaptiveThinkingEffort::{High, Low, Medium, XHigh};
     use serde_json::json;
 
-    fn catalog(models: serde_json::Value) -> Result<CapabilityCatalog> {
+    pub(crate) fn catalog(models: serde_json::Value) -> Result<CapabilityCatalog> {
         CapabilityCatalog::parse(&json!({ "amazon-bedrock": { "models": models } }).to_string())
     }
 

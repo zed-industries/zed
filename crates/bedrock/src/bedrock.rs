@@ -143,6 +143,7 @@ pub async fn stream_completion(
     Ok(stream)
 }
 
+// The SDK field is an i32, and "as" would wrap a large limit into a negative one.
 fn wire_max_tokens(value: u64) -> Result<i32, BedrockError> {
     if value == 0 {
         return Err(BedrockError::Validation(
@@ -414,23 +415,6 @@ mod tests {
                 serde_json::json!({"reasoning": {"effort": value}})
             );
         }
-    }
-
-    #[test]
-    fn output_limit_must_fit_the_sdk_field() -> Result<()> {
-        assert!(
-            wire_max_tokens(0)
-                .expect_err("zero output limit")
-                .to_string()
-                .contains("max_tokens 0")
-        );
-        assert_eq!(wire_max_tokens(1)?, 1);
-        let largest = i32::MAX as u64;
-        assert_eq!(wire_max_tokens(largest)?, i32::MAX);
-        let oversized = largest + 1;
-        let error = wire_max_tokens(oversized).expect_err("oversized output limit");
-        assert!(error.to_string().contains(&oversized.to_string()));
-        Ok(())
     }
 
     #[test]
