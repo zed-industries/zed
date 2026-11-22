@@ -12230,6 +12230,7 @@ dependencies = [
 name = "open_path_prompt"
 version = "0.1.0"
 dependencies = [
+ "clock",
  "editor",
  "file_icons",
  "futures 0.3.34",
@@ -12238,6 +12239,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "rpc",
  "serde",
  "serde_json",
  "settings",

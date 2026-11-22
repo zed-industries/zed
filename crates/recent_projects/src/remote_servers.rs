@@ -392,7 +392,11 @@ impl ProjectPicker {
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx).show_hidden();
+        // The project is freshly connected and has no worktrees yet, so resolve
+        // `./` and `../` against the remote home directory, never the client's cwd.
+        let relative_to = PathBuf::from(home_dir.to_string());
+        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, relative_to, cx)
+            .show_hidden();
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx).embedded();
@@ -3150,6 +3154,7 @@ mod filter_tests {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use util::path;
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
@@ -3307,5 +3312,65 @@ mod tests {
 
         assert_eq!(connections[0].projects.len(), 1);
         assert!(connections[new_index.0].projects.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_project_picker_resolves_dot_relative_to_home_dir(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/remote/home"),
+                serde_json::json!({
+                    "remote_file": "Content",
+                    "sub": {},
+                }),
+            )
+            .await;
+
+        // A freshly connected remote project has no worktrees yet.
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let modal = workspace.update_in(cx, |_workspace, window, cx| {
+            let weak = cx.weak_entity();
+            cx.new(|cx| {
+                RemoteServerProjects::project_picker(
+                    false,
+                    ServerIndex::Ssh(SshServerIndex(0)),
+                    remote::MockConnectionOptions { id: 0 }.into(),
+                    project.clone(),
+                    RemotePathBuf::from_str(path!("/remote/home"), PathStyle::local()),
+                    window,
+                    cx,
+                    weak,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        let picker = modal.read_with(cx, |modal, cx| match &modal.mode {
+            Mode::ProjectPicker(project_picker) => project_picker.read(cx).picker.clone(),
+            _ => panic!("expected project picker mode"),
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("./", window, cx);
+        });
+        cx.run_until_parked();
+
+        let candidates =
+            picker.read_with(cx, |picker, _| picker.delegate.collect_match_candidates());
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate == "remote_file"),
+            "`./` should resolve against the remote home dir, got {candidates:?}"
+        );
+        assert!(
+            candidates.iter().any(|candidate| candidate == "sub"),
+            "`./` should resolve against the remote home dir, got {candidates:?}"
+        );
     }
 }
