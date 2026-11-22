@@ -20,6 +20,8 @@ use crate::{
 pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
+    pub open_ranges: Option<Vec<Range<usize>>>,
+    pub close_ranges: Option<Vec<Range<usize>>>,
     pub newline_only: bool,
     pub syntax_layer_depth: usize,
     pub color_index: Option<usize>,
@@ -297,8 +299,10 @@ impl<'a> ChunkBrackets<'a> {
                 .collect::<Vec<_>>();
 
             while let Some(mat) = matches.peek() {
-                let mut open = None;
-                let mut close = None;
+                let mut open_ranges = Vec::new();
+                let mut close_ranges = Vec::new();
+                let mut open_kind = None;
+                let mut close_kind = None;
                 let syntax_layer_depth = mat.depth;
                 let grammar_index = grammar_indices[mat.grammar_index];
                 let pattern_key = BracketPatternKey {
@@ -309,28 +313,48 @@ impl<'a> ChunkBrackets<'a> {
                 let pattern = &config.patterns[mat.pattern_index];
                 for capture in mat.captures {
                     if capture.index == config.open_capture_ix {
-                        open = Some((capture.node.byte_range(), capture.node.kind_id()));
+                        open_ranges.push(capture.node.byte_range());
+                        open_kind.get_or_insert_with(|| capture.node.kind_id());
                     } else if capture.index == config.close_capture_ix {
-                        close = Some((capture.node.byte_range(), capture.node.kind_id()));
+                        close_ranges.push(capture.node.byte_range());
+                        close_kind.get_or_insert_with(|| capture.node.kind_id());
                     }
                 }
 
                 matches.advance();
 
-                let Some(((open_range, open_kind), (close_range, close_kind))) = open.zip(close)
-                else {
+                let (
+                    Some(open_kind),
+                    Some(close_kind),
+                    Some(first_open_range),
+                    Some(last_open_range),
+                    Some(first_close_range),
+                    Some(last_close_range),
+                ) = (
+                    open_kind,
+                    close_kind,
+                    open_ranges.first(),
+                    open_ranges.last(),
+                    close_ranges.first(),
+                    close_ranges.last(),
+                ) else {
                     continue;
                 };
-
+                
+                let open_range = first_open_range.start..last_open_range.end;
+                let close_range = first_close_range.start..last_close_range.end;
+                
                 let bracket_range = open_range.start..=close_range.end;
                 if !bracket_range.overlaps(&self.chunk_range) {
                     continue;
                 }
-
+                
                 let candidate = BracketMatchCandidate {
                     bracket_match: BracketMatch {
                         open_range,
                         close_range,
+                        open_ranges: Some(open_ranges),
+                        close_ranges: Some(close_ranges),
                         syntax_layer_depth,
                         newline_only: pattern.newline_only,
                         color_index: None,
@@ -682,6 +706,8 @@ impl<'a> ChunkBrackets<'a> {
                         bracket_match: BracketMatch {
                             open_range: inferred.start..inferred.end,
                             close_range: close.start..close.end,
+                            open_ranges: None,
+                            close_ranges: None,
                             newline_only: pattern.newline_only,
                             syntax_layer_depth,
                             color_index: None,
@@ -752,6 +778,8 @@ impl<'a> ChunkBrackets<'a> {
                 bracket_match: BracketMatch {
                     open_range: open.start..open.end,
                     close_range: close.start..close.end,
+                    open_ranges: None,
+                    close_ranges: None,
                     newline_only: pattern.newline_only,
                     syntax_layer_depth: self
                         .syntax_layer_depths_by_delimiter
@@ -798,13 +826,7 @@ impl<'a> ChunkBrackets<'a> {
             .enumerate()
             .map(|(index, candidate)| {
                 let bracket_match = candidate.bracket_match;
-                // Certain languages have "brackets" that are not brackets, e.g. tags. and such
-                // bracket will match the entire tag with all text inside.
-                // For now, avoid highlighting any pair that has more than single char in each bracket.
-                // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
-                let should_color = !candidate.rainbow_exclude
-                    && (bracket_match.open_range.len() == 1
-                        || bracket_match.close_range.len() == 1);
+                let should_color = !candidate.rainbow_exclude;
                 if should_color {
                     opens.push(bracket_match.open_range.clone());
                     color_pairs.push((
