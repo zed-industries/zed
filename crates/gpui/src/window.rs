@@ -6117,7 +6117,11 @@ impl Window {
         let old_modality = self.last_input_modality;
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) => InputModality::Keyboard,
-            PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
+            // A file dragged in from another application is a pointer gesture too: it is only
+            // dropped on a hovered target, and nothing is hovered while the modality is keyboard.
+            PlatformInput::MouseMove(_)
+            | PlatformInput::MouseDown(_)
+            | PlatformInput::FileDrop(_) => InputModality::Mouse,
             PlatformInput::Touch(_) => InputModality::Touch,
             _ => self.last_input_modality,
         };
@@ -9925,6 +9929,52 @@ mod tests {
             cx.test_window(failed.window).external_drag_files(),
             [(failed_path, true)]
         );
+    }
+
+    struct FileDropView(Rc<RefCell<Vec<ExternalPaths>>>);
+
+    impl Render for FileDropView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().on_drop({
+                let observed_drops = self.0.clone();
+                move |paths: &ExternalPaths, _, _| observed_drops.borrow_mut().push(paths.clone())
+            })
+        }
+    }
+
+    #[gpui::test]
+    fn file_drop_after_keyboard_input_reaches_target_under_pointer(cx: &mut TestAppContext) {
+        let observed_drops = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let observed_drops = observed_drops.clone();
+            move |_, _| FileDropView(observed_drops)
+        });
+        let position = point(px(10.), px(10.));
+        let paths = ExternalPaths([PathBuf::from("/tmp/dropped-file")].into_iter().collect());
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: Keystroke::parse("a").expect("valid keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position,
+                    paths: paths.clone(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(FileDropEvent::Submit { position }.to_platform_input(), cx);
+        })
+        .unwrap();
+
+        assert_eq!(observed_drops.borrow().as_slice(), [paths]);
     }
 
     struct FocusForwarder {
