@@ -1,16 +1,19 @@
-use std::io::Write;
+use std::{io::Write, sync::Arc, time::Duration};
 
 use crate::{
     RemoteArch, RemoteOs, RemotePlatform,
     json_log::LogRecord,
     protocol::{MESSAGE_LEN_SIZE, message_len_from_buffer, read_message_with_len, write_message},
+    proxy::ProxyLaunchError,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use futures::{
     AsyncReadExt as _, FutureExt as _, StreamExt as _,
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
+    future::FusedFuture as _,
 };
 use gpui::{AppContext as _, AsyncApp, Task};
+use parking_lot::Mutex;
 use rpc::proto::Envelope;
 use util::command::Child;
 
@@ -145,6 +148,8 @@ fn parse_home_dir(output: &str) -> Option<String> {
     (home_dir.starts_with('/') && !home_dir.contains('\u{FFFD}')).then(|| home_dir.to_owned())
 }
 
+const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+
 fn handle_rpc_messages_over_child_process_stdio(
     mut remote_proxy_process: Child,
     incoming_tx: UnboundedSender<Envelope>,
@@ -160,6 +165,7 @@ fn handle_rpc_messages_over_child_process_stdio(
     let mut stdout_buffer = Vec::new();
     let mut stderr_buffer = Vec::new();
     let mut stderr_offset = 0;
+    let last_proxy_error = Arc::new(Mutex::new(None::<String>));
 
     let stdin_task = cx.background_spawn(async move {
         while let Some(outgoing) = outgoing_rx.next().await {
@@ -193,45 +199,57 @@ fn handle_rpc_messages_over_child_process_stdio(
         }
     });
 
-    let stderr_task: Task<anyhow::Result<()>> = cx.background_spawn(async move {
-        loop {
-            stderr_buffer.resize(stderr_offset + 1024, 0);
+    let stderr_task: Task<anyhow::Result<()>> = cx.background_spawn({
+        let last_proxy_error = last_proxy_error.clone();
+        async move {
+            loop {
+                stderr_buffer.resize(stderr_offset + 1024, 0);
 
-            let len = child_stderr
-                .read(&mut stderr_buffer[stderr_offset..])
-                .await?;
-            if len == 0 {
-                return anyhow::Ok(());
-            }
-
-            stderr_offset += len;
-            let mut start_ix = 0;
-            while let Some(ix) = stderr_buffer[start_ix..stderr_offset]
-                .iter()
-                .position(|b| b == &b'\n')
-            {
-                let line_ix = start_ix + ix;
-                let content = &stderr_buffer[start_ix..line_ix];
-                start_ix = line_ix + 1;
-                if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
-                    record.log(log::logger())
-                } else {
-                    std::io::stderr()
-                        .write_fmt(format_args!(
-                            "(remote) {}\n",
-                            String::from_utf8_lossy(content)
-                        ))
-                        .ok();
+                let len = child_stderr
+                    .read(&mut stderr_buffer[stderr_offset..])
+                    .await?;
+                if len == 0 {
+                    return anyhow::Ok(());
                 }
-            }
-            stderr_buffer.drain(0..start_ix);
-            stderr_offset -= start_ix;
 
-            connection_activity_tx.try_send(()).ok();
+                stderr_offset += len;
+                let mut start_ix = 0;
+                while let Some(ix) = stderr_buffer[start_ix..stderr_offset]
+                    .iter()
+                    .position(|b| b == &b'\n')
+                {
+                    let line_ix = start_ix + ix;
+                    let content = &stderr_buffer[start_ix..line_ix];
+                    start_ix = line_ix + 1;
+                    if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
+                        // Server logs are forwarded through the proxy too; only the proxy's own
+                        // errors explain why the proxy exited.
+                        if record.is_error()
+                            && let Some(message) = record.message.strip_prefix("(remote proxy) ")
+                        {
+                            *last_proxy_error.lock() = Some(message.to_owned());
+                        }
+                        record.log(log::logger())
+                    } else {
+                        std::io::stderr()
+                            .write_fmt(format_args!(
+                                "(remote) {}\n",
+                                String::from_utf8_lossy(content)
+                            ))
+                            .ok();
+                    }
+                }
+                stderr_buffer.drain(0..start_ix);
+                stderr_offset -= start_ix;
+
+                connection_activity_tx.try_send(()).ok();
+            }
         }
     });
 
+    let executor = cx.background_executor().clone();
     cx.background_spawn(async move {
+        let mut stderr_task = stderr_task.fuse();
         let result = futures::select! {
             result = stdin_task.fuse() => {
                 result.context("stdin")
@@ -239,7 +257,7 @@ fn handle_rpc_messages_over_child_process_stdio(
             result = stdout_task.fuse() => {
                 result.context("stdout")
             }
-            result = stderr_task.fuse() => {
+            result = stderr_task => {
                 result.context("stderr")
             }
         };
@@ -251,6 +269,19 @@ fn handle_rpc_messages_over_child_process_stdio(
             let status = 1;
             status
         });
+        if status != 0 && ProxyLaunchError::from_exit_code(status).is_none() {
+            // The proxy logs its fatal error right before exiting, so stdout may reach EOF
+            // before that last stderr line has been read.
+            if !stderr_task.is_terminated() {
+                futures::select! {
+                    _ = stderr_task => {}
+                    _ = executor.timer(STDERR_DRAIN_TIMEOUT).fuse() => {}
+                }
+            }
+            if let Some(error) = last_proxy_error.lock().take() {
+                return Err(anyhow!("{error} (remote proxy exit status {status})"));
+            }
+        }
         match result {
             Ok(_) => Ok(status),
             Err(error) => Err(error),
