@@ -5,6 +5,7 @@
 
 mod mode;
 mod movement;
+mod registers;
 mod selection;
 #[cfg(test)]
 mod test;
@@ -12,15 +13,27 @@ mod test;
 use editor::{Editor, EditorEvent, EditorSettings, MultiBufferOffset, SelectionEffects};
 use gpui::{
     Action, App, AppContext as _, Context, Entity, KeyContext, KeystrokeEvent, Subscription,
-    WeakEntity, Window,
+    WeakEntity, Window, actions,
 };
 use language::{CursorShape, TransactionId};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{ModeContent, RegisterSetting, Settings, VimInsertModeCursorShape};
+use settings::{
+    ModeContent, RegisterSetting, Settings, UseSystemClipboard, VimInsertModeCursorShape,
+};
 use vim_mode_setting::{HelixModeSetting, VimModeSetting, observe_modal_editing_changes_in};
 
 use crate::{mode::InsertSession, selection::HelixRange};
+
+pub use registers::{DEFAULT_REGISTER, HelixRegisters};
+
+actions!(
+    helix,
+    [
+        /// Selects the register the next command uses, from the next typed character.
+        SelectRegister,
+    ]
+);
 
 /// Appends a digit to the count of the next command.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -53,6 +66,21 @@ impl Mode {
     }
 }
 
+/// A command waiting for the next typed character.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingInput {
+    Register,
+}
+
+impl PendingInput {
+    /// The value of the `helix_pending` key context.
+    fn context_id(self) -> &'static str {
+        match self {
+            PendingInput::Register => "register",
+        }
+    }
+}
+
 /// Attaches the Helix state to an editor.
 pub(crate) struct HelixAddon {
     pub(crate) entity: Entity<Helix>,
@@ -72,6 +100,8 @@ impl editor::Addon for HelixAddon {
 pub(crate) struct Helix {
     pub(crate) mode: Mode,
     count: Option<usize>,
+    pub(crate) selected_register: Option<char>,
+    pending_input: Option<PendingInput>,
     insert_session: Option<InsertSession>,
     editor: WeakEntity<Editor>,
     _subscriptions: Vec<Subscription>,
@@ -83,6 +113,8 @@ impl Helix {
         cx.new(|cx| Helix {
             mode: HelixSettings::get_global(cx).default_mode,
             count: None,
+            selected_register: None,
+            pending_input: None,
             insert_session: None,
             editor: editor.downgrade(),
             _subscriptions: vec![
@@ -99,7 +131,11 @@ impl Helix {
     }
 
     fn extend_key_context(&self, key_context: &mut KeyContext) {
-        if self.mode != Mode::Insert {
+        // While a command waits for a character, keys must reach the editor
+        // as text instead of triggering the usual bindings.
+        if let Some(pending_input) = self.pending_input {
+            key_context.set("helix_pending", pending_input.context_id());
+        } else if self.mode != Mode::Insert {
             key_context.add("Helix");
         }
         if self.count.is_some() {
@@ -144,11 +180,14 @@ impl Helix {
             Self::action(editor, cx, |helix, &PushDigit(digit), _, cx| {
                 helix.push_digit(digit, cx)
             });
+            Self::action(editor, cx, |helix, _: &SelectRegister, window, cx| {
+                helix.await_input(PendingInput::Register, window, cx)
+            });
             mode::register(editor, cx);
             movement::register(editor, cx);
         });
         let mode = helix.read(cx).mode;
-        Self::sync_editor_settings(mode, editor, window, cx);
+        Self::sync_editor_settings(mode, false, editor, window, cx);
         if mode != Mode::Insert {
             Self::ensure_selections_width(editor, window, cx);
         }
@@ -215,23 +254,62 @@ impl Helix {
         }
     }
 
-    /// Like Helix, the count only applies to the command that follows it,
-    /// whichever command that is.
+    fn await_input(
+        &mut self,
+        pending_input: PendingInput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_input = Some(pending_input);
+        self.sync_editor_settings_for_state(window, cx);
+        cx.notify();
+    }
+
+    /// Receives the character a pending command waits for. Keys without a
+    /// binding reach the editor as ignored input outside of insert mode.
+    fn input_ignored(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending_input) = self.pending_input.take() else {
+            return;
+        };
+        match pending_input {
+            PendingInput::Register => self.selected_register = text.chars().next(),
+        }
+        self.sync_editor_settings_for_state(window, cx);
+        cx.notify();
+    }
+
+    /// Like Helix, the count and the selected register only apply to the
+    /// command that follows them, whichever command that is.
     fn observe_keystrokes(
         &mut self,
         keystroke_event: &KeystrokeEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut keep_register = false;
         if let Some(action) = keystroke_event.action.as_ref() {
             if action.as_any().is::<PushDigit>() {
                 return;
             }
-        } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
+            keep_register = action.as_any().is::<SelectRegister>();
+        } else if self.pending_input.is_some()
+            || window.has_pending_keystrokes()
+            || keystroke_event.keystroke.is_ime_in_progress()
         {
+            // A character for the pending command arrives as ignored input
+            // after this observer runs.
             return;
         }
-        if self.count.take().is_some() {
+
+        let mut changed = self.count.take().is_some();
+        if !keep_register {
+            changed |= self.selected_register.take().is_some();
+            if self.pending_input.take().is_some() {
+                self.sync_editor_settings_for_state(window, cx);
+                changed = true;
+            }
+        }
+        if changed {
             cx.notify();
         }
     }
@@ -241,14 +319,25 @@ impl Helix {
             return;
         }
         self.mode = mode;
-        self.update_editor(cx, |helix, editor, cx| {
-            Self::sync_editor_settings(helix.mode, editor, window, cx);
-        });
+        self.sync_editor_settings_for_state(window, cx);
         cx.notify();
+    }
+
+    fn sync_editor_settings_for_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(cx, |helix, editor, cx| {
+            Self::sync_editor_settings(
+                helix.mode,
+                helix.pending_input.is_some(),
+                editor,
+                window,
+                cx,
+            );
+        });
     }
 
     fn sync_editor_settings(
         mode: Mode,
+        awaiting_input: bool,
         editor: &mut Editor,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -261,7 +350,7 @@ impl Helix {
         editor.set_clip_at_line_ends(false, cx);
         editor.set_collapse_matches(false);
         editor.set_input_enabled(inserting);
-        editor.set_expects_character_input(inserting);
+        editor.set_expects_character_input(inserting || awaiting_input);
         editor.set_cursor_offset_on_selection(!inserting);
         editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
     }
@@ -274,10 +363,9 @@ impl Helix {
     ) {
         match event {
             EditorEvent::Focused | EditorEvent::FocusedIn | EditorEvent::CursorShapeChanged => {
-                self.update_editor(cx, |helix, editor, cx| {
-                    Self::sync_editor_settings(helix.mode, editor, window, cx)
-                });
+                self.sync_editor_settings_for_state(window, cx);
             }
+            EditorEvent::InputIgnored { text } => self.input_ignored(text, window, cx),
             EditorEvent::Blurred => {
                 self.update_editor(cx, |helix, editor, cx| {
                     let settings = HelixSettings::get_global(cx);
@@ -338,6 +426,7 @@ impl Helix {
 pub(crate) struct HelixSettings {
     pub default_mode: Mode,
     pub show_edit_predictions_in_normal_mode: bool,
+    pub use_system_clipboard: UseSystemClipboard,
     normal_cursor_shape: CursorShape,
     select_cursor_shape: CursorShape,
     insert_cursor_shape: Option<CursorShape>,
@@ -369,6 +458,9 @@ impl Settings for HelixSettings {
             show_edit_predictions_in_normal_mode: vim
                 .show_edit_predictions_in_normal_mode
                 .unwrap_or_default(),
+            use_system_clipboard: vim
+                .use_system_clipboard
+                .unwrap_or(UseSystemClipboard::Always),
             normal_cursor_shape: cursor_shape.normal.unwrap_or_default().into(),
             select_cursor_shape: cursor_shape.visual.unwrap_or_default().into(),
             insert_cursor_shape: match cursor_shape.insert {

@@ -11,6 +11,13 @@
       "7": ["helix::PushDigit", 7],
       "8": ["helix::PushDigit", 8],
       "9": ["helix::PushDigit", 9],
+      "\"": "helix::SelectRegister",
+    },
+  },
+  {
+    "context": "Editor && helix_pending",
+    "bindings": {
+      "escape": "helix::NormalMode",
     },
   },
   {
