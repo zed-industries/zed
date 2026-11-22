@@ -339,17 +339,16 @@ impl Window {
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
-        // A key that doesn't continue what is pending is left for the view like
-        // any other. Dispatching it here as well would dispatch it twice when
-        // the view then leaves it.
-        let continues_pending = self.pending_input_keystrokes().is_some_and(|pending| {
+        let pending = self.pending_input_keystrokes();
+        let is_pending = pending.is_some();
+        let continues_pending = pending.is_some_and(|pending| {
             let mut input = pending.to_vec();
             input.push(event.keystroke.clone());
             let (bindings, is_pending, _) =
                 dispatch_tree.bindings_for_input(&input, &dispatch_path);
             is_pending || !bindings.is_empty()
         });
-        if !continues_pending {
+        let is_reserved = !continues_pending && {
             let input = std::slice::from_ref(&event.keystroke);
             let (bindings, _, context_stack) =
                 dispatch_tree.bindings_for_input(input, &dispatch_path);
@@ -359,14 +358,22 @@ impl Window {
             };
             // The first key of a longer binding is reserved too, or the view
             // could keep that key and the binding would never begin.
-            let is_reserved = bindings.first().is_some_and(is_reserved)
+            bindings.first().is_some_and(is_reserved)
                 || dispatch_tree
                     .possible_next_bindings_for_input(input, &context_stack)
                     .iter()
-                    .any(is_reserved);
-            if !is_reserved {
-                return false;
-            }
+                    .any(is_reserved)
+        };
+        if is_pending && !continues_pending {
+            // The pending binding ends here, as it would in the window's own
+            // content. Left pending, it would be completed by a later key even
+            // after the view had used this one.
+            self.flush_pending_input(cx);
+        }
+        if !continues_pending && !is_reserved {
+            // The key is left for the view like any other. Dispatching it here
+            // as well would dispatch it twice when the view then leaves it.
+            return false;
         }
         // The key is GPUI's whether or not anything acts on it. Leaving it to
         // the view as well would have it dispatched again when the view left it.
@@ -486,17 +493,29 @@ mod tests {
         // of that binding's keys are GPUI's.
         assert!(!platform_window.simulate_key_down_before_native_view(press("cmd-k")));
         cx.simulate_keystrokes(window.into(), "cmd-k");
-        // A key that doesn't continue the binding is the view's to see first,
-        // and isn't dispatched here, which would dispatch it twice if the view
-        // then left it.
+        // A key that doesn't continue the binding ends it. The key is the
+        // view's to see first, and isn't dispatched here, which would dispatch
+        // it twice if the view then left it.
         assert!(!platform_window.simulate_key_down_before_native_view(press("x")));
         assert!(
-            window
+            !window
                 .update(cx, |_, window, _| window.has_pending_keystrokes())
                 .unwrap()
         );
-        assert!(platform_window.simulate_key_down_before_native_view(press("o")));
-        assert_eq!(actions(cx), ["ordinary"]);
+        let keys = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |view, _, _| std::mem::take(&mut view.keys))
+                .unwrap()
+        };
+        // The binding's first key is dispatched on its own, as it is when
+        // the binding times out.
+        assert_eq!(keys(cx), ["k"]);
+        cx.simulate_keystrokes(window.into(), "x");
+        assert_eq!(keys(cx), ["x"]);
+        // Whether or not the view used that key, the rest of the binding's
+        // keys no longer complete it, and are the view's again.
+        assert!(!platform_window.simulate_key_down_before_native_view(press("o")));
+        assert_eq!(actions(cx), [] as [&str; 0]);
 
         // The view never sees the first key of a reserved binding, which it
         // could otherwise keep.
@@ -668,6 +687,7 @@ mod tests {
             native_view,
             other_focus: cx.focus_handle(),
             actions: Vec::new(),
+            keys: Vec::new(),
             presses: Vec::new(),
             paints_native_view_twice: false,
             unmark_count: 0,
@@ -711,6 +731,8 @@ mod tests {
         native_view: NativeView,
         other_focus: FocusHandle,
         actions: Vec<&'static str>,
+        /// The key presses dispatched to the window's content.
+        keys: Vec<String>,
         presses: Vec<&'static str>,
         paints_native_view_twice: bool,
         /// How many times the input handler of the "cover" element was told to
@@ -724,6 +746,9 @@ mod tests {
                 .size_full()
                 .on_action(cx.listener(|this, _: &Reserved, _, _| this.actions.push("reserved")))
                 .on_action(cx.listener(|this, _: &Ordinary, _, _| this.actions.push("ordinary")))
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, _| {
+                    this.keys.push(event.keystroke.key.clone())
+                }))
                 .child(
                     div()
                         .absolute()
@@ -857,6 +882,7 @@ mod tests {
             native_view: new_native_view(window, cx),
             other_focus: cx.focus_handle(),
             actions: Vec::new(),
+            keys: Vec::new(),
             presses: Vec::new(),
             paints_native_view_twice: false,
             unmark_count: 0,
