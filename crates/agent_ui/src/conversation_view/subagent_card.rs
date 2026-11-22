@@ -1,6 +1,6 @@
 use acp_thread::{
-    AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, SessionMessageSide, ToolCall,
-    ToolCallContent, ToolCallStatus,
+    AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, SessionMessageSide, ThreadStatus,
+    ToolCall, ToolCallContent, ToolCallStatus,
 };
 use agent_client_protocol::v2::schema as acp_v2;
 use gpui::{App, Entity, SharedString};
@@ -224,31 +224,47 @@ impl SubagentCardState {
     /// Builds the card for a subagent tool call. Once the call has finished, a subagent that
     /// recorded an outcome for the call's run (as native subagents do) shows that outcome.
     /// Calls saved before outcomes were recorded, and subagents of agents that don't report
-    /// state, show the tool call's status.
+    /// state, show the tool call's status. A call that started its subagent in the
+    /// background finishes right away, so its card follows the subagent instead.
     pub(crate) fn for_subagent_tool_call(
         tool_call: &ToolCall,
         subagent: Option<&AcpThread>,
         cx: &App,
     ) -> Self {
         let card = Self::from_tool_call(tool_call, cx);
-        let Some(SubagentEntries {
-            start,
-            end: Some(_),
-        }) = card.entries
+        let Some(entries) = card.entries else {
+            return card;
+        };
+        // A background call returns as soon as the subagent starts, so its status says
+        // nothing about the subagent's work.
+        let returned_early = card.status == SubagentStatus::Completed
+            && tool_call
+                .subagent_session_info
+                .as_ref()
+                .is_some_and(|info| info.run_in_background);
+        if entries.end.is_none() && !returned_early {
+            return card;
+        }
+        let Some(subagent) = subagent.filter(|subagent| subagent.subagent_association().is_some())
         else {
             return card;
         };
-        let Some(outcome) = subagent
-            .filter(|subagent| subagent.subagent_association().is_some())
-            .and_then(|subagent| subagent.subagent_outcome_after(start))
-        else {
-            return card;
+        let (status, error) = match subagent.subagent_outcome_after(entries.start) {
+            Some(outcome) => SubagentStatus::from_reported_state(Some(outcome)),
+            None if !returned_early => return card,
+            // The call can return before the subagent has received its message.
+            None if subagent.status() == ThreadStatus::Generating
+                || subagent.entries().len() <= entries.start =>
+            {
+                (SubagentStatus::Running, None)
+            }
+            // The run left no outcome, as when Zed quit while it was working.
+            None => (SubagentStatus::Unknown, None),
         };
-        let (status, error) = SubagentStatus::from_reported_state(Some(outcome));
         Self {
             status,
             error,
-            can_stop: false,
+            can_stop: status == SubagentStatus::Running,
             ..card
         }
     }
@@ -290,6 +306,12 @@ impl SubagentCardState {
                 "Spawning Agent…".into()
             }
         })
+    }
+
+    /// Whether this call sent a message to a subagent that had already worked, rather
+    /// than starting one.
+    pub(crate) fn is_follow_up(&self) -> bool {
+        self.entries.is_some_and(|entries| entries.start > 0)
     }
 
     /// The subagent entry that full screen should open at: the start of this card's part
@@ -376,6 +398,29 @@ mod tests {
         ] {
             assert_eq!(card(None, status, None).title(None).as_ref(), title);
         }
+    }
+
+    #[test]
+    fn a_call_to_a_subagent_that_already_worked_is_a_follow_up() {
+        let first = card(
+            None,
+            SubagentStatus::Completed,
+            Some(SubagentEntries {
+                start: 0,
+                end: Some(3),
+            }),
+        );
+        assert!(!first.is_follow_up());
+        let later = card(
+            None,
+            SubagentStatus::Running,
+            Some(SubagentEntries {
+                start: 4,
+                end: None,
+            }),
+        );
+        assert!(later.is_follow_up());
+        assert!(!card(None, SubagentStatus::Running, None).is_follow_up());
     }
 
     #[test]

@@ -1,11 +1,11 @@
 use crate::{
     ApplyCodeActionTool, AskUserTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
-    CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
-    DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
-    GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
-    ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    WriteFileTool, decide_permission_from_settings,
+    CreateDirectoryTool, CreateThreadTool, DbBackgroundWork, DbLanguageModel, DbThread,
+    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool,
+    GetCodeActionsTool, GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool,
+    MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
+    StopAgentTool, StopCommandTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri, ProcessOutput};
 use action_log::ActionLog;
@@ -771,6 +771,25 @@ pub enum AgentMessageContent {
     ToolUse(LanguageModelToolUse),
 }
 
+/// A command that the terminal tool started with `run_in_background` and that
+/// has not exited yet.
+struct BackgroundCommand {
+    id: acp_v2::TerminalId,
+    command: SharedString,
+    terminal: Rc<dyn TerminalHandle>,
+    /// Whether the agent stopped it, and so already has its output, or the
+    /// user stopped the thread. Either way its result is not delivered.
+    stopped_by_agent: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SubagentStopRequest {
+    Immediately,
+    AtNextBoundary,
+    /// A request to stop at the next boundary that has taken effect.
+    StoppedAtBoundary,
+}
+
 pub trait TerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp_v2::TerminalId>;
     fn current_output(&self, cx: &AsyncApp) -> Result<ProcessOutput>;
@@ -787,6 +806,16 @@ pub trait SubagentHandle {
     fn num_entries(&self, cx: &App) -> usize;
     /// Runs a turn for a given message and returns both the response and the index of that output message.
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
+    /// Like `send`, but the run isn't tied to the parent's current turn:
+    /// cancelling or replacing that turn leaves the subagent running.
+    fn send_in_background(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+        self.send(message, cx)
+    }
+    /// Whether the last run ended early because the agent that started this
+    /// subagent asked it to stop after its current step.
+    fn stopped_after_current_step(&self, _cx: &App) -> bool {
+        false
+    }
 }
 
 pub trait ThreadEnvironment {
@@ -814,6 +843,80 @@ pub trait ThreadEnvironment {
     ) -> Result<Rc<dyn SubagentHandle>> {
         Err(anyhow::anyhow!(
             "Resuming subagent sessions is not supported"
+        ))
+    }
+
+    /// Starts `message` on `subagent` without waiting for it. Its final
+    /// message is delivered to this thread as a new message once it finishes.
+    fn run_subagent_in_background(
+        &self,
+        subagent: Rc<dyn SubagentHandle>,
+        message: String,
+        cx: &mut App,
+    ) -> Result<()> {
+        let _ = (subagent, message, cx);
+        Err(anyhow::anyhow!(
+            "Background agents are not supported in this environment"
+        ))
+    }
+
+    /// Stops a subagent that this thread started in the background. With
+    /// `immediately`, its turn is cancelled and the task resolves, once it has
+    /// stopped, to what it had produced; nothing more is delivered for that
+    /// run. Otherwise it stops at its next message boundary, the way a steered
+    /// thread does, and reports back like any other background run.
+    fn stop_background_subagent(
+        &self,
+        session_id: acp_v2::SessionId,
+        immediately: bool,
+        cx: &mut App,
+    ) -> Task<Result<String>> {
+        let _ = (session_id, immediately, cx);
+        Task::ready(Err(anyhow::anyhow!(
+            "Background agents are not supported in this environment"
+        )))
+    }
+
+    /// Keeps track of a command that the terminal tool left running in the
+    /// background, so that it can be listed and stopped.
+    fn register_background_command(
+        &self,
+        id: acp_v2::TerminalId,
+        command: String,
+        terminal: Rc<dyn TerminalHandle>,
+        cx: &mut App,
+    ) {
+        let _ = (id, command, terminal, cx);
+    }
+
+    /// Forgets a background command that has finished. Returns whether the
+    /// agent stopped it, in which case it already has the command's output.
+    fn background_command_finished(&self, id: &acp_v2::TerminalId, cx: &mut App) -> bool {
+        let _ = (id, cx);
+        false
+    }
+
+    /// Kills a command that this thread left running in the background. The
+    /// task resolves, once the command has exited, to what it had printed.
+    fn stop_background_command(
+        &self,
+        id: acp_v2::TerminalId,
+        cx: &mut App,
+    ) -> Task<Result<String>> {
+        let _ = (id, cx);
+        Task::ready(Err(anyhow::anyhow!(
+            "Background commands are not supported in this environment"
+        )))
+    }
+
+    /// Delivers `message` to this thread as a new message, on behalf of work
+    /// that finished in the background. An idle thread starts a new turn with
+    /// it; a thread that is mid-turn is steered, ending its turn at the next
+    /// message boundary to take the message.
+    fn deliver_background_message(&self, message: String, cx: &mut App) -> Result<()> {
+        let _ = (message, cx);
+        Err(anyhow::anyhow!(
+            "Background work is not supported in this environment"
         ))
     }
 
@@ -1296,6 +1399,7 @@ pub(crate) struct StreamingSaveKey {
     thinking_effort: Option<String>,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     sandbox_grants: crate::db::DbSandboxGrants,
+    background_work_count: usize,
 }
 
 pub struct Thread {
@@ -1356,6 +1460,19 @@ pub struct Thread {
     ui_scroll_position: Option<gpui::ListOffset>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
+    /// Subagents started with `run_in_background`. Unlike `running_subagents`
+    /// they outlive the turn that started them: cancelling or replacing that
+    /// turn leaves them running.
+    background_subagents: Vec<WeakEntity<Thread>>,
+    /// Background subagent results waiting for this thread to go idle. While
+    /// there are any, the running turn ends at its next message boundary, the
+    /// way it does for a steering message.
+    pending_background_results: usize,
+    /// How the agent that started this subagent asked its current run to stop,
+    /// if it did.
+    stop_request: Option<SubagentStopRequest>,
+    /// Commands that the terminal tool left running in the background.
+    background_commands: Vec<BackgroundCommand>,
     inherits_parent_model_settings: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     /// Sandbox permissions the user approved "for the rest of the thread".
@@ -1506,6 +1623,10 @@ impl Thread {
             draft_prompt: None,
             ui_scroll_position: None,
             running_subagents: Vec::new(),
+            background_subagents: Vec::new(),
+            pending_background_results: 0,
+            stop_request: None,
+            background_commands: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
@@ -1794,6 +1915,64 @@ impl Thread {
         }
     }
 
+    /// Reports the background work that was running when the thread was saved
+    /// as interrupted: none of it survived Zed quitting. Each item becomes a
+    /// message after the history, in the form a finished item reports back, so
+    /// the model reads it before the user's next message. No turn starts.
+    fn report_interrupted_background_work(&mut self, work: Vec<DbBackgroundWork>) {
+        for item in work {
+            let text = match item {
+                DbBackgroundWork::Agent { session_id, title } => {
+                    crate::interrupted_background_agent_message(&session_id, &title)
+                }
+                DbBackgroundWork::Command {
+                    terminal_id,
+                    command,
+                } => crate::interrupted_background_command_message(&terminal_id, &command),
+            };
+            self.messages.push(Arc::new(Message::User(UserMessage {
+                id: ClientUserMessageId::new(),
+                content: Arc::from([UserMessageContent::Text(text)]),
+            })));
+        }
+    }
+
+    /// The background work that is still running, as saved with the thread.
+    fn background_work_to_db(&self, cx: &App) -> Vec<DbBackgroundWork> {
+        let agents = self
+            .background_subagents
+            .iter()
+            .filter_map(|subagent| subagent.upgrade())
+            .map(|subagent| {
+                let subagent = subagent.read(cx);
+                DbBackgroundWork::Agent {
+                    session_id: subagent.id().clone(),
+                    title: subagent.title().unwrap_or_else(|| "Agent".into()),
+                }
+            });
+        let commands = self
+            .background_commands
+            .iter()
+            .filter(|command| !command.stopped_by_agent)
+            .map(|command| DbBackgroundWork::Command {
+                terminal_id: command.id.clone(),
+                command: command.command.clone(),
+            });
+        agents.chain(commands).collect()
+    }
+
+    fn background_work_count(&self) -> usize {
+        self.background_subagents
+            .iter()
+            .filter(|subagent| subagent.upgrade().is_some())
+            .count()
+            + self
+                .background_commands
+                .iter()
+                .filter(|command| !command.stopped_by_agent)
+                .count()
+    }
+
     pub fn from_db(
         id: acp_v2::SessionId,
         db_thread: DbThread,
@@ -1837,7 +2016,7 @@ impl Thread {
         let context_usage =
             context_usage_from_history(&db_thread.messages, &db_thread.request_token_usage);
 
-        Self {
+        let mut thread = Self {
             id,
             prompt_id: PromptId::new(),
             title: if db_thread.title.is_empty() {
@@ -1884,12 +2063,18 @@ impl Thread {
                 offset_in_item: gpui::px(sp.offset_in_item),
             }),
             running_subagents: Vec::new(),
+            background_subagents: Vec::new(),
+            pending_background_results: 0,
+            stop_request: None,
+            background_commands: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
-        }
+        };
+        thread.report_interrupted_background_work(db_thread.background_work);
+        thread
     }
 
     pub fn sandbox_status(&self, cx: &App) -> Option<(ThreadSandbox, ThreadSandbox)> {
@@ -1988,6 +2173,7 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            background_work: self.background_work_to_db(cx),
         };
 
         cx.background_spawn(async move {
@@ -2014,6 +2200,7 @@ impl Thread {
             thinking_effort: self.thinking_effort.clone(),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            background_work_count: self.background_work_count(),
         }
     }
 
@@ -2273,6 +2460,7 @@ impl Thread {
             self.project.clone(),
             environment.clone(),
         ));
+        self.add_tool(StopCommandTool::new(environment.clone()));
         self.add_tool(WebSearchTool);
 
         self.add_tool(AskUserTool);
@@ -2294,6 +2482,7 @@ impl Thread {
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment.clone()));
+            self.add_tool(StopAgentTool::new(environment.clone()));
         }
 
         // Sibling-thread tools are exposed at every depth: a subagent should
@@ -2419,6 +2608,55 @@ impl Thread {
 
     pub fn end_turn_at_next_boundary(&self) -> bool {
         self.end_turn_at_next_boundary
+            || self.pending_background_results > 0
+            || self.stop_request == Some(SubagentStopRequest::AtNextBoundary)
+    }
+
+    /// Ends this subagent's run at its next message boundary, on behalf of the
+    /// agent that started it.
+    pub(crate) fn stop_at_next_boundary(&mut self) {
+        self.stop_request = Some(SubagentStopRequest::AtNextBoundary);
+    }
+
+    /// Cancels this subagent's run on behalf of the agent that started it.
+    pub(crate) fn stop_for_parent(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.stop_request = Some(SubagentStopRequest::Immediately);
+        self.request_cancel(cx)
+    }
+
+    pub(crate) fn was_stopped_by_parent(&self) -> bool {
+        self.stop_request == Some(SubagentStopRequest::Immediately)
+    }
+
+    /// Records that the turn ended at a message boundary with work left to do.
+    /// A request to stop there has then taken effect; a run that ends on its
+    /// own before reaching a boundary was not cut short by it.
+    fn turn_ended_at_boundary(&mut self) {
+        if self.stop_request == Some(SubagentStopRequest::AtNextBoundary) {
+            self.stop_request = Some(SubagentStopRequest::StoppedAtBoundary);
+        }
+    }
+
+    /// Whether this subagent's last run ended early, at a message boundary,
+    /// because the agent that started it asked for that.
+    pub(crate) fn was_stopped_at_boundary(&self) -> bool {
+        self.stop_request == Some(SubagentStopRequest::StoppedAtBoundary)
+    }
+
+    /// A stop request applies to the run that was under way when it was made.
+    pub(crate) fn clear_stop_request(&mut self) {
+        self.stop_request = None;
+    }
+
+    /// Asks the running turn, if any, to end at its next message boundary so
+    /// that a background subagent's result can be delivered. Holds until the
+    /// matching `finish_background_result_delivery`.
+    pub(crate) fn begin_background_result_delivery(&mut self) {
+        self.pending_background_results += 1;
+    }
+
+    pub(crate) fn finish_background_result_delivery(&mut self) {
+        self.pending_background_results = self.pending_background_results.saturating_sub(1);
     }
 
     fn accumulate_token_usage(&mut self, update: language_model::TokenUsage) {
@@ -3331,8 +3569,13 @@ impl Thread {
             } else if end_turn {
                 return Ok(());
             } else {
-                let end_at_boundary =
-                    this.update(cx, |this, _| this.end_turn_at_next_boundary())?;
+                let end_at_boundary = this.update(cx, |this, _| {
+                    let end_at_boundary = this.end_turn_at_next_boundary();
+                    if end_at_boundary {
+                        this.turn_ended_at_boundary();
+                    }
+                    end_at_boundary
+                })?;
                 if end_at_boundary {
                     log::debug!("Steering message queued, ending turn at message boundary");
                     return Ok(());
@@ -4528,6 +4771,193 @@ impl Thread {
         });
     }
 
+    pub(crate) fn register_background_subagent(
+        &mut self,
+        subagent: WeakEntity<Thread>,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_subagents.push(subagent);
+        cx.notify();
+    }
+
+    pub(crate) fn unregister_background_subagent(
+        &mut self,
+        subagent_session_id: &acp_v2::SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_subagents.retain(|s| {
+            s.upgrade()
+                .map_or(false, |s| s.read(cx).id() != subagent_session_id)
+        });
+        cx.notify();
+    }
+
+    /// The subagent with `session_id`, if this thread started it in the
+    /// background and it is still working.
+    pub(crate) fn background_subagent(
+        &self,
+        session_id: &acp_v2::SessionId,
+        cx: &App,
+    ) -> Option<Entity<Thread>> {
+        self.background_subagents
+            .iter()
+            .filter_map(|subagent| subagent.upgrade())
+            .find(|subagent| subagent.read(cx).id() == session_id)
+    }
+
+    /// Whether subagents or commands started in the background are still
+    /// working for this thread, which can be the case while the thread itself
+    /// is idle.
+    pub fn has_background_work(&self) -> bool {
+        !self.background_commands.is_empty()
+            || self
+                .background_subagents
+                .iter()
+                .any(|subagent| subagent.upgrade().is_some())
+    }
+
+    pub(crate) fn register_background_command(
+        &mut self,
+        id: acp_v2::TerminalId,
+        command: SharedString,
+        terminal: Rc<dyn TerminalHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_commands.push(BackgroundCommand {
+            id,
+            command,
+            terminal,
+            stopped_by_agent: false,
+        });
+        cx.notify();
+    }
+
+    /// Forgets a background command that has finished. Returns whether the
+    /// agent stopped it.
+    pub(crate) fn background_command_finished(
+        &mut self,
+        id: &acp_v2::TerminalId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(ix) = self
+            .background_commands
+            .iter()
+            .position(|command| &command.id == id)
+        else {
+            return false;
+        };
+        let command = self.background_commands.remove(ix);
+        cx.notify();
+        command.stopped_by_agent
+    }
+
+    /// Marks a running background command as stopped by the agent and returns
+    /// its terminal, for the caller to kill.
+    pub(crate) fn stop_background_command(
+        &mut self,
+        id: &acp_v2::TerminalId,
+    ) -> Option<Rc<dyn TerminalHandle>> {
+        let command = self
+            .background_commands
+            .iter_mut()
+            .find(|command| &command.id == id)?;
+        command.stopped_by_agent = true;
+        Some(command.terminal.clone())
+    }
+
+    /// Stops the subagents and commands this thread started in the background,
+    /// on behalf of the user stopping the thread. As with `stop_agent` and
+    /// `stop_command`, nothing they produce is delivered back, so no turn
+    /// starts. Instead, each one leaves a message after the history saying the
+    /// user stopped it, which the model reads before the user's next message
+    /// and which is shown in the thread right away.
+    /// The task resolves once the subagents have stopped.
+    pub fn stop_background_work(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let mut notices = Vec::new();
+
+        let subagents = self
+            .background_subagents
+            .iter()
+            .filter_map(|subagent| subagent.upgrade())
+            .collect::<Vec<_>>();
+        let mut stopping = Vec::with_capacity(subagents.len());
+        for subagent in subagents {
+            let (session_id, title) = {
+                let subagent = subagent.read(cx);
+                (
+                    subagent.id().clone(),
+                    subagent.title().unwrap_or_else(|| "Agent".into()),
+                )
+            };
+            notices.push(crate::stopped_background_agent_message(&session_id, &title));
+            stopping.push(subagent.update(cx, |thread, cx| thread.stop_for_parent(cx)));
+        }
+
+        let mut terminals = Vec::new();
+        for command in &mut self.background_commands {
+            if command.stopped_by_agent {
+                continue;
+            }
+            command.stopped_by_agent = true;
+            notices.push(crate::stopped_background_command_message(
+                &command.id,
+                &command.command,
+            ));
+            terminals.push(command.terminal.clone());
+        }
+
+        if notices.is_empty() {
+            return Task::ready(());
+        }
+        let notices = notices
+            .into_iter()
+            .map(|text| UserMessage {
+                id: ClientUserMessageId::new(),
+                content: Arc::from([UserMessageContent::Text(text)]),
+            })
+            .collect::<Vec<_>>();
+        self.messages.extend(
+            notices
+                .iter()
+                .map(|notice| Arc::new(Message::User(notice.clone()))),
+        );
+        cx.emit(BackgroundNoticesAdded(notices));
+        cx.notify();
+
+        cx.spawn(async move |_, cx| {
+            for terminal in terminals {
+                terminal.kill(cx).log_err();
+            }
+            futures::future::join_all(stopping).await;
+        })
+    }
+
+    /// The commands this thread left running in the background, as terminal
+    /// id and command line.
+    pub fn background_commands(&self) -> Vec<(acp_v2::TerminalId, SharedString)> {
+        self.background_commands
+            .iter()
+            .map(|command| (command.id.clone(), command.command.clone()))
+            .collect()
+    }
+
+    /// The subagents currently working for this thread, whether within its
+    /// turn or in the background, as session id and title.
+    pub fn active_subagents(&self, cx: &App) -> Vec<(acp_v2::SessionId, SharedString)> {
+        self.running_subagents
+            .iter()
+            .chain(&self.background_subagents)
+            .filter_map(|subagent| subagent.upgrade())
+            .map(|subagent| {
+                let subagent = subagent.read(cx);
+                (
+                    subagent.id().clone(),
+                    subagent.title().unwrap_or_else(|| "Agent".into()),
+                )
+            })
+            .collect()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn running_subagent_ids(&self, cx: &App) -> Vec<acp_v2::SessionId> {
         self.running_subagents
@@ -5359,6 +5789,14 @@ impl EventEmitter<TokenUsageUpdated> for Thread {}
 pub(crate) struct CancellationRequested;
 
 impl EventEmitter<CancellationRequested> for Thread {}
+
+/// Messages added after the history, outside of any turn, to tell the model
+/// about background work the user stopped. A turn's own messages reach the
+/// session through its event stream; these have none, so the session is told
+/// with this event, to show them as a replayed thread would.
+pub(crate) struct BackgroundNoticesAdded(pub Vec<UserMessage>);
+
+impl EventEmitter<BackgroundNoticesAdded> for Thread {}
 
 pub struct TitleUpdated;
 
