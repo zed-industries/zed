@@ -52,9 +52,9 @@ pub(super) struct NativeViews {
     /// Set while first responder is being matched to GPUI's focus, so that
     /// the requests this makes don't each start matching it again.
     reconciling: bool,
-    /// Whether GPUI was told of a mouse press that went to a native view, and
-    /// is owed the release.
-    pressed_in_view: bool,
+    /// The mouse buttons, by number, whose presses went to a native view. GPUI
+    /// was told of each press, and is owed its release.
+    buttons_pressed_in_view: Vec<isize>,
     /// The keys, by key code, whose presses GPUI took ahead of a native view.
     /// Their releases are GPUI's too, and not the view's, which never saw them
     /// pressed.
@@ -155,6 +155,20 @@ impl NativeViews {
         self.views
             .iter()
             .any(|attached| attached.placement.is_some())
+    }
+
+    fn note_button_pressed_in_view(&mut self, button: isize) {
+        if !self.buttons_pressed_in_view.contains(&button) {
+            self.buttons_pressed_in_view.push(button);
+        }
+    }
+
+    /// Returns whether GPUI is owed the release of `button`, which settles it.
+    fn take_button_pressed_in_view(&mut self, button: isize) -> bool {
+        let count = self.buttons_pressed_in_view.len();
+        self.buttons_pressed_in_view
+            .retain(|pressed| *pressed != button);
+        self.buttons_pressed_in_view.len() != count
     }
 
     /// What `responder` is to the window whose own view is `gpui_view`.
@@ -873,7 +887,10 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
             NSEventType::LeftMouseDown | NSEventType::RightMouseDown | NSEventType::OtherMouseDown
         ) {
             let position: NSPoint = msg_send![event, locationInWindow];
+            // GPUI knows where its own content leaves a native view uncovered,
+            // but not what else AppKit has in front of the view there.
             hit_test_native_view(&window_state, position)
+                .and_then(|_| native_view_under_press(&window_state, this, position))
         } else {
             None
         };
@@ -886,8 +903,10 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
             // it would go on treating the button as held.
             let release = is_release
                 .then(|| {
+                    let button: isize = msg_send![event, buttonNumber];
                     let mut lock = window_state.try_lock()?;
-                    std::mem::take(&mut lock.native_views.pressed_in_view)
+                    lock.native_views
+                        .take_button_pressed_in_view(button)
                         .then(|| lock.content_size().height)
                 })
                 .flatten()
@@ -898,10 +917,11 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
             }
             return;
         }
+        let button: isize = msg_send![event, buttonNumber];
         let window_height = {
             let mut lock = window_state.lock();
             lock.native_views.clicked = clicked;
-            lock.native_views.pressed_in_view = true;
+            lock.native_views.note_button_pressed_in_view(button);
             lock.content_size().height
         };
         // GPUI goes first, so that focus it moves in response, such as a dismissed
@@ -912,6 +932,38 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
         let _: () = msg_send![super(this, superclass), sendEvent: event];
         window_state.lock().native_views.clicked = None;
     }
+}
+
+/// The native view that AppKit delivers a mouse press at this position to, if
+/// it delivers it to one.
+///
+/// # Safety
+///
+/// `window` must be a live GPUI window, and the window state must be unlocked,
+/// because hit-testing calls back into the GPUI view.
+unsafe fn native_view_under_press(
+    window_state: &Rc<Mutex<MacWindowState>>,
+    window: &AnyObject,
+    position_in_window: NSPoint,
+) -> Option<NativeViewId> {
+    // SAFETY: The caller guarantees that `window` is live, and its views are live
+    // while they are in it.
+    let recipient: *mut AnyObject = unsafe {
+        let content_view: *mut AnyObject = msg_send![window, contentView];
+        if content_view.is_null() {
+            return None;
+        }
+        // The view around the content view holds the titlebar's controls too.
+        // It has no superview, so it is asked in the window's coordinates.
+        let frame_view: *mut AnyObject = msg_send![content_view, superview];
+        let root_view = if frame_view.is_null() {
+            content_view
+        } else {
+            frame_view
+        };
+        msg_send![root_view, hitTest: position_in_window]
+    };
+    window_state.try_lock()?.native_views.containing(recipient)
 }
 
 /// Notes whether the pointer is over a native view, and has AppKit rebuild the
@@ -1507,6 +1559,19 @@ mod tests {
             Some(id(1)),
             false
         ));
+    }
+
+    #[test]
+    fn gpui_is_owed_the_release_of_each_button_pressed_in_a_native_view() {
+        let mut views = NativeViews::default();
+        views.note_button_pressed_in_view(0);
+        views.note_button_pressed_in_view(1);
+        // Releasing one button leaves the other held.
+        assert!(views.take_button_pressed_in_view(0));
+        assert!(!views.take_button_pressed_in_view(0));
+        assert!(views.take_button_pressed_in_view(1));
+        // A button pressed elsewhere reaches GPUI the usual way.
+        assert!(!views.take_button_pressed_in_view(2));
     }
 
     #[test]
