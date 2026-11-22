@@ -835,7 +835,7 @@ impl HitboxId {
         window.mouse_hit_test.ids.contains(&self)
     }
 
-    fn next(self) -> HitboxId {
+    pub(crate) fn next(self) -> HitboxId {
         HitboxId(self.0.wrapping_add(1))
     }
 }

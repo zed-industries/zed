@@ -1,9 +1,9 @@
 use crate::{Action, KeyBinding, KeyDownEvent, PlatformInput};
 use crate::{
     AnyWindowHandle, App, Bounds, Element, ElementId, FocusHandle, FocusId, Focusable,
-    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, InteractiveElement,
-    IntoElement, LayoutId, PaintNativeView, ParentElement, Pixels, Point, Style, Styled, Window,
-    div,
+    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, Hsla, InspectorElementId,
+    InteractiveElement, IntoElement, LayoutId, PaintNativeView, ParentElement, Pixels, Point,
+    Style, Styled, Window, div,
 };
 use anyhow::{Context as _, Result};
 use collections::HashSet;
@@ -73,6 +73,9 @@ pub(crate) struct NativeViewState {
     window: AnyWindowHandle,
     focus_handle: FocusHandle,
     background: Cell<Hsla>,
+    /// The hitbox of the occurrence that shows the view, which is the one
+    /// painted first in a frame that paints the view more than once.
+    shown_hitbox: Cell<Option<HitboxId>>,
     reserved_actions: RefCell<HashSet<TypeId>>,
     _attachment: Box<dyn Any>,
 }
@@ -107,6 +110,7 @@ impl NativeView {
             window: window.handle,
             focus_handle: cx.focus_handle(),
             background: Cell::new(Hsla::transparent_black()),
+            shown_hitbox: Cell::new(None),
             reserved_actions: RefCell::default(),
             _attachment: attachment,
         });
@@ -203,8 +207,34 @@ impl Element for NativeViewElement {
         window: &mut Window,
         _cx: &mut App,
     ) -> Option<Hitbox> {
-        (self.0.0.window == window.handle)
-            .then(|| window.insert_hitbox(bounds, HitboxBehavior::BlockMouse))
+        let state = &self.0.0;
+        if state.window != window.handle {
+            return None;
+        }
+        // The view is only where it is painted first, so a later occurrence
+        // must not keep mouse input from what is behind it. It still has a
+        // hitbox, which becomes the view's if a frame reuses this occurrence
+        // after the first one has gone. An occurrence that is clipped away
+        // paints nothing, and doesn't count as the first.
+        let is_visible = !bounds.intersect(&window.content_mask().bounds).is_empty();
+        let is_shown_elsewhere = state.shown_hitbox.get().is_some_and(|shown| {
+            window
+                .next_frame
+                .hitboxes
+                .iter()
+                .any(|hitbox| hitbox.id == shown)
+        });
+        let shows_view = is_visible && !is_shown_elsewhere;
+        let behavior = if shows_view {
+            HitboxBehavior::BlockMouse
+        } else {
+            HitboxBehavior::Normal
+        };
+        let hitbox = window.insert_hitbox(bounds, behavior);
+        if shows_view {
+            state.shown_hitbox.set(Some(hitbox.id));
+        }
+        Some(hitbox)
     }
 
     fn paint(
@@ -566,6 +596,26 @@ mod tests {
                 assert_eq!(bounds, [ScaledPixels::from(0.)]);
             })
             .unwrap();
+
+        // Where the view was painted again, it isn't shown and takes no mouse
+        // input, so what is behind it there gets the press.
+        let id = window
+            .update(cx, |view, _, _| view.native_view.0.id)
+            .unwrap();
+        let platform_window = cx.test_window(window.into());
+        let painted_first = point(px(75.), px(75.));
+        let painted_again = point(px(250.), px(50.));
+        assert_eq!(
+            platform_window.hit_test_native_view(painted_first),
+            Some(id)
+        );
+        assert_eq!(platform_window.hit_test_native_view(painted_again), None);
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_mouse_down(painted_again, MouseButton::Left, Modifiers::default());
+        let presses = window
+            .update(&mut cx, |view, _, _| std::mem::take(&mut view.presses))
+            .unwrap();
+        assert_eq!(presses, ["outside cover", "behind second occurrence"]);
     }
 
     #[gpui::test]
@@ -694,6 +744,12 @@ mod tests {
                             .top_0()
                             .left(px(200.))
                             .size(px(100.))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, _| {
+                                    this.presses.push("behind second occurrence")
+                                }),
+                            )
                             .child(self.native_view.clone()),
                     )
                 })
