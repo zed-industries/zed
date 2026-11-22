@@ -335,6 +335,10 @@ impl LinuxPlatform {
         let loop_handle = event_loop.handle();
         LinuxCommon::register_sources(&common, &loop_handle, main_receiver, power_receiver)
             .expect("failed to register Linux event sources");
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        if allowed_modes.intersects(WindowingModes::WAYLAND | WindowingModes::X11) {
+            quit_on_sigterm(&loop_handle, event_loop.get_signal()).log_err();
+        }
         Self {
             common,
             event_loop: RefCell::new(Some(event_loop)),
@@ -1735,6 +1739,36 @@ fn release_on_drop(request: Request<()>, executor: BackgroundExecutor) -> Activi
             })
             .detach();
     })
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn quit_on_sigterm(
+    loop_handle: &LoopHandle<'static, ()>,
+    loop_signal: LoopSignal,
+) -> anyhow::Result<()> {
+    const QUIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    let (sender, quit_requests) = calloop::channel::channel::<()>();
+    loop_handle
+        .insert_source(quit_requests, move |event, _, _| {
+            if let calloop::channel::Event::Msg(()) = event {
+                loop_signal.stop();
+            }
+        })
+        .map_err(|error| anyhow!("failed to register SIGTERM listener: {error}"))?;
+    let (mut reader, writer) = std::os::unix::net::UnixStream::pair()?;
+    std::thread::Builder::new()
+        .name("SigtermListener".to_string())
+        .spawn(move || {
+            if reader.read_exact(&mut [0u8]).is_err() {
+                return;
+            }
+            sender.send(()).log_err();
+            std::thread::sleep(QUIT_TIMEOUT);
+            signal_hook::low_level::emulate_default_handler(signal_hook::consts::SIGTERM).log_err();
+        })?;
+    signal_hook::low_level::pipe::register(signal_hook::consts::SIGTERM, writer)?;
+    Ok(())
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]

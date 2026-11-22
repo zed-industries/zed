@@ -25,6 +25,7 @@ use std::{
     },
     ffi::OsStr,
     ffi::OsString,
+    io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
@@ -187,6 +188,8 @@ pub struct AutoUpdater {
     update_check_type: UpdateCheckType,
     _wake_subscription: gpui::Subscription,
     dismissed_status: Option<AutoUpdateStatus>,
+    staged_update: Option<StagedUpdate>,
+    _staged_update_subscription: gpui::Subscription,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -412,6 +415,124 @@ impl InstallerDir {
     }
 }
 
+type FileState = (u64, Option<SystemTime>);
+
+struct InstalledRelease {
+    restart_path: Option<PathBuf>,
+    staged_update: Option<StagedUpdate>,
+}
+
+struct StagedUpdate {
+    dir: PathBuf,
+    bundle: PathBuf,
+    installed: PathBuf,
+    installed_binary: PathBuf,
+    installed_binary_state: Option<FileState>,
+}
+
+impl StagedUpdate {
+    fn new(
+        staging_dir: tempfile::TempDir,
+        bundle: PathBuf,
+        installed: PathBuf,
+        installed_binary: PathBuf,
+    ) -> Self {
+        Self {
+            dir: staging_dir.keep(),
+            bundle,
+            installed,
+            installed_binary_state: file_state(&installed_binary),
+            installed_binary,
+        }
+    }
+
+    fn install(&self) -> Result<()> {
+        anyhow::ensure!(
+            file_state(&self.installed_binary) == self.installed_binary_state,
+            "{:?} changed after the update was staged, keeping it",
+            self.installed_binary
+        );
+        let previous = self.dir.join("previous");
+        std::fs::rename(&self.installed, &previous)
+            .with_context(|| format!("failed to move {:?}", self.installed))?;
+        if let Err(error) = std::fs::rename(&self.bundle, &self.installed) {
+            std::fs::rename(&previous, &self.installed)
+                .with_context(|| format!("failed to restore {:?} after {error}", self.installed))?;
+            return Err(error).with_context(|| {
+                format!("failed to move {:?} to {:?}", self.bundle, self.installed)
+            });
+        }
+        Ok(())
+    }
+
+    fn keeps_previous_app(&self) -> bool {
+        !self.installed.exists() && self.dir.join("previous").exists()
+    }
+
+    async fn remove(self) {
+        match fs::remove_dir_all(&self.dir).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => log::warn!("failed to remove the staged update {:?}: {error}", self.dir),
+        }
+    }
+}
+
+fn file_state(path: &Path) -> Option<FileState> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()))
+}
+
+async fn create_staging_dir(bundle: &Path, swapped: &Path) -> Result<Option<tempfile::TempDir>> {
+    let parent = bundle
+        .parent()
+        .with_context(|| format!("no parent dir for {bundle:?}"))?;
+    let name = bundle
+        .file_name()
+        .and_then(OsStr::to_str)
+        .with_context(|| format!("invalid app path {bundle:?}"))?;
+    let prefix = format!(".{name}.update.");
+    remove_stale_dirs(parent, &prefix).await;
+
+    if !can_swap(parent, swapped) {
+        log::warn!("cannot swap {swapped:?} from {parent:?}, installing the update in place");
+        return Ok(None);
+    }
+    match tempfile::Builder::new().prefix(&prefix).tempdir_in(parent) {
+        Ok(staging_dir) => Ok(Some(staging_dir)),
+        Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+            log::warn!("cannot stage the update in {parent:?}, installing it in place: {error}");
+            Ok(None)
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to create a staging dir in {parent:?}"))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn can_swap(staging_parent: &Path, swapped: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let Some(swapped_parent) = swapped.parent() else {
+        return false;
+    };
+    let writable = |path: &Path| nix::unistd::access(path, nix::unistd::AccessFlags::W_OK).is_ok();
+    let same_device = match (
+        std::fs::metadata(staging_parent),
+        std::fs::metadata(swapped_parent),
+    ) {
+        (Ok(staging_parent), Ok(swapped_parent)) => staging_parent.dev() == swapped_parent.dev(),
+        _ => false,
+    };
+    same_device && writable(swapped_parent) && writable(swapped)
+}
+
+#[cfg(not(unix))]
+fn can_swap(_staging_parent: &Path, _swapped: &Path) -> bool {
+    true
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UpdateCheckType {
     Automatic,
@@ -459,6 +580,8 @@ impl AutoUpdater {
             }
         });
 
+        let staged_update_subscription = cx.on_app_quit(|this, cx| this.install_staged_update(cx));
+
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
@@ -468,6 +591,8 @@ impl AutoUpdater {
             update_check_type: UpdateCheckType::Automatic,
             _wake_subscription: wake_subscription,
             dismissed_status: None,
+            staged_update: None,
+            _staged_update_subscription: staged_update_subscription,
         }
     }
 
@@ -848,20 +973,26 @@ impl AutoUpdater {
             ))
             .await
         };
-        let new_binary_path = install_result
+        let installed_release = install_result
             .with_context(|| format!("Failed to install update at: {}", target_path.display()))?;
-        if let Some(new_binary_path) = new_binary_path {
-            cx.update(|cx| cx.set_restart_path(new_binary_path));
+        if let Some(restart_path) = installed_release.restart_path {
+            cx.update(|cx| cx.set_restart_path(restart_path));
         }
 
-        this.update(cx, |this, cx| {
-            this.set_should_show_update_notification(true, cx)
-                .detach_and_log_err(cx);
+        let previous_staged_update = this.update(cx, |this, cx| {
+            if installed_release.staged_update.is_none() {
+                this.set_should_show_update_notification(true, cx)
+                    .detach_and_log_err(cx);
+            }
             this.status = AutoUpdateStatus::Updated {
                 version: newer_version,
             };
             cx.notify();
+            mem::replace(&mut this.staged_update, installed_release.staged_update)
         });
+        if let Some(previous_staged_update) = previous_staged_update {
+            previous_staged_update.remove().await;
+        }
         Ok(())
     }
 
@@ -938,7 +1069,7 @@ impl AutoUpdater {
         running_app_path: PathBuf,
         channel: &str,
         background_executor: BackgroundExecutor,
-    ) -> Result<Option<PathBuf>> {
+    ) -> Result<InstalledRelease> {
         match OS {
             "macos" => {
                 install_release_macos(
@@ -992,6 +1123,41 @@ impl AutoUpdater {
         let kvp = KeyValueStore::global(cx);
         cx.background_spawn(async move {
             Ok(kvp.read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?.is_some())
+        })
+    }
+
+    fn install_staged_update(&mut self, cx: &App) -> Task<()> {
+        let Some(staged_update) = self.staged_update.take() else {
+            return Task::ready(());
+        };
+        let show_update_notification = match staged_update.install() {
+            Ok(()) => {
+                log::info!(
+                    "installed the staged update at {:?}",
+                    staged_update.installed
+                );
+                Some(self.set_should_show_update_notification(true, cx))
+            }
+            Err(error) => {
+                log::error!("failed to install the staged update: {error:?}");
+                None
+            }
+        };
+        let remove_staging_dir = !staged_update.keeps_previous_app();
+        let record_update = async move {
+            if let Some(show_update_notification) = show_update_notification
+                && let Err(error) = show_update_notification.await
+            {
+                log::error!("failed to record the installed update: {error:?}");
+            }
+        };
+        let remove_staging_dir = async move {
+            if remove_staging_dir {
+                staged_update.remove().await;
+            }
+        };
+        cx.background_spawn(async move {
+            futures_lite::future::zip(record_update, remove_staging_dir).await;
         })
     }
 }
@@ -1131,10 +1297,19 @@ async fn install_release_linux(
     downloaded_tar_gz: &Path,
     channel: &str,
     running_app_path: PathBuf,
-) -> Result<Option<PathBuf>> {
-    let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
+) -> Result<InstalledRelease> {
+    let installed = linux_installed_app_path(&running_app_path, channel)?;
+    let restart_path = Some(installed.join("libexec/zed-editor"));
+    let staging_dir = if running_app_path.starts_with(&installed) {
+        create_staging_dir(&installed, &installed).await?
+    } else {
+        None
+    };
 
-    let extracted = temp_dir.path().join("zed");
+    let extracted = match &staging_dir {
+        Some(staging_dir) => staging_dir.path().to_path_buf(),
+        None => temp_dir.path().join("zed"),
+    };
     fs::create_dir_all(&extracted)
         .await
         .context("failed to create directory into which to extract update")?;
@@ -1157,27 +1332,29 @@ async fn install_release_linux(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let suffix = if channel != "stable" {
-        format!("-{}", channel)
-    } else {
-        String::default()
-    };
-    let app_folder_name = format!("zed{}.app", suffix);
+    let app_folder_name = installed
+        .file_name()
+        .with_context(|| format!("invalid app path {installed:?}"))?;
+    let from = extracted.join(app_folder_name);
 
-    let from = extracted.join(&app_folder_name);
-    let mut to = home_dir.join(".local");
-
-    let expected_suffix = format!("{}/libexec/zed-editor", app_folder_name);
-
-    if let Some(prefix) = running_app_path
-        .to_str()
-        .and_then(|str| str.strip_suffix(&expected_suffix))
-    {
-        to = PathBuf::from(prefix);
+    if let Some(staging_dir) = staging_dir {
+        let installed_binary = installed.join("libexec/zed-editor");
+        return Ok(InstalledRelease {
+            restart_path,
+            staged_update: Some(StagedUpdate::new(
+                staging_dir,
+                from,
+                installed,
+                installed_binary,
+            )),
+        });
     }
 
+    let to = installed
+        .parent()
+        .with_context(|| format!("no parent dir for {installed:?}"))?;
     let mut cmd = new_command("rsync");
-    cmd.args(["-av", "--delete"]).arg(&from).arg(&to);
+    cmd.args(["-av", "--delete"]).arg(&from).arg(to);
     let output = cmd
         .output()
         .await
@@ -1191,7 +1368,29 @@ async fn install_release_linux(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    Ok(Some(to.join(expected_suffix)))
+    Ok(InstalledRelease {
+        restart_path,
+        staged_update: None,
+    })
+}
+
+fn linux_installed_app_path(running_app_path: &Path, channel: &str) -> Result<PathBuf> {
+    let suffix = if channel != "stable" {
+        format!("-{}", channel)
+    } else {
+        String::default()
+    };
+    let app_folder_name = format!("zed{}.app", suffix);
+    let expected_suffix = format!("{}/libexec/zed-editor", app_folder_name);
+
+    let prefix = match running_app_path
+        .to_str()
+        .and_then(|str| str.strip_suffix(&expected_suffix))
+    {
+        Some(prefix) => PathBuf::from(prefix),
+        None => PathBuf::from(env::var("HOME").context("no HOME env var set")?).join(".local"),
+    };
+    Ok(prefix.join(app_folder_name))
 }
 
 async fn install_release_macos(
@@ -1199,10 +1398,12 @@ async fn install_release_macos(
     downloaded_dmg: &Path,
     running_app_path: PathBuf,
     background_executor: &BackgroundExecutor,
-) -> Result<Option<PathBuf>> {
+) -> Result<InstalledRelease> {
     let running_app_filename = running_app_path
         .file_name()
         .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
+    let staging_dir =
+        create_staging_dir(&running_app_path, &running_app_path.join("Contents")).await?;
 
     let mount_path = temp_dir.path().join("Zed");
     let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
@@ -1229,10 +1430,14 @@ async fn install_release_macos(
         background_executor,
     };
 
+    let destination = match &staging_dir {
+        Some(staging_dir) => staging_dir.path().join("bundle"),
+        None => running_app_path.clone(),
+    };
     let mut cmd = new_command("rsync");
     cmd.args(["-av", "--delete", "--exclude", "Icon?"])
         .arg(&mounted_app_path)
-        .arg(&running_app_path);
+        .arg(&destination);
     let rsync_output = cmd.output().await;
 
     // Await the unmount (even if rsync failed) so that the installer temp dir
@@ -1247,7 +1452,26 @@ async fn install_release_macos(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    Ok(None)
+    Ok(InstalledRelease {
+        restart_path: None,
+        staged_update: staging_dir
+            .map(|staging_dir| macos_staged_update(staging_dir, &destination, &running_app_path)),
+    })
+}
+
+fn macos_staged_update(
+    staging_dir: tempfile::TempDir,
+    staged_app_path: &Path,
+    running_app_path: &Path,
+) -> StagedUpdate {
+    let installed = running_app_path.join("Contents");
+    let installed_binary = installed.join("MacOS/zed");
+    StagedUpdate::new(
+        staging_dir,
+        staged_app_path.join("Contents"),
+        installed,
+        installed_binary,
+    )
 }
 
 /// Removes stale installer dirs from the system temp dir. Older Zed versions
@@ -1255,22 +1479,21 @@ async fn install_release_macos(
 /// was still mounted inside it, which made the deletion fail silently.
 #[cfg(any(rust_analyzer, all(not(target_os = "windows"), not(test))))]
 async fn cleanup_stale_installer_dirs() {
-    const STALE_INSTALLER_DIR_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+    remove_stale_dirs(&std::env::temp_dir(), INSTALLER_DIR_PREFIX).await;
+}
 
-    let temp_dir = std::env::temp_dir();
-    let Ok(mut entries) = fs::read_dir(&temp_dir).await else {
-        log::warn!("failed to read temp dir {temp_dir:?} while cleaning up installer dirs");
+async fn remove_stale_dirs(parent: &Path, prefix: &str) {
+    const STALE_DIR_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+    let Ok(mut entries) = fs::read_dir(parent).await else {
+        log::warn!("failed to read {parent:?} while cleaning up stale update dirs");
         return;
     };
     while let Some(entry) = entries.next().await {
         let Ok(entry) = entry else {
             continue;
         };
-        if !entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(INSTALLER_DIR_PREFIX)
-        {
+        if !entry.file_name().to_string_lossy().starts_with(prefix) {
             continue;
         }
         // Leave recent dirs alone, as they may belong to an update currently
@@ -1280,17 +1503,17 @@ async fn cleanup_stale_installer_dirs() {
                 && metadata.modified().ok().is_some_and(|modified| {
                     SystemTime::now()
                         .duration_since(modified)
-                        .is_ok_and(|age| age > STALE_INSTALLER_DIR_AGE)
+                        .is_ok_and(|age| age > STALE_DIR_AGE)
                 })
         });
         if is_stale {
             if let Err(error) = fs::remove_dir_all(entry.path()).await {
                 log::warn!(
-                    "failed to remove stale installer dir {:?}: {error}",
+                    "failed to remove stale update dir {:?}: {error}",
                     entry.path()
                 );
             } else {
-                log::info!("removed stale installer dir {:?}", entry.path());
+                log::info!("removed stale update dir {:?}", entry.path());
             }
         }
     }
@@ -1310,7 +1533,7 @@ async fn cleanup_windows() -> Result<()> {
     Ok(())
 }
 
-async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<PathBuf>> {
+async fn install_release_windows(downloaded_installer: &Path) -> Result<InstalledRelease> {
     let mut cmd = new_command(downloaded_installer);
     cmd.arg("/verysilent")
         .arg("/update=true")
@@ -1329,7 +1552,10 @@ async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<P
         .context("No parent dir for Zed.exe")?
         .join("tools")
         .join("auto_update_helper.exe");
-    Ok(Some(helper_path))
+    Ok(InstalledRelease {
+        restart_path: Some(helper_path),
+        staged_update: None,
+    })
 }
 
 pub async fn finalize_auto_update_on_quit() {
@@ -1380,7 +1606,7 @@ mod tests {
 
     use super::*;
 
-    pub(super) struct InstallOverride(pub Rc<dyn Fn(&Path, &AsyncApp) -> Result<Option<PathBuf>>>);
+    pub(super) struct InstallOverride(pub Rc<dyn Fn(&Path, &AsyncApp) -> Result<InstalledRelease>>);
     impl Global for InstallOverride {}
 
     #[gpui::test]
@@ -1407,6 +1633,7 @@ mod tests {
         let (dmg_tx, dmg_rx) = oneshot::channel::<String>();
 
         cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
             settings::init(cx);
 
             let current_version = semver::Version::new(0, 100, 0);
@@ -1475,14 +1702,23 @@ mod tests {
         dmg_tx.send("<fake-zed-update>".to_owned()).unwrap();
 
         let tmp_dir = Arc::new(tempdir().unwrap());
+        let installed_app_path = tmp_dir.path().join("Zed.app");
+        let installed_binary_path = installed_app_path.join("zed");
+        std::fs::create_dir(&installed_app_path).unwrap();
+        std::fs::write(&installed_binary_path, "<running-zed>").unwrap();
 
         cx.update(|cx| {
             let tmp_dir = tmp_dir.clone();
+            let installed_app_path = installed_app_path.clone();
             cx.set_global(InstallOverride(Rc::new(move |target_path, _cx| {
-                let tmp_dir = tmp_dir.clone();
-                let dest_path = tmp_dir.path().join("zed");
-                std::fs::copy(&target_path, &dest_path)?;
-                Ok(Some(dest_path))
+                Ok(InstalledRelease {
+                    restart_path: Some(installed_app_path.join("zed")),
+                    staged_update: Some(staged_update_fixture(
+                        tmp_dir.path(),
+                        &installed_app_path,
+                        Some(&std::fs::read_to_string(target_path)?),
+                    )),
+                })
             })));
         });
 
@@ -1501,13 +1737,262 @@ mod tests {
                 version: semver::Version::new(0, 100, 1)
             }
         );
+        assert_eq!(
+            std::fs::read_to_string(&installed_binary_path).unwrap(),
+            "<running-zed>"
+        );
+
+        let should_show_update_notification = auto_updater
+            .read_with(cx, |updater, cx| {
+                updater.should_show_update_notification(cx)
+            })
+            .await
+            .unwrap();
+        assert!(!should_show_update_notification);
+
         let will_restart = cx.expect_restart();
         cx.update(|cx| cx.restart());
         let (path, arguments) = will_restart.await.unwrap();
         assert!(arguments.is_empty());
-        let path = path.unwrap();
-        assert_eq!(path, tmp_dir.path().join("zed"));
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "<fake-zed-update>");
+        assert_eq!(path, Some(installed_binary_path.clone()));
+        assert_eq!(
+            std::fs::read_to_string(&installed_binary_path).unwrap(),
+            "<running-zed>"
+        );
+
+        cx.update(|cx| cx.shutdown());
+        assert_eq!(
+            std::fs::read_to_string(&installed_binary_path).unwrap(),
+            "<fake-zed-update>"
+        );
+        let remaining = std::fs::read_dir(tmp_dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(remaining, std::slice::from_ref(&installed_app_path));
+        let should_show_update_notification = auto_updater
+            .read_with(cx, |updater, cx| {
+                updater.should_show_update_notification(cx)
+            })
+            .await
+            .unwrap();
+        assert!(should_show_update_notification);
+    }
+
+    #[gpui::test]
+    async fn test_staged_update_is_installed_on_quit(cx: &mut TestAppContext) {
+        cx.background_executor.allow_parking();
+        let dir = tempdir().unwrap();
+        let installed_app_path = dir.path().join("Zed.app");
+        let installed_binary_path = installed_app_path.join("zed");
+        std::fs::create_dir(&installed_app_path).unwrap();
+        std::fs::write(&installed_binary_path, "old").unwrap();
+
+        let auto_updater = cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
+            settings::init(cx);
+            release_channel::init_test(semver::Version::new(0, 100, 0), ReleaseChannel::Stable, cx);
+            let client = Client::new(
+                Arc::new(FakeSystemClock::new()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            );
+            cx.new(|cx| AutoUpdater::new(semver::Version::new(0, 100, 0), client, cx))
+        });
+        auto_updater.update(cx, |updater, _| {
+            updater.staged_update = Some(staged_update_fixture(
+                dir.path(),
+                &installed_app_path,
+                Some("new"),
+            ));
+        });
+        assert_eq!(
+            std::fs::read_to_string(&installed_binary_path).unwrap(),
+            "old"
+        );
+
+        cx.update(|cx| cx.shutdown());
+        assert_eq!(
+            std::fs::read_to_string(&installed_binary_path).unwrap(),
+            "new"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_macos_update_swaps_contents_and_keeps_bundle_root() {
+        let dir = tempdir().unwrap();
+        let running_app_path = dir.path().join("Zed.app");
+        let custom_icon_path = running_app_path.join("Icon\r");
+        std::fs::create_dir_all(running_app_path.join("Contents/MacOS")).unwrap();
+        std::fs::write(running_app_path.join("Contents/MacOS/zed"), "old").unwrap();
+        std::fs::write(&custom_icon_path, "custom icon").unwrap();
+
+        let staging_dir = tempfile::Builder::new()
+            .prefix(".Zed.app.update.")
+            .tempdir_in(dir.path())
+            .unwrap();
+        let staged_app_path = staging_dir.path().join("bundle");
+        std::fs::create_dir_all(staged_app_path.join("Contents/MacOS")).unwrap();
+        std::fs::write(staged_app_path.join("Contents/MacOS/zed"), "new").unwrap();
+
+        macos_staged_update(staging_dir, &staged_app_path, &running_app_path)
+            .install()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(running_app_path.join("Contents/MacOS/zed")).unwrap(),
+            "new"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&custom_icon_path).unwrap(),
+            "custom icon"
+        );
+    }
+
+    #[test]
+    fn test_staged_update_install_keeps_installed_app_on_failure() {
+        let dir = tempdir().unwrap();
+        let installed_app_path = dir.path().join("Zed.app");
+        let installed_binary_path = installed_app_path.join("zed");
+        std::fs::create_dir(&installed_app_path).unwrap();
+        std::fs::write(&installed_binary_path, "old").unwrap();
+
+        let without_bundle = staged_update_fixture(dir.path(), &installed_app_path, None);
+        assert!(without_bundle.install().is_err());
+        assert_eq!(
+            std::fs::read_to_string(&installed_binary_path).unwrap(),
+            "old"
+        );
+
+        let replaced_after_staging =
+            staged_update_fixture(dir.path(), &installed_app_path, Some("new"));
+        std::fs::write(&installed_binary_path, "manually installed").unwrap();
+        assert!(replaced_after_staging.install().is_err());
+        assert_eq!(
+            std::fs::read_to_string(&installed_binary_path).unwrap(),
+            "manually installed"
+        );
+
+        std::fs::remove_dir_all(&installed_app_path).unwrap();
+        let removed_app = staged_update_fixture(dir.path(), &installed_app_path, Some("new"));
+        assert!(removed_app.install().is_err());
+        assert!(!installed_app_path.exists());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_linux_release_is_staged_next_to_installed_app() {
+        let dir = tempdir().unwrap();
+        let new_binary_path = dir.path().join("release/zed.app/libexec/zed-editor");
+        std::fs::create_dir_all(new_binary_path.parent().unwrap()).unwrap();
+        std::fs::write(&new_binary_path, "new").unwrap();
+        let installed_binary_path = dir.path().join("prefix/zed.app/libexec/zed-editor");
+        std::fs::create_dir_all(installed_binary_path.parent().unwrap()).unwrap();
+        std::fs::write(&installed_binary_path, "old").unwrap();
+        let tarball = dir.path().join("zed.tar.gz");
+
+        smol::block_on(async {
+            let output = new_command("tar")
+                .arg("-czf")
+                .arg(&tarball)
+                .arg("-C")
+                .arg(dir.path().join("release"))
+                .arg("zed.app")
+                .output()
+                .await
+                .unwrap();
+            assert!(output.status.success());
+
+            let installer_dir = InstallerDir::new().await.unwrap();
+            let release = install_release_linux(
+                &installer_dir,
+                &tarball,
+                "stable",
+                installed_binary_path.clone(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(release.restart_path, Some(installed_binary_path.clone()));
+            assert_eq!(
+                std::fs::read_to_string(&installed_binary_path).unwrap(),
+                "old"
+            );
+
+            let staged_update = release.staged_update.unwrap();
+            assert_eq!(
+                staged_update.dir.parent(),
+                installed_binary_path.ancestors().nth(3)
+            );
+            staged_update.install().unwrap();
+            assert_eq!(
+                std::fs::read_to_string(&installed_binary_path).unwrap(),
+                "new"
+            );
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_can_swap_predicts_rename() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        for (read_only_app, read_only_contents) in [(false, false), (true, false), (false, true)] {
+            let dir = tempdir().unwrap();
+            let app = dir.path().join("Zed.app");
+            let contents = app.join("Contents");
+            std::fs::create_dir_all(&contents).unwrap();
+            for (path, read_only) in [(&app, read_only_app), (&contents, read_only_contents)] {
+                if read_only {
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o555)).unwrap();
+                }
+            }
+
+            let predicted = can_swap(dir.path(), &contents);
+            let previous = dir.path().join("previous");
+            let renamed = std::fs::rename(&contents, &previous).is_ok();
+            for path in [&app, &contents, &previous] {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).ok();
+            }
+
+            assert_eq!(
+                predicted, renamed,
+                "read-only app dir: {read_only_app}, read-only Contents: {read_only_contents}"
+            );
+            if !read_only_app && !read_only_contents {
+                assert!(predicted);
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_remove_stale_dirs_keeps_recent_and_unrelated_dirs() {
+        let dir = tempdir().unwrap();
+        let prefix = ".Zed.app.update.";
+        let two_days_ago = SystemTime::now() - Duration::from_secs(2 * 24 * 60 * 60);
+        let stale = dir.path().join(".Zed.app.update.stale");
+        let recent = dir.path().join(".Zed.app.update.recent");
+        let other_app = dir.path().join(".Other.app.update.stale");
+        for path in [&stale, &recent, &other_app] {
+            std::fs::create_dir(path).unwrap();
+        }
+        for path in [&stale, &other_app] {
+            std::fs::File::open(path)
+                .unwrap()
+                .set_modified(two_days_ago)
+                .unwrap();
+        }
+
+        smol::block_on(remove_stale_dirs(dir.path(), prefix));
+
+        let mut remaining = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        remaining.sort();
+        let mut expected = [recent, other_app];
+        expected.sort();
+        assert_eq!(remaining, expected);
     }
 
     #[gpui::test]
@@ -1883,5 +2368,27 @@ mod tests {
             newer_version.unwrap(),
             Some(fetched_version.parse().unwrap())
         );
+    }
+
+    fn staged_update_fixture(
+        root: &Path,
+        installed_app_path: &Path,
+        bundle_binary_contents: Option<&str>,
+    ) -> StagedUpdate {
+        let staging_dir = tempfile::Builder::new()
+            .prefix(".Zed.app.update.")
+            .tempdir_in(root)
+            .unwrap();
+        let bundle = staging_dir.path().join("bundle");
+        if let Some(contents) = bundle_binary_contents {
+            std::fs::create_dir(&bundle).unwrap();
+            std::fs::write(bundle.join("zed"), contents).unwrap();
+        }
+        StagedUpdate::new(
+            staging_dir,
+            bundle,
+            installed_app_path.to_path_buf(),
+            installed_app_path.join("zed"),
+        )
     }
 }
