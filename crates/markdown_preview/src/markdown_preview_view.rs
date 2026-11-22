@@ -1125,6 +1125,7 @@ impl MarkdownPreviewView {
             })
             .scroll_handle(self.scroll_handle.clone())
             .show_root_block_markers()
+            .cull_offscreen_root_blocks()
             .image_resolver({
                 let base_directory = self.base_directory.clone();
                 move |dest_url, cx| {
