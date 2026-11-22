@@ -14,7 +14,8 @@ mod example_support;
 #[cfg(target_os = "macos")]
 mod example {
     use gpui::{
-        App, Context, Focusable as _, NativeView, Task, Window, WindowOptions, div, prelude::*, px, rgb,
+        App, Context, Focusable as _, NativeView, Task, Window, WindowOptions, div, prelude::*, px,
+        rgb,
     };
     use objc2::{
         class, msg_send,
@@ -75,7 +76,11 @@ mod example {
             };
             // SAFETY: The pointer is the live web view, which is in no view hierarchy.
             let web_view = unsafe {
-                NativeView::new(NonNull::from(&*web_view_object).cast::<c_void>(), window, cx)
+                NativeView::new(
+                    NonNull::from(&*web_view_object).cast::<c_void>(),
+                    window,
+                    cx,
+                )
             }
             .expect("this example only runs where native views are composited");
             // SAFETY: Attaching the web view put it in the GPUI window, whose
@@ -142,8 +147,7 @@ mod example {
             // SAFETY: The field is live and in the window, on the main thread.
             unsafe {
                 let ns_window: *mut AnyObject = msg_send![&*self.appkit_field, window];
-                let accepted: Bool =
-                    msg_send![ns_window, makeFirstResponder: &*self.appkit_field];
+                let accepted: Bool = msg_send![ns_window, makeFirstResponder: &*self.appkit_field];
                 println!("AppKit field took keyboard input: {}", accepted.as_bool());
             }
         }
