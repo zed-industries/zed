@@ -33,7 +33,7 @@
 
 ((jsx_element
   (jsx_opening_element
-  	"<" @open
+    "<" @open
     ">" @open)
   (jsx_closing_element
     "</" @close
@@ -42,8 +42,8 @@
 
 ((jsx_element
   (jsx_opening_element
-  	"<" @open
-  	(identifier) @open
+    "<" @open
+    (identifier) @open
     ">" @open)
   (jsx_closing_element) @close)
   (#set! newline.only))
@@ -51,6 +51,6 @@
 ((jsx_element
   (jsx_self_closing_element
     "<" @open
-  	(identifier) @open
+    (identifier) @open
     "/>" @close))
   (#set! newline.only))
