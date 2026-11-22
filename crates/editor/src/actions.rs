@@ -427,6 +427,8 @@ actions!(
     [
         /// Accepts the full edit prediction.
         AcceptEditPrediction,
+        /// Amends the editor text with hint's edit (if sent).
+        AcceptInlayHint,
         /// Accepts a partial edit prediction.
         #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptNextWordEditPrediction,
@@ -568,6 +570,9 @@ actions!(
         /// Folds all code blocks at indentation level 9.
         #[action(name = "FoldAtLevel_9")]
         FoldAtLevel9,
+        /// Folds all code blocks at the same indentation level of the current
+        /// line.
+        FoldAtCurrentIndentationLevel,
         /// Folds all function bodies in the editor.
         FoldFunctionBodies,
         /// Folds the current code block and all its children.
@@ -634,6 +639,14 @@ actions!(
         HalfPageUp,
         /// Shows hover information for the symbol at cursor.
         Hover,
+        /// Expands the selected debugger hover entry.
+        DebuggerHoverExpandSelected,
+        /// Collapses the selected debugger hover entry.
+        DebuggerHoverCollapseSelected,
+        /// Selects the next debugger hover entry.
+        DebuggerHoverSelectNext,
+        /// Selects the previous debugger hover entry.
+        DebuggerHoverSelectPrevious,
         /// Increases indentation of selected lines.
         Indent,
         /// Inserts a UUID v4 at cursor position.

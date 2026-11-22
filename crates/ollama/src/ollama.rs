@@ -7,7 +7,7 @@ use http_client::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub use settings::KeepAlive;
+pub use settings_content::KeepAlive;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
@@ -96,6 +96,8 @@ pub enum ChatMessage {
     Tool {
         tool_name: String,
         content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<String>>,
     },
 }
 
@@ -172,14 +174,6 @@ pub struct LocalModelListing {
     pub modified_at: String,
     pub size: u64,
     pub digest: String,
-    pub details: ModelDetails,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct LocalModel {
-    pub modelfile: String,
-    pub parameters: String,
-    pub template: String,
     pub details: ModelDetails,
 }
 

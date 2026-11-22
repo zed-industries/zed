@@ -8,6 +8,10 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+test = false
+doctest = false
+
 [dependencies]
 gpui.workspace = true
 schemars.workspace = true

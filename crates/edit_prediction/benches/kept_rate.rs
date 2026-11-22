@@ -1,5 +1,6 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use edit_prediction::metrics::compute_kept_rate;
+use std::hint::black_box;
 
 fn repeated_function_lines(line_count: usize) -> String {
     let mut text = String::with_capacity(line_count * 32);

@@ -14,7 +14,6 @@ use util::ResultExt;
 
 pub struct CaptureInput {
     pub name: String,
-    pub input_device: Option<DeviceId>,
     config: cpal::SupportedStreamConfig,
     samples: Arc<Mutex<Vec<i16>>>,
     _stream: cpal::Stream,
@@ -30,11 +29,10 @@ impl CaptureInput {
         log::info!("Using microphone: {}", name);
 
         let samples = Arc::new(Mutex::new(Vec::new()));
-        let stream = start_capture(device, config.clone(), samples.clone())?;
+        let stream = start_capture(device, config, samples.clone())?;
 
         Ok(Self {
             name,
-            input_device,
             _stream: stream,
             config,
             samples,
@@ -58,7 +56,7 @@ fn start_capture(
 ) -> Result<cpal::Stream> {
     let stream = device
         .build_input_stream_raw(
-            &config.config(),
+            config.config(),
             config.sample_format(),
             move |data, _: &_| {
                 let data = crate::get_sample_data(config.sample_format(), data).log_err();

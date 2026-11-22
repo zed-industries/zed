@@ -509,6 +509,36 @@ mod tests {
     }
 
     #[test]
+    fn test_default_path_hyperlink_regexes() -> anyhow::Result<()> {
+        let content = settings::parse_json_with_comments(&settings::default_settings())?;
+        let settings = TerminalSettings::from_settings(&content);
+        let searches = RegexSearches::new(
+            &settings.path_hyperlink_regexes,
+            Duration::from_millis(settings.path_hyperlink_timeout_ms),
+        );
+        let examples = [
+            (r#"File "src/main.py", line 42"#, "src/main.py", Some("42")),
+            ("src/main.rs:42", "src/main.rs:42", None),
+        ];
+        assert_eq!(searches.path_hyperlink_regexes.len(), examples.len());
+        assert_eq!(
+            searches.path_hyperlink_regexes.len(),
+            settings.path_hyperlink_regexes.len()
+        );
+        for (regex, (input, path, line)) in searches.path_hyperlink_regexes.iter().zip(examples) {
+            let captures = regex
+                .captures(input)
+                .ok_or_else(|| anyhow::anyhow!("Default regex does not match {input}"))?;
+            assert_eq!(
+                captures.name("path").map(|capture| capture.as_str()),
+                Some(path)
+            );
+            assert_eq!(captures.name("line").map(|capture| capture.as_str()), line);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_url_regex() {
         re_test(
             URL_REGEX,
@@ -1586,7 +1616,7 @@ mod tests {
         fn process_input(term: &mut Term<VoidListener>, c: char) {
             match c {
                 '\t' => term.put_tab(1),
-                c @ _ => term.input(c),
+                c => term.input(c),
             }
         }
 
@@ -1896,7 +1926,7 @@ mod tests {
 
                 match cell.c {
                     '\t' => result.push(' '),
-                    c @ _ => result.push(c),
+                    c => result.push(c),
                 }
             }
 

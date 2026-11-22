@@ -1,3 +1,5 @@
+pub const DANGERBOT: Runner = Runner("namespace-profile-dangerbot");
+
 pub const LINUX_SMALL: Runner = Runner("namespace-profile-2x4-ubuntu-2404");
 pub const LINUX_DEFAULT: Runner = LINUX_XL;
 pub const LINUX_XL: Runner = Runner("namespace-profile-16x32-ubuntu-2204");
@@ -12,6 +14,8 @@ pub const LINUX_ARM_BUNDLER: Runner = Runner("namespace-profile-8x32-ubuntu-2004
 pub const LINUX_LARGE_RAM: Runner = Runner("namespace-profile-8x32-ubuntu-2404");
 
 pub const MAC_DEFAULT: Runner = Runner("namespace-profile-mac-large");
+pub const MAC_BUNDLER: Runner = Runner("namespace-profile-mac-large-xcode26");
+pub const MAC_SMALL: Runner = Runner("namespace-profile-mac-small");
 pub const WINDOWS_DEFAULT: Runner = Runner("self-32vcpu-windows-2022");
 
 pub struct Runner(&'static str);
@@ -44,6 +48,16 @@ impl Arch {
             Arch::AARCH64 => LINUX_ARM_BUNDLER,
         }
     }
+
+    // Snapcraft can only build a snap for the architecture of its host. These
+    // are GitHub-hosted because snapd needs systemd, which the Namespace runner
+    // images don't run.
+    pub fn linux_snap_builder(&self) -> Runner {
+        match self {
+            Arch::X86_64 => Runner("ubuntu-24.04"),
+            Arch::AARCH64 => Runner("ubuntu-24.04-arm"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,6 +65,19 @@ pub enum Platform {
     Windows,
     Linux,
     Mac,
+}
+
+impl Platform {
+    pub fn target_triple(self, arch: Arch) -> &'static str {
+        match (self, arch) {
+            (Self::Linux, Arch::X86_64) => "x86_64-unknown-linux-musl",
+            (Self::Linux, Arch::AARCH64) => "aarch64-unknown-linux-musl",
+            (Self::Mac, Arch::X86_64) => "x86_64-apple-darwin",
+            (Self::Mac, Arch::AARCH64) => "aarch64-apple-darwin",
+            (Self::Windows, Arch::X86_64) => "x86_64-pc-windows-msvc",
+            (Self::Windows, Arch::AARCH64) => "aarch64-pc-windows-msvc",
+        }
+    }
 }
 
 impl std::fmt::Display for Platform {

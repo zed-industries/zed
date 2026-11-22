@@ -107,7 +107,7 @@ impl Args {
         quote! {
             #errors
             #[::gpui::proptest::property_test(
-                proptest_path = "::gpui::proptest",
+                proptest_path = ::gpui::proptest,
                 config = #fixed_config,
                 #(#remaining_args,)*
             )]

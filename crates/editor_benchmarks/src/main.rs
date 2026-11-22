@@ -42,7 +42,7 @@ fn parse_args() -> Args {
             }
             "--help" | "-h" => {
                 eprintln!(
-                    "Usage: editor_benchmarks [OPTIONS] <FILE> <QUERY>\n\n\
+                    "Usage: editor-benchmarks [OPTIONS] <FILE> <QUERY>\n\n\
                      Arguments:\n  \
                        <FILE>   Path to the file to search in\n  \
                        <QUERY>  The search query string\n\n\
@@ -60,7 +60,7 @@ fn parse_args() -> Args {
     }
 
     if positional.len() < 2 {
-        eprintln!("Usage: editor_benchmarks [OPTIONS] <FILE> <QUERY>");
+        eprintln!("Usage: editor-benchmarks [OPTIONS] <FILE> <QUERY>");
         std::process::exit(1);
     }
     parsed.file = positional.remove(0);

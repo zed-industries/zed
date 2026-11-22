@@ -485,8 +485,11 @@ impl Editor {
                             self.buffer.read(cx).last_transaction_id(cx)
                         {
                             if transaction_id_prev != Some(transaction_id_now) {
-                                self.selection_history
-                                    .insert_transaction(transaction_id_now, selections);
+                                self.selection_history.insert_transaction(
+                                    transaction_id_now,
+                                    selections,
+                                    self.add_selections_state.clone(),
+                                );
                             }
                         }
 
@@ -921,9 +924,6 @@ impl Editor {
                 ))
             })
             .collect::<Vec<_>>();
-        if edits.is_empty() {
-            return None;
-        }
 
         let cursor_position = predicted_cursor_position.and_then(|predicted| {
             let anchor = multibuffer.anchor_in_excerpt(predicted.anchor)?;

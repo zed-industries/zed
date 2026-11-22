@@ -1,9 +1,10 @@
+use collections::HashMap;
 use editor::{CursorLayout, EditorSettings, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
-    GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
+    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element,
+    ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight, GlobalElementId,
+    HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
     Point as GpuiPoint, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
     UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, div, fill, point, px, relative,
     size,
@@ -13,9 +14,10 @@ use language::CursorShape as EditorCursorShape;
 use settings::Settings;
 use std::time::Instant;
 use terminal::{
-    Cell, Color, Content, CursorShape, IndexedCell, Modes, NamedColor, Point, Range, Terminal,
-    TerminalBounds, is_app_chosen_exact_color as terminal_is_app_chosen_exact_color,
-    is_default_background_color, terminal_settings::TerminalSettings,
+    Cell, Color, Content, CursorShape, IndexedCell, Modes, MouseInputMode, NamedColor, Point,
+    Range, Terminal, TerminalBounds,
+    is_app_chosen_exact_color as terminal_is_app_chosen_exact_color, is_default_background_color,
+    terminal_settings::TerminalSettings,
 };
 use theme::{ActiveTheme, Theme};
 use theme_settings::ThemeSettings;
@@ -40,7 +42,6 @@ pub struct LayoutState {
     ime_cursor_bounds: Option<Bounds<Pixels>>,
     background_color: Hsla,
     dimensions: TerminalBounds,
-    mode: Modes,
     display_offset: usize,
     hyperlink_tooltip: Option<AnyElement>,
     block_below_cursor_element: Option<AnyElement>,
@@ -161,7 +162,7 @@ impl BatchedTextRun {
         window
             .text_system()
             .shape_line(
-                self.text.clone().into(),
+                self.text.as_str().into(),
                 self.font_size.to_pixels(window.rem_size()),
                 std::slice::from_ref(&self.style),
                 Some(dimensions.cell_width),
@@ -449,6 +450,9 @@ impl TerminalElement {
     ) {
         let start_time = Instant::now();
         let theme = cx.theme();
+        // A grid repeats few color pairs, and each contrast check costs several `powf` calls
+        // (dozens when the color needs adjusting).
+        let mut contrast_cache = HashMap::default();
 
         // Pre-allocate with estimated capacity to reduce reallocations
         let estimated_cells = grid.size_hint().0;
@@ -528,6 +532,7 @@ impl TerminalElement {
                             text_style,
                             hyperlink,
                             minimum_contrast,
+                            &mut contrast_cache,
                         );
 
                         let cell_point = LayoutPoint::new(display_line, point.column as i32);
@@ -874,13 +879,19 @@ impl TerminalElement {
         text_style: &TextStyle,
         hyperlink: Option<(HighlightStyle, &Range)>,
         minimum_contrast: f32,
+        contrast_cache: &mut HashMap<(Hsla, Hsla), Hsla>,
     ) -> TextRun {
         let skip_contrast = Self::is_app_chosen_exact_color(&fg);
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        if !skip_contrast && !Self::is_decorative_character(cell.character()) {
-            fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
+        if minimum_contrast > 0.0
+            && !skip_contrast
+            && !Self::is_decorative_character(cell.character())
+        {
+            fg = *contrast_cache
+                .entry((fg, bg))
+                .or_insert_with(|| ensure_minimum_contrast(fg, bg, minimum_contrast));
         }
 
         // Use a dim multiplier that stays close to the existing Alacritty look.
@@ -940,31 +951,11 @@ impl TerminalElement {
         result
     }
 
-    fn generic_button_handler<E>(
-        connection: Entity<Terminal>,
-        focus_handle: FocusHandle,
-        steal_focus: bool,
-        f: impl Fn(&mut Terminal, &E, &mut Context<Terminal>),
-    ) -> impl Fn(&E, &mut Window, &mut App) {
-        move |event, window, cx| {
-            if steal_focus {
-                window.focus(&focus_handle, cx);
-            } else if !focus_handle.is_focused(window) {
-                return;
-            }
-            connection.update(cx, |terminal, cx| {
-                f(terminal, event, cx);
-
-                cx.notify();
-            })
-        }
-    }
-
     fn register_mouse_listeners(
         &mut self,
-        mode: Modes,
         hitbox: &Hitbox,
         content_mode: &ContentMode,
+        mouse_input_mode: MouseInputMode,
         window: &mut Window,
     ) {
         let focus = self.focus.clone();
@@ -979,13 +970,14 @@ impl TerminalElement {
             move |e, window, cx| {
                 window.focus(&focus, cx);
 
-                let scroll_top = terminal_view.read(cx).scroll_top;
+                let view = terminal_view.read(cx);
+                let scroll_top = view.scroll_top;
                 terminal.update(cx, |terminal, cx| {
                     let mut adjusted_event = e.clone();
                     if scroll_top > Pixels::ZERO {
                         adjusted_event.position.y += scroll_top;
                     }
-                    terminal.mouse_down(&adjusted_event, cx);
+                    terminal.mouse_down(&adjusted_event, mouse_input_mode, cx);
                     cx.notify();
                 })
             }
@@ -995,7 +987,6 @@ impl TerminalElement {
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
             let focus = focus.clone();
-            let terminal_view = terminal_view;
             move |e: &MouseMoveEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
@@ -1011,7 +1002,12 @@ impl TerminalElement {
                             if scroll_top > Pixels::ZERO {
                                 adjusted_event.position.y += scroll_top;
                             }
-                            terminal.mouse_drag(&adjusted_event, hitbox.bounds, cx);
+                            terminal.mouse_drag(
+                                &adjusted_event,
+                                hitbox.bounds,
+                                mouse_input_mode,
+                                cx,
+                            );
                             cx.notify();
                         }
                     })
@@ -1019,37 +1015,63 @@ impl TerminalElement {
 
                 if hitbox.is_hovered(window) {
                     terminal.update(cx, |terminal, cx| {
-                        terminal.mouse_move(e, cx);
+                        terminal.mouse_move(e, mouse_input_mode, cx);
                     })
                 }
             }
         });
 
-        self.interactivity.on_mouse_up(
-            MouseButton::Left,
-            TerminalElement::generic_button_handler(
-                terminal.clone(),
-                focus.clone(),
-                false,
-                move |terminal, e, cx| {
-                    terminal.mouse_up(e, cx);
-                },
-            ),
-        );
-        self.interactivity.on_mouse_down(
-            MouseButton::Middle,
-            TerminalElement::generic_button_handler(
-                terminal.clone(),
-                focus.clone(),
-                true,
-                move |terminal, e, cx| {
-                    terminal.mouse_down(e, cx);
-                },
-            ),
-        );
+        for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
+            self.interactivity.on_mouse_up(button, {
+                let terminal = terminal.clone();
+                let focus = focus.clone();
+                move |event, window, cx| {
+                    if !focus.is_focused(window) {
+                        return;
+                    }
+                    if button != MouseButton::Left
+                        && (mouse_input_mode == MouseInputMode::LocalSelection
+                            || !terminal
+                                .read(cx)
+                                .last_content
+                                .mode
+                                .intersects(Modes::MOUSE_MODE))
+                    {
+                        return;
+                    }
+                    terminal.update(cx, |terminal, cx| {
+                        terminal.mouse_up(event, mouse_input_mode, cx);
+                        cx.notify();
+                    });
+                }
+            });
+        }
+        for button in [MouseButton::Middle, MouseButton::Right] {
+            self.interactivity.on_mouse_down(button, {
+                let terminal = terminal.clone();
+                let focus = focus.clone();
+                move |event, window, cx| {
+                    if mouse_input_mode == MouseInputMode::LocalSelection
+                        || (button == MouseButton::Right
+                            && !terminal
+                                .read(cx)
+                                .last_content
+                                .mode
+                                .intersects(Modes::MOUSE_MODE))
+                    {
+                        return;
+                    }
+                    window.focus(&focus, cx);
+                    terminal.update(cx, |terminal, cx| {
+                        terminal.mouse_down(event, mouse_input_mode, cx);
+                        cx.notify();
+                    });
+                }
+            });
+        }
 
         if content_mode.is_scrollable() {
-            self.interactivity.on_scroll_wheel({
+            self.interactivity.on_scroll({
                 let terminal_view = self.terminal_view.downgrade();
                 move |e, window, cx| {
                     terminal_view
@@ -1064,44 +1086,6 @@ impl TerminalElement {
                         .ok();
                 }
             });
-        }
-
-        // Mouse mode handlers:
-        // All mouse modes need the extra click handlers
-        if mode.intersects(Modes::MOUSE_MODE) {
-            self.interactivity.on_mouse_down(
-                MouseButton::Right,
-                TerminalElement::generic_button_handler(
-                    terminal.clone(),
-                    focus.clone(),
-                    true,
-                    move |terminal, e, cx| {
-                        terminal.mouse_down(e, cx);
-                    },
-                ),
-            );
-            self.interactivity.on_mouse_up(
-                MouseButton::Right,
-                TerminalElement::generic_button_handler(
-                    terminal.clone(),
-                    focus.clone(),
-                    false,
-                    move |terminal, e, cx| {
-                        terminal.mouse_up(e, cx);
-                    },
-                ),
-            );
-            self.interactivity.on_mouse_up(
-                MouseButton::Middle,
-                TerminalElement::generic_button_handler(
-                    terminal,
-                    focus,
-                    false,
-                    move |terminal, e, cx| {
-                        terminal.mouse_up(e, cx);
-                    },
-                ),
-            );
         }
     }
 
@@ -1361,7 +1345,7 @@ impl Element for TerminalElement {
                     terminal.set_size(dimensions);
                     terminal.sync(window, cx);
 
-                    if window.modifiers().secondary()
+                    if window.modifiers().secondary(cx)
                         && bounds.contains(&window.mouse_position())
                         && let Some(registered_hover) = self.terminal_view.read(cx).hover.as_ref()
                     {
@@ -1395,14 +1379,12 @@ impl Element for TerminalElement {
 
                 let Content {
                     cells,
-                    mode,
                     display_offset,
                     cursor_char,
                     selection,
                     cursor,
                     ..
                 } = &self.terminal.read(cx).last_content;
-                let mode = *mode;
                 let display_offset = *display_offset;
 
                 // searches, highlights to a single range representations
@@ -1589,7 +1571,6 @@ impl Element for TerminalElement {
                     dimensions,
                     rects,
                     relative_highlighted_ranges,
-                    mode,
                     display_offset,
                     hyperlink_tooltip,
                     block_below_cursor_element,
@@ -1612,9 +1593,10 @@ impl Element for TerminalElement {
     ) {
         let paint_start = Instant::now();
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            let scroll_top = self.terminal_view.read(cx).scroll_top;
+            let terminal_view = self.terminal_view.read(cx);
+            let scroll_top = terminal_view.scroll_top;
+            let mouse_input_mode = terminal_view.mouse_input_mode();
 
-            window.paint_quad(fill(bounds, layout.background_color));
             let origin = layout.dimensions.bounds.origin - GpuiPoint::new(px(0.), scroll_top);
             let scale_factor = window.scale_factor();
             let snap_px = |value: Pixels| {
@@ -1634,12 +1616,12 @@ impl Element for TerminalElement {
             };
 
             self.register_mouse_listeners(
-                layout.mode,
                 &layout.hitbox,
                 &layout.content_mode,
+                mouse_input_mode,
                 window,
             );
-            if window.modifiers().secondary()
+            if window.modifiers().secondary(cx)
                 && bounds.contains(&window.mouse_position())
                 && self.terminal_view.read(cx).hover.is_some()
             {
@@ -1782,14 +1764,6 @@ impl Element for TerminalElement {
     }
 }
 
-impl IntoElement for TerminalElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 struct TerminalInputHandler {
     terminal_view: Entity<TerminalView>,
     workspace: WeakEntity<Workspace>,
@@ -1799,10 +1773,13 @@ struct TerminalInputHandler {
 impl InputHandler for TerminalInputHandler {
     fn selected_text_range(
         &mut self,
-        _ignore_disabled_input: bool,
+        ignore_disabled_input: bool,
         _: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Option<UTF16Selection> {
+        if self.terminal_view.read(cx).is_read_only() && !ignore_disabled_input {
+            return None;
+        }
         // Always return a valid selection for IME positioning,
         // even in ALT_SCREEN mode (fullscreen TUI apps like opencode, vim, etc.)
         // The terminal still has a cursor position that should be used for IME candidate window placement.
@@ -1837,6 +1814,9 @@ impl InputHandler for TerminalInputHandler {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if self.terminal_view.read(cx).is_read_only() {
+            return;
+        }
         self.terminal_view.update(cx, |view, view_cx| {
             view.clear_marked_text(view_cx);
             view.commit_text(text, view_cx);
@@ -2030,8 +2010,61 @@ pub fn convert_color(fg: &Color, theme: &Theme) -> Hsla {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AbsoluteLength, Hsla, font};
+    use gpui::{AbsoluteLength, Hsla, TestAppContext, font};
     use ui::utils::apca_contrast;
+
+    #[gpui::test]
+    async fn terminal_input_handler_respects_read_only_mode(cx: &mut TestAppContext) {
+        let (project, workspace, window_handle) = crate::tests::init_test_with_window(cx).await;
+        for read_only in [false, true] {
+            let (_pane, terminal, terminal_view) = crate::tests::add_display_only_terminal(
+                &project,
+                window_handle,
+                true,
+                read_only,
+                cx,
+            );
+
+            window_handle
+                .update(cx, |_multi_workspace, window, cx| {
+                    let mut input_handler = TerminalInputHandler {
+                        terminal_view,
+                        workspace: workspace.downgrade(),
+                        cursor_bounds: None,
+                    };
+
+                    assert_eq!(
+                        input_handler
+                            .selected_text_range(false, window, cx)
+                            .is_none(),
+                        read_only
+                    );
+                    assert!(
+                        input_handler
+                            .selected_text_range(true, window, cx)
+                            .is_some()
+                    );
+
+                    input_handler.replace_and_mark_text_in_range(None, "あ", None, window, cx);
+                    assert_eq!(
+                        input_handler.marked_text_range(window, cx),
+                        (!read_only).then_some(0..1)
+                    );
+
+                    input_handler.replace_text_in_range(None, "亜", window, cx);
+                    assert_eq!(input_handler.marked_text_range(window, cx), None);
+                    assert_eq!(
+                        terminal.update(cx, |terminal, _| terminal.take_input_log()),
+                        if read_only {
+                            Vec::new()
+                        } else {
+                            vec!["亜".as_bytes().to_vec()]
+                        }
+                    );
+                })
+                .expect("test window should remain open");
+        }
+    }
 
     #[test]
     fn test_is_decorative_character() {
@@ -2354,6 +2387,67 @@ mod tests {
         assert!(!TerminalElement::is_decorative_character('1'));
         assert!(!TerminalElement::is_decorative_character('$'));
         assert!(!TerminalElement::is_decorative_character(' '));
+    }
+
+    #[gpui::test]
+    fn test_cell_style_caches_contrast_per_color_pair(cx: &mut TestAppContext) {
+        use terminal::{Color, NamedColor};
+
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        cx.update(|cx| {
+            let theme = cx.theme();
+            let pairs = [
+                (
+                    Color::Named(NamedColor::BrightBlack),
+                    Color::Named(NamedColor::Background),
+                ),
+                (
+                    Color::Named(NamedColor::Foreground),
+                    Color::Named(NamedColor::Background),
+                ),
+                (
+                    Color::Named(NamedColor::BrightBlack),
+                    Color::Named(NamedColor::White),
+                ),
+                (Color::Indexed(8), Color::Named(NamedColor::Black)),
+            ];
+            let cell_color = |fg: &Color, bg: &Color, minimum_contrast, contrast_cache: &mut _| {
+                TerminalElement::cell_style(
+                    Point::new(0, 0),
+                    &Cell::default(),
+                    *fg,
+                    *bg,
+                    theme,
+                    &TextStyle::default(),
+                    None,
+                    minimum_contrast,
+                    contrast_cache,
+                )
+                .color
+            };
+            for minimum_contrast in [0.0, 45.0, 90.0] {
+                let mut contrast_cache = HashMap::default();
+                for (fg, bg) in pairs.iter().chain(pairs.iter().rev()) {
+                    let key = (convert_color(fg, theme), convert_color(bg, theme));
+                    let expected = ensure_minimum_contrast(key.0, key.1, minimum_contrast);
+                    assert_eq!(
+                        cell_color(fg, bg, minimum_contrast, &mut contrast_cache),
+                        expected,
+                        "{fg:?} on {bg:?} at {minimum_contrast}"
+                    );
+                    let cached = contrast_cache.get(&key);
+                    assert_eq!(cached, (minimum_contrast > 0.0).then_some(&expected));
+                }
+            }
+            let (fg, bg) = &pairs[0];
+            let key = (convert_color(fg, theme), convert_color(bg, theme));
+            let mut contrast_cache = HashMap::from_iter([(key, gpui::red())]);
+            assert_eq!(cell_color(fg, bg, 45.0, &mut contrast_cache), gpui::red());
+        });
     }
 
     #[test]

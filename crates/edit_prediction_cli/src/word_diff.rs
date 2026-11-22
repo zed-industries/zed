@@ -8,7 +8,6 @@ use similar::{DiffTag, TextDiff};
 /// - Deletions are marked with `[-...-]`
 /// - Insertions are marked with `{+...+}`
 pub fn unified_to_word_diff(unified_diff: &str) -> String {
-    let lines: Vec<&str> = unified_diff.lines().collect();
     let mut result = String::new();
     let mut old_lines: Vec<&str> = Vec::new();
     let mut new_lines: Vec<&str> = Vec::new();
@@ -41,7 +40,7 @@ pub fn unified_to_word_diff(unified_diff: &str) -> String {
             new_lines.clear();
         };
 
-    for line in lines {
+    for line in unified_diff.lines() {
         if line.starts_with("---") || line.starts_with("+++") {
             flush_changes(&mut old_lines, &mut new_lines, &mut result);
             result.push_str(line);

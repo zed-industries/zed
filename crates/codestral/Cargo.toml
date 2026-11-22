@@ -5,8 +5,13 @@ edition.workspace = true
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/codestral.rs"
+test = false
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
@@ -24,5 +29,3 @@ serde_json.workspace = true
 text.workspace = true
 zed_credentials_provider.workspace = true
 zeta_prompt.workspace = true
-
-[dev-dependencies]

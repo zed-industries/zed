@@ -50,6 +50,8 @@ impl IntoGpui for WindowBackgroundContent {
             WindowBackgroundContent::Opaque => WindowBackgroundAppearance::Opaque,
             WindowBackgroundContent::Transparent => WindowBackgroundAppearance::Transparent,
             WindowBackgroundContent::Blurred => WindowBackgroundAppearance::Blurred,
+            WindowBackgroundContent::MicaBackdrop => WindowBackgroundAppearance::MicaBackdrop,
+            WindowBackgroundContent::MicaAltBackdrop => WindowBackgroundAppearance::MicaAltBackdrop,
         }
     }
 }

@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/aws_http_client.rs"
+test = false
+doctest = false
 
 [features]
 default = []

@@ -6,8 +6,9 @@ use collections::HashMap;
 pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
 use fs::Fs;
 use futures::io::BufReader;
+pub use github_releases::latest_github_release;
 use gpui::{AsyncApp, SharedString};
-pub use http_client::{HttpClient, github::latest_github_release};
+pub use http_client::HttpClient;
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use schemars::JsonSchema;
@@ -25,14 +26,6 @@ use std::{
 };
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 use util::{archive::extract_zip, rel_path::RelPath};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DapStatus {
-    None,
-    CheckingForUpdate,
-    Downloading,
-    Failed { error: String },
-}
 
 #[async_trait]
 pub trait DapDelegate: Send + Sync + 'static {
@@ -264,11 +257,6 @@ pub enum DownloadedFileType {
     Vsix,
     GzipTar,
     Zip,
-}
-
-pub struct GithubRepo {
-    pub repo_name: String,
-    pub repo_owner: String,
 }
 
 pub async fn download_adapter_from_github(

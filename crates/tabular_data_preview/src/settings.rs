@@ -4,7 +4,7 @@ pub enum RowRenderMechanism {
     #[default]
     VariableList,
     /// Default behaviour for now while resizable columns are being stabilized.
-    #[allow(dead_code)] // Will be used when settings ui is added
+    #[cfg_attr(not(feature = "dev-tools"), expect(dead_code))]
     UniformList,
 }
 
@@ -36,7 +36,7 @@ pub enum FilterSortOrder {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct TabularDataPreviewSettings {
+pub(crate) struct TableViewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
     pub(crate) numbering_type: RowIdentifiers,
@@ -47,7 +47,7 @@ pub(crate) struct TabularDataPreviewSettings {
     pub(crate) multiline_cells_enabled: bool,
 }
 
-impl TabularDataPreviewSettings {
+impl TableViewSettings {
     /// `multiline_cells_enabled` only makes sense with `VariableList`, which
     /// supports per-row heights; `UniformList` requires every row to share one
     /// height, so multiline is never honored there regardless of the setting.

@@ -30,7 +30,9 @@ function updateKeybindings() {
   const isMac = os === "Mac" || os === "iOS";
 
   function processKeybinding(element) {
-    const [macKeybinding, linuxKeybinding] = element.textContent.split("|");
+    const [macKeybinding, linuxKeybinding = macKeybinding] =
+      element.textContent.split("|");
+
     element.textContent = isMac ? macKeybinding : linuxKeybinding;
     element.classList.add("keybinding");
   }

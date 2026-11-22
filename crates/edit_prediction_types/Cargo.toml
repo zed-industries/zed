@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/edit_prediction_types.rs"
+test = false
+doctest = false
 
 [dependencies]
 client.workspace = true

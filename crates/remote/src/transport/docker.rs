@@ -29,6 +29,7 @@ use rpc::proto::Envelope;
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs,
     RemotePlatform,
+    command::RemoteCommand,
     remote_client::{CommandTemplate, Interactive},
     transport::parse_platform,
 };
@@ -844,6 +845,64 @@ impl RemoteConnection for DockerExecConnection {
         })
     }
 
+    fn build_stdio_command(
+        &self,
+        mut command: RemoteCommand,
+    ) -> Result<(CommandTemplate, Vec<u8>)> {
+        let remote_binary_relpath = self
+            .remote_binary_relpath
+            .as_ref()
+            .context("Remote binary path not set")?;
+        let mut env = self
+            .connection_options
+            .remote_env
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect::<HashMap<_, _>>();
+        env.extend(command.env);
+        command.env = env;
+        command.retain_valid_env();
+        if let Some(working_dir) = command.working_dir.take() {
+            let working_dir = RemotePathBuf::new(working_dir, self.path_style()).to_string();
+            command.working_dir = Some(match working_dir.strip_prefix("~/") {
+                Some(remainder) => format!(
+                    "{}/{}",
+                    self.remote_dir_for_server.trim_end_matches('/'),
+                    remainder.trim_start_matches('/')
+                ),
+                None => working_dir,
+            });
+        }
+        let remote_binary_path = format!(
+            "{}/{}",
+            self.remote_dir_for_server.trim_end_matches('/'),
+            remote_binary_relpath.display(PathStyle::Unix),
+        );
+        let mut args = vec![
+            String::from("exec"),
+            String::from("-u"),
+            self.connection_options.remote_user.clone(),
+        ];
+        if let Some(working_dir) = &command.working_dir {
+            args.push(String::from("-w"));
+            args.push(working_dir.clone());
+        }
+        args.extend([
+            String::from("-i"),
+            self.connection_options.container_id.clone(),
+            remote_binary_path,
+            String::from("exec"),
+        ]);
+        Ok((
+            CommandTemplate {
+                program: self.docker_cli().to_string(),
+                args,
+                env: HashMap::default(),
+            },
+            command.encode()?,
+        ))
+    }
+
     fn build_forward_ports_command(
         &self,
         _forwards: Vec<(u16, String, u16)>,
@@ -1050,6 +1109,73 @@ mod tests {
                 " \"-e\" \"GH_TOKEN=<redacted>\" \"container_id\" \"sh\""
             )
         );
+    }
+
+    #[test]
+    fn test_build_stdio_command() -> Result<()> {
+        let mut connection = connection(&[("API_KEY", "remote-secret"), ("NAME\0NUL", "dropped")]);
+        let command = |env, working_dir: Option<&str>| RemoteCommand {
+            program: String::from("agent"),
+            args: vec![String::from("--token=argument-secret")],
+            env,
+            working_dir: working_dir.map(str::to_owned),
+        };
+        assert_eq!(
+            connection
+                .build_stdio_command(command(HashMap::default(), None))
+                .unwrap_err()
+                .to_string(),
+            "Remote binary path not set"
+        );
+
+        connection.remote_binary_relpath = Some(Arc::from(RelPath::from_unix_str(
+            ".local/share/zed/remote server",
+        )?));
+        for (env_override, working_dir, expected_working_dir, use_podman, expected_program) in [
+            (None, None, None, false, "docker"),
+            (
+                Some("agent-secret"),
+                Some("~/project"),
+                Some("/tmp/zed/project"),
+                true,
+                "podman",
+            ),
+            (
+                None,
+                Some("/workspace"),
+                Some("/workspace"),
+                false,
+                "docker",
+            ),
+        ] {
+            connection.connection_options.use_podman = use_podman;
+            let expected_env = HashMap::from_iter([(
+                String::from("API_KEY"),
+                String::from(env_override.unwrap_or("remote-secret")),
+            )]);
+            let expected_payload = command(expected_env, expected_working_dir).encode()?;
+            let mut env = env_override
+                .map(|value| (String::from("API_KEY"), value.to_owned()))
+                .into_iter()
+                .collect::<HashMap<_, _>>();
+            env.insert(String::from("NAME=VALUE"), String::from("dropped"));
+            let (template, payload) = connection.build_stdio_command(command(env, working_dir))?;
+            assert_eq!(template.program, expected_program);
+            let mut expected_args = vec!["exec", "-u", "user"];
+            if let Some(expected_working_dir) = expected_working_dir {
+                expected_args.extend(["-w", expected_working_dir]);
+            }
+            expected_args.extend([
+                "-i",
+                "container_id",
+                "/tmp/zed/.local/share/zed/remote server",
+                "exec",
+            ]);
+            assert_eq!(template.args, expected_args);
+            assert_eq!(template.env, HashMap::default());
+            assert_eq!(payload, expected_payload);
+        }
+        Ok(())
     }
 
     fn connection(remote_env: &[(&str, &str)]) -> DockerExecConnection {

@@ -10,9 +10,8 @@ workspace = true
 
 [lib]
 path = "src/install_cli.rs"
-
-[features]
-test-support = []
+test = false
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
@@ -22,4 +21,6 @@ log.workspace = true
 release_channel.workspace = true
 smol.workspace = true
 util.workspace = true
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
 workspace.workspace = true

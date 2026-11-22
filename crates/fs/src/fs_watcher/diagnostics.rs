@@ -1,4 +1,4 @@
-use super::{OsWatcher, OsWatcherKind};
+use super::{Coverage, OsWatcher, OsWatcherKind};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{
@@ -10,6 +10,7 @@ use std::{
 };
 
 const EVENT_CAPACITY: usize = 10_000;
+const RESCAN_PATH_HISTORY_CAPACITY: usize = 10;
 
 /// An opt-in recording. Watchers hold only weak references to its buffer, so
 /// dropping this value stops collection without changing any watches.
@@ -39,6 +40,7 @@ pub struct WatcherSnapshot {
 #[derive(Clone, Debug, Serialize)]
 pub struct WatchRoot {
     pub path: String,
+    /// Zero when the backend watch is retained only for covered descendants.
     pub registrations: usize,
 }
 
@@ -122,6 +124,37 @@ impl DiagnosticRecorder {
     }
 }
 
+#[derive(Default)]
+pub(super) struct RescanHistory {
+    paths: VecDeque<PathBuf>,
+}
+
+impl RescanHistory {
+    pub(super) fn record(&mut self, event: &notify::Event) -> Option<String> {
+        let report = event.need_rescan().then(|| {
+            // Capture before inserting the rescan so the report includes all ten
+            // preceding paths, even when this is the start of an overflow burst.
+            format!(
+                "reason={:?}, paths={:?}, recent_paths={:?}",
+                event.info().unwrap_or("unspecified"),
+                event.paths,
+                self.paths,
+            )
+        });
+        let first_path = event
+            .paths
+            .len()
+            .saturating_sub(RESCAN_PATH_HISTORY_CAPACITY);
+        for path in event.paths.iter().skip(first_path) {
+            if self.paths.len() == RESCAN_PATH_HISTORY_CAPACITY {
+                self.paths.pop_front();
+            }
+            self.paths.push_back(path.clone());
+        }
+        report
+    }
+}
+
 impl WatchRecording {
     pub(crate) fn new(watchers: impl IntoIterator<Item = Arc<OsWatcher>>) -> Self {
         let state = Arc::new(Mutex::new(RecordingState {
@@ -156,13 +189,10 @@ impl WatchRecording {
                     .paths
                     .0
                     .values()
-                    .filter(|path| path.has_os_watcher)
-                    .filter_map(|path| {
-                        let registration = state.watchers.get(path.watcher_ids.first()?)?;
-                        Some(WatchRoot {
-                            path: registration.path.as_path().to_string_lossy().into_owned(),
-                            registrations: path.watcher_ids.len(),
-                        })
+                    .filter(|path| matches!(path.coverage, Coverage::Watched { .. }))
+                    .map(|path| WatchRoot {
+                        path: path.path.as_path().to_string_lossy().into_owned(),
+                        registrations: path.watcher_ids.len(),
                     })
                     .collect();
                 roots.sort_by(|left, right| left.path.cmp(&right.path));
@@ -202,6 +232,31 @@ mod tests {
     use gpui::TestAppContext;
     use notify::{Event, EventKind, event::Flag};
     use std::path::Path;
+
+    #[test]
+    fn rescan_report_contains_ten_preceding_paths_and_reason() {
+        let mut history = RescanHistory::default();
+        for range in [0..12, 12..13] {
+            let mut event = Event::new(EventKind::Create(notify::event::CreateKind::File));
+            event.paths = range
+                .map(|index| PathBuf::from(format!("file-{index}")))
+                .collect();
+            assert!(history.record(&event).is_none());
+        }
+        let rescan = Event::new(EventKind::Other)
+            .set_flag(Flag::Rescan)
+            .set_info("rescan: kernel dropped")
+            .add_path("root".into());
+        let report = history
+            .record(&rescan)
+            .expect("the first rescan should produce a report");
+
+        assert_eq!(
+            report,
+            r#"reason="rescan: kernel dropped", paths=["root"], recent_paths=["file-3", "file-4", "file-5", "file-6", "file-7", "file-8", "file-9", "file-10", "file-11", "file-12"]"#
+        );
+        assert_eq!(history.paths.len(), RESCAN_PATH_HISTORY_CAPACITY);
+    }
 
     struct Backend;
 
@@ -334,5 +389,29 @@ mod tests {
         assert!(snapshot.events[0].detail.contains("watch failed"));
         assert_eq!(snapshot.events[1].operation, "unwatch_error");
         assert!(snapshot.events[1].detail.contains("unwatch failed"));
+    }
+
+    #[gpui::test]
+    fn recording_snapshots_retained_roots_without_registrations(cx: &TestAppContext) {
+        let watcher = watcher(OsWatcherKind::Poll, cx);
+        let root = util::path!("/root");
+        let registration = watcher
+            .add(Path::new(root).into(), false, |_| {})
+            .unwrap()
+            .unwrap();
+        let covered = watcher
+            .add(Path::new(util::path!("/root/fail")).into(), false, |_| {})
+            .unwrap()
+            .unwrap();
+        let recording = WatchRecording::new([watcher.clone()]);
+
+        watcher.remove(registration);
+        let roots = &recording.snapshot().watchers[0].roots;
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].path, root);
+        assert_eq!(roots[0].registrations, 0);
+
+        watcher.remove(covered);
+        assert!(recording.snapshot().watchers[0].roots.is_empty());
     }
 }

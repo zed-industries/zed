@@ -111,7 +111,7 @@ try {
     }
     assert.ok(await evaluate('!!document.querySelector("textarea")'), "Input example did not launch");
     await evaluate(`(async () => {
-        const tests = await import("/font_fallback_test.js");
+        const tests = await import("/font-fallback-test.js");
         await tests.default();
         tests.test_missing_glyph_notifications();
     })()`);
@@ -158,12 +158,22 @@ try {
     await delay(200);
     assert.equal(await rasterCount("😀"), 1, "Caret movement should not rerasterize emoji");
 
-    const text = "A中文 が か\u3099 각 각 😀 ❤️ 👍🏽 🇯🇵 1️⃣ 👩‍💻 👨‍👩‍👧‍👦Z";
+    await key("a", true);
+    await insert("🕸🕸🕸");
+    await delay(200);
+    assert.equal(await rasterCount("🕸"), 1, "Repeated text-default emoji should share one atlas image");
+    assert.equal(await readText(), "🕸🕸🕸");
+    await key("ArrowLeft");
+    await key("ArrowRight");
+    await delay(200);
+    assert.equal(await rasterCount("🕸"), 1, "Caret movement should not rerasterize text-default emoji");
+
+    const text = "A中文 が か\u3099 각 각 🕸 🕸\uFE0F 🕸\uFE0E 🕸 😀 ❤️ 👍🏽 🇯🇵 1️⃣ 👩‍💻 👨‍👩‍👧‍👦Z";
     await key("a", true);
     await insert(text);
     await delay(200);
     assert.equal(await readText(), text);
-    for (const grapheme of ["❤️", "👍🏽", "🇯🇵", "1️⃣", "👩‍💻", "👨‍👩‍👧‍👦"]) {
+    for (const grapheme of ["🕸", "🕸\uFE0F", "🕸\uFE0E", "❤️", "👍🏽", "🇯🇵", "1️⃣", "👩‍💻", "👨‍👩‍👧‍👦"]) {
         assert.ok(await rasterCount(grapheme) > 0, `Missing whole-grapheme raster: ${grapheme}`);
     }
     for (const grapheme of ["中", "文", "が", "か\u3099", "각", "각"]) {

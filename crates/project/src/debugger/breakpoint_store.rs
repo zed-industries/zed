@@ -613,19 +613,6 @@ impl BreakpointStore {
         cx.notify();
     }
 
-    pub fn on_file_rename(
-        &mut self,
-        old_path: Arc<Path>,
-        new_path: Arc<Path>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(breakpoints) = self.breakpoints.remove(&old_path) {
-            self.breakpoints.insert(new_path, breakpoints);
-
-            cx.notify();
-        }
-    }
-
     pub fn clear_breakpoints(&mut self, cx: &mut Context<Self>) {
         let breakpoint_paths = self.breakpoints.keys().cloned().collect();
         self.breakpoints.clear();
@@ -973,15 +960,6 @@ impl Breakpoint {
             state: BreakpointState::Enabled,
             hit_condition: None,
             condition: None,
-            message: None,
-        }
-    }
-
-    pub fn new_condition(hit_condition: &str) -> Self {
-        Self {
-            state: BreakpointState::Enabled,
-            condition: None,
-            hit_condition: Some(hit_condition.into()),
             message: None,
         }
     }

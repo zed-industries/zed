@@ -10,9 +10,7 @@ workspace = true
 
 [lib]
 path = "src/markdown_preview.rs"
-
-[features]
-test-support = []
+doctest = false
 
 [dependencies]
 anyhow.workspace = true

@@ -13,6 +13,7 @@ message File {
   Timestamp mtime = 4;
   bool is_deleted = 5;
   bool is_historic = 6;
+  bool is_private = 7;
 }
 
 message Entry {
@@ -52,6 +53,7 @@ message RemoveWorktree {
 message GetPathMetadata {
   uint64 project_id = 1;
   string path = 2;
+  bool canonicalize = 3;
 }
 
 message GetPathMetadataResponse {

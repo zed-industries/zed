@@ -148,8 +148,10 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     ) {
         let store = self.store.read(cx);
 
-        if store.user_store.read_with(cx, |user_store, _cx| {
-            user_store.account_too_young() || user_store.has_overdue_invoices()
+        if store.user_store.read_with(cx, |user_store, cx| {
+            user_store.account_too_young()
+                || user_store.has_overdue_invoices()
+                || crate::zed_edit_predictions_excluded_from_plan(user_store, cx)
         }) {
             return;
         }
