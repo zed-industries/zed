@@ -3792,6 +3792,11 @@ pub struct AcpThread {
     submissions: SessionSubmissions,
     activity: SessionActivity,
     received_session_state: bool,
+    /// True while the agent replays a saved session's history. Replayed tool calls
+    /// already finished, so their locations are not opened: on a remote project each
+    /// one is a buffer (and sometimes a new worktree) on the server, and a long
+    /// history opens enough of them at once to stall the connection.
+    replaying_history: bool,
     /// Each idle state a subagent reported, with how many entries it had then. The subagent
     /// reports one state for all its work, so this is what shows the outcome of an earlier
     /// message to it after it has received later ones.
@@ -4142,6 +4147,7 @@ impl AcpThread {
             ),
             activity: SessionActivity::default(),
             received_session_state: false,
+            replaying_history: false,
             subagent_outcomes: Vec::new(),
             reported_usage: None,
             connection,
@@ -4475,6 +4481,15 @@ impl AcpThread {
     /// Distinguishes a received snapshot from the default Idle used by new sessions.
     pub fn has_received_session_state(&self) -> bool {
         self.received_session_state
+    }
+
+    /// Marks the start or end of a history replay; see `replaying_history`.
+    pub fn set_replaying_history(&mut self, replaying_history: bool) {
+        self.replaying_history = replaying_history;
+    }
+
+    pub fn is_replaying_history(&self) -> bool {
+        self.replaying_history
     }
 
     /// Restores the outcomes a subagent reported before it was saved, each with the entry
@@ -6711,6 +6726,9 @@ impl AcpThread {
     }
 
     pub fn resolve_locations(&mut self, id: acp_v2::ToolCallId, cx: &mut Context<Self>) {
+        if self.replaying_history {
+            return;
+        }
         let project = self.project.clone();
         let should_update_agent_location = self.parent_session_id.is_none();
         let Some((_, tool_call)) = self.tool_call_mut(&id) else {
@@ -18377,6 +18395,82 @@ mod tests {
                 ..location.clone()
             }
         );
+    }
+
+    #[gpui::test]
+    async fn test_replayed_tool_calls_do_not_open_location_buffers(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        let location = || {
+            vec![
+                acp_v2::ToolCallLocation::new(acp_v2::AbsolutePath::new(PathBuf::from(path!(
+                    "/project/file.rs"
+                ))))
+                .line(2),
+            ]
+        };
+
+        thread.update(cx, |thread, cx| {
+            thread.set_replaying_history(true);
+            thread
+                .upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new("replayed").locations(location()),
+                    cx,
+                )
+                .expect("replayed tool call");
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            let (index, call) = thread
+                .tool_call(&acp_v2::ToolCallId::new("replayed"))
+                .expect("tool");
+            assert!(call.resolved_locations.is_empty());
+            let (location, resolved) = thread.entries[index].location(0).expect("location");
+            assert_eq!(
+                location.line,
+                Some(2),
+                "the line is kept for opening on click"
+            );
+            assert!(resolved.is_none());
+        });
+        project.read_with(cx, |project, _| {
+            assert!(
+                project.agent_location().is_none(),
+                "replay must not move the agent location"
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.set_replaying_history(false);
+            thread
+                .upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new("live").locations(location()),
+                    cx,
+                )
+                .expect("live tool call");
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            let (_, call) = thread
+                .tool_call(&acp_v2::ToolCallId::new("live"))
+                .expect("tool");
+            assert!(call.resolved_locations.iter().all(Option::is_some));
+            assert_eq!(call.resolved_locations.len(), 1);
+        });
     }
 
     #[gpui::test]

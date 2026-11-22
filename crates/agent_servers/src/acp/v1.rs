@@ -1026,7 +1026,7 @@ impl AcpConnection {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let thread = cx.new(|cx| {
-            AcpThread::new(
+            let mut thread = AcpThread::new(
                 None,
                 title,
                 Some(work_dirs),
@@ -1036,7 +1036,9 @@ impl AcpConnection {
                 session_id.clone(),
                 watch::Receiver::constant(self.prompt_capabilities()),
                 cx,
-            )
+            );
+            thread.set_replaying_history(replays_history);
+            thread
         });
         self.register_session(session_id.clone(), &thread, None, None, None, cx);
 
@@ -1066,6 +1068,11 @@ impl AcpConnection {
                     if response.is_err() {
                         // Do not let replay from a failed load reach its replacement.
                         drain_foreground_queue(&dispatch_tx).await.log_err();
+                    }
+                    // The response follows every replayed update, so live tool calls
+                    // from here on resolve their locations as usual.
+                    if let Some(thread) = thread.upgrade() {
+                        thread.update(cx, |thread, _| thread.set_replaying_history(false));
                     }
                     let Some(connection_state) = this.upgrade() else {
                         return Ok(());

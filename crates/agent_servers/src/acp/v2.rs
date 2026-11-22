@@ -1098,7 +1098,10 @@ impl AcpV2Connection {
                 Ok(thread) => thread,
                 Err(error) => return Task::ready(Err(error)),
             };
-        thread.update(cx, |thread, cx| thread.mark_activity_unconfirmed(cx));
+        thread.update(cx, |thread, cx| {
+            thread.mark_activity_unconfirmed(cx);
+            thread.set_replaying_history(replay_history);
+        });
         let replay = if replay_history {
             let replay = Rc::new(RefCell::new(super::V2Replay::default()));
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
@@ -1129,6 +1132,7 @@ impl AcpV2Connection {
                     let this = this.upgrade().context("Connection was released")?;
                     let thread = thread.upgrade().context("Session was released")?;
                     cx.update(|cx| {
+                        thread.update(cx, |thread, _| thread.set_replaying_history(false));
                         if let Some(replay) = replay {
                             let mut replay = replay.borrow_mut();
                             // For older agents that omit a marker, the response still
@@ -1173,6 +1177,7 @@ impl AcpV2Connection {
                         drain_foreground_queue(&dispatch_tx).await.log_err();
                         if let Some(thread) = thread.upgrade() {
                             thread.update(cx, |thread, cx| {
+                                thread.set_replaying_history(false);
                                 thread.invalidate_replayed_subagent_state(cx)
                             });
                         }
