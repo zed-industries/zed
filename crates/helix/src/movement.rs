@@ -71,7 +71,7 @@ impl Helix {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = 1;
+        let count = self.take_count(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
                 selections.move_offsets_with(&mut |snapshot, selection| {
@@ -98,7 +98,7 @@ impl Helix {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = 1;
+        let count = self.take_count(cx);
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.change_selections(SelectionEffects::default(), window, cx, |selections| {

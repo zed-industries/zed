@@ -1,6 +1,6 @@
 use editor::test::editor_test_context::EditorTestContext;
 use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _};
-use gpui::{KeyContext, TestAppContext, UpdateGlobal as _};
+use gpui::{KeyBinding, KeyContext, TestAppContext, UpdateGlobal as _};
 use indoc::indoc;
 use settings::{HELIX_KEYMAP_PATH, KeybindSource, KeymapFile, SettingsStore};
 use vim_mode_setting::HelixNextFeatureFlag;
@@ -161,4 +161,64 @@ async fn test_keymap(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         «abc
         dexˇ»f"});
+}
+
+fn lines(count: usize) -> String {
+    (0..count)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn cursor_row(cx: &mut EditorTestContext) -> u32 {
+    cx.update_editor(|editor, _, cx| {
+        let display_map = editor.display_snapshot(cx);
+        editor
+            .selections
+            .newest::<text::Point>(&display_map)
+            .head()
+            .row
+    })
+}
+
+#[gpui::test]
+async fn test_count(cx: &mut TestAppContext) {
+    let mut cx = helix_editor(cx).await;
+    cx.set_state(&format!("ˇ{}", lines(20)));
+
+    cx.simulate_keystrokes("3 j");
+    assert_eq!(cursor_row(&mut cx), 3);
+
+    cx.simulate_keystrokes("1 0 j");
+    assert_eq!(cursor_row(&mut cx), 13);
+
+    cx.simulate_keystrokes("1 0 k");
+    assert_eq!(cursor_row(&mut cx), 3);
+
+    // A zero without a count before it is not a count.
+    cx.simulate_keystrokes("0 j");
+    assert_eq!(cursor_row(&mut cx), 4);
+}
+
+#[gpui::test]
+async fn test_count_is_reset_by_other_commands(cx: &mut TestAppContext) {
+    let mut cx = helix_editor(cx).await;
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-y",
+            editor::actions::ToggleLineNumbers,
+            Some("Editor"),
+        )])
+    });
+    cx.set_state(&format!("ˇ{}", lines(20)));
+
+    cx.simulate_keystrokes("1 0 ctrl-y j");
+    assert_eq!(cursor_row(&mut cx), 1);
+
+    // An unbound key is a command that does nothing, like in Helix.
+    cx.simulate_keystrokes("3 x j");
+    assert_eq!(cursor_row(&mut cx), 2);
+
+    cx.simulate_keystrokes("3 v j");
+    assert_eq!(cursor_row(&mut cx), 3);
 }

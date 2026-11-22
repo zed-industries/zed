@@ -11,13 +11,24 @@ mod test;
 
 use editor::{Editor, EditorEvent, EditorSettings, MultiBufferOffset, SelectionEffects};
 use gpui::{
-    Action, App, AppContext as _, Context, Entity, KeyContext, Subscription, WeakEntity, Window,
+    Action, App, AppContext as _, Context, Entity, KeyContext, KeystrokeEvent, Subscription,
+    WeakEntity, Window,
 };
 use language::{CursorShape, TransactionId};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use settings::{ModeContent, RegisterSetting, Settings, VimInsertModeCursorShape};
 use vim_mode_setting::{HelixModeSetting, VimModeSetting, observe_modal_editing_changes_in};
 
 use crate::{mode::InsertSession, selection::HelixRange};
+
+/// Appends a digit to the count of the next command.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = helix)]
+struct PushDigit(usize);
+
+/// Helix ignores digits that would make the count larger than this.
+const MAX_COUNT: usize = 100_000_000;
 
 /// Initializes the `helix` crate.
 pub fn init(cx: &mut App) {
@@ -60,6 +71,7 @@ impl editor::Addon for HelixAddon {
 /// The Helix state of one editor.
 pub(crate) struct Helix {
     pub(crate) mode: Mode,
+    count: Option<usize>,
     insert_session: Option<InsertSession>,
     editor: WeakEntity<Editor>,
     _subscriptions: Vec<Subscription>,
@@ -70,21 +82,28 @@ impl Helix {
         let editor = cx.entity();
         cx.new(|cx| Helix {
             mode: HelixSettings::get_global(cx).default_mode,
+            count: None,
             insert_session: None,
             editor: editor.downgrade(),
-            _subscriptions: vec![cx.subscribe_in(
-                &editor,
-                window,
-                |helix: &mut Helix, _, event, window, cx| {
-                    helix.handle_editor_event(event, window, cx)
-                },
-            )],
+            _subscriptions: vec![
+                cx.observe_keystrokes(Self::observe_keystrokes),
+                cx.subscribe_in(
+                    &editor,
+                    window,
+                    |helix: &mut Helix, _, event, window, cx| {
+                        helix.handle_editor_event(event, window, cx)
+                    },
+                ),
+            ],
         })
     }
 
     fn extend_key_context(&self, key_context: &mut KeyContext) {
         if self.mode != Mode::Insert {
             key_context.add("Helix");
+        }
+        if self.count.is_some() {
+            key_context.add("helix_count");
         }
         key_context.set("helix_mode", self.mode.context_id());
     }
@@ -122,6 +141,9 @@ impl Helix {
             entity: helix.clone(),
         });
         helix.update(cx, |_, cx| {
+            Self::action(editor, cx, |helix, &PushDigit(digit), _, cx| {
+                helix.push_digit(digit, cx)
+            });
             mode::register(editor, cx);
             movement::register(editor, cx);
         });
@@ -168,6 +190,50 @@ impl Helix {
     ) -> Option<R> {
         let editor = self.editor.upgrade()?;
         Some(editor.update(cx, |editor, cx| update(self, editor, cx)))
+    }
+
+    fn push_digit(&mut self, digit: usize, cx: &mut Context<Self>) {
+        let count = self
+            .count
+            .unwrap_or(0)
+            .saturating_mul(10)
+            .saturating_add(digit);
+        if count <= MAX_COUNT {
+            self.count = Some(count).filter(|count| *count > 0);
+            cx.notify();
+        }
+    }
+
+    /// Takes the count typed before the current command, defaulting to 1.
+    fn take_count(&mut self, cx: &mut Context<Self>) -> usize {
+        match self.count.take() {
+            Some(count) => {
+                cx.notify();
+                count
+            }
+            None => 1,
+        }
+    }
+
+    /// Like Helix, the count only applies to the command that follows it,
+    /// whichever command that is.
+    fn observe_keystrokes(
+        &mut self,
+        keystroke_event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(action) = keystroke_event.action.as_ref() {
+            if action.as_any().is::<PushDigit>() {
+                return;
+            }
+        } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
+        {
+            return;
+        }
+        if self.count.take().is_some() {
+            cx.notify();
+        }
     }
 
     fn switch_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
