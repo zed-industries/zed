@@ -8094,6 +8094,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
+ "indoc",
  "language",
  "release_channel",
  "semver",

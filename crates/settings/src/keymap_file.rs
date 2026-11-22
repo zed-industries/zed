@@ -1408,6 +1408,7 @@ impl<'a> KeybindUpdateTarget<'a> {
 pub enum KeybindSource {
     User,
     Vim,
+    Helix,
     Base,
     #[default]
     Default,
@@ -1418,6 +1419,7 @@ impl KeybindSource {
     const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Base as u32);
     const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Default as u32);
     const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Vim as u32);
+    const HELIX: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Helix as u32);
     const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::User as u32);
 
     pub fn name(&self) -> &'static str {
@@ -1426,6 +1428,7 @@ impl KeybindSource {
             KeybindSource::Default => "Default",
             KeybindSource::Base => "Base",
             KeybindSource::Vim => "Vim",
+            KeybindSource::Helix => "Helix",
             KeybindSource::Unknown => "Unknown",
         }
     }
@@ -1436,6 +1439,7 @@ impl KeybindSource {
             KeybindSource::Default => Self::DEFAULT,
             KeybindSource::Base => Self::BASE,
             KeybindSource::Vim => Self::VIM,
+            KeybindSource::Helix => Self::HELIX,
             KeybindSource::Unknown => KeyBindingMetaIndex(*self as u32),
         }
     }
@@ -1446,6 +1450,7 @@ impl KeybindSource {
             Self::BASE => KeybindSource::Base,
             Self::DEFAULT => KeybindSource::Default,
             Self::VIM => KeybindSource::Vim,
+            Self::HELIX => KeybindSource::Helix,
             _ => KeybindSource::Unknown,
         }
     }

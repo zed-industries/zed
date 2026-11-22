@@ -72,10 +72,11 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    BaseKeymap, DEFAULT_KEYMAP_PATH, DefaultOpenBehavior, InvalidSettingsError, KeybindSource,
-    KeymapFile, KeymapFileLoadResult, MigrationStatus, SPECIFIC_OVERRIDES_KEYMAP_PATH, Settings,
-    SettingsFile, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
-    initial_project_settings_content, initial_tasks_content, update_settings_file,
+    BaseKeymap, DEFAULT_KEYMAP_PATH, DefaultOpenBehavior, HELIX_KEYMAP_PATH, InvalidSettingsError,
+    KeybindSource, KeymapFile, KeymapFileLoadResult, MigrationStatus,
+    SPECIFIC_OVERRIDES_KEYMAP_PATH, Settings, SettingsFile, SettingsStore, VIM_KEYMAP_PATH,
+    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
+    update_settings_file,
 };
 use sidebar::Sidebar;
 #[cfg(debug_assertions)]
@@ -2384,6 +2385,13 @@ pub fn load_default_keymap(cx: &mut App) {
     {
         cx.bind_keys(filter_disabled_ai_bindings(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
+            cx,
+        ));
+    }
+
+    if helix_crate_enabled {
+        cx.bind_keys(filter_disabled_ai_bindings(
+            KeymapFile::load_asset(HELIX_KEYMAP_PATH, Some(KeybindSource::Helix), cx).unwrap(),
             cx,
         ));
     }

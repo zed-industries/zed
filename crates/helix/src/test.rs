@@ -1,7 +1,8 @@
 use editor::test::editor_test_context::EditorTestContext;
 use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _};
 use gpui::{KeyContext, TestAppContext, UpdateGlobal as _};
-use settings::SettingsStore;
+use indoc::indoc;
+use settings::{HELIX_KEYMAP_PATH, KeybindSource, KeymapFile, SettingsStore};
 use vim_mode_setting::HelixNextFeatureFlag;
 
 use crate::{
@@ -17,6 +18,13 @@ fn init_test(cx: &mut TestAppContext) {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         editor::init(cx);
         crate::init(cx);
+        let mut bindings =
+            KeymapFile::load_asset(HELIX_KEYMAP_PATH, Some(KeybindSource::Helix), cx)
+                .expect("helix keymap should load");
+        for binding in &mut bindings {
+            binding.set_meta(KeybindSource::Helix.meta());
+        }
+        cx.bind_keys(bindings);
     });
 }
 
@@ -128,4 +136,29 @@ async fn test_mode_switching(cx: &mut TestAppContext) {
     cx.dispatch_action(NormalMode);
     assert_eq!(mode(&mut cx), Some(Mode::Normal));
     cx.assert_editor_state("«ˇa»bc");
+}
+
+#[gpui::test]
+async fn test_keymap(cx: &mut TestAppContext) {
+    let mut cx = helix_editor(cx).await;
+    cx.set_state(indoc! {"
+        ˇabc
+        def"});
+    cx.simulate_keystrokes("l j");
+    cx.assert_editor_state(indoc! {"
+        abc
+        d«eˇ»f"});
+
+    cx.simulate_keystrokes("v h k");
+    assert_eq!(mode(&mut cx), Some(Mode::Select));
+    cx.assert_editor_state(indoc! {"
+        «ˇabc
+        de»f"});
+
+    cx.simulate_keystrokes("escape");
+    assert_eq!(mode(&mut cx), Some(Mode::Normal));
+    cx.simulate_keystrokes("a x escape");
+    cx.assert_editor_state(indoc! {"
+        «abc
+        dexˇ»f"});
 }

@@ -1,0 +1,42 @@
+[
+  {
+    "context": "Editor && Helix && helix_mode == normal && !menu",
+    "bindings": {
+      "h": "helix::MoveCharLeft",
+      "left": "helix::MoveCharLeft",
+      "j": "helix::MoveVisualLineDown",
+      "down": "helix::MoveVisualLineDown",
+      "k": "helix::MoveVisualLineUp",
+      "up": "helix::MoveVisualLineUp",
+      "l": "helix::MoveCharRight",
+      "right": "helix::MoveCharRight",
+      "v": "helix::SelectMode",
+      "i": "helix::InsertMode",
+      "a": "helix::AppendMode",
+      "escape": "helix::NormalMode",
+    },
+  },
+  {
+    "context": "Editor && Helix && helix_mode == select && !menu",
+    "bindings": {
+      "h": "helix::ExtendCharLeft",
+      "left": "helix::ExtendCharLeft",
+      "j": "helix::ExtendVisualLineDown",
+      "down": "helix::ExtendVisualLineDown",
+      "k": "helix::ExtendVisualLineUp",
+      "up": "helix::ExtendVisualLineUp",
+      "l": "helix::ExtendCharRight",
+      "right": "helix::ExtendCharRight",
+      "v": "helix::NormalMode",
+      "i": "helix::InsertMode",
+      "a": "helix::AppendMode",
+      "escape": "helix::ExitSelectMode",
+    },
+  },
+  {
+    "context": "Editor && helix_mode == insert",
+    "bindings": {
+      "escape": "helix::NormalMode",
+    },
+  },
+]
