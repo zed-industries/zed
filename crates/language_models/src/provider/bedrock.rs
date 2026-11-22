@@ -1065,23 +1065,6 @@ impl BedrockLanguageModelProvider {
         all_models
     }
 
-    fn preferred_model(&self, fast: bool, cx: &App) -> Option<LanguageModel> {
-        if matches!(
-            self.state.read(cx).listing,
-            ModelListing::Loading { previous: None }
-        ) {
-            return None;
-        }
-        let models = self.bedrock_models(cx);
-        let prefix = if fast {
-            DEFAULT_FAST_MODEL_ID_PREFIX
-        } else {
-            DEFAULT_MODEL_ID_PREFIX
-        };
-        newest_converse_model(&models, prefix)
-            .map(|model| self.offered_language_model(model, &models))
-    }
-
     fn offered_language_model(
         &self,
         config: &BedrockModelConfig,
@@ -1114,45 +1097,7 @@ impl BedrockLanguageModelProvider {
     }
 }
 
-/// The newest offered model of these families is the default.
-const DEFAULT_MODEL_ID_PREFIX: &str = "anthropic.claude-sonnet-";
-const DEFAULT_FAST_MODEL_ID_PREFIX: &str = "anthropic.claude-haiku-";
 const FABLE_FALLBACK_MODEL_ID: &str = "anthropic.claude-opus-4-8";
-
-fn model_version(model_id: &str) -> Vec<u64> {
-    model_id
-        .split_once(':')
-        .map_or(model_id, |(id, _)| id)
-        .split('-')
-        .skip_while(|component| !component.bytes().all(|byte| byte.is_ascii_digit()))
-        .take_while(|component| component.len() != 8 && !component.is_empty())
-        .map_while(|component| component.parse().ok())
-        .collect()
-}
-
-fn newest_converse_model<'a>(
-    models: &'a IndexMap<String, BedrockModelConfig>,
-    prefix: &str,
-) -> Option<&'a BedrockModelConfig> {
-    models
-        .values()
-        .filter_map(|config| match config {
-            BedrockModelConfig::Converse(model) if model.base_model_id.starts_with(prefix) => {
-                Some((config, model))
-            }
-            _ => None,
-        })
-        .max_by(|(_, left), (_, right)| {
-            model_version(&left.base_model_id)
-                .cmp(&model_version(&right.base_model_id))
-                .then_with(|| {
-                    (left.route == ConverseModelRoute::Automatic)
-                        .cmp(&(right.route == ConverseModelRoute::Automatic))
-                })
-                .then_with(|| right.id.cmp(&left.id))
-        })
-        .map(|(config, _)| config)
-}
 
 /// The Converse model a settings entry describes. The entry's name is sent as
 /// the model id exactly as written. An entry whose name Bedrock listed, or
@@ -1246,12 +1191,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiBedrock)
     }
 
-    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
-        self.preferred_model(false, cx)
+    fn default_model(&self, _cx: &App) -> Option<LanguageModel> {
+        None
     }
 
-    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
-        self.preferred_model(true, cx)
+    fn default_fast_model(&self, _cx: &App) -> Option<LanguageModel> {
+        None
     }
 
     fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
@@ -3776,25 +3721,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn equal_versions_prefer_automatic_routes_then_lower_selection_ids() -> Result<()> {
-        let mut models = IndexMap::default();
-        for (id, route) in [
-            ("a-private", ConverseModelRoute::Pinned),
-            ("z-automatic", ConverseModelRoute::Automatic),
-            ("b-automatic", ConverseModelRoute::Automatic),
-        ] {
-            let mut model = converse_model("anthropic.claude-sonnet-8", None);
-            model.id = id.to_string();
-            model.route = route;
-            models.insert(id.to_string(), BedrockModelConfig::Converse(model));
-        }
-        let selected =
-            newest_converse_model(&models, DEFAULT_MODEL_ID_PREFIX).context("family model")?;
-        assert_eq!(language_model(selected).id.0.as_ref(), "b-automatic");
-        Ok(())
-    }
-
     fn application_profile(base: &str) -> Result<InferenceProfileSummary> {
         Ok(InferenceProfileSummary::builder()
             .inference_profile_id("app")
@@ -3880,81 +3806,6 @@ mod tests {
             assert_eq!(
                 mantle_language_model(&mantle).telemetry_id.as_ref(),
                 "bedrock-mantle/vendor.chat"
-            );
-            Ok(())
-        });
-        assert!(result.is_ok(), "{result:?}");
-    }
-
-    #[gpui::test]
-    fn defaults_use_only_the_highest_foundation_version_in_their_family(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        init_provider_test(cx);
-        let result = cx.update(|cx| -> Result<()> {
-            let provider = new_test_provider(http_client::FakeHttpClient::with_404_response(), cx);
-            for (bases, expected_default, expected_fast) in [
-                (
-                    vec![
-                        "anthropic.claude-sonnet-9",
-                        "anthropic.claude-sonnet-10",
-                        "anthropic.claude-haiku-7",
-                    ],
-                    Some("anthropic.claude-sonnet-10"),
-                    Some("anthropic.claude-haiku-7"),
-                ),
-                (
-                    vec![
-                        "anthropic.claude-sonnet-4-9-20261201-v1:0",
-                        "anthropic.claude-sonnet-4-10-20260101-v1:0",
-                    ],
-                    Some("anthropic.claude-sonnet-4-10-20260101-v1:0"),
-                    None,
-                ),
-                (vec!["anthropic.claude-opus-8", "vendor.chat"], None, None),
-            ] {
-                let profiles = bases
-                    .iter()
-                    .map(|base| listed_inference_profile(&format!("us.{base}"), base))
-                    .collect::<Vec<_>>();
-                let foundations = bases
-                    .iter()
-                    .map(|base| listed_foundation_model(base))
-                    .collect::<Vec<_>>();
-                provider.state.update(cx, |state, _| {
-                    state.listing =
-                        ModelListing::Listed(ModelCatalog::new(&profiles, &foundations));
-                });
-                assert_eq!(
-                    provider
-                        .default_model(cx)
-                        .map(|model| model.id.0.to_string()),
-                    expected_default.map(str::to_string)
-                );
-                assert_eq!(
-                    provider
-                        .default_fast_model(cx)
-                        .map(|model| model.id.0.to_string()),
-                    expected_fast.map(str::to_string)
-                );
-            }
-            let base = "anthropic.claude-sonnet-10";
-            let application = application_profile(base)?;
-            provider.state.update(cx, |state, _| {
-                state.listing = ModelListing::Listed(ModelCatalog::new(
-                    std::slice::from_ref(&application),
-                    &[listed_foundation_model(base)],
-                ));
-                state.capability_catalog = CapabilityCatalog::default();
-            });
-            assert_eq!(
-                provider
-                    .default_model(cx)
-                    .context("application-only default")?
-                    .id
-                    .0
-                    .as_ref(),
-                application.inference_profile_arn()
             );
             Ok(())
         });
@@ -4822,65 +4673,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn first_listing_does_not_offer_a_provisional_default(cx: &mut gpui::TestAppContext) {
-        let scenario = async {
-            init_provider_test(cx);
-            set_bedrock_settings(
-                cx,
-                serde_json::json!({"available_models": [{"name": "anthropic.claude-haiku-98", "max_tokens": 10000}]}),
-            )?;
-            let (release, response) = futures::channel::oneshot::channel::<()>();
-            let response = response
-                .map(|result| result.expect("test releases listing"))
-                .boxed()
-                .shared();
-            let (started, mut requests) = futures::channel::mpsc::unbounded();
-            let client = http_client::FakeHttpClient::create(move |request| {
-                let response = response.clone();
-                let started = started.clone();
-                async move {
-                    if request.uri() == CAPABILITY_CATALOG_URL {
-                        return json_response(404, serde_json::json!({}));
-                    }
-                    started.unbounded_send(()).context("notify listing start")?;
-                    response.await;
-                    json_response(
-                        200,
-                        listing_response(&request, &["anthropic.claude-sonnet-42"]),
-                    )
-                }
-            });
-            let provider = Arc::new(cx.update(|cx| new_test_provider(client, cx)));
-            provider.state.update(cx, |state, cx| {
-            state.capability_catalog = capability_catalog(serde_json::json!({
-                "us.anthropic.claude-sonnet-99": capability_entry("Provisional", serde_json::json!({})),
-            }));
-            state.change_auth(api_key_auth(), false, cx);
-        });
-            requests.next().await.context("listing started")?;
-            assert_eq!(offered_ids(&provider, cx), ["anthropic.claude-haiku-98"]);
-            assert!(cx.update(|cx| provider.default_model(cx)).is_none());
-            assert!(cx.update(|cx| provider.default_fast_model(cx)).is_none());
-            release
-                .send(())
-                .map_err(|_| anyhow!("listing receiver dropped"))?;
-            finish_listing(&provider, cx).await?;
-            cx.update(|cx| {
-                assert_eq!(
-                    provider
-                        .default_model(cx)
-                        .map(|model| model.id.0.to_string()),
-                    Some("anthropic.claude-sonnet-42".into())
-                );
-            });
-            Ok::<_, anyhow::Error>(())
-        };
-        scenario
-            .await
-            .expect("initial default scenario should complete");
-    }
-
-    #[gpui::test]
     async fn signed_out_settings_models_do_not_resolve_credentials_or_send_requests(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -5045,20 +4837,6 @@ mod tests {
         );
         let provider =
             cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
-        let offered_ids = |cx: &mut gpui::TestAppContext| {
-            cx.update(|cx| provider.provided_models(cx))
-                .into_iter()
-                .map(|model| model.id.0.to_string())
-                .collect::<Vec<_>>()
-        };
-
-        assert_eq!(offered_ids(cx), ["us.anthropic.claude-sonnet-9"]);
-        assert_eq!(
-            cx.update(|cx| provider.default_model(cx))
-                .map(|model| model.id.0.to_string()),
-            Some("us.anthropic.claude-sonnet-9".to_string())
-        );
-
         let model_catalog = ModelCatalog::new(
             &[
                 listed_inference_profile(
@@ -5069,51 +4847,34 @@ mod tests {
                     "global.anthropic.claude-sonnet-9",
                     "anthropic.claude-sonnet-9",
                 ),
-                listed_inference_profile(
-                    "us.anthropic.claude-sonnet-8",
-                    "anthropic.claude-sonnet-8",
-                ),
                 listed_inference_profile("us.anthropic.claude-haiku-9", "anthropic.claude-haiku-9"),
             ],
             &[
                 listed_foundation_model("anthropic.claude-sonnet-9"),
-                listed_foundation_model("anthropic.claude-sonnet-8"),
                 listed_foundation_model("anthropic.claude-haiku-9"),
             ],
         );
-        provider.state.update(cx, |state, cx| {
+        provider.state.update(cx, |state, _| {
             state.listing = ModelListing::Listed(model_catalog);
             state.capability_catalog = capability_catalog(serde_json::json!({
                 "global.anthropic.claude-sonnet-9":
                     capability_entry("Sonnet 9 (Global)", always_reasoning_members()),
             }));
-            cx.notify();
         });
 
-        assert_eq!(
-            offered_ids(cx),
-            [
-                "anthropic.claude-haiku-9",
-                "anthropic.claude-sonnet-8",
-                "anthropic.claude-sonnet-9",
-                "us.anthropic.claude-sonnet-9",
-            ]
-        );
-        let default_model = cx
-            .update(|cx| provider.default_model(cx))
-            .expect("a listed Sonnet model should be the default");
-        assert_eq!(default_model.id.0.as_ref(), "anthropic.claude-sonnet-9");
-        assert_eq!(default_model.max_token_count(), 700_000);
-        assert!(default_model.supports_thinking);
-        assert!(!default_model.supports_disabling_thinking);
-        let default_fast_model = cx
-            .update(|cx| provider.default_fast_model(cx))
-            .expect("a listed Haiku model should be the fast default");
-        assert_eq!(default_fast_model.id.0.as_ref(), "anthropic.claude-haiku-9");
+        let models = cx.update(|cx| provider.provided_models(cx));
+        let [uncatalogued, listed, configured] = models.as_slice() else {
+            panic!("expected three models, got {}", models.len());
+        };
+        assert_eq!(uncatalogued.id.0.as_ref(), "anthropic.claude-haiku-9");
         assert!(
-            !default_fast_model.supports_thinking,
+            !uncatalogued.supports_thinking,
             "a model the capability catalog does not know has no reasoning controls"
         );
+        assert_eq!(listed.id.0.as_ref(), "anthropic.claude-sonnet-9");
+        assert_eq!(listed.max_token_count(), 700_000);
+        assert!(listed.supports_thinking);
+        assert!(!listed.supports_disabling_thinking);
 
         let converse_config = |model: &LanguageModel, cx: &mut gpui::TestAppContext| match cx
             .update(|cx| provider.config(model, cx))
@@ -5123,16 +4884,12 @@ mod tests {
             BedrockModelConfig::Mantle(_) => panic!("expected a converse model"),
         };
         assert_eq!(
-            converse_config(&default_model, cx).request_id,
+            converse_config(listed, cx).request_id,
             "global.anthropic.claude-sonnet-9",
             "`allow_global` routes a listed model through its global profile"
         );
 
-        let configured = cx
-            .update(|cx| provider.provided_models(cx))
-            .into_iter()
-            .find(|model| model.id.0.as_ref() == "us.anthropic.claude-sonnet-9")
-            .expect("the settings entry should be offered");
+        assert_eq!(configured.id.0.as_ref(), "us.anthropic.claude-sonnet-9");
         assert_eq!(configured.max_token_count(), 500_000);
         assert_eq!(
             configured.name.0.as_ref(),
@@ -5142,7 +4899,7 @@ mod tests {
             configured.supports_thinking,
             "a settings entry takes what it leaves unsaid from the listed model"
         );
-        let configured = converse_config(&configured, cx);
+        let configured = converse_config(configured, cx);
         assert_eq!(
             configured.request_id, "us.anthropic.claude-sonnet-9",
             "a settings entry is always invoked by its own name"
