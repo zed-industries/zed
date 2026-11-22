@@ -990,6 +990,21 @@ impl BedrockLanguageModelProvider {
         all_models
     }
 
+    /// The offered model with the greatest id under `prefix`, which is the
+    /// newest because Bedrock ids embed the version. Models that Bedrock
+    /// lists as legacy are skipped.
+    fn preferred_model(&self, prefix: &str, cx: &App) -> Option<LanguageModel> {
+        let models = self.bedrock_models(cx);
+        let model_catalog = self.state.read(cx).model_catalog.as_ref();
+        let (_, model) = models
+            .iter()
+            .filter(|(id, _)| {
+                id.starts_with(prefix) && model_catalog.is_none_or(|catalog| catalog.is_active(id))
+            })
+            .max_by_key(|(id, _)| *id)?;
+        Some(self.offered_language_model(model, &models))
+    }
+
     fn offered_language_model(
         &self,
         config: &BedrockModelConfig,
@@ -1116,12 +1131,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiBedrock)
     }
 
-    fn default_model(&self, _cx: &App) -> Option<LanguageModel> {
-        None
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
+        self.preferred_model("anthropic.claude-sonnet-", cx)
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<LanguageModel> {
-        None
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
+        self.preferred_model("anthropic.claude-haiku-", cx)
     }
 
     fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
@@ -3602,8 +3617,9 @@ mod tests {
     use std::path::Path;
 
     use bedrock::bedrock_control_plane_client::types::{
-        FoundationModelSummary, InferenceProfileModel, InferenceProfileStatus,
-        InferenceProfileSummary, InferenceProfileType, ModelModality,
+        FoundationModelLifecycle, FoundationModelLifecycleStatus, FoundationModelSummary,
+        InferenceProfileModel, InferenceProfileStatus, InferenceProfileSummary,
+        InferenceProfileType, ModelModality,
     };
 
     /// A Converse model served through a `us.` inference profile.
@@ -4041,6 +4057,13 @@ mod tests {
     }
 
     fn listed_foundation_model(model_id: &str) -> FoundationModelSummary {
+        foundation_model_with_status(model_id, FoundationModelLifecycleStatus::Active)
+    }
+
+    fn foundation_model_with_status(
+        model_id: &str,
+        status: FoundationModelLifecycleStatus,
+    ) -> FoundationModelSummary {
         FoundationModelSummary::builder()
             .model_arn(format!(
                 "arn:aws:bedrock:us-east-1::foundation-model/{model_id}"
@@ -4050,8 +4073,56 @@ mod tests {
             .input_modalities(ModelModality::Text)
             .output_modalities(ModelModality::Text)
             .response_streaming_supported(true)
+            .model_lifecycle(
+                FoundationModelLifecycle::builder()
+                    .status(status)
+                    .build()
+                    .expect("the lifecycle has a status"),
+            )
             .build()
             .expect("the summary has every required member")
+    }
+
+    #[gpui::test]
+    fn defaults_are_the_newest_active_sonnet_and_haiku(cx: &mut gpui::TestAppContext) {
+        init_provider_test(cx);
+        let provider =
+            cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx));
+        // Ids as Bedrock lists them: a dated id sorts below its successors.
+        let active = [
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-5",
+            "anthropic.claude-sonnet-5-5",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+        ];
+        let legacy = ["anthropic.claude-sonnet-6", "anthropic.claude-haiku-5-5"];
+        let profiles = active
+            .iter()
+            .chain(&legacy)
+            .map(|id| listed_inference_profile(&format!("us.{id}"), id))
+            .collect::<Vec<_>>();
+        let foundation_models =
+            active
+                .iter()
+                .map(|id| listed_foundation_model(id))
+                .chain(legacy.iter().map(|id| {
+                    foundation_model_with_status(id, FoundationModelLifecycleStatus::Legacy)
+                }))
+                .collect::<Vec<_>>();
+        provider.state.update(cx, |state, _| {
+            state.model_catalog = Some(ModelCatalog::new(&profiles, &foundation_models));
+        });
+
+        let (default, fast) =
+            cx.update(|cx| (provider.default_model(cx), provider.default_fast_model(cx)));
+        assert_eq!(
+            default.map(|model| model.id.0.to_string()).as_deref(),
+            Some("anthropic.claude-sonnet-5-5")
+        );
+        assert_eq!(
+            fast.map(|model| model.id.0.to_string()).as_deref(),
+            Some("anthropic.claude-haiku-4-5-20251001-v1:0")
+        );
     }
 
     fn listed_inference_profile(profile_id: &str, model_id: &str) -> InferenceProfileSummary {
@@ -4196,6 +4267,7 @@ mod tests {
                         "modelName": format!("Name of {id}"),
                         "inputModalities": ["TEXT"], "outputModalities": ["TEXT"],
                         "responseStreamingSupported": true,
+                        "modelLifecycle": {"status": "ACTIVE"},
                     }]})
                 } else if request
                     .uri()

@@ -11,8 +11,8 @@ use anyhow::{Result, anyhow};
 use aws_sdk_bedrock::Client;
 use aws_sdk_bedrock::error::{DisplayErrorContext, ProvideErrorMetadata, SdkError};
 use aws_sdk_bedrock::types::{
-    FoundationModelSummary, InferenceProfileStatus, InferenceProfileSummary, InferenceProfileType,
-    ModelModality,
+    FoundationModelLifecycleStatus, FoundationModelSummary, InferenceProfileStatus,
+    InferenceProfileSummary, InferenceProfileType, ModelModality,
 };
 use futures::FutureExt;
 use std::collections::BTreeMap;
@@ -53,6 +53,7 @@ struct ListedModel {
     base_model_id: String,
     display_name: String,
     supports_images: bool,
+    is_active: bool,
     geographic_profile_id: Option<String>,
     global_profile_id: Option<String>,
     /// Every profile id and ARN that routes to this model.
@@ -66,6 +67,9 @@ impl ListedModel {
             base_model_id: model.model_id().to_string(),
             display_name: display_name.to_string(),
             supports_images: model.input_modalities().contains(&ModelModality::Image),
+            is_active: model.model_lifecycle().is_some_and(|lifecycle| {
+                lifecycle.status() == &FoundationModelLifecycleStatus::Active
+            }),
             geographic_profile_id: None,
             global_profile_id: None,
             routes: Vec::new(),
@@ -173,6 +177,13 @@ impl ModelCatalog {
         self.models.iter().map(move |model| {
             model.converse_model(model.request_id(allow_global), capability_catalog)
         })
+    }
+
+    /// Whether Bedrock lists the model with this id as active rather than legacy.
+    pub fn is_active(&self, model_id: &str) -> bool {
+        self.models
+            .iter()
+            .any(|model| model.id == model_id && model.is_active)
     }
 
     /// The model that `request_id` resolves to, where `request_id` is a
