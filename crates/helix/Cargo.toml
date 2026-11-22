@@ -25,6 +25,7 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 text.workspace = true
+theme.workspace = true
 unicode-segmentation.workspace = true
 vim_mode_setting.workspace = true
 

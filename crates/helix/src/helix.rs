@@ -12,15 +12,17 @@ mod test;
 
 use editor::{Editor, EditorEvent, EditorSettings, MultiBufferOffset, SelectionEffects};
 use gpui::{
-    Action, App, AppContext as _, Context, Entity, KeyContext, KeystrokeEvent, Subscription,
-    WeakEntity, Window, actions,
+    Action, App, AppContext as _, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
+    Subscription, WeakEntity, Window, actions,
 };
 use language::{CursorShape, TransactionId};
+use modal_editor::{ModeIndicatorFocused, ModeIndicatorSource, ModeStatus};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{
     ModeContent, RegisterSetting, Settings, UseSystemClipboard, VimInsertModeCursorShape,
 };
+use theme::ActiveTheme as _;
 use vim_mode_setting::{HelixModeSetting, VimModeSetting, observe_modal_editing_changes_in};
 
 use crate::{mode::InsertSession, selection::HelixRange};
@@ -45,6 +47,7 @@ const MAX_COUNT: usize = 100_000_000;
 
 /// Initializes the `helix` crate.
 pub fn init(cx: &mut App) {
+    modal_editor::register_mode_indicator_source::<Helix>(cx);
     cx.observe_new(Helix::register).detach();
 }
 
@@ -53,6 +56,16 @@ pub(crate) enum Mode {
     Normal,
     Select,
     Insert,
+}
+
+impl std::fmt::Display for Mode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Mode::Normal => "NORMAL",
+            Mode::Select => "SELECT",
+            Mode::Insert => "INSERT",
+        })
+    }
 }
 
 impl Mode {
@@ -105,6 +118,43 @@ pub(crate) struct Helix {
     insert_session: Option<InsertSession>,
     editor: WeakEntity<Editor>,
     _subscriptions: Vec<Subscription>,
+}
+
+impl EventEmitter<ModeIndicatorFocused> for Helix {}
+
+impl ModeIndicatorSource for Helix {
+    fn mode_status(&self, cx: &App) -> ModeStatus {
+        let colors = cx.theme().colors();
+        let (foreground, background) = match self.mode {
+            Mode::Normal => (
+                colors.vim_helix_normal_foreground,
+                colors.vim_helix_normal_background,
+            ),
+            Mode::Select => (
+                colors.vim_helix_select_foreground,
+                colors.vim_helix_select_background,
+            ),
+            Mode::Insert => (colors.vim_insert_foreground, colors.vim_insert_background),
+        };
+        let mut pending = String::new();
+        if let Some(register) = self.selected_register {
+            pending.push('"');
+            pending.push(register);
+        }
+        if self.pending_input == Some(PendingInput::Register) {
+            pending.push('"');
+        }
+        if let Some(count) = self.count {
+            pending.push_str(&count.to_string());
+        }
+        ModeStatus {
+            label: None,
+            mode: self.mode.to_string(),
+            pending,
+            foreground,
+            background,
+        }
+    }
 }
 
 impl Helix {
@@ -190,6 +240,12 @@ impl Helix {
         Self::sync_editor_settings(mode, false, editor, window, cx);
         if mode != Mode::Insert {
             Self::ensure_selections_width(editor, window, cx);
+        }
+        if editor.is_focused(window) {
+            // Let the mode indicator subscribe to the new state first.
+            cx.defer_in(window, move |_, _, cx| {
+                helix.update(cx, |_, cx| cx.emit(ModeIndicatorFocused));
+            });
         }
     }
 
@@ -362,7 +418,11 @@ impl Helix {
         cx: &mut Context<Self>,
     ) {
         match event {
-            EditorEvent::Focused | EditorEvent::FocusedIn | EditorEvent::CursorShapeChanged => {
+            EditorEvent::Focused => {
+                cx.emit(ModeIndicatorFocused);
+                self.sync_editor_settings_for_state(window, cx);
+            }
+            EditorEvent::FocusedIn | EditorEvent::CursorShapeChanged => {
                 self.sync_editor_settings_for_state(window, cx);
             }
             EditorEvent::InputIgnored { text } => self.input_ignored(text, window, cx),

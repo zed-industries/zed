@@ -2,6 +2,7 @@ use editor::test::editor_test_context::EditorTestContext;
 use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _};
 use gpui::{ClipboardItem, KeyBinding, KeyContext, TestAppContext, UpdateGlobal as _};
 use indoc::indoc;
+use modal_editor::ModeIndicatorSource as _;
 use settings::{HELIX_KEYMAP_PATH, KeybindSource, KeymapFile, SettingsStore, UseSystemClipboard};
 use vim_mode_setting::HelixNextFeatureFlag;
 
@@ -375,4 +376,34 @@ async fn test_default_register_follows_use_system_clipboard(cx: &mut TestAppCont
         read_register(DEFAULT_REGISTER, &mut cx),
         Some(vec!["newer".to_string()])
     );
+}
+
+fn mode_status(cx: &mut EditorTestContext) -> (String, String) {
+    cx.editor(|editor, _, cx| {
+        let helix = editor
+            .addon::<HelixAddon>()
+            .map(|addon| addon.entity.clone())
+            .expect("helix should be active");
+        let status = helix.read(cx).mode_status(cx);
+        (status.mode, status.pending)
+    })
+}
+
+#[gpui::test]
+async fn test_mode_status(cx: &mut TestAppContext) {
+    let mut cx = helix_editor(cx).await;
+    cx.set_state(&format!("ˇ{}", lines(5)));
+    assert_eq!(mode_status(&mut cx), ("NORMAL".into(), "".into()));
+
+    cx.simulate_keystrokes("\"");
+    assert_eq!(mode_status(&mut cx), ("NORMAL".into(), "\"".into()));
+    cx.simulate_keystrokes("a 1 2");
+    assert_eq!(mode_status(&mut cx), ("NORMAL".into(), "\"a12".into()));
+    cx.simulate_keystrokes("j");
+    assert_eq!(mode_status(&mut cx), ("NORMAL".into(), "".into()));
+
+    cx.simulate_keystrokes("v");
+    assert_eq!(mode_status(&mut cx).0, "SELECT");
+    cx.simulate_keystrokes("i");
+    assert_eq!(mode_status(&mut cx).0, "INSERT");
 }
