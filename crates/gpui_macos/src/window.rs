@@ -2199,7 +2199,7 @@ impl PlatformWindow for MacWindow {
         id: gpui::NativeViewId,
         view: NonNull<c_void>,
     ) -> Option<Box<dyn std::any::Any>> {
-        // SAFETY: The caller guarantees `view` is a live, unparented `NSView`, and
+        // SAFETY: The caller guarantees `view` is a live `NSView` with no superview, and
         // platform windows are only used on the main thread.
         unsafe { native_views::attach(&self.0, id, view) }
     }
