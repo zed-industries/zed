@@ -47,6 +47,10 @@ pub(super) struct NativeViews {
     /// Whether GPUI was told of a mouse press that went to a native view, and
     /// is owed the release.
     pressed_in_view: bool,
+    /// The keys, by key code, whose presses GPUI took ahead of a native view.
+    /// Their releases are GPUI's too, and not the view's, which never saw them
+    /// pressed.
+    keys_taken_before_view: Vec<u16>,
     /// Whether the pointer is over a native view, which then sets the cursor.
     pointer_over_view: bool,
     /// Whether a scene has been drawn since the pointer was last looked for.
@@ -755,9 +759,12 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
             return msg_send![super(this, superclass), sendEvent: event];
         };
         if let Some(key_down) = key_down_for_native_view(&window_state, this, event) {
+            let key_code: u16 = msg_send![event, keyCode];
             if offer_key_down_before_native_view(&window_state, key_down) {
+                note_key_taken_before_view(&window_state, key_code, true);
                 return;
             }
+            note_key_taken_before_view(&window_state, key_code, false);
             window_state.lock().native_views.delivering_key_down = true;
             let _: () = msg_send![super(this, superclass), sendEvent: event];
             window_state.lock().native_views.delivering_key_down = false;
@@ -765,6 +772,32 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
         }
 
         let event_type: NSEventType = msg_send![event, type];
+        if event_type == NSEventType::KeyUp {
+            let key_code: u16 = msg_send![event, keyCode];
+            let was_taken = window_state.try_lock().is_some_and(|mut lock| {
+                let taken = &mut lock.native_views.keys_taken_before_view;
+                let count = taken.len();
+                taken.retain(|taken| *taken != key_code);
+                taken.len() != count
+            });
+            if was_taken {
+                if let Some(key_up) = platform_input_from_native(event, None) {
+                    pass_input_to_gpui(&window_state, key_up);
+                }
+                return;
+            }
+        }
+        if event_type == NSEventType::FlagsChanged {
+            // The view with keyboard input is sent the change, and GPUI isn't,
+            // though what GPUI draws can depend on the modifiers held.
+            let _: () = msg_send![super(this, superclass), sendEvent: event];
+            if let Some(modifiers_changed) =
+                modifiers_changed_beside_view(&window_state, this, event)
+            {
+                pass_input_to_gpui(&window_state, modifiers_changed);
+            }
+            return;
+        }
         if event_type == NSEventType::MouseMoved {
             let position: NSPoint = msg_send![event, locationInWindow];
             update_pointer_over_view(&window_state, position);
@@ -977,6 +1010,56 @@ unsafe fn key_down_for_native_view(
     }
 }
 
+/// Records whether GPUI took the press of a key ahead of the native view,
+/// which decides where the key's release goes.
+fn note_key_taken_before_view(
+    window_state: &Rc<Mutex<MacWindowState>>,
+    key_code: u16,
+    taken: bool,
+) {
+    let mut lock = window_state.lock();
+    let keys = &mut lock.native_views.keys_taken_before_view;
+    keys.retain(|key| *key != key_code);
+    if taken {
+        keys.push(key_code);
+    }
+}
+
+/// Returns a change of modifiers for GPUI to hear of, if a native view has
+/// keyboard input and GPUI hasn't heard of this change.
+///
+/// # Safety
+///
+/// `window` must be a live GPUI window and `event` a live `NSEvent`.
+unsafe fn modifiers_changed_beside_view(
+    window_state: &Rc<Mutex<MacWindowState>>,
+    window: &AnyObject,
+    event: *mut AnyObject,
+) -> Option<PlatformInput> {
+    // SAFETY: The caller guarantees that `window` and `event` are live.
+    unsafe {
+        let mut lock = window_state.try_lock()?;
+        if lock.native_views.views.is_empty() {
+            return None;
+        }
+        let first_responder: *mut AnyObject = msg_send![window, firstResponder];
+        lock.native_views.containing(first_responder)?;
+        let input = platform_input_from_native(event, None)?;
+        let PlatformInput::ModifiersChanged(current) = &input else {
+            return None;
+        };
+        if let Some(PlatformInput::ModifiersChanged(previous)) =
+            &lock.previous_modifiers_changed_event
+            && previous.modifiers == current.modifiers
+            && previous.capslock == current.capslock
+        {
+            return None;
+        }
+        lock.previous_modifiers_changed_event = Some(input.clone());
+        Some(input)
+    }
+}
+
 /// Offers GPUI a key press that a native view has not seen, and returns whether GPUI used it.
 fn offer_key_down_before_native_view(
     window_state: &Rc<Mutex<MacWindowState>>,
@@ -1035,6 +1118,8 @@ extern "C" fn window_perform_key_equivalent(
         if !delivering_key_down
             && offer_key_down_before_native_view(&window_state, key_down.clone())
         {
+            let key_code: u16 = msg_send![event, keyCode];
+            note_key_taken_before_view(&window_state, key_code, true);
             return Bool::YES;
         }
 
