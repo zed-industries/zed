@@ -7,12 +7,12 @@ use anyhow::{Context as _, Result};
 use askpass::EncryptedPassword;
 use editor::Editor;
 use futures::{FutureExt as _, channel::oneshot, select};
-use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
+use gpui::{AppContext, AsyncApp, Entity, PromptLevel, WindowHandle};
 
 use project::{ProjectHost, trusted_worktrees};
 use remote::{
-    DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionOptions,
-    SshConnectionOptions,
+    ConnectionState, DockerConnectionOptions, Interactive, RemoteClient, RemoteConnection,
+    RemoteConnectionOptions, SshConnectionOptions,
 };
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
@@ -139,6 +139,24 @@ pub async fn open_remote_project(
     if let Some(existing) = existing {
         let existing_window = existing.window;
         let existing_workspace = existing.workspace;
+
+        let reconnecting_client = cx.update(|cx| {
+            existing_workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_client()
+                .filter(|client| {
+                    client.read(cx).connection_state() == ConnectionState::Reconnecting
+                })
+        });
+        if let Some(reconnecting_client) = reconnecting_client {
+            existing_window.update(cx, |multi_workspace, window, cx| {
+                window.activate_window();
+                multi_workspace.activate(existing_workspace.clone(), None, window, cx);
+            })?;
+            wait_while_reconnecting(&reconnecting_client, cx).await;
+        }
 
         let remote_connection = cx.update(|cx| {
             existing_workspace
@@ -502,6 +520,21 @@ async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> boo
         return false;
     };
     child.status().await.is_ok_and(|status| status.success())
+}
+
+async fn wait_while_reconnecting(remote_client: &Entity<RemoteClient>, cx: &mut AsyncApp) {
+    let (reconnect_ended_tx, reconnect_ended_rx) = oneshot::channel();
+    let mut reconnect_ended_tx = Some(reconnect_ended_tx);
+    let _subscription = cx.update(|cx| {
+        cx.observe(remote_client, move |remote_client, cx| {
+            if remote_client.read(cx).connection_state() != ConnectionState::Reconnecting
+                && let Some(reconnect_ended_tx) = reconnect_ended_tx.take()
+            {
+                reconnect_ended_tx.send(()).ok();
+            }
+        })
+    });
+    reconnect_ended_rx.await.ok();
 }
 
 #[cfg(test)]
@@ -1316,6 +1349,73 @@ mod tests {
             .unwrap();
     }
 
+    #[gpui::test]
+    async fn test_open_waits_for_reconnecting_workspace(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (opts, paths, app_state, window, _headless) =
+            open_connected_remote_project(cx, server_cx).await;
+        let client = window_remote_client(window, cx);
+        client.update(cx, |client, cx| client.force_heartbeat_timeout(0, cx));
+        assert_eq!(
+            client.read_with(cx, |client, _| client.connection_state()),
+            ConnectionState::Reconnecting
+        );
+
+        let opened_window = open_remote_project(
+            opts,
+            paths,
+            app_state,
+            workspace::OpenOptions::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(opened_window, window);
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        assert_eq!(
+            client.read_with(cx, |client, _| client.connection_state()),
+            ConnectionState::Connected
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_connection_stops_reconnecting_client_of_same_workspace(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (opts, paths, app_state, window, _headless) =
+            open_connected_remote_project(cx, server_cx).await;
+        let old_client = window_remote_client(window, cx);
+        old_client.update(cx, |client, cx| client.force_heartbeat_timeout(0, cx));
+
+        let new_window = open_remote_project(
+            opts,
+            paths,
+            app_state,
+            workspace::OpenOptions {
+                workspace_matching: workspace::WorkspaceMatching::None,
+                ..Default::default()
+            },
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(new_window, window);
+        assert_eq!(
+            old_client.read_with(cx, |client, _| client.connection_state()),
+            ConnectionState::Disconnected
+        );
+        assert_eq!(
+            window_remote_client(new_window, cx)
+                .read_with(cx, |client, _| client.connection_state()),
+            ConnectionState::Connected
+        );
+    }
+
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
@@ -1323,5 +1423,79 @@ mod tests {
             editor::init(cx);
             state
         })
+    }
+
+    async fn open_connected_remote_project(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> (
+        RemoteConnectionOptions,
+        Vec<PathBuf>,
+        Arc<AppState>,
+        WindowHandle<MultiWorkspace>,
+        Entity<HeadlessProject>,
+    ) {
+        let app_state = init_test(cx);
+        cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+        server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(
+                path!("/project"),
+                json!({ "src": { "main.rs": "fn main() {}" } }),
+            )
+            .await;
+        server_cx.update(HeadlessProject::init);
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs,
+                    http_client: Arc::new(BlockedHttpClient),
+                    node_runtime: NodeRuntime::unavailable(),
+                    languages,
+                    extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(connect_guard);
+
+        let paths = vec![PathBuf::from(path!("/project"))];
+        let window = open_remote_project(
+            opts.clone(),
+            paths.clone(),
+            app_state.clone(),
+            workspace::OpenOptions::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.executor()
+            .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        (opts, paths, app_state, window, headless)
+    }
+
+    fn window_remote_client(
+        window: WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) -> Entity<RemoteClient> {
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .remote_client()
+                    .unwrap()
+            })
+            .unwrap()
     }
 }
