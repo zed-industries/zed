@@ -44,6 +44,13 @@ pub(super) struct NativeViews {
     /// The view a mouse-down event is being delivered to, which may take
     /// first responder even though GPUI has not focused it yet.
     clicked: Option<NativeViewId>,
+    /// The view that was asked to take keyboard input and didn't. It isn't
+    /// asked again until it takes keyboard input itself or GPUI's focus moves,
+    /// and the GPUI view has keyboard input in its place.
+    declined: Option<NativeViewId>,
+    /// Set while first responder is being matched to GPUI's focus, so that
+    /// the requests this makes don't each start matching it again.
+    reconciling: bool,
     /// Whether GPUI was told of a mouse press that went to a native view, and
     /// is owed the release.
     pressed_in_view: bool,
@@ -139,6 +146,7 @@ impl NativeViews {
         self.focused.map(|id| FocusedNativeView {
             id,
             shown: self.shown(id).is_some(),
+            declined: self.declined == Some(id),
         })
     }
 
@@ -531,6 +539,8 @@ struct FocusedNativeView {
     /// Whether it is on screen. A view can be focused before it is shown, and
     /// stays focused when it is hidden.
     shown: bool,
+    /// Whether it was asked to take keyboard input and didn't.
+    declined: bool,
 }
 
 /// A view keyboard input is moved to so that it matches GPUI's focus.
@@ -547,13 +557,14 @@ fn input_target_for_focus(
     current: InputHolder,
 ) -> Option<InputTarget> {
     let (target, holder) = match focused {
-        Some(FocusedNativeView { id, shown: true }) => {
-            (InputTarget::NativeView(id), InputHolder::NativeView(id))
-        }
-        // A hidden view can't take keyboard input until it is shown.
-        Some(FocusedNativeView { shown: false, .. }) | None => {
-            (InputTarget::GpuiView, InputHolder::GpuiView)
-        }
+        Some(FocusedNativeView {
+            id,
+            shown: true,
+            declined: false,
+        }) => (InputTarget::NativeView(id), InputHolder::NativeView(id)),
+        // A hidden view can't take keyboard input until it is shown, and a view
+        // that declined it would only decline again.
+        Some(_) | None => (InputTarget::GpuiView, InputHolder::GpuiView),
     };
     (current != InputHolder::Other && current != holder).then_some(target)
 }
@@ -580,7 +591,7 @@ fn may_take_input(
         // first, and is accepted.
         InputHolder::GpuiView => !matches!(
             focused,
-            Some(FocusedNativeView { id, shown: true }) if current == InputHolder::NativeView(id)
+            Some(FocusedNativeView { id, shown: true, .. }) if current == InputHolder::NativeView(id)
         ),
         // Web views ask for keyboard input on their own, such as when a page
         // script focuses its window. Only GPUI's focus, a click, or VoiceOver's
@@ -596,7 +607,14 @@ fn may_take_input(
 
 /// Records the view GPUI has focused and gives it keyboard input.
 pub(super) fn set_focused(window_state: &Rc<Mutex<MacWindowState>>, id: Option<NativeViewId>) {
-    window_state.lock().native_views.focused = id;
+    {
+        let mut lock = window_state.lock();
+        let views = &mut lock.native_views;
+        if views.focused != id {
+            views.declined = None;
+        }
+        views.focused = id;
+    }
     reconcile_first_responder(window_state);
 }
 
@@ -606,6 +624,25 @@ pub(super) fn set_focused(window_state: &Rc<Mutex<MacWindowState>>, id: Option<N
 /// attached view is left with keyboard input, such as a control the app or
 /// AppKit put in the titlebar. GPUI's focus says nothing about those.
 pub(super) fn reconcile_first_responder(window_state: &Rc<Mutex<MacWindowState>>) {
+    // The window is asked to move first responder, and reconciles again as it
+    // does. This call sees to whatever those requests leave.
+    if std::mem::replace(&mut window_state.lock().native_views.reconciling, true) {
+        return;
+    }
+    // One request gives keyboard input to the view GPUI has focused, and a
+    // second returns it to the GPUI view if that view declined. Nothing takes
+    // a third, so a responder that never settles can't keep this going.
+    for _ in 0..2 {
+        if !request_first_responder_for_focus(window_state) {
+            break;
+        }
+    }
+    window_state.lock().native_views.reconciling = false;
+}
+
+/// Asks the window to make the view GPUI has focused first responder, and
+/// returns whether there was anything to ask for.
+fn request_first_responder_for_focus(window_state: &Rc<Mutex<MacWindowState>>) -> bool {
     // SAFETY: The window and views are live, and this runs on the main thread. The
     // window state is unlocked for `makeFirstResponder:` because AppKit calls back
     // into it synchronously, and the target is retained in case that detaches it.
@@ -620,10 +657,10 @@ pub(super) fn reconcile_first_responder(window_state: &Rc<Mutex<MacWindowState>>
             let target = match input_target_for_focus(views.focused(), current) {
                 Some(InputTarget::NativeView(id)) => match views.shown(id) {
                     Some(attached) => Some(attached.view.clone()),
-                    None => return,
+                    None => return false,
                 },
                 Some(InputTarget::GpuiView) => None,
-                None => return,
+                None => return false,
             };
             (native_window, target.ok_or(gpui_view))
         };
@@ -631,6 +668,7 @@ pub(super) fn reconcile_first_responder(window_state: &Rc<Mutex<MacWindowState>>
             Ok(view) => msg_send![native_window, makeFirstResponder: &**view],
             Err(gpui_view) => msg_send![native_window, makeFirstResponder: *gpui_view],
         };
+        true
     }
 }
 
@@ -947,13 +985,27 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
             return accepted;
         }
 
-        if let InputHolder::NativeView(requested) = requested
-            && focused.is_none_or(|focused| focused.id != requested)
-        {
-            let callback = window_state.lock().native_views.focused_callback.take();
-            if let Some(mut callback) = callback {
-                callback(requested);
-                window_state.lock().native_views.focused_callback = Some(callback);
+        if let InputHolder::NativeView(requested) = requested {
+            // AppKit reports success even when the view declines to become first
+            // responder, which leaves the window itself with keyboard input.
+            let took_input = {
+                let mut lock = window_state.lock();
+                let current: *mut AnyObject = msg_send![this, firstResponder];
+                let views = &mut lock.native_views;
+                let took_input = views.containing(current) == Some(requested);
+                if !took_input {
+                    views.declined = Some(requested);
+                } else if views.declined == Some(requested) {
+                    views.declined = None;
+                }
+                took_input
+            };
+            if took_input && focused.is_none_or(|focused| focused.id != requested) {
+                let callback = window_state.lock().native_views.focused_callback.take();
+                if let Some(mut callback) = callback {
+                    callback(requested);
+                    window_state.lock().native_views.focused_callback = Some(callback);
+                }
             }
         }
         // GPUI records a view that took keyboard input as focused when it follows.
@@ -961,7 +1013,8 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
         // first responder back so the two never disagree. Anything else that moved
         // first responder away from the view GPUI has focused is undone too, such as
         // AppKit handing it to the window itself, or a full screen transition
-        // restoring it to the GPUI view.
+        // restoring it to the GPUI view. A view that declined keyboard input isn't
+        // asked again, and the GPUI view takes it.
         reconcile_first_responder(&window_state);
         accepted
     }
@@ -1378,6 +1431,31 @@ mod tests {
     }
 
     #[test]
+    fn a_view_that_declines_keyboard_input_leaves_it_with_the_gpui_view() {
+        use InputHolder::{GpuiView, NativeView, Window};
+        let declined = Some(FocusedNativeView {
+            id: id(1),
+            shown: true,
+            declined: true,
+        });
+        // AppKit leaves the window itself with keyboard input when a view
+        // declines it. Asking the view again would never end.
+        assert_eq!(
+            input_target_for_focus(declined, Window),
+            Some(InputTarget::GpuiView)
+        );
+        assert_eq!(input_target_for_focus(declined, GpuiView), None);
+        // The view can still take keyboard input itself, such as on a click.
+        assert!(may_take_input(
+            NativeView(id(1)),
+            GpuiView,
+            declined,
+            Some(id(1)),
+            false
+        ));
+    }
+
+    #[test]
     fn stacking_puts_shown_views_between_the_gpui_view_and_everything_else() {
         // The views are only compared by address.
         let views = [0u8; 6];
@@ -1415,6 +1493,7 @@ mod tests {
         Some(FocusedNativeView {
             id: id(view),
             shown,
+            declined: false,
         })
     }
 
