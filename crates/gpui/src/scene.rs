@@ -43,6 +43,9 @@ struct Layer {
     bounds: Bounds<ScaledPixels>,
     max_kind: PrimitiveKind,
     max_shared_kind: PrimitiveKind,
+    /// Whether a native view was painted in the layer, which then can't be
+    /// drawn as one: what was painted after the view has to cover it.
+    has_native_view: bool,
 }
 
 #[derive(Default)]
@@ -136,6 +139,7 @@ impl Scene {
             bounds: Bounds::default(),
             max_kind: PrimitiveKind::Shadow,
             max_shared_kind: PrimitiveKind::NativeView,
+            has_native_view: false,
         });
         self.paint_operations.push(PaintOperation::StartLayer);
     }
@@ -154,6 +158,10 @@ impl Scene {
         if layer.primitives.is_empty() {
             return;
         }
+        if layer.has_native_view {
+            self.insert_layer_around_native_views(layer);
+            return;
+        }
         let order =
             self.primitive_bounds
                 .insert(layer.bounds, layer.max_kind, layer.max_shared_kind);
@@ -162,6 +170,50 @@ impl Scene {
                 let primitive = primitive.clone();
                 self.push_primitive(primitive, order);
             }
+        }
+    }
+
+    /// Inserts a layer that a native view was painted in.
+    ///
+    /// A layer's primitives share one place in the drawing order, where they
+    /// are drawn by kind and not in the order they were painted. A native
+    /// view erases what is drawn before it, so the layer is inserted in parts:
+    /// what was painted before each view, the view, and what was painted after.
+    fn insert_layer_around_native_views(&mut self, layer: Layer) {
+        let mut part = Vec::new();
+        for index in layer.primitives.into_iter().flatten() {
+            let PaintOperation::Primitive(primitive) = &self.paint_operations[index] else {
+                continue;
+            };
+            let primitive = primitive.clone();
+            if primitive.kind() == PrimitiveKind::NativeView {
+                self.insert_layer_part(std::mem::take(&mut part));
+                self.insert_layer_part(vec![primitive]);
+            } else {
+                part.push(primitive);
+            }
+        }
+        self.insert_layer_part(part);
+    }
+
+    fn insert_layer_part(&mut self, primitives: Vec<Primitive>) {
+        let Some(first) = primitives.first() else {
+            return;
+        };
+        let mut bounds = first.clipped_bounds();
+        let mut max_kind = PrimitiveKind::Shadow;
+        let mut max_shared_kind = PrimitiveKind::NativeView;
+        for primitive in &primitives {
+            let kind = primitive.kind();
+            bounds = bounds.join(&primitive.clipped_bounds());
+            max_kind = max_kind.max(kind);
+            max_shared_kind = max_shared_kind.min(kind.max_shared_kind());
+        }
+        let order = self
+            .primitive_bounds
+            .insert(bounds, max_kind, max_shared_kind);
+        for primitive in primitives {
+            self.push_primitive(primitive, order);
         }
     }
 
@@ -183,6 +235,7 @@ impl Scene {
             layer.bounds = layer.bounds.join(&clipped_bounds);
             layer.max_kind = layer.max_kind.max(kind);
             layer.max_shared_kind = layer.max_shared_kind.min(kind.max_shared_kind());
+            layer.has_native_view |= kind == PrimitiveKind::NativeView;
             let index = self.paint_operations.len();
             match layer.primitives.last_mut() {
                 Some(range) if range.end == index => range.end += 1,
@@ -1271,6 +1324,29 @@ mod tests {
     fn batch_labels(scene: &mut Scene) -> Vec<String> {
         scene.finish();
         scene.batches().map(|batch| batch.label()).collect()
+    }
+
+    #[test]
+    fn a_native_view_in_a_layer_is_covered_by_what_the_layer_paints_after_it() {
+        let mut scene = Scene::default();
+        scene.push_layer();
+        scene.insert_primitive(quad(0.));
+        scene.insert_primitive(PaintNativeView {
+            order: 0,
+            id: NativeViewId::for_test(1),
+            hitbox_id: HitboxId::placeholder(),
+            bounds: square(0.),
+            content_mask: ContentMask { bounds: square(0.) },
+            background: Hsla::default(),
+        });
+        scene.insert_primitive(quad(0.));
+        // A quad beside the view shares nothing with it, so it isn't held back.
+        scene.insert_primitive(quad(20.));
+        scene.pop_layer();
+        assert_eq!(
+            batch_labels(&mut scene),
+            ["quads (1)", "native views (1)", "quads (2)"]
+        );
     }
 
     #[test]

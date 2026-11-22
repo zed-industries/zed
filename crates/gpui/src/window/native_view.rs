@@ -46,10 +46,17 @@ impl NativeViewId {
 ///
 /// The view takes keyboard input directly from the platform while its
 /// [`FocusHandle`] is focused, which a click on the view does, as can an
-/// assistive technology such as VoiceOver moving its cursor into the view. A key the view doesn't use is then dispatched
-/// from the view's element like any other key press, so key bindings apply
-/// to what the view leaves. Bindings for actions passed to
-/// [`reserve_action`](Self::reserve_action) apply before the view sees the key.
+/// assistive technology such as VoiceOver moving its cursor into the view.
+/// A key the view doesn't use is then dispatched from the view's element like
+/// any other key press, so key bindings apply to what the view leaves.
+///
+/// Two kinds of key reach key bindings before the view. Bindings for actions
+/// passed to [`reserve_action`](Self::reserve_action) apply first, and their
+/// keys never reach the view. A key held with Command or Control is offered to
+/// the view as a key equivalent, which is how a web view takes it; a view that
+/// only takes such keys as ordinary key presses, as AppKit's text views do,
+/// gets one after key bindings have had it.
+///
 /// The view may take a moment to leave a key, so the keys of any other
 /// multi-key binding can reach the view when they are typed quickly.
 ///
@@ -331,9 +338,10 @@ impl Window {
                 return false;
             }
         }
-        !self
-            .dispatch_event(PlatformInput::KeyDown(event), cx)
-            .propagate
+        // The key is GPUI's whether or not anything acts on it. Leaving it to
+        // the view as well would have it dispatched again when the view left it.
+        self.dispatch_event(PlatformInput::KeyDown(event), cx);
+        true
     }
 
     /// Focuses the handle of a native view that the platform gave keyboard input to.

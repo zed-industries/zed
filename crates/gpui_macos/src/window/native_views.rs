@@ -385,6 +385,7 @@ pub(super) fn apply_layout(window_state: &Rc<Mutex<MacWindowState>>, layout: Lay
             }
         }
         let stacking = layout.stacking.map(|stacking| {
+            let current = Vec::new();
             let front_to_back = stacking
                 .iter()
                 .rev()
@@ -402,6 +403,7 @@ pub(super) fn apply_layout(window_state: &Rc<Mutex<MacWindowState>>, layout: Lay
                 gpui_view: lock.native_view.as_ptr().cast_const().cast(),
                 front_to_back,
                 attached,
+                current,
             }
         });
         (
@@ -437,6 +439,11 @@ pub(super) fn apply_layout(window_state: &Rc<Mutex<MacWindowState>>, layout: Lay
         unsafe {
             let content_view: *mut NSView = msg_send![gpui_view, superview];
             if let Some(content_view) = content_view.as_ref() {
+                stacking.current = content_view
+                    .subviews()
+                    .iter()
+                    .map(|subview| Retained::as_ptr(&subview))
+                    .collect();
                 content_view.sortSubviewsUsingFunction_context(
                     compare_stacking,
                     (&raw mut stacking).cast(),
@@ -454,22 +461,30 @@ struct Stacking {
     /// The containers of the views the scene shows, starting with the one painted last.
     front_to_back: Vec<*const NSView>,
     attached: Vec<*const NSView>,
+    /// The subviews as they are ordered now, from the back. Those that aren't
+    /// native views keep their places among themselves and their side of the
+    /// GPUI view.
+    current: Vec<*const NSView>,
 }
 
 impl Stacking {
     /// How far forward a subview belongs, with greater values in front.
-    fn rank(&self, view: *const NSView) -> usize {
+    fn rank(&self, view: *const NSView) -> (u8, usize) {
+        let place = |view| self.current.iter().position(|current| *current == view);
         if view == self.gpui_view {
-            usize::MAX
+            (3, 0)
         } else if let Some(index) = self.front_to_back.iter().position(|shown| *shown == view) {
             // Shown views sit above hidden ones, in the scene's order.
-            2 + self.front_to_back.len() - index
+            (2, self.front_to_back.len() - index)
         } else if self.attached.contains(&view) {
-            1
+            (1, 0)
+        } else if place(view) > place(self.gpui_view) {
+            // A view the app put in front of GPUI's content stays there.
+            (4, place(view).unwrap_or_default())
         } else {
-            // Views that aren't native views, such as the blur behind a
-            // translucent window, stay at the back.
-            0
+            // Other views, such as the blur behind a translucent window, stay
+            // at the back.
+            (0, place(view).unwrap_or_default())
         }
     }
 }
@@ -1280,17 +1295,21 @@ mod tests {
     #[test]
     fn stacking_puts_shown_views_between_the_gpui_view_and_everything_else() {
         // The views are only compared by address.
-        let views = [0u8; 5];
-        let [gpui_view, front, back, hidden, unrelated] =
-            [0, 1, 2, 3, 4].map(|index| NonNull::from(&views[index]).cast::<NSView>());
+        let views = [0u8; 6];
+        let [gpui_view, front, back, hidden, behind, above] =
+            [0, 1, 2, 3, 4, 5].map(|index| NonNull::from(&views[index]).cast::<NSView>());
+        // AppKit draws later subviews in front, and sorts ascending.
+        let mut back_to_front = [front, behind, gpui_view, hidden, above, back];
         let mut stacking = Stacking {
             gpui_view: gpui_view.as_ptr(),
             front_to_back: vec![front.as_ptr(), back.as_ptr()],
             attached: vec![hidden.as_ptr(), back.as_ptr(), front.as_ptr()],
+            current: back_to_front
+                .iter()
+                .map(|view| view.as_ptr().cast_const())
+                .collect(),
         };
 
-        // AppKit draws later subviews in front, and sorts ascending.
-        let mut back_to_front = [front, gpui_view, hidden, unrelated, back];
         back_to_front.sort_by(|first, second| {
             // SAFETY: `stacking` outlives the call, which never reads the views.
             let order = unsafe { compare_stacking(*first, *second, (&raw mut stacking).cast()) };
@@ -1300,7 +1319,11 @@ mod tests {
                 NSComparisonResult::Descending => std::cmp::Ordering::Greater,
             }
         });
-        assert_eq!(back_to_front, [unrelated, hidden, back, front, gpui_view]);
+        // Views that aren't native views stay on their side of the GPUI view.
+        assert_eq!(
+            back_to_front,
+            [behind, hidden, back, front, gpui_view, above]
+        );
     }
 
     fn focused(view: u64, shown: bool) -> Option<FocusedNativeView> {
