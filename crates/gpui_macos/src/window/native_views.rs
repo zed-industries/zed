@@ -32,6 +32,7 @@ use std::{
     ffi::c_void,
     ptr::{self, NonNull},
     rc::{Rc, Weak},
+    sync::OnceLock,
 };
 
 type HitTestCallback = Box<dyn FnMut(Point<Pixels>) -> Option<NativeViewId>>;
@@ -252,7 +253,7 @@ pub(super) unsafe fn attach(
     // runs on the main thread. The window state is unlocked because AppKit calls
     // back into the window as its view hierarchy changes.
     let container = unsafe {
-        let container: Retained<NSView> = msg_send![class!(NSView), new];
+        let container: Retained<NSView> = msg_send![container_class(), new];
         let _: () = msg_send![&*container, setClipsToBounds: true];
         container.setHidden(true);
         container.addSubview(&view);
@@ -275,6 +276,33 @@ pub(super) unsafe fn attach(
         window_state: Rc::downgrade(window_state),
         id,
     }))
+}
+
+/// The class of the view each native view is put inside.
+fn container_class() -> &'static AnyClass {
+    static CONTAINER_CLASS: OnceLock<&'static AnyClass> = OnceLock::new();
+    CONTAINER_CLASS.get_or_init(|| {
+        let name = c"GPUINativeViewContainer";
+        let Some(mut decl) = ClassBuilder::new(name, class!(NSView)) else {
+            // Another copy of GPUI in this process has registered the class.
+            return AnyClass::get(name).unwrap_or(class!(NSView));
+        };
+        // SAFETY: The function signature matches the selector's Objective-C signature.
+        unsafe {
+            decl.add_method(
+                sel!(performKeyEquivalent:),
+                container_perform_key_equivalent as extern "C" fn(_, Sel, *mut AnyObject) -> Bool,
+            );
+        }
+        decl.register()
+    })
+}
+
+/// Keeps a key equivalent from the native view inside, which AppKit would
+/// otherwise offer it whether or not the view has keyboard input. The window
+/// offers key equivalents to the view that has keyboard input itself.
+extern "C" fn container_perform_key_equivalent(_: &AnyObject, _: Sel, _: *mut AnyObject) -> Bool {
+    Bool::NO
 }
 
 /// Shows the scene's native view background behind the window's content.
@@ -1152,7 +1180,8 @@ fn pass_input_to_gpui(window_state: &Rc<Mutex<MacWindowState>>, input: PlatformI
 /// Lets the native view with keyboard input perform a key equivalent before GPUI.
 ///
 /// AppKit otherwise asks the views in an order that doesn't depend on which
-/// one has keyboard input.
+/// one has keyboard input, so that view is asked here, and the containers of
+/// the native views keep AppKit's own search out of them.
 extern "C" fn window_perform_key_equivalent(
     this: &AnyObject,
     _: Sel,
@@ -1176,8 +1205,16 @@ extern "C" fn window_perform_key_equivalent(
             return Bool::YES;
         }
 
+        let view = native_view_with_keyboard_input(&window_state, this);
         window_state.lock().native_views.routing_key_equivalent = true;
-        let performed: Bool = msg_send![super(this, superclass), performKeyEquivalent: event];
+        let mut performed = match &view {
+            Some(view) => msg_send![&**view, performKeyEquivalent: event],
+            None => Bool::NO,
+        };
+        if !performed.as_bool() {
+            // The rest of the window is asked next, such as a control in the titlebar.
+            performed = msg_send![super(this, superclass), performKeyEquivalent: event];
+        }
         window_state.lock().native_views.routing_key_equivalent = false;
         if performed.as_bool() || delivering_key_down {
             return performed;
@@ -1189,6 +1226,23 @@ extern "C" fn window_perform_key_equivalent(
         window_state.lock().native_views.passed_up_key_equivalent = Retained::retain(event);
         Bool::new(pass_key_down_to_gpui(&window_state, key_down))
     }
+}
+
+/// The attached view that first responder is, or is inside.
+///
+/// # Safety
+///
+/// `window` must be a live GPUI window.
+unsafe fn native_view_with_keyboard_input(
+    window_state: &Rc<Mutex<MacWindowState>>,
+    window: &AnyObject,
+) -> Option<Retained<NSView>> {
+    let lock = window_state.try_lock()?;
+    // SAFETY: The caller guarantees that `window` is live.
+    let first_responder: *mut AnyObject = unsafe { msg_send![window, firstResponder] };
+    let id = lock.native_views.containing(first_responder)?;
+    let attached = lock.native_views.views.iter().find(|view| view.id == id)?;
+    Some(attached.view.clone())
 }
 
 /// Gives GPUI a key press that came back up the responder chain unused.
