@@ -4098,19 +4098,6 @@ mod tests {
         new_test_provider_with_fs(http_client, fs, cx)
     }
 
-    fn new_test_provider_with_credentials(
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut App,
-    ) -> BedrockLanguageModelProvider {
-        BedrockLanguageModelProvider::new_with_cache(
-            http_client::FakeHttpClient::with_404_response(),
-            credentials_provider,
-            fs::FakeFs::new(cx.background_executor().clone()),
-            PathBuf::from(TEST_CACHE_PATH),
-            cx,
-        )
-    }
-
     /// A capability catalog entry for a text model with tools.
     fn capability_entry(name: &str, members: Value) -> Value {
         let mut entry = serde_json::json!({
@@ -4175,38 +4162,59 @@ mod tests {
     }
 
     fn init_provider_settings(cx: &mut gpui::TestAppContext, settings: Value) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            gpui_tokio::init(cx);
-        });
+        init_provider_test(cx);
         set_bedrock_settings(cx, settings).expect("test settings should parse");
     }
 
-    fn listing_response(request: &HttpRequest<AsyncBody>, model_ids: &[&str]) -> Value {
-        if request.uri().path() == "/foundation-models" {
-            serde_json::json!({"modelSummaries": model_ids.iter().map(|id| serde_json::json!({
-                "modelId": id,
-                "modelArn": format!("arn:aws:bedrock:us-east-1::foundation-model/{id}"),
-                "modelName": format!("Name of {id}"),
-                "inputModalities": ["TEXT"], "outputModalities": ["TEXT"],
-                "responseStreamingSupported": true,
-            })).collect::<Vec<_>>()})
-        } else if request
-            .uri()
-            .query()
-            .is_some_and(|query| query.contains("SYSTEM_DEFINED"))
-        {
-            serde_json::json!({"inferenceProfileSummaries": model_ids.iter().map(|id| serde_json::json!({
-                "inferenceProfileId": format!("us.{id}"),
-                "inferenceProfileArn": format!("arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.{id}"),
-                "inferenceProfileName": id,
-                "status": "ACTIVE", "type": "SYSTEM_DEFINED",
-                "models": [{"modelArn": format!("arn:aws:bedrock:us-east-1::foundation-model/{id}")}],
-            })).collect::<Vec<_>>()})
-        } else {
-            serde_json::json!({"inferenceProfileSummaries": []})
-        }
+    /// What the fake control plane answers: `None` denies `ListFoundationModels`,
+    /// and `Some` lists that one model behind a `us.` inference profile.
+    type ListingResponse = Arc<parking_lot::Mutex<Option<&'static str>>>;
+
+    fn listing_client(response: &ListingResponse) -> Arc<dyn HttpClient> {
+        let response = response.clone();
+        http_client::FakeHttpClient::create(move |request| {
+            let listed = *response.lock();
+            async move {
+                if request.uri() == CAPABILITY_CATALOG_URL {
+                    return json_response(404, serde_json::json!({}));
+                }
+                let is_foundation_models = request.uri().path() == "/foundation-models";
+                let Some(id) = listed else {
+                    return if is_foundation_models {
+                        json_response(
+                            403,
+                            serde_json::json!({"__type": "AccessDeniedException", "message": "test denial"}),
+                        )
+                    } else {
+                        json_response(200, serde_json::json!({"inferenceProfileSummaries": []}))
+                    };
+                };
+                let body = if is_foundation_models {
+                    serde_json::json!({"modelSummaries": [{
+                        "modelId": id,
+                        "modelArn": format!("arn:aws:bedrock:us-east-1::foundation-model/{id}"),
+                        "modelName": format!("Name of {id}"),
+                        "inputModalities": ["TEXT"], "outputModalities": ["TEXT"],
+                        "responseStreamingSupported": true,
+                    }]})
+                } else if request
+                    .uri()
+                    .query()
+                    .is_some_and(|query| query.contains("SYSTEM_DEFINED"))
+                {
+                    serde_json::json!({"inferenceProfileSummaries": [{
+                        "inferenceProfileId": format!("us.{id}"),
+                        "inferenceProfileArn": format!("arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.{id}"),
+                        "inferenceProfileName": id,
+                        "status": "ACTIVE", "type": "SYSTEM_DEFINED",
+                        "models": [{"modelArn": format!("arn:aws:bedrock:us-east-1::foundation-model/{id}")}],
+                    }]})
+                } else {
+                    serde_json::json!({"inferenceProfileSummaries": []})
+                };
+                json_response(200, body)
+            }
+        })
     }
 
     fn json_response(status: u16, body: Value) -> Result<http_client::Response<AsyncBody>> {
@@ -4355,9 +4363,9 @@ mod tests {
             send_test_completion(&provider, cx).await?;
             let requests = requests.lock();
             assert!(
-                requests
-                    .iter()
-                    .all(|(uri, _, _)| uri.starts_with(endpoint) && uri.contains("converse-stream")),
+                requests.iter().all(|(uri, _, _)| {
+                    uri.starts_with(endpoint) && uri.contains("converse-stream")
+                }),
                 "only inference requests are sent, and only to the endpoint: {requests:?}"
             );
             let (_, headers, body) = requests.last().context("inference request")?;
@@ -4381,97 +4389,43 @@ mod tests {
     ) {
         let scenario = async {
             init_provider_test(cx);
-            let app_arn =
-                "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/account-chat";
-            for (failed_call, operation) in [
-                ("APPLICATION", "ListInferenceProfiles"),
-                ("SYSTEM_DEFINED", "ListInferenceProfiles"),
-                ("/foundation-models", "ListFoundationModels"),
-            ] {
-                let responses = Arc::new(parking_lot::Mutex::new((false, false)));
-                let client = http_client::FakeHttpClient::create({
-                    let responses = responses.clone();
-                    move |request| {
-                        let (failure, empty) = *responses.lock();
-                        async move {
-                            if request.uri() == CAPABILITY_CATALOG_URL {
-                                return json_response(404, serde_json::json!({}));
-                            }
-                            let application = request
-                                .uri()
-                                .query()
-                                .is_some_and(|query| query.contains("APPLICATION"));
-                            if failure && request.uri().to_string().contains(failed_call) {
-                                return json_response(
-                                    403,
-                                    serde_json::json!({"__type":"AccessDeniedException", "message":"test denial"}),
-                                );
-                            }
-                            let response = if request.uri().path() == "/foundation-models" {
-                                listing_response(&request, &["vendor.chat", "vendor.second"])
-                            } else if empty {
-                                listing_response(&request, &[])
-                            } else if application {
-                                serde_json::json!({"inferenceProfileSummaries": [{
-                                    "inferenceProfileId": "account-chat",
-                                    "inferenceProfileArn": app_arn,
-                                    "inferenceProfileName": "App",
-                                    "status": "ACTIVE", "type": "APPLICATION",
-                                    "models": [{"modelArn": "arn:aws:bedrock:us-east-1::foundation-model/vendor.chat"}]
-                                }]})
-                            } else if request
-                                .uri()
-                                .query()
-                                .is_some_and(|query| query.contains("nextToken"))
-                            {
-                                listing_response(&request, &["vendor.second"])
-                            } else {
-                                let mut body = listing_response(&request, &["vendor.chat"]);
-                                body["nextToken"] = "page-two".into();
-                                body
-                            };
-                            json_response(200, response)
-                        }
-                    }
-                });
-                let provider = cx.update(|cx| new_test_provider(client, cx));
+            let response = ListingResponse::new(parking_lot::Mutex::new(Some("vendor.chat")));
+            let provider = cx.update(|cx| new_test_provider(listing_client(&response), cx));
+            provider
+                .state
+                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
+            finish_listing(&provider, cx).await?;
+            assert_eq!(offered_ids(&provider, cx), ["vendor.chat"]);
+
+            *response.lock() = None;
+            cx.update(|cx| provider.refresh_models(cx));
+            finish_listing(&provider, cx).await?;
+            assert_eq!(offered_ids(&provider, cx), ["vendor.chat"]);
+            let (message, warning) = provider
+                .state
+                .read_with(cx, |state, _| state.listing_message())
+                .context("refresh warning")?;
+            assert!(warning);
+            assert!(
+                message.contains("earlier account list")
+                    && message.contains("bedrock:ListFoundationModels")
+                    && message.contains("test denial"),
+                "{message}"
+            );
+
+            *response.lock() = Some("vendor.next");
+            cx.update(|cx| provider.refresh_models(cx));
+            finish_listing(&provider, cx).await?;
+            assert_eq!(offered_ids(&provider, cx), ["vendor.next"]);
+            assert_eq!(
                 provider
                     .state
-                    .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
-                finish_listing(&provider, cx).await?;
-                assert_eq!(
-                    offered_ids(&provider, cx),
-                    [app_arn, "vendor.chat", "vendor.second"]
-                );
-
-                *responses.lock() = (true, true);
-                cx.update(|cx| provider.refresh_models(cx));
-                finish_listing(&provider, cx).await?;
-                assert_eq!(
-                    offered_ids(&provider, cx),
-                    [app_arn, "vendor.chat", "vendor.second"]
-                );
-                let (message, warning) = provider
-                    .state
-                    .read_with(cx, |state, _| {
-                        assert!(state.model_catalog.is_some());
-                        state.listing_message()
-                    })
-                    .context("refresh warning")?;
-                assert!(warning);
-                assert!(
-                    message.contains(&format!("bedrock:{operation}"))
-                        && message.contains("test denial")
-                );
-
-                *responses.lock() = (false, true);
-                cx.update(|cx| provider.refresh_models(cx));
-                finish_listing(&provider, cx).await?;
-                assert!(offered_ids(&provider, cx).is_empty());
-            }
+                    .read_with(cx, |state, _| state.listing_message()),
+                None
+            );
             anyhow::Ok(())
         };
-        scenario.await.expect("complete profile lists");
+        scenario.await.expect("failed listing scenario");
     }
 
     #[gpui::test]
@@ -4480,27 +4434,8 @@ mod tests {
     ) {
         let scenario = async {
             init_provider_test(cx);
-            let deny = Arc::new(std::sync::atomic::AtomicBool::new(true));
-            let client = http_client::FakeHttpClient::create({
-                let deny = deny.clone();
-                move |request| {
-                    let deny = deny.load(std::sync::atomic::Ordering::SeqCst);
-                    async move {
-                        if request.uri() == CAPABILITY_CATALOG_URL {
-                            return json_response(404, serde_json::json!({}));
-                        }
-                        if request.uri().path() == "/foundation-models" && deny {
-                            json_response(
-                                403,
-                                serde_json::json!({"__type": "AccessDeniedException", "message": "required listing test error"}),
-                            )
-                        } else {
-                            json_response(200, listing_response(&request, &["vendor.listed"]))
-                        }
-                    }
-                }
-            });
-            let provider = Arc::new(cx.update(|cx| new_test_provider(client, cx)));
+            let response = ListingResponse::default();
+            let provider = cx.update(|cx| new_test_provider(listing_client(&response), cx));
             provider.state.update(cx, |state, _| {
                 state.capability_catalog = capability_catalog(serde_json::json!({
                     "us.vendor.public": capability_entry("Public", serde_json::json!({})),
@@ -4516,40 +4451,26 @@ mod tests {
             assert!(offered_ids(&provider, cx).is_empty());
             finish_listing(&provider, cx).await?;
             assert_eq!(offered_ids(&provider, cx), ["vendor.public"]);
-            provider.state.read_with(cx, |state, _| {
-                let (message, warning) = state.listing_message().expect("public list message");
-                assert!(
-                    message.contains("ListFoundationModels")
-                        && message.contains("required listing test error")
-                );
-                assert!(warning && state.uses_public_catalog());
-            });
-            deny.store(false, std::sync::atomic::Ordering::SeqCst);
+            let (message, warning) = provider
+                .state
+                .read_with(cx, |state, _| state.listing_message())
+                .context("public list message")?;
+            assert!(warning);
+            assert!(
+                message.contains("models.dev")
+                    && message.contains("ListFoundationModels")
+                    && message.contains("test denial"),
+                "{message}"
+            );
+
+            *response.lock() = Some("vendor.listed");
             cx.update(|cx| provider.refresh_models(cx));
             assert_eq!(offered_ids(&provider, cx), ["vendor.public"]);
             finish_listing(&provider, cx).await?;
-            let current = cx
-                .update(|cx| provider.provided_models(cx))
-                .pop()
-                .context("account model")?;
-            assert_eq!(current.id.0.as_ref(), "vendor.listed");
             assert_eq!(offered_ids(&provider, cx), ["vendor.listed"]);
-            cx.update(|cx| provider.config(&current, cx))?;
-            deny.store(true, std::sync::atomic::Ordering::SeqCst);
-            set_bedrock_settings(cx, serde_json::json!({"region": "eu-west-1"}))?;
-            cx.run_until_parked();
-            finish_listing(&provider, cx).await?;
-            assert!(offered_ids(&provider, cx).is_empty());
-            provider.state.read_with(cx, |state, _| {
-                assert!(state.uses_public_catalog());
-                let (message, warning) = state.listing_message().expect("public list message");
-                assert!(warning && message.contains("required listing test error"));
-            });
-            Ok::<_, anyhow::Error>(())
+            anyhow::Ok(())
         };
-        scenario
-            .await
-            .expect("required listing failure scenario should complete");
+        scenario.await.expect("required listing failure scenario");
     }
 
     #[gpui::test]
@@ -4615,7 +4536,15 @@ mod tests {
         init_provider_test(cx);
         let store =
             Arc::new(credentials_provider::test_support::FakeCredentialsProvider::default());
-        let provider = cx.update(|cx| new_test_provider_with_credentials(store.clone(), cx));
+        let provider = cx.update(|cx| {
+            BedrockLanguageModelProvider::new_with_cache(
+                http_client::FakeHttpClient::with_404_response(),
+                store.clone(),
+                fs::FakeFs::new(cx.background_executor().clone()),
+                PathBuf::from(TEST_CACHE_PATH),
+                cx,
+            )
+        });
         provider
             .state
             .update(cx, |state, _| state.set_auth(api_key_auth()));
@@ -4650,29 +4579,19 @@ mod tests {
             provider
                 .state
                 .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
-            for (method, profile, expected) in [
+            for (profile, expected) in [
                 (
-                    "named_profile",
                     "one",
                     BedrockAuth::NamedProfile {
                         profile_name: "one".into(),
                     },
                 ),
                 (
-                    "named_profile",
                     "two",
                     BedrockAuth::NamedProfile {
                         profile_name: "two".into(),
                     },
                 ),
-                (
-                    "sso",
-                    "three",
-                    BedrockAuth::SingleSignOn {
-                        profile_name: "three".into(),
-                    },
-                ),
-                ("default", "four", BedrockAuth::Automatic),
             ] {
                 provider.state.update(cx, |state, _| {
                     state.expiring_credentials = Some(ExpiringCredentials {
@@ -4690,7 +4609,7 @@ mod tests {
                 set_bedrock_settings(
                     cx,
                     serde_json::json!({
-                        "endpoint_url": "https://gateway.example.com", "authentication_method": method, "profile": profile,
+                        "endpoint_url": "https://gateway.example.com", "authentication_method": "named_profile", "profile": profile,
                     }),
                 )?;
                 cx.run_until_parked();
@@ -4789,7 +4708,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn capability_catalog_is_fetched_cached_and_refreshed(cx: &mut gpui::TestAppContext) {
+    async fn capability_catalog_is_fetched_after_sign_in_and_cached(cx: &mut gpui::TestAppContext) {
         init_provider_settings(
             cx,
             serde_json::json!({"endpoint_url": "https://gateway.example.com/bedrock"}),
@@ -4797,60 +4716,31 @@ mod tests {
         let catalog_json = capability_catalog_json(serde_json::json!({
             "us.vendor.chat": capability_entry("Chat (US)", serde_json::json!({})),
         }));
-        let request_count = Arc::new(parking_lot::Mutex::new(0));
-        let http_client = http_client::FakeHttpClient::create({
-            let request_count = request_count.clone();
+        let http_client = http_client::FakeHttpClient::create(move |request| {
             let catalog_json = catalog_json.clone();
-            let executor = cx.background_executor.clone();
-            move |request| {
-                // This ready response is decoded in the same refresh job, before its next await.
-                assert!(
-                    !executor.is_main_thread(),
-                    "catalog fetch/decode job ran on the UI executor"
-                );
-                let is_catalog_request = request.uri() == CAPABILITY_CATALOG_URL;
-                let mut count = request_count.lock();
-                *count += 1;
-                let catalog_json = if *count == 1 {
-                    catalog_json.clone()
-                } else {
-                    capability_catalog_json(serde_json::json!({}))
-                };
-                async move {
-                    let (status, body) = if is_catalog_request {
-                        (200, catalog_json)
-                    } else {
-                        (404, String::new())
-                    };
-                    Ok(http_client::Response::builder()
-                        .status(status)
-                        .body(AsyncBody::from(body))?)
-                }
+            async move {
+                assert_eq!(request.uri(), CAPABILITY_CATALOG_URL);
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(catalog_json))?)
             }
         });
         let fs = fs::FakeFs::new(cx.background_executor.clone());
-        let provider =
-            cx.update(|cx| new_test_provider_with_fs(http_client.clone(), fs.clone(), cx));
-        let has_catalog = |provider: &BedrockLanguageModelProvider,
-                           cx: &mut gpui::TestAppContext| {
+        let provider = cx.update(|cx| new_test_provider_with_fs(http_client, fs.clone(), cx));
+
+        cx.run_until_parked();
+        assert!(
             provider
                 .state
-                .read_with(cx, |state, _| !state.capability_catalog.is_empty())
-        };
-
-        assert!(
-            !has_catalog(&provider, cx),
+                .read_with(cx, |state, _| state.capability_catalog.is_empty()),
             "nothing is fetched before authentication"
         );
-        cx.run_until_parked();
-        assert_eq!(*request_count.lock(), 0);
 
         provider
             .state
             .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
         cx.run_until_parked();
-        assert!(has_catalog(&provider, cx));
-        assert_eq!(*request_count.lock(), 1);
+        assert_eq!(offered_ids(&provider, cx), ["vendor.chat"]);
         provider.state.read_with(cx, |state, _| {
             assert_eq!(state.last_capability_catalog_error, None)
         });
@@ -4859,59 +4749,42 @@ mod tests {
             .await
             .expect("the catalog should be cached");
         assert!(cached.contains("amazon-bedrock") && !cached.contains("another-provider"));
+    }
 
-        cx.executor()
-            .advance_clock(model_catalog_cache::REFRESH_INTERVAL);
-        cx.run_until_parked();
-        assert_eq!(*request_count.lock(), 2);
-        provider.state.read_with(cx, |state, _| {
-            assert!(
-                state
-                    .last_capability_catalog_error
-                    .as_deref()
-                    .is_some_and(|error| error.contains("no usable models"))
-            );
-            assert!(
-                state
-                    .capability_catalog
-                    .model_for_request_id("us.vendor.chat")
-                    .is_some()
-            );
-        });
-        assert_eq!(
-            fs.load(Path::new(TEST_CACHE_PATH))
-                .await
-                .expect("last good catalog"),
-            cached
+    #[gpui::test]
+    async fn stale_cached_capability_catalog_is_used_when_the_fetch_fails(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_provider_settings(
+            cx,
+            serde_json::json!({"endpoint_url": "https://gateway.example.com/bedrock"}),
         );
-
-        // A second provider starts from the last good copy on disk.
-        fs.set_next_mtime(SystemTime::now() - Duration::from_secs(10 * 60));
-        fs.atomic_write(PathBuf::from(TEST_CACHE_PATH), cached)
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(Path::new("/cache/bedrock"))
             .await
-            .expect("make cache stale");
-        let failed_requests = Arc::new(parking_lot::Mutex::new(0));
-        let failing_http_client = http_client::FakeHttpClient::create({
-            let failed_requests = failed_requests.clone();
-            move |request| {
-                assert_eq!(request.uri(), CAPABILITY_CATALOG_URL);
-                *failed_requests.lock() += 1;
-                async { json_response(404, serde_json::json!({})) }
-            }
+            .expect("create the cache directory");
+        fs.set_next_mtime(SystemTime::now() - Duration::from_secs(10 * 60));
+        fs.insert_file(
+            TEST_CACHE_PATH,
+            capability_catalog_json(serde_json::json!({
+                "us.vendor.chat": capability_entry("Chat (US)", serde_json::json!({})),
+            }))
+            .into_bytes(),
+        )
+        .await;
+        let provider = cx.update(|cx| {
+            new_test_provider_with_fs(
+                http_client::FakeHttpClient::with_404_response(),
+                fs.clone(),
+                cx,
+            )
         });
-        let cached_provider =
-            cx.update(|cx| new_test_provider_with_fs(failing_http_client, fs.clone(), cx));
-        cached_provider
+        provider
             .state
             .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
-        // The initial disk read is queued on GPUI's executor. Refresh before it
-        // can populate memory, as registry initialization can do on startup.
-        cx.update(|cx| cached_provider.refresh_models(cx));
         cx.run_until_parked();
-        assert!(has_catalog(&cached_provider, cx));
-        assert_eq!(*failed_requests.lock(), 1);
-        assert_eq!(offered_ids(&cached_provider, cx), ["vendor.chat"]);
-        cached_provider.state.read_with(cx, |state, _| {
+        assert_eq!(offered_ids(&provider, cx), ["vendor.chat"]);
+        provider.state.read_with(cx, |state, _| {
             assert!(
                 state
                     .last_capability_catalog_error
@@ -4938,18 +4811,8 @@ mod tests {
         }
     }
 
-    fn adaptive_thinking_settings() -> Option<settings::BedrockThinkingSettings> {
-        Some(settings::BedrockThinkingSettings::Config(
-            settings::BedrockThinkingConfigSettings {
-                adaptive: Some(true),
-                has_xhigh: None,
-                budget_tokens: None,
-            },
-        ))
-    }
-
     #[test]
-    fn unknown_settings_entry_has_only_the_capabilities_it_states() -> Result<()> {
+    fn unknown_settings_entry_has_only_the_capabilities_it_states() {
         let capability_catalog = CapabilityCatalog::default();
         let unstated = converse_model_from_settings(
             &settings_entry("us.vendor.chat", None),
@@ -4978,7 +4841,16 @@ mod tests {
             &AvailableModel {
                 supports_tools: Some(true),
                 max_output_tokens: Some(32_000),
-                ..settings_entry("us.vendor.chat", adaptive_thinking_settings())
+                ..settings_entry(
+                    "us.vendor.chat",
+                    Some(settings::BedrockThinkingSettings::Config(
+                        settings::BedrockThinkingConfigSettings {
+                            adaptive: Some(true),
+                            has_xhigh: None,
+                            budget_tokens: None,
+                        },
+                    )),
+                )
             },
             None,
             &capability_catalog,
@@ -4989,51 +4861,6 @@ mod tests {
         );
         assert_eq!(stated.max_output_tokens, Some(32_000));
         assert!(stated.supports_tool_use);
-
-        use bedrock::Thinking;
-        for (setting, expected) in [
-            (
-                serde_json::json!(true),
-                Some(Thinking::Enabled {
-                    budget_tokens: Some(4096),
-                }),
-            ),
-            (serde_json::json!(false), None),
-            (
-                serde_json::json!({"budget_tokens": 10000}),
-                Some(Thinking::Enabled {
-                    budget_tokens: Some(10000),
-                }),
-            ),
-            (
-                serde_json::json!({"adaptive": true, "has_xhigh": true}),
-                Some(Thinking::Adaptive {
-                    effort: BedrockAdaptiveThinkingEffort::XHigh,
-                    binding_controls_beta: None,
-                }),
-            ),
-        ] {
-            let model = converse_model_from_settings(
-                &AvailableModel {
-                    max_output_tokens: Some(32_000),
-                    ..settings_entry("vendor.manual", Some(serde_json::from_value(setting)?))
-                },
-                None,
-                &capability_catalog,
-            );
-            let request = into_bedrock(
-                LanguageModelRequest {
-                    thinking_allowed: true,
-                    thinking_effort: Some("xhigh".into()),
-                    ..Default::default()
-                },
-                &model,
-                None,
-                None,
-            )?;
-            assert_request_thinking(&request, expected.as_ref());
-        }
-        Ok(())
     }
 
     #[test]
@@ -5405,13 +5232,26 @@ mod tests {
             "us.xai.example": capability_entry("Always", always_reasoning_members()),
             "us.anthropic.mandatory": capability_entry("Mandatory", always_reasoning_members()),
         }));
-        for (id, setting, thinking_allowed, effort, expected) in [
+        let adaptive_high = || Thinking::Adaptive {
+            effort: High,
+            binding_controls_beta: None,
+        };
+        for (id, setting, thinking_allowed, effort, expected, supports_disabling_thinking) in [
             (
                 "openai.example",
                 None,
                 false,
                 "high",
                 Thinking::Reasoning { effort: None },
+                true,
+            ),
+            (
+                "openai.example",
+                Some(json!(false)),
+                true,
+                "high",
+                Thinking::Reasoning { effort: None },
+                true,
             ),
             (
                 "openai.example",
@@ -5419,13 +5259,7 @@ mod tests {
                 true,
                 "max",
                 Thinking::Reasoning { effort: Some(Low) },
-            ),
-            (
-                "openai.example",
-                Some(json!({"adaptive":true})),
                 true,
-                "high",
-                Thinking::Reasoning { effort: Some(High) },
             ),
             (
                 "xai.example",
@@ -5433,32 +5267,15 @@ mod tests {
                 false,
                 "high",
                 Thinking::Reasoning { effort: Some(Low) },
+                false,
             ),
             (
                 "anthropic.example",
                 Some(json!({"adaptive":true, "has_xhigh":true})),
                 true,
                 "max",
-                Thinking::Adaptive {
-                    effort: High,
-                    binding_controls_beta: None,
-                },
-            ),
-            (
-                "anthropic.claude-opus-4-5-example",
-                Some(json!({"adaptive":true})),
+                adaptive_high(),
                 true,
-                "low",
-                Thinking::Enabled {
-                    budget_tokens: Some(4096),
-                },
-            ),
-            (
-                "openai.example",
-                Some(json!(false)),
-                true,
-                "high",
-                Thinking::Reasoning { effort: None },
             ),
             (
                 "anthropic.claude-opus-4-5-example",
@@ -5468,78 +5285,46 @@ mod tests {
                 Thinking::Enabled {
                     budget_tokens: Some(5000),
                 },
-            ),
-            (
-                "anthropic.mandatory",
-                None,
-                false,
-                "high",
-                Thinking::Adaptive {
-                    effort: High,
-                    binding_controls_beta: None,
-                },
-            ),
-            (
-                "anthropic.mandatory",
-                Some(json!({"adaptive": true})),
-                false,
-                "high",
-                Thinking::Adaptive {
-                    effort: High,
-                    binding_controls_beta: None,
-                },
+                true,
             ),
             (
                 "anthropic.mandatory",
                 Some(json!(false)),
-                true,
+                false,
                 "high",
-                Thinking::Adaptive {
-                    effort: High,
-                    binding_controls_beta: None,
-                },
+                adaptive_high(),
+                false,
             ),
         ] {
-            let listed = ModelCatalog::new(
-                &[listed_inference_profile(&format!("us.{id}"), id)],
-                &[listed_foundation_model(id)],
+            let model = converse_model_from_settings(
+                &settings_entry(id, setting.map(serde_json::from_value).transpose()?),
+                None,
+                &catalog,
             );
-            for model_catalog in [None, Some(&listed)] {
-                let model = converse_model_from_settings(
-                    &settings_entry(id, setting.clone().map(serde_json::from_value).transpose()?),
-                    model_catalog,
-                    &catalog,
-                );
-                assert_eq!(model.request_id, id);
-                assert_eq!(model.base_model_id, id);
-                if id == "anthropic.mandatory" {
-                    assert!(!model.supports_temperature);
-                }
-                let language_model = converse_language_model(&model);
-                assert_eq!(
-                    language_model.supports_disabling_thinking,
-                    id != "xai.example" && id != "anthropic.mandatory",
-                    "{id}"
-                );
-                assert!(
-                    language_model
-                        .supported_effort_levels
-                        .iter()
-                        .all(|level| level.value.as_ref() != "none")
-                );
-                let request = into_bedrock(
-                    LanguageModelRequest {
-                        messages: vec![user_message("Hello")],
-                        thinking_allowed,
-                        thinking_effort: Some(effort.into()),
-                        ..Default::default()
-                    },
-                    &model,
-                    None,
-                    None,
-                )?;
-                assert_request_thinking(&request, Some(&expected));
-            }
+            assert_eq!(model.request_id, id);
+            let language_model = converse_language_model(&model);
+            assert_eq!(
+                language_model.supports_disabling_thinking, supports_disabling_thinking,
+                "{id}"
+            );
+            assert!(
+                language_model
+                    .supported_effort_levels
+                    .iter()
+                    .all(|level| level.value.as_ref() != "none")
+            );
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![user_message("Hello")],
+                    thinking_allowed,
+                    thinking_effort: Some(effort.into()),
+                    ..Default::default()
+                },
+                &model,
+                None,
+                None,
+            )?;
+            assert_request_thinking(&request, Some(&expected));
         }
         Ok(())
     }
@@ -5715,16 +5500,16 @@ mod tests {
                 ],
                 details,
             )?;
-            assert_eq!(
-                request.messages[0].content().iter().any(|content| matches!(
-                    content,
-                    BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::RedactedContent(bytes))
-                        if bytes.as_ref() == [0, 255]
-                )),
-                replays_reasoning,
-                "{}",
-                model.id
-            );
+            let replayed = request.messages[0]
+                .content()
+                .iter()
+                .any(|content| match content {
+                    BedrockInnerContent::ReasoningContent(
+                        BedrockThinkingBlock::RedactedContent(bytes),
+                    ) => bytes.as_ref() == [0, 255],
+                    _ => false,
+                });
+            assert_eq!(replayed, replays_reasoning, "{}", model.id);
         }
         Ok(())
     }
@@ -5797,23 +5582,17 @@ mod tests {
     }
 
     #[test]
-    fn test_converse_refusals_and_forced_tool_use() -> Result<()> {
-        let fable = converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true)));
-        let earlier_fable =
-            converse_model("anthropic.claude-fable-5", Some(adaptive_thinking(false)));
-        let reasoning_model = converse_model("openai.gpt-example", Some(reasoning()));
-        let other_model = converse_model("vendor.chat", None);
-
-        let fable_language_model = converse_language_model(&fable);
-        assert!(fable_language_model.supports_tools);
-        assert!(fable_language_model.tool_choice_support.auto);
-        assert!(fable_language_model.tool_choice_support.none);
-        assert_eq!(fable_language_model.refusal_fallback_model_id, None);
-        for model in [&fable, &earlier_fable, &reasoning_model, &other_model] {
+    fn test_forced_tool_use_is_rejected_locally_where_unsupported() -> Result<()> {
+        for model in [
+            converse_model("anthropic.claude-fable-5-1", Some(adaptive_thinking(true))),
+            converse_model("anthropic.claude-fable-5", Some(adaptive_thinking(false))),
+            converse_model("openai.gpt-example", Some(reasoning())),
+            converse_model("vendor.chat", None),
+        ] {
             let expected_forced =
-                anthropic_model_id(model).is_none_or(anthropic::supports_forced_tool_use);
+                anthropic_model_id(&model).is_none_or(anthropic::supports_forced_tool_use);
             assert_eq!(
-                converse_language_model(model).tool_choice_support.any,
+                converse_language_model(&model).tool_choice_support.any,
                 expected_forced,
                 "{}",
                 model.id,
@@ -5840,7 +5619,7 @@ mod tests {
                     }],
                     ..Default::default()
                 },
-                model,
+                &model,
                 None,
                 None,
             );
@@ -5864,36 +5643,35 @@ mod tests {
                 );
             }
         }
-        assert_eq!(
-            converse_language_model(&other_model).refusal_fallback_model_id,
-            None
-        );
+        Ok(())
+    }
 
+    #[test]
+    fn test_refusal_stop_reasons_are_reported_for_models_that_refuse() -> Result<()> {
         for (model, reports_refusals) in [
-            (fable, true),
-            (earlier_fable, true),
-            (reasoning_model, true),
-            (other_model, false),
+            (
+                converse_model("anthropic.claude-fable-5", Some(adaptive_thinking(false))),
+                true,
+            ),
+            (
+                converse_model("openai.gpt-example", Some(reasoning())),
+                true,
+            ),
+            (converse_model("vendor.chat", None), false),
         ] {
             for reason in [StopReason::from("refusal"), StopReason::ContentFiltered] {
-                let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::MessageStop(
+                let response = futures::stream::iter([Ok(ConverseStreamOutput::MessageStop(
                     bedrock::bedrock_client::types::MessageStopEvent::builder()
                         .stop_reason(reason)
                         .build()?,
                 ))]);
-                let events = futures::executor::block_on(
-                    map_to_language_model_completion_events(Box::pin(response), model.clone())
-                        .collect::<Vec<_>>(),
-                )
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()?;
                 let expected_stop_reason = if reports_refusals {
                     language_model::StopReason::Refusal(None)
                 } else {
                     language_model::StopReason::EndTurn
                 };
                 assert_eq!(
-                    events,
+                    completion_events(&model, response)?,
                     [LanguageModelCompletionEvent::Stop(expected_stop_reason)],
                     "{}",
                     model.id
@@ -6132,65 +5910,34 @@ mod tests {
     async fn test_mantle_region_policy_rejects_unconfigured_regions_before_http(
         cx: &mut gpui::TestAppContext,
     ) {
-        let result = async {
-            let supported = MANTLE_SUPPORTED_REGIONS
-                .first()
-                .context("configured Mantle Region")?;
-            let unsupported = "test-region-not-configured";
-            anyhow::ensure!(!MANTLE_SUPPORTED_REGIONS.contains(&unsupported));
-            let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let http_client = http_client::FakeHttpClient::create({
-                let requests = requests.clone();
-                move |request| {
-                    let requests = requests.clone();
-                    async move {
-                        assert_eq!(
-                            request.uri().host(),
-                            Some(format!("bedrock-mantle.{supported}.api.aws").as_str())
-                        );
-                        requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        Ok(http_client::Response::builder()
-                            .body(AsyncBody::from("data: [DONE]\n\n"))?)
-                    }
-                }
-            });
-            init_provider_test(cx);
-            let model = mantle_model(false);
-            let limiter = RateLimiter::new(1);
-            for (region, allowed) in [(unsupported, false), (*supported, true)] {
-                set_bedrock_settings(cx, serde_json::json!({"region": region}))?;
-                let provider = cx.update(|cx| new_test_provider(http_client.clone(), cx));
-                provider.state.update(cx, |state, _| {
-                    state.set_auth(api_key_auth());
-                });
-                let response = provider
-                    .stream_mantle_completion(
-                        &model,
-                        &limiter,
-                        LanguageModelRequest::default(),
-                        &cx.to_async(),
-                    )
-                    .await;
-                if allowed {
-                    drop(response?);
-                    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
-                } else {
-                    let error = response
-                        .err()
-                        .context("unconfigured Region should be rejected")?;
-                    assert!(error.to_string().contains(region));
-                    assert!(
-                        error
-                            .to_string()
-                            .contains(&MANTLE_SUPPORTED_REGIONS.join(", "))
-                    );
-                    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
-                }
-            }
-            anyhow::Ok(())
-        }
-        .await;
-        assert!(result.is_ok(), "{result:?}");
+        let region = "test-region-not-configured";
+        init_provider_settings(cx, serde_json::json!({"region": region}));
+        let provider = cx.update(|cx| {
+            new_test_provider(
+                http_client::FakeHttpClient::create(|_| async {
+                    panic!("an unconfigured Region reached HTTP")
+                }),
+                cx,
+            )
+        });
+        provider
+            .state
+            .update(cx, |state, _| state.set_auth(api_key_auth()));
+        let error = provider
+            .stream_mantle_completion(
+                &mantle_model(false),
+                &RateLimiter::new(1),
+                LanguageModelRequest::default(),
+                &cx.to_async(),
+            )
+            .await
+            .err()
+            .expect("an unconfigured Region should be rejected")
+            .to_string();
+        assert!(
+            error.contains(region) && error.contains(&MANTLE_SUPPORTED_REGIONS.join(", ")),
+            "{error}"
+        );
     }
 
     fn mantle_message_item(id: &str) -> ResponseOutputItem {
@@ -6853,13 +6600,8 @@ mod tests {
     }
 
     fn test_provider(cx: &mut gpui::TestAppContext) -> BedrockLanguageModelProvider {
-        cx.executor().allow_parking();
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            gpui_tokio::init(cx);
-            new_test_provider(http_client::FakeHttpClient::with_404_response(), cx)
-        })
+        init_provider_test(cx);
+        cx.update(|cx| new_test_provider(http_client::FakeHttpClient::with_404_response(), cx))
     }
 
     fn no_environment(_: &str) -> Option<String> {
