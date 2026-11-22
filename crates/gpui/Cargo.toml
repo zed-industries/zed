@@ -37,6 +37,9 @@ inspector = ["gpui_macros/inspector"]
 # Tracks every entity handle so tests can assert nothing leaked. Also enabled
 # by setting `GPUI_LEAK_DETECTION` when building; see `build.rs`.
 leak-detection = []
+# Checks every `LayoutId` use, panicking with a description of stale, foreign
+# and corrupted IDs instead of Taffy's uninformative slotmap panic.
+layout-id-debug = []
 font-kit = []
 wayland = []
 x11 = [
