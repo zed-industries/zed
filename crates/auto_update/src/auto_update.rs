@@ -118,16 +118,6 @@ actions!(
     ]
 );
 
-#[derive(Serialize, Debug)]
-pub struct AssetQuery<'a> {
-    asset: &'a str,
-    os: &'a str,
-    arch: &'a str,
-    metrics_id: Option<&'a str>,
-    system_id: Option<&'a str>,
-    is_staff: Option<bool>,
-}
-
 #[derive(Clone, Debug)]
 pub enum AutoUpdateStatus {
     Idle,
@@ -219,6 +209,26 @@ fn fork_release_asset_name(os: &str, arch: &str) -> Result<String> {
         "windows" => Ok(format!("Zed-{arch}.exe")),
         unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
     }
+}
+
+fn fork_remote_server_extension(os: &str) -> Result<&'static str> {
+    match os {
+        "macos" | "linux" => Ok("gz"),
+        "windows" => Ok("zip"),
+        unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
+    }
+}
+
+fn fork_remote_server_asset_name(os: &str, arch: &str) -> Result<String> {
+    let extension = fork_remote_server_extension(os)?;
+    Ok(format!("zed-remote-server-{os}-{arch}.{extension}"))
+}
+
+fn fork_release_tag_for_version(version: &Version) -> String {
+    format!(
+        "fork-v{}.{}.{}",
+        version.major, version.minor, version.patch
+    )
 }
 
 /// The run number the release workflow builds with, from build metadata such
@@ -646,9 +656,6 @@ impl AutoUpdater {
         true
     }
 
-    // If you are packaging Zed and need to override the place it downloads SSH remotes from,
-    // you can override this function. You should also update get_remote_server_release_url to return
-    // Ok(None).
     pub async fn download_remote_server_release(
         release_channel: ReleaseChannel,
         version: Option<Version>,
@@ -665,21 +672,14 @@ impl AutoUpdater {
         })?;
 
         set_status("Fetching remote server release", cx);
-        let release = Self::get_release_asset(
-            &this,
-            release_channel,
-            version,
-            "zed-remote-server",
-            os,
-            arch,
-            cx,
-        )
-        .await?;
+        let release =
+            Self::get_fork_remote_server_release(&this, version.as_ref(), os, arch, cx).await?;
 
+        let extension = fork_remote_server_extension(os)?;
         let servers_dir = paths::remote_servers_dir();
         let channel_dir = servers_dir.join(release_channel.dev_name());
         let platform_dir = channel_dir.join(format!("{}-{}", os, arch));
-        let version_path = platform_dir.join(format!("{}.gz", release.version));
+        let version_path = platform_dir.join(format!("{}.{extension}", release.version));
         smol::fs::create_dir_all(&platform_dir).await.ok();
 
         let client = this.read_with(cx, |this, _| this.client.http_client());
@@ -707,7 +707,7 @@ impl AutoUpdater {
     }
 
     pub async fn get_remote_server_release_url(
-        channel: ReleaseChannel,
+        _channel: ReleaseChannel,
         version: Option<Version>,
         os: &str,
         arch: &str,
@@ -721,88 +721,21 @@ impl AutoUpdater {
         })?;
 
         let release =
-            Self::get_release_asset(&this, channel, version, "zed-remote-server", os, arch, cx)
-                .await?;
+            Self::get_fork_remote_server_release(&this, version.as_ref(), os, arch, cx).await?;
 
         Ok(Some(release.url))
     }
 
-    async fn get_release_asset(
-        this: &Entity<Self>,
-        release_channel: ReleaseChannel,
-        version: Option<Version>,
-        asset: &str,
-        os: &str,
-        arch: &str,
-        cx: &mut AsyncApp,
-    ) -> Result<ReleaseAsset> {
-        let client = this.read_with(cx, |this, _| this.client.clone());
-
-        let (system_id, metrics_id, is_staff) = if client.telemetry().metrics_enabled() {
-            (
-                client.telemetry().system_id(),
-                client.telemetry().metrics_id(),
-                client.telemetry().is_staff(),
-            )
-        } else {
-            (None, None, None)
-        };
-
-        let version = if let Some(mut version) = version {
-            version.pre = semver::Prerelease::EMPTY;
-            version.build = semver::BuildMetadata::EMPTY;
-            version.to_string()
-        } else {
-            "latest".to_string()
-        };
-        let http_client = client.http_client();
-
-        let path = format!("/releases/{}/{}/asset", release_channel.dev_name(), version,);
-        let url = http_client.build_zed_cloud_url_with_query(
-            &path,
-            AssetQuery {
-                os,
-                arch,
-                asset,
-                metrics_id: metrics_id.as_deref(),
-                system_id: system_id.as_deref(),
-                is_staff,
-            },
-        )?;
-
+    async fn fetch_fork_release_manifest(
+        http_client: &Arc<HttpClientWithUrl>,
+        manifest_url: &str,
+    ) -> Result<Option<ForkReleaseManifest>> {
         let mut response = http_client
-            .get(url.as_str(), Default::default(), true)
+            .get(manifest_url, Default::default(), true)
             .await?;
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-
-        anyhow::ensure!(
-            response.status().is_success(),
-            "failed to fetch release: {:?}",
-            String::from_utf8_lossy(&body),
-        );
-
-        serde_json::from_slice(body.as_slice()).with_context(|| {
-            format!(
-                "error deserializing release {:?}",
-                String::from_utf8_lossy(&body),
-            )
-        })
-    }
-
-    async fn get_fork_release(
-        this: &Entity<Self>,
-        os: &str,
-        arch: &str,
-        cx: &mut AsyncApp,
-    ) -> Result<ReleaseAsset> {
-        let http_client = this.read_with(cx, |this, _| this.client.http_client());
-        let manifest_url = format!(
-            "https://github.com/{FORK_RELEASE_REPOSITORY}/releases/latest/download/release.json"
-        );
-        let mut response = http_client
-            .get(&manifest_url, Default::default(), true)
-            .await?;
+        if response.status() == http_client::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         anyhow::ensure!(
@@ -817,11 +750,91 @@ impl AutoUpdater {
                     String::from_utf8_lossy(&body),
                 )
             })?;
+        Ok(Some(manifest))
+    }
 
+    async fn get_fork_release_manifest(
+        http_client: &Arc<HttpClientWithUrl>,
+        version: Option<&Version>,
+    ) -> Result<ForkReleaseManifest> {
+        let latest_url = format!(
+            "https://github.com/{FORK_RELEASE_REPOSITORY}/releases/latest/download/release.json"
+        );
+        if let Some(requested_version) = version {
+            let tag = fork_release_tag_for_version(requested_version);
+            let tagged_url = format!(
+                "https://github.com/{FORK_RELEASE_REPOSITORY}/releases/download/{tag}/release.json"
+            );
+            if let Some(manifest) =
+                Self::fetch_fork_release_manifest(http_client, &tagged_url).await?
+            {
+                return Ok(manifest);
+            }
+            // Fall back to the latest release when this build was published
+            // under a custom `fork-v*` tag whose name differs from `fork-v{version}`.
+            let manifest = Self::fetch_fork_release_manifest(http_client, &latest_url)
+                .await?
+                .with_context(|| format!("failed to fetch {latest_url}: 404 Not Found"))?;
+            let manifest_version = manifest.version.parse::<Version>().with_context(|| {
+                format!("invalid version in release manifest: {}", manifest.version)
+            })?;
+            anyhow::ensure!(
+                (
+                    manifest_version.major,
+                    manifest_version.minor,
+                    manifest_version.patch,
+                ) == (
+                    requested_version.major,
+                    requested_version.minor,
+                    requested_version.patch,
+                ),
+                "no release {tag} found in {FORK_RELEASE_REPOSITORY} (latest is {})",
+                manifest.tag,
+            );
+            return Ok(manifest);
+        }
+
+        Self::fetch_fork_release_manifest(http_client, &latest_url)
+            .await?
+            .with_context(|| format!("failed to fetch {latest_url}: 404 Not Found"))
+    }
+
+    async fn get_fork_release(
+        this: &Entity<Self>,
+        os: &str,
+        arch: &str,
+        cx: &mut AsyncApp,
+    ) -> Result<ReleaseAsset> {
+        let http_client = this.read_with(cx, |this, _| this.client.http_client());
+        let manifest = Self::get_fork_release_manifest(&http_client, None).await?;
         let asset = fork_release_asset_name(os, arch)?;
         anyhow::ensure!(
             manifest.assets.contains(&asset),
             "the latest release ({}) has no build for {os} {arch}",
+            manifest.tag,
+        );
+        Ok(ReleaseAsset {
+            version: manifest.version,
+            url: format!(
+                "https://github.com/{FORK_RELEASE_REPOSITORY}/releases/download/{}/{asset}",
+                manifest.tag
+            ),
+        })
+    }
+
+    async fn get_fork_remote_server_release(
+        this: &Entity<Self>,
+        version: Option<&Version>,
+        os: &str,
+        arch: &str,
+        cx: &mut AsyncApp,
+    ) -> Result<ReleaseAsset> {
+        let http_client = this.read_with(cx, |this, _| this.client.http_client());
+        let manifest = Self::get_fork_release_manifest(&http_client, version).await?;
+        let asset = fork_remote_server_asset_name(os, arch)?;
+        anyhow::ensure!(
+            manifest.assets.contains(&asset),
+            "release {} has no remote server for {os} {arch}",
             manifest.tag,
         );
         Ok(ReleaseAsset {
@@ -1191,7 +1204,7 @@ async fn cleanup_remote_server_cache(
     while let Some(entry) = entries.next().await {
         let entry = entry?;
         let path = entry.path();
-        if path.extension() != Some(OsStr::new("gz")) {
+        if !matches!(path.extension().and_then(OsStr::to_str), Some("gz" | "zip")) {
             continue;
         }
 
@@ -1977,6 +1990,140 @@ mod tests {
             linux_system_install_prefix(Path::new("/usr/lib/zed/zed-editor")),
             None
         );
+    }
+
+    #[gpui::test]
+    async fn test_remote_server_release_url_resolves_from_fork_release(cx: &mut TestAppContext) {
+        cx.background_executor.allow_parking();
+        cx.update(|cx| {
+            settings::init(cx);
+            let current_version: Version = "1.30.0+stable.10.aaa".parse().unwrap();
+            release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
+
+            let clock = Arc::new(FakeSystemClock::new());
+            let fake_client_http = FakeHttpClient::create(|req| async move {
+                if req.uri().path()
+                    == format!("/{FORK_RELEASE_REPOSITORY}/releases/download/fork-v1.30.0/release.json")
+                {
+                    return Ok(Response::builder()
+                        .status(200)
+                        .body(
+                            r#"{"version":"1.30.0+stable.10.aaa","tag":"fork-v1.30.0","assets":["zed-remote-server-linux-x86_64.gz","zed-remote-server-windows-x86_64.zip"]}"#.into(),
+                        )
+                        .unwrap());
+                }
+                Ok(Response::builder().status(404).body("".into()).unwrap())
+            });
+            let client = Client::new(clock, fake_client_http, cx);
+            crate::init(client, cx);
+        });
+
+        let requested: Version = "1.30.0+stable.10.aaa".parse().unwrap();
+        let linux_url = AutoUpdater::get_remote_server_release_url(
+            ReleaseChannel::Stable,
+            Some(requested.clone()),
+            "linux",
+            "x86_64",
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            linux_url.as_deref(),
+            Some(
+                format!(
+                    "https://github.com/{FORK_RELEASE_REPOSITORY}/releases/download/fork-v1.30.0/zed-remote-server-linux-x86_64.gz"
+                )
+                .as_str()
+            )
+        );
+
+        let windows_url = AutoUpdater::get_remote_server_release_url(
+            ReleaseChannel::Stable,
+            Some(requested.clone()),
+            "windows",
+            "x86_64",
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            windows_url.as_deref(),
+            Some(
+                format!(
+                    "https://github.com/{FORK_RELEASE_REPOSITORY}/releases/download/fork-v1.30.0/zed-remote-server-windows-x86_64.zip"
+                )
+                .as_str()
+            )
+        );
+
+        let missing_arch = AutoUpdater::get_remote_server_release_url(
+            ReleaseChannel::Stable,
+            Some(requested),
+            "macos",
+            "aarch64",
+            &mut cx.to_async(),
+        )
+        .await;
+        assert!(missing_arch.is_err());
+    }
+
+    #[gpui::test]
+    async fn test_remote_server_release_url_falls_back_to_latest_for_custom_tag(
+        cx: &mut TestAppContext,
+    ) {
+        cx.background_executor.allow_parking();
+        cx.update(|cx| {
+            settings::init(cx);
+            let current_version: Version = "1.30.0+stable.10.aaa".parse().unwrap();
+            release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
+
+            let clock = Arc::new(FakeSystemClock::new());
+            let fake_client_http = FakeHttpClient::create(|req| async move {
+                if req.uri().path()
+                    == format!("/{FORK_RELEASE_REPOSITORY}/releases/latest/download/release.json")
+                {
+                    return Ok(Response::builder()
+                        .status(200)
+                        .body(
+                            r#"{"version":"1.30.0+stable.10.aaa","tag":"fork-v1.30.0-custom","assets":["zed-remote-server-linux-aarch64.gz"]}"#.into(),
+                        )
+                        .unwrap());
+                }
+                Ok(Response::builder().status(404).body("".into()).unwrap())
+            });
+            let client = Client::new(clock, fake_client_http, cx);
+            crate::init(client, cx);
+        });
+
+        let matching_url = AutoUpdater::get_remote_server_release_url(
+            ReleaseChannel::Stable,
+            Some("1.30.0+stable.10.aaa".parse().unwrap()),
+            "linux",
+            "aarch64",
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            matching_url.as_deref(),
+            Some(
+                format!(
+                    "https://github.com/{FORK_RELEASE_REPOSITORY}/releases/download/fork-v1.30.0-custom/zed-remote-server-linux-aarch64.gz"
+                )
+                .as_str()
+            )
+        );
+
+        let mismatched = AutoUpdater::get_remote_server_release_url(
+            ReleaseChannel::Stable,
+            Some("1.28.0+stable.9.bbb".parse().unwrap()),
+            "linux",
+            "aarch64",
+            &mut cx.to_async(),
+        )
+        .await;
+        assert!(mismatched.is_err());
     }
 
     #[test]

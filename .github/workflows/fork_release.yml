@@ -105,6 +105,12 @@ jobs:
         name: Zed-${{ matrix.arch }}.dmg
         path: target/${{ matrix.target }}/release/Zed-${{ matrix.arch }}.dmg
         if-no-files-found: error
+    - name: Upload remote server
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: zed-remote-server-macos-${{ matrix.arch }}.gz
+        path: target/zed-remote-server-macos-${{ matrix.arch }}.gz
+        if-no-files-found: error
 
   bundle_linux:
     if: github.repository == 'belizariogr/zed'
@@ -164,6 +170,12 @@ jobs:
         name: zed-linux-${{ matrix.arch }}.tar.gz
         path: dist/zed-linux-${{ matrix.arch }}.tar.gz
         if-no-files-found: error
+    - name: Upload remote server
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: zed-remote-server-linux-${{ matrix.arch }}.gz
+        path: target/zed-remote-server-linux-${{ matrix.arch }}.gz
+        if-no-files-found: error
 
   bundle_windows:
     if: github.repository == 'belizariogr/zed'
@@ -195,6 +207,12 @@ jobs:
       with:
         name: Zed-${{ matrix.arch }}.exe
         path: target/Zed-${{ matrix.arch }}.exe
+        if-no-files-found: error
+    - name: Upload remote server
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: zed-remote-server-windows-${{ matrix.arch }}.zip
+        path: target/zed-remote-server-windows-${{ matrix.arch }}.zip
         if-no-files-found: error
 
   publish:
@@ -231,7 +249,13 @@ jobs:
         files=()
         assets=()
         missing=()
-        for asset in Zed-aarch64.dmg Zed-x86_64.dmg zed-linux-x86_64.tar.gz zed-linux-aarch64.tar.gz Zed-x86_64.exe Zed-aarch64.exe; do
+        for asset in \
+          Zed-aarch64.dmg Zed-x86_64.dmg \
+          zed-linux-x86_64.tar.gz zed-linux-aarch64.tar.gz \
+          Zed-x86_64.exe Zed-aarch64.exe \
+          zed-remote-server-macos-aarch64.gz zed-remote-server-macos-x86_64.gz \
+          zed-remote-server-linux-x86_64.gz zed-remote-server-linux-aarch64.gz \
+          zed-remote-server-windows-x86_64.zip zed-remote-server-windows-aarch64.zip; do
           if [[ -f "artifacts/${asset}" ]]; then
             files+=("artifacts/${asset}")
             assets+=("${asset}")
