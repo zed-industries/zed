@@ -6,7 +6,7 @@
 //! Neither call reports token limits, tool use or reasoning support. Those
 //! come from the [`CapabilityCatalog`].
 
-use crate::{CapabilityCatalog, ConverseModel};
+use crate::{CapabilityCatalog, ConverseModel, GLOBAL_GEOGRAPHY, split_profile_id};
 use anyhow::{Result, anyhow};
 use aws_sdk_bedrock::Client;
 use aws_sdk_bedrock::error::{DisplayErrorContext, ProvideErrorMetadata, SdkError};
@@ -17,12 +17,9 @@ use aws_sdk_bedrock::types::{
 use futures::FutureExt;
 use std::collections::BTreeMap;
 
-const GLOBAL_PROFILE_ID_PREFIX: &str = "global.";
-
 /// Models with an inference profile that the Converse API does not serve.
 const CONVERSE_UNSUPPORTED: &[&str] = &["twelvelabs.pegasus"];
 
-/// Whether the model can hold a text conversation over `ConverseStream`.
 fn supports_converse_stream(model: &FoundationModelSummary) -> bool {
     model.input_modalities().contains(&ModelModality::Text)
         && model.output_modalities() == [ModelModality::Text]
@@ -56,16 +53,10 @@ struct ListedModel {
     base_model_id: String,
     display_name: String,
     supports_images: bool,
-    geographic_profile: Option<GeographicProfile>,
+    geographic_profile_id: Option<String>,
     global_profile_id: Option<String>,
     /// Every profile id and ARN that routes to this model.
     routes: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct GeographicProfile {
-    id: String,
-    destination_count: usize,
 }
 
 impl ListedModel {
@@ -75,17 +66,14 @@ impl ListedModel {
             base_model_id: model.model_id().to_string(),
             display_name: display_name.to_string(),
             supports_images: model.input_modalities().contains(&ModelModality::Image),
-            geographic_profile: None,
+            geographic_profile_id: None,
             global_profile_id: None,
             routes: Vec::new(),
         }
     }
 
     fn request_id(&self, allow_global: bool) -> &str {
-        let geographic = self
-            .geographic_profile
-            .as_ref()
-            .map(|profile| profile.id.as_str());
+        let geographic = self.geographic_profile_id.as_deref();
         let global = self.global_profile_id.as_deref();
         let profile_id = if allow_global {
             global.or(geographic)
@@ -126,6 +114,12 @@ impl ModelCatalog {
             .map(|model| (model.model_id(), model))
             .collect::<BTreeMap<_, _>>();
 
+        // A Region can offer several geographies for one model. In this order,
+        // the first is the one that keeps requests closest to the Region.
+        let mut inference_profiles = inference_profiles.iter().collect::<Vec<_>>();
+        inference_profiles
+            .sort_by_key(|profile| (profile.models().len(), profile.inference_profile_id()));
+
         let mut system_defined = BTreeMap::<&str, ListedModel>::new();
         let mut application = Vec::new();
         for profile in inference_profiles {
@@ -146,27 +140,13 @@ impl ModelCatalog {
                         ListedModel::new(model_id, model.model_name().unwrap_or(model_id), model)
                     });
                     listed_model.routes.extend(routes);
-                    if profile_id.starts_with(GLOBAL_PROFILE_ID_PREFIX) {
-                        listed_model.global_profile_id = Some(profile_id.to_string());
-                        continue;
-                    }
-                    // A Region can offer several geographies for one model.
-                    // Prefer the one that keeps requests closest to it.
-                    let destination_count = profile.models().len();
-                    let is_narrower =
-                        listed_model
-                            .geographic_profile
-                            .as_ref()
-                            .is_none_or(|current| {
-                                (destination_count, profile_id)
-                                    < (current.destination_count, current.id.as_str())
-                            });
-                    if is_narrower {
-                        listed_model.geographic_profile = Some(GeographicProfile {
-                            id: profile_id.to_string(),
-                            destination_count,
-                        });
-                    }
+                    let preferred =
+                        if matches!(split_profile_id(profile_id), Some((GLOBAL_GEOGRAPHY, _))) {
+                            &mut listed_model.global_profile_id
+                        } else {
+                            &mut listed_model.geographic_profile_id
+                        };
+                    preferred.get_or_insert_with(|| profile_id.to_string());
                 }
                 // An application profile can only be invoked by its ARN.
                 InferenceProfileType::Application => application.push(ListedModel {
@@ -380,24 +360,18 @@ mod tests {
     #[test]
     fn routes_through_the_global_profile_only_when_allowed() -> Result<()> {
         let models = [foundation_model("vendor.chat", &[])?];
-        let global = profile("global.vendor.chat", "vendor.chat", 2)?;
-        let geographic = profile("us.vendor.chat", "vendor.chat", 3)?;
+        let profiles = [
+            profile("global.vendor.chat", "vendor.chat", 2)?,
+            profile("us.vendor.chat", "vendor.chat", 3)?,
+        ];
         for (profiles, allow_global, request_id) in [
-            (
-                vec![global.clone(), geographic.clone()],
-                false,
-                "us.vendor.chat",
-            ),
-            (
-                vec![global.clone(), geographic.clone()],
-                true,
-                "global.vendor.chat",
-            ),
+            (&profiles[..], false, "us.vendor.chat"),
+            (&profiles[..], true, "global.vendor.chat"),
             // The only profile a model has serves it either way.
-            (vec![global], false, "global.vendor.chat"),
-            (vec![geographic], true, "us.vendor.chat"),
+            (&profiles[..1], false, "global.vendor.chat"),
+            (&profiles[1..], true, "us.vendor.chat"),
         ] {
-            let model = only_model(&ModelCatalog::new(&profiles, &models), allow_global)?;
+            let model = only_model(&ModelCatalog::new(profiles, &models), allow_global)?;
             assert_eq!(model.id, "vendor.chat");
             assert_eq!(model.base_model_id, "vendor.chat");
             assert_eq!(model.request_id, request_id);

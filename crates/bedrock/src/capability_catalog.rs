@@ -10,12 +10,10 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 
 pub const CAPABILITY_CATALOG_URL: &str = "https://models.dev/api.json";
-/// The catalog's key for the models that Bedrock serves.
-pub const CAPABILITY_CATALOG_PROVIDER: &str = "amazon-bedrock";
 
 const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
 
-const GLOBAL_GEOGRAPHY: &str = "global";
+pub(crate) const GLOBAL_GEOGRAPHY: &str = "global";
 /// The geographies of cross-Region inference profiles, which prefix the ids
 /// of those profiles.
 const GEOGRAPHIES: &[&str] = &[
@@ -65,7 +63,7 @@ fn geographies(region: &str) -> &'static [&'static str] {
 
 /// Splits an inference profile id into its geography and the id of the
 /// foundation model behind it.
-fn split_profile_id(profile_id: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_profile_id(profile_id: &str) -> Option<(&str, &str)> {
     profile_id
         .split_once('.')
         .filter(|(geography, _)| GEOGRAPHIES.contains(geography))
@@ -105,7 +103,6 @@ struct ModelCapabilities {
     name: String,
     #[serde(default)]
     reasoning: bool,
-    #[serde(default)]
     reasoning_options: Option<Vec<ReasoningOption>>,
     #[serde(default)]
     tool_call: bool,
@@ -114,7 +111,6 @@ struct ModelCapabilities {
     #[serde(default)]
     modalities: Modalities,
     limit: Limits,
-    #[serde(default)]
     status: Option<String>,
 }
 
@@ -123,7 +119,7 @@ struct ReasoningOption {
     #[serde(rename = "type")]
     kind: String,
     #[serde(default)]
-    values: Option<Vec<String>>,
+    values: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -137,7 +133,6 @@ struct Modalities {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 struct Limits {
     context: NonZeroU64,
-    #[serde(default)]
     output: Option<u64>,
 }
 
@@ -165,12 +160,10 @@ impl ModelCapabilities {
         self.reasoning_options()
             .iter()
             .filter(|option| option.kind == "effort")
-            .flat_map(|option| option.values.as_deref().unwrap_or_default())
+            .flat_map(|option| &option.values)
             .map(String::as_str)
     }
 
-    /// The efforts the model can be asked for, with `default_effort` as the
-    /// default when the model offers it.
     fn efforts(
         &self,
         default_effort: BedrockAdaptiveThinkingEffort,
@@ -241,7 +234,6 @@ impl ModelCapabilities {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CapabilityCatalog {
     models: BTreeMap<String, ModelCapabilities>,
-    first_profile_by_base: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -291,38 +283,28 @@ impl CapabilityCatalog {
         // An empty section is an error so that it never overwrites a usable cache.
         anyhow::ensure!(
             !models.is_empty(),
-            "the {CAPABILITY_CATALOG_PROVIDER} capability catalog contains no usable models"
+            "the amazon-bedrock capability catalog contains no usable models"
         );
-        let mut first_profile_by_base = BTreeMap::new();
-        for id in models.keys() {
-            if let Some((_, base)) = split_profile_id(id) {
-                first_profile_by_base
-                    .entry(base.to_string())
-                    .or_insert_with(|| id.clone());
-            }
-        }
-        Ok(Self {
-            models,
-            first_profile_by_base,
-        })
+        Ok(Self { models })
     }
 
     pub fn is_empty(&self) -> bool {
         self.models.is_empty()
     }
 
+    /// Prefers the requested profile, then the foundation model, then the
+    /// lexicographically first profile of the same model.
     fn capabilities(&self, base_model_id: &str, request_id: &str) -> Option<&ModelCapabilities> {
         self.models
             .get(profile_id(request_id))
             .or_else(|| self.models.get(base_model_id))
             .or_else(|| {
-                self.models
-                    .get(self.first_profile_by_base.get(base_model_id)?)
+                self.models.iter().find_map(|(id, capabilities)| {
+                    (split_profile_id(id)?.1 == base_model_id).then_some(capabilities)
+                })
             })
     }
 
-    /// Prefers the requested profile, then the foundation model, then the
-    /// lexicographically first profile of the same model.
     pub fn describe(&self, base_model_id: &str, request_id: &str) -> ConverseModel {
         ConverseModel::from_capabilities(
             base_model_id,
