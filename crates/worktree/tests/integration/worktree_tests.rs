@@ -31,6 +31,13 @@ use util::{
     test::TempTree,
 };
 
+#[cfg(unix)]
+use std::{
+    fs::OpenOptions,
+    sync::mpsc::{self, RecvTimeoutError},
+    time::Duration,
+};
+
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
     init_test(cx);
@@ -1567,6 +1574,126 @@ async fn test_real_fs_scan_symlinks_expanded(cx: &mut TestAppContext) {
                 (rel_path("src"), false),
                 (rel_path("src/a.rs"), false),
             ]
+        );
+    });
+}
+
+#[cfg(unix)]
+#[gpui::test]
+async fn test_real_fs_scan_does_not_block_on_special_git_files(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    init_test(cx);
+
+    let temp_root = TempTree::new(json!({
+        "commondir_gitdir": {},
+        "project": {
+            "commondir_checkout": {},
+            "nested": {
+                "a.rs": "",
+            },
+            "src": {
+                "b.rs": "",
+            },
+        },
+    }));
+    let project_root = temp_root.path().join("project");
+    let commondir_gitdir = temp_root.path().join("commondir_gitdir");
+    let fifo_with_writer = project_root.join("src").join(GITIGNORE);
+    let fifos = [
+        project_root.join("nested").join(DOT_GIT),
+        commondir_gitdir.join("commondir"),
+        fifo_with_writer.clone(),
+    ];
+    for fifo in &fifos {
+        let status = util::command::new_command("mkfifo")
+            .arg(fifo)
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success(), "mkfifo {fifo:?} failed");
+    }
+    std::fs::write(
+        project_root.join("commondir_checkout").join(DOT_GIT),
+        format!("gitdir: {}\n", commondir_gitdir.display()),
+    )
+    .unwrap();
+    let fifo_writer = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&fifo_with_writer)
+        .unwrap();
+
+    let (scan_finished_tx, scan_finished_rx) = mpsc::channel::<()>();
+    let fifo_releaser = std::thread::spawn(move || {
+        if scan_finished_rx.recv_timeout(Duration::from_secs(10)) != Err(RecvTimeoutError::Timeout)
+        {
+            return false;
+        }
+        drop(fifo_writer);
+        while scan_finished_rx.recv_timeout(Duration::from_millis(1))
+            == Err(RecvTimeoutError::Timeout)
+        {
+            for fifo in &fifos {
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(fifo)
+                    .log_err();
+            }
+        }
+        true
+    });
+
+    let fs = RealFs::new(None, cx.executor());
+    let tree = Worktree::local(
+        project_root.as_path(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    let mut confirmed_common_dirs = Vec::new();
+    for checkout in ["commondir_checkout", "nested"] {
+        confirmed_common_dirs.push(
+            worktree::discover_confirmed_root_repo_metadata(
+                &project_root.join(checkout),
+                fs.as_ref(),
+            )
+            .await
+            .map(|metadata| metadata.common_dir.ends_with("commondir_gitdir")),
+        );
+    }
+    drop(scan_finished_tx);
+    let scanner_blocked = fifo_releaser.join().unwrap();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            (
+                tree.entries(true, 0)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                confirmed_common_dirs,
+                scanner_blocked,
+            ),
+            (
+                vec![
+                    rel_path(""),
+                    rel_path("commondir_checkout"),
+                    rel_path("nested"),
+                    rel_path("nested/a.rs"),
+                    rel_path("src"),
+                    rel_path("src/.gitignore"),
+                    rel_path("src/b.rs"),
+                ],
+                vec![None, None],
+                false,
+            )
         );
     });
 }

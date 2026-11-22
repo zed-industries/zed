@@ -2398,10 +2398,15 @@ impl GitStore {
         {
             return Task::ready(Err(anyhow!("no permalink available")));
         }
+        let GitStoreState::Local { fs, .. } = &self.state else {
+            return Task::ready(Err(anyhow!("no permalink available")));
+        };
+        let fs = fs.clone();
         let file_path = file.worktree.read(cx).absolutize(&file.path);
-        cx.spawn(async move |cx| {
-            let provider_registry = cx.update(GitHostingProviderRegistry::default_global);
-            get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
+        let provider_registry = GitHostingProviderRegistry::default_global(cx);
+        cx.background_spawn(async move {
+            get_permalink_in_rust_registry_src(fs.as_ref(), provider_registry, file_path, selection)
+                .await
                 .context("no permalink available")
         })
     }
@@ -11383,7 +11388,8 @@ fn is_numbered_mount_name(name: &str) -> bool {
     })
 }
 
-fn get_permalink_in_rust_registry_src(
+async fn get_permalink_in_rust_registry_src(
+    fs: &dyn Fs,
     provider_registry: Arc<GitHostingProviderRegistry>,
     path: PathBuf,
     selection: Range<u32>,
@@ -11409,14 +11415,18 @@ fn get_permalink_in_rust_registry_src(
         package: CargoPackage,
     }
 
-    let Some((dir, cargo_vcs_info_json)) = path.ancestors().skip(1).find_map(|dir| {
-        let json = std::fs::read_to_string(dir.join(".cargo_vcs_info.json")).ok()?;
-        Some((dir, json))
-    }) else {
+    let mut cargo_vcs_info = None;
+    for dir in path.ancestors().skip(1) {
+        if let Ok(json) = fs.load(&dir.join(".cargo_vcs_info.json")).await {
+            cargo_vcs_info = Some((dir, json));
+            break;
+        }
+    }
+    let Some((dir, cargo_vcs_info_json)) = cargo_vcs_info else {
         bail!("No .cargo_vcs_info.json found in parent directories")
     };
     let cargo_vcs_info = serde_json::from_str::<CargoVcsInfo>(&cargo_vcs_info_json)?;
-    let cargo_toml = std::fs::read_to_string(dir.join("Cargo.toml"))?;
+    let cargo_toml = fs.load(&dir.join("Cargo.toml")).await?;
     let manifest = toml::from_str::<CargoToml>(&cargo_toml)?;
     let (provider, remote) = parse_git_remote_url(provider_registry, &manifest.package.repository)
         .context("parsing package.repository field of manifest")?;
