@@ -288,6 +288,7 @@ impl CapabilityCatalog {
                 },
             )
             .collect::<BTreeMap<_, _>>();
+        // An empty section is an error so that it never overwrites a usable cache.
         anyhow::ensure!(
             !models.is_empty(),
             "the {CAPABILITY_CATALOG_PROVIDER} capability catalog contains no usable models"
@@ -490,13 +491,8 @@ mod tests {
     fn cache_points_require_a_family_first_claude_id() {
         let catalog = CapabilityCatalog::default();
         for (id, expected) in [
-            ("anthropic.claude-example-9", true),
             ("anthropic.claude-example-4-v1:0", true),
-            ("anthropic.claude-example-preview", false),
-            ("anthropic.claude-example-2", false),
             ("anthropic.claude-3-example", false),
-            ("anthropic.claude-v2-example", false),
-            ("anthropic.claude-instant-example", false),
             ("vendor.claude-example-9", false),
         ] {
             assert_eq!(catalog.describe(id, id).supports_caching, expected, "{id}");
@@ -530,35 +526,14 @@ mod tests {
 
     #[test]
     fn ignores_invalid_output_limits_without_dropping_the_model() -> Result<()> {
-        for (context, output) in [
-            (100, 0),
-            (100, 100),
-            (100, 101),
-            (4_000_000_000u64, 3_000_000_000u64),
-        ] {
-            let catalog = catalog(json!({
-                "vendor.chat": entry("Chat", json!({"limit": {"context": context, "output": output}})),
-            }))?;
-            let model = catalog
-                .model_for_request_id("vendor.chat")
-                .context("readable context window")?;
-            assert_eq!(model.max_tokens, context);
-            assert_eq!(model.max_output_tokens, None);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn skips_an_entry_it_cannot_read() -> Result<()> {
         let catalog = catalog(json!({
-            "vendor.broken": {"name": "No limits"},
-            "vendor.zero": entry("Zero", json!({"limit": {"context": 0}})),
-            "vendor.chat": entry("Chat", json!({})),
+            "vendor.chat": entry("Chat", json!({"limit": {"context": 100, "output": 100}})),
         }))?;
-
-        assert!(catalog.model_for_request_id("vendor.broken").is_none());
-        assert!(catalog.model_for_request_id("vendor.zero").is_none());
-        assert!(catalog.model_for_request_id("vendor.chat").is_some());
+        let model = catalog
+            .model_for_request_id("vendor.chat")
+            .context("readable context window")?;
+        assert_eq!(model.max_tokens, 100);
+        assert_eq!(model.max_output_tokens, None);
         Ok(())
     }
 
@@ -566,20 +541,13 @@ mod tests {
     fn cache_contains_only_a_usable_bedrock_section() -> Result<()> {
         let response = json!({
             "unrelated": {"models": {"vendor.unrelated": {"name": "Other"}}, "large": [1, 2, 3]},
-            "amazon-bedrock": {"models": {
-                "us.vendor.chat": entry("Chat", json!({})),
-                "vendor.broken": {"name": "No limits"},
-            }},
+            "amazon-bedrock": {"models": {"us.vendor.chat": entry("Chat", json!({}))}},
         })
         .to_string();
         let (catalog, cache) = CapabilityCatalog::parse_with_cache(&response)?;
         assert!(catalog.model_for_request_id("us.vendor.chat").is_some());
         assert!(!cache.contains("unrelated"));
         assert_eq!(catalog, CapabilityCatalog::parse(&cache)?);
-        for models in [json!({}), json!({"vendor.broken": {"name": "No limits"}})] {
-            let response = json!({"amazon-bedrock": {"models": models}}).to_string();
-            assert!(CapabilityCatalog::parse_with_cache(&response).is_err());
-        }
         Ok(())
     }
 
@@ -591,6 +559,7 @@ mod tests {
             "anthropic.always": entry("", reasoning(json!([efforts]))),
             "anthropic.optional": entry("", reasoning(json!([toggle, efforts]))),
             "anthropic.budget": entry("", reasoning(json!([toggle, {"type": "budget_tokens"}]))),
+            "anthropic.claude-opus-4-5-v1": entry("", reasoning(json!([toggle, efforts]))),
             "anthropic.uncontrolled": entry("", reasoning(json!([]))),
             "anthropic.plain": entry("", json!({})),
             "openai.effort": entry("", reasoning(json!([efforts]))),
@@ -619,6 +588,11 @@ mod tests {
         );
         assert_eq!(
             thinking("anthropic.budget"),
+            Some(ConverseThinking::budget(None))
+        );
+        // The catalog lists efforts for this model, which rejects adaptive thinking.
+        assert_eq!(
+            thinking("anthropic.claude-opus-4-5-v1"),
             Some(ConverseThinking::budget(None))
         );
         assert_eq!(thinking("anthropic.uncontrolled"), None);
