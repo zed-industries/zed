@@ -510,6 +510,8 @@ impl State {
         let profile_name = aws_profile_name(&self.auth);
         let region = self.get_region();
         let generation = self.listing_generation;
+        // One deadline covers credential resolution and every listing call and
+        // page, so a stalled call cannot leave the model list loading forever.
         let deadline = cx
             .background_executor()
             .timer(LIST_MODELS_TIMEOUT)
@@ -562,6 +564,8 @@ impl State {
         self.fetch_models_task = None;
         self.listing_generation += 1;
         if !self.is_authenticated() {
+            // Dropping both tasks cancels their requests in flight, so nothing
+            // fetched for the old sign-in is applied afterwards.
             self.listing = ModelListing::Unauthenticated;
             self.refresh_capability_catalog_task = None;
             self.last_capability_catalog_error = None;
@@ -837,6 +841,8 @@ impl State {
             let credentials =
                 language_model::read_credentials(credentials_provider.as_ref(), AMAZON_AWS_URL, cx)
                     .await;
+            // A sign-out or newer sign-in may have happened while the keychain
+            // was read.
             let is_current = this.update(cx, |this, cx| {
                 this.sync_settings(cx);
                 this.auth_generation == generation
@@ -1267,6 +1273,8 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     fn refresh_models(&self, cx: &mut App) {
         self.state.update(cx, |state, cx| {
             state.sync_settings(cx);
+            // The loop is replaced rather than added to: dropping the task
+            // cancels its hourly timer.
             state.refresh_capability_catalog_task = None;
             if state.is_authenticated() {
                 state.refresh_capability_catalog_task =
@@ -3787,62 +3795,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn public_stand_in_uses_foundation_ids_and_settings_keep_verbatim_ids() -> Result<()> {
-        let catalog = CapabilityCatalog::parse(&capability_catalog_json(serde_json::json!({
-            "us.vendor.chat": capability_entry("Public", serde_json::json!({})),
-            "global.vendor.chat": capability_entry("Public global", serde_json::json!({})),
-            "us.vendor.other": capability_entry("Other", serde_json::json!({})),
-        })))?;
-        let models = catalog.models_for_region("us-east-1", false);
-        assert_eq!(
-            models
-                .iter()
-                .map(|model| model.id.as_str())
-                .collect::<Vec<_>>(),
-            ["vendor.chat", "vendor.other"]
-        );
-        let pinned =
-            converse_model_from_settings(&settings_entry("us.vendor.chat", None), None, &catalog);
-        assert_eq!(pinned.id, "us.vendor.chat");
-        assert_eq!(
-            converse_language_model(&pinned).telemetry_id.as_ref(),
-            "bedrock/vendor.chat"
-        );
-        let unknown = converse_model_from_settings(
-            &settings_entry(
-                "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/private",
-                None,
-            ),
-            None,
-            &catalog,
-        );
-        assert!(!unknown.foundation_model_known);
-        assert_eq!(
-            converse_language_model(&unknown).telemetry_id.as_ref(),
-            "bedrock/custom"
-        );
-        let unknown_public_looking =
-            converse_model_from_settings(&settings_entry("vendor.secret", None), None, &catalog);
-        assert_eq!(
-            converse_language_model(&unknown_public_looking)
-                .telemetry_id
-                .as_ref(),
-            "bedrock/custom"
-        );
-        let mut mantle = mantle_model(false);
-        assert_eq!(
-            mantle_language_model(&mantle).telemetry_id.as_ref(),
-            "bedrock-mantle/custom"
-        );
-        mantle.known_foundation_model_id = Some("vendor.chat".to_string());
-        assert_eq!(
-            mantle_language_model(&mantle).telemetry_id.as_ref(),
-            "bedrock-mantle/vendor.chat"
-        );
-        Ok(())
-    }
-
     fn application_profile(base: &str) -> Result<InferenceProfileSummary> {
         Ok(InferenceProfileSummary::builder()
             .inference_profile_id("app")
@@ -3902,6 +3854,33 @@ mod tests {
                 let request = into_bedrock(LanguageModelRequest::default(), &config, None, None)?;
                 assert_eq!(request.model, application.inference_profile_arn());
             }
+
+            for unknown_id in [
+                "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/private",
+                "vendor.secret",
+            ] {
+                let unknown = provider.state.read_with(cx, |state, _| {
+                    converse_model_from_settings(
+                        &settings_entry(unknown_id, None),
+                        state.listing.catalog(),
+                        &state.capability_catalog,
+                    )
+                });
+                assert_eq!(
+                    converse_language_model(&unknown).telemetry_id.as_ref(),
+                    "bedrock/custom"
+                );
+            }
+            let mut mantle = mantle_model(false);
+            assert_eq!(
+                mantle_language_model(&mantle).telemetry_id.as_ref(),
+                "bedrock-mantle/custom"
+            );
+            mantle.known_foundation_model_id = Some(base.to_string());
+            assert_eq!(
+                mantle_language_model(&mantle).telemetry_id.as_ref(),
+                "bedrock-mantle/vendor.chat"
+            );
             Ok(())
         });
         assert!(result.is_ok(), "{result:?}");
@@ -4262,254 +4241,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn text_only_completion_emits_no_reasoning_provenance() -> Result<()> {
-        use bedrock::bedrock_client::types::{ContentBlockDeltaEvent, MessageStartEvent};
-        let model = converse_model_from_settings(
-            &settings_entry("private/chat", None),
-            None,
-            &CapabilityCatalog::default(),
-        );
-        let events = [
-            Ok(ConverseStreamOutput::MessageStart(
-                MessageStartEvent::builder()
-                    .role(bedrock::BedrockRole::Assistant)
-                    .build()?,
-            )),
-            Ok(ConverseStreamOutput::ContentBlockDelta(
-                ContentBlockDeltaEvent::builder()
-                    .content_block_index(0)
-                    .delta(ContentBlockDelta::Text("answer".into()))
-                    .build()?,
-            )),
-        ];
-        let mut message = LanguageModelRequestMessage {
-            role: Role::Assistant,
-            content: Vec::new(),
-            cache: false,
-            reasoning_details: None,
-        };
-        for event in completion_events(&model, futures::stream::iter(events))? {
-            match event {
-                LanguageModelCompletionEvent::Text(text) => {
-                    message.content.push(MessageContent::Text(text))
-                }
-                LanguageModelCompletionEvent::ReasoningDetails(details) => {
-                    message.reasoning_details = Some(Arc::new(details))
-                }
-                other => anyhow::bail!("unexpected event: {other:?}"),
-            }
-        }
-        assert!(
-            matches!(message.content.as_slice(), [MessageContent::Text(text)] if text == "answer")
-        );
-        assert!(message.reasoning_details.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn unknown_routes_do_not_share_opaque_history_or_disclose_their_names() -> Result<()> {
-        let unknown = |id| {
-            converse_model_from_settings(
-                &settings_entry(id, None),
-                None,
-                &CapabilityCatalog::default(),
-            )
-        };
-        let first = unknown("team-a/chat");
-        let source = reasoning_source(&first);
-        assert!(!source.contains("team-a") && !source.contains("chat"));
-        let listed = converse_model("vendor.chat", None);
-        for (model, replay) in [
-            (first, true),
-            (unknown("team-b/chat"), false),
-            (listed, false),
-        ] {
-            let request = replay_history(
-                &model,
-                vec![
-                    MessageContent::RedactedThinking("AP8=".into()),
-                    MessageContent::Text("answer".into()),
-                ],
-                Some(Arc::new(serde_json::json!({"bedrock_model": source}))),
-            )?;
-            assert_eq!(request.messages[0].content().iter().any(|content| matches!(content, BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::RedactedContent(bytes)) if bytes.as_ref() == [0, 255])), replay);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn openai_wire_conventions_and_reasoning_replay_survive_catalog_drift() -> Result<()> {
-        use bedrock::bedrock_client::types::{
-            ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStartEvent, MessageStopEvent,
-        };
-        let response = || -> Result<Vec<Result<BedrockStreamingResponse>>> {
-            Ok(vec![
-                Ok(ConverseStreamOutput::MessageStart(
-                    MessageStartEvent::builder()
-                        .role(bedrock::BedrockRole::Assistant)
-                        .build()?,
-                )),
-                Ok(ConverseStreamOutput::ContentBlockDelta(
-                    ContentBlockDeltaEvent::builder()
-                        .content_block_index(0)
-                        .delta(ContentBlockDelta::ReasoningContent(
-                            ReasoningContentBlockDelta::RedactedContent(BedrockBlob::new([0])),
-                        ))
-                        .build()?,
-                )),
-                Ok(ConverseStreamOutput::ContentBlockDelta(
-                    ContentBlockDeltaEvent::builder()
-                        .content_block_index(0)
-                        .delta(ContentBlockDelta::ReasoningContent(
-                            ReasoningContentBlockDelta::RedactedContent(BedrockBlob::new([255])),
-                        ))
-                        .build()?,
-                )),
-                Ok(ConverseStreamOutput::ContentBlockStop(
-                    ContentBlockStopEvent::builder()
-                        .content_block_index(0)
-                        .build()?,
-                )),
-                Ok(ConverseStreamOutput::MessageStop(
-                    MessageStopEvent::builder()
-                        .stop_reason(StopReason::ContentFiltered)
-                        .build()?,
-                )),
-            ])
-        };
-        let with_effort = CapabilityCatalog::parse(&capability_catalog_json(serde_json::json!({
-            "openai.chat": capability_entry("Chat", serde_json::json!({"reasoning": true, "reasoning_options": [{"type": "effort", "values": ["none", "low", "high"]}]})),
-        })))?.describe("openai.chat", "us.openai.chat");
-        let without_effort =
-            CapabilityCatalog::parse(&capability_catalog_json(serde_json::json!({
-                "openai.chat": capability_entry("Chat", serde_json::json!({})),
-            })))?
-            .describe("openai.chat", "us.openai.chat");
-        assert!(!always_reasons(&with_effort));
-        assert!(without_effort.thinking.is_none());
-        let record =
-            |model: &ConverseModel| completion_events(model, futures::stream::iter(response()?));
-        let recorded = record(&with_effort)?;
-        assert_eq!(record(&without_effort)?, recorded);
-        let details = recorded
-            .iter()
-            .find_map(|event| match event {
-                LanguageModelCompletionEvent::ReasoningDetails(details) => {
-                    Some(Arc::new(details.clone()))
-                }
-                _ => None,
-            })
-            .context("reasoning source")?;
-        assert_eq!(
-            *details,
-            serde_json::json!({"bedrock_model": "openai.chat"})
-        );
-        let data = recorded
-            .iter()
-            .find_map(|event| match event {
-                LanguageModelCompletionEvent::RedactedThinking { data } => Some(data.clone()),
-                _ => None,
-            })
-            .context("opaque reasoning")?;
-        for model in [&with_effort, &without_effort] {
-            let request = replay_history(
-                model,
-                vec![
-                    MessageContent::RedactedThinking(data.clone()),
-                    MessageContent::Text("answer".into()),
-                ],
-                Some(details.clone()),
-            )?;
-            assert!(
-                matches!(request.messages.first().and_then(|message| message.content().first()), Some(BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::RedactedContent(bytes))) if bytes.as_ref() == [0, 255])
-            );
-        }
-        for (model, source) in [
-            (
-                converse_model("anthropic.claude-example", Some(adaptive_thinking(true))),
-                Some(details.clone()),
-            ),
-            (with_effort.clone(), None),
-        ] {
-            let request = replay_history(
-                &model,
-                vec![
-                    MessageContent::RedactedThinking(data.clone()),
-                    MessageContent::Thinking {
-                        text: "foreign thinking".into(),
-                        signature: Some("foreign signature".into()),
-                    },
-                    MessageContent::Text("answer".into()),
-                ],
-                source,
-            )?;
-            assert!(
-                matches!(request.messages[0].content(), [BedrockInnerContent::Text(text)] if text == "answer")
-            );
-        }
-        let malformed = replay_history(
-            &with_effort,
-            vec![
-                MessageContent::RedactedThinking("not base64!".into()),
-                MessageContent::Text("answer".into()),
-            ],
-            Some(details),
-        )?;
-        assert!(
-            matches!(malformed.messages[0].content(), [BedrockInnerContent::Text(text)] if text == "answer")
-        );
-
-        for (base, thinking, image_is_inline) in [
-            ("openai.chat", None, false),
-            ("xai.chat", Some(reasoning()), true),
-        ] {
-            let request = into_bedrock(
-                LanguageModelRequest {
-                    messages: vec![LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![MessageContent::ToolResult(
-                            language_model::LanguageModelToolResult {
-                                tool_use_id: "call".into(),
-                                tool_name: "image".into(),
-                                is_error: false,
-                                content: vec![LanguageModelToolResultContent::Image(
-                                    language_model::LanguageModelImage {
-                                        source: "AP8=".into(),
-                                    },
-                                )],
-                                output: None,
-                            },
-                        )],
-                        cache: false,
-                        reasoning_details: None,
-                    }],
-                    ..Default::default()
-                },
-                &converse_model(base, thinking),
-                None,
-                None,
-            )?;
-            let first = request
-                .messages
-                .first()
-                .and_then(|message| message.content().first())
-                .context("tool result")?;
-            let BedrockInnerContent::ToolResult(result) = first else {
-                anyhow::bail!("expected tool result")
-            };
-            assert_eq!(
-                result
-                    .content()
-                    .iter()
-                    .any(|part| matches!(part, BedrockToolResultContentBlock::Image(_))),
-                image_is_inline,
-                "{base}"
-            );
-        }
-        Ok(())
-    }
-
     fn reasoning() -> ConverseThinking {
         ConverseThinking::Reasoning {
             efforts: vec![
@@ -4804,269 +4535,113 @@ mod tests {
         Ok(())
     }
 
-    #[gpui::test]
-    async fn region_changes_cancel_pending_listing_and_keep_request_settings_together(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let scenario = async {
-            init_provider_test(cx);
-            let settings = |region: &str, header: &str| {
-                serde_json::json!({
-                    "region": region, "custom_headers": {"x-test-route": header},
-                    "available_models": [{"name": "vendor.manual", "max_tokens": 10000}],
-                    "guardrail_identifier": header, "guardrail_version": "1",
-                })
-            };
-            set_bedrock_settings(cx, settings("us-east-1", "old"))?;
-            let (release, old_response) = futures::channel::oneshot::channel::<()>();
-            let old_response = old_response
-                .map(|result| result.expect("release old listing"))
-                .boxed()
-                .shared();
-            let (entered, mut pending) = futures::channel::mpsc::unbounded();
-            let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
-            let client = http_client::FakeHttpClient::create({
-                let old_response = old_response.clone();
+    type RecordedRequests =
+        Arc<parking_lot::Mutex<Vec<(String, http_client::http::HeaderMap, String)>>>;
+
+    /// A client that records every request other than the capability catalog
+    /// fetch, and answers each with the error `send_test_completion` expects.
+    fn recording_client() -> (Arc<dyn HttpClient>, RecordedRequests) {
+        let requests = RecordedRequests::default();
+        let client = http_client::FakeHttpClient::create({
+            let requests = requests.clone();
+            move |mut request| {
                 let requests = requests.clone();
-                move |mut request| {
-                    let old_response = old_response.clone();
-                    let entered = entered.clone();
-                    let requests = requests.clone();
-                    async move {
-                        if request.uri() == CAPABILITY_CATALOG_URL {
-                            return json_response(404, serde_json::json!({}));
-                        }
-                        let mut body = String::new();
-                        request.body_mut().read_to_string(&mut body).await?;
-                        requests.lock().push((
-                            request.uri().to_string(),
-                            request.headers().clone(),
-                            body,
-                        ));
-                        if request.uri().path().ends_with("converse-stream") {
-                            return json_response(
-                                400,
-                                serde_json::json!({"__type": "ValidationException", "message": "test completion ended"}),
-                            );
-                        }
-                        let old_region =
-                            request.uri().host() == Some("bedrock.us-east-1.amazonaws.com");
-                        if old_region && request.uri().path() == "/foundation-models" {
-                            entered.unbounded_send(()).context("old listing entered")?;
-                            old_response.await;
-                        }
-                        json_response(
-                            200,
-                            listing_response(
-                                &request,
-                                &[if old_region {
-                                    "vendor.old"
-                                } else {
-                                    "vendor.current"
-                                }],
-                            ),
-                        )
+                async move {
+                    if request.uri() == CAPABILITY_CATALOG_URL {
+                        return json_response(404, serde_json::json!({}));
                     }
+                    let mut body = String::new();
+                    request.body_mut().read_to_string(&mut body).await?;
+                    requests.lock().push((
+                        request.uri().to_string(),
+                        request.headers().clone(),
+                        body,
+                    ));
+                    json_response(
+                        400,
+                        serde_json::json!({"__type": "ValidationException", "message": "test completion ended"}),
+                    )
                 }
-            });
-            let provider = cx.update(|cx| new_test_provider(client, cx));
-            provider
-                .state
-                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
-            pending.next().await.context("pending old listing")?;
-            set_bedrock_settings(cx, settings("eu-west-1", "current"))?;
-            cx.run_until_parked();
-            finish_listing(&provider, cx).await?;
-            assert_eq!(
-                offered_ids(&provider, cx),
-                ["vendor.current", "vendor.manual"]
-            );
-            assert!(requests.lock().iter().any(|(uri, _, _)| {
-                uri.starts_with("https://bedrock.eu-west-1.amazonaws.com/foundation-models")
-            }));
-            send_test_completion(&provider, cx).await?;
-            {
-                let requests = requests.lock();
-                let (uri, headers, body) = requests
-                    .iter()
-                    .find(|(uri, _, _)| uri.contains("converse-stream"))
-                    .context("inference request")?;
-                assert!(uri.starts_with("https://bedrock-runtime.eu-west-1.amazonaws.com/"));
-                assert_eq!(
-                    headers.get("x-test-route").context("custom header")?,
-                    "current"
-                );
-                let body: Value = serde_json::from_str(body)?;
-                assert_eq!(body["guardrailConfig"]["guardrailIdentifier"], "current");
             }
-            let before = requests.lock().len();
-            let mut passive = settings("eu-west-1", "passive");
-            passive["allow_global"] = true.into();
-            passive["available_models"][0]["max_tokens"] = 12000.into();
-            set_bedrock_settings(cx, passive)?;
-            cx.run_until_parked();
-            assert_eq!(
-                requests.lock().len(),
-                before,
-                "headers, guardrails, models and allow_global do not list again"
-            );
-            set_bedrock_settings(cx, settings("eu-west-1", "immediate"))?;
-            send_test_completion(&provider, cx).await?;
-            {
-                let requests = requests.lock();
-                let (_, headers, body) = requests.last().context("immediate settings request")?;
-                assert_eq!(
-                    headers.get("x-test-route").context("immediate header")?,
-                    "immediate"
-                );
-                assert_eq!(
-                    serde_json::from_str::<Value>(body)?["guardrailConfig"]["guardrailIdentifier"],
-                    "immediate"
-                );
-                assert_eq!(
-                    requests.len(),
-                    before + 1,
-                    "only the requested inference call is sent"
-                );
-            }
-            release
-                .send(())
-                .map_err(|_| anyhow!("old response receiver dropped"))?;
-            cx.run_until_parked();
-            assert_eq!(
-                offered_ids(&provider, cx),
-                ["vendor.current", "vendor.manual"]
-            );
-            Ok::<_, anyhow::Error>(())
-        };
-        scenario
-            .await
-            .expect("Region settings scenario should complete");
+        });
+        (client, requests)
     }
 
     #[gpui::test]
-    async fn endpoint_changes_enter_and_leave_gateway_mode_without_applying_old_lists(
+    async fn region_setting_selects_the_runtime_host(cx: &mut gpui::TestAppContext) {
+        let scenario = async {
+            init_provider_test(cx);
+            set_bedrock_settings(
+                cx,
+                serde_json::json!({
+                    "region": "eu-west-1",
+                    "available_models": [{"name": "vendor.manual", "max_tokens": 10000}],
+                }),
+            )?;
+            let (client, requests) = recording_client();
+            let provider = cx.update(|cx| new_test_provider(client, cx));
+            provider
+                .state
+                .update(cx, |state, _| state.set_auth(api_key_auth()));
+            send_test_completion(&provider, cx).await?;
+            let requests = requests.lock();
+            let (uri, _, _) = requests.last().context("inference request")?;
+            assert!(
+                uri.starts_with("https://bedrock-runtime.eu-west-1.amazonaws.com/"),
+                "{uri}"
+            );
+            anyhow::Ok(())
+        };
+        scenario.await.expect("Region settings scenario");
+    }
+
+    #[gpui::test]
+    async fn custom_endpoint_receives_requests_and_is_not_asked_for_a_listing(
         cx: &mut gpui::TestAppContext,
     ) {
         let scenario = async {
             init_provider_test(cx);
-            let settings = |endpoint: Option<&str>, header: &str| {
+            let endpoint = "https://gateway.example.com/bedrock";
+            set_bedrock_settings(
+                cx,
                 serde_json::json!({
-                    "endpoint_url": endpoint, "custom_headers": {"x-test-route": header},
+                    "endpoint_url": endpoint, "custom_headers": {"x-test-route": "gateway"},
                     "available_models": [{"name": "vendor.manual", "max_tokens": 10000}],
-                })
-            };
-            set_bedrock_settings(cx, settings(None, "direct"))?;
-            let (release, old_response) = futures::channel::oneshot::channel::<()>();
-            let old_response = old_response
-                .map(|result| result.expect("release old listing"))
-                .boxed()
-                .shared();
-            let old_listing = Arc::new(parking_lot::Mutex::new(true));
-            let (entered, mut pending) = futures::channel::mpsc::unbounded();
-            let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
-            let client = http_client::FakeHttpClient::create({
-                let old_response = old_response.clone();
-                let old_listing = old_listing.clone();
-                let requests = requests.clone();
-                move |request| {
-                    let old_response = old_response.clone();
-                    let entered = entered.clone();
-                    let old = *old_listing.lock();
-                    let requests = requests.clone();
-                    async move {
-                        if request.uri() == CAPABILITY_CATALOG_URL {
-                            return json_response(404, serde_json::json!({}));
-                        }
-                        requests
-                            .lock()
-                            .push((request.uri().to_string(), request.headers().clone()));
-                        if request.uri().path().ends_with("converse-stream") {
-                            return json_response(
-                                400,
-                                serde_json::json!({"__type": "ValidationException", "message": "test completion ended"}),
-                            );
-                        }
-                        if old && request.uri().path() == "/foundation-models" {
-                            entered.unbounded_send(()).context("old listing entered")?;
-                            old_response.await;
-                        }
-                        json_response(
-                            200,
-                            listing_response(
-                                &request,
-                                &[if old { "vendor.old" } else { "vendor.current" }],
-                            ),
-                        )
-                    }
-                }
-            });
+                    "guardrail_identifier": "test-guardrail", "guardrail_version": "1",
+                }),
+            )?;
+            let (client, requests) = recording_client();
             let provider = cx.update(|cx| new_test_provider(client, cx));
             provider
                 .state
                 .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
-            pending.next().await.context("pending old listing")?;
-            set_bedrock_settings(
-                cx,
-                settings(Some("https://gateway-a.example.com/bedrock"), "gateway-a"),
-            )?;
             cx.run_until_parked();
             let (message, _) = provider
                 .state
                 .read_with(cx, |state, _| state.listing_message())
                 .context("gateway listing message")?;
             assert!(message.contains("custom endpoint"));
-            let count_before_gateways = requests.lock().len();
-            for (endpoint, header) in [
-                ("https://gateway-a.example.com/bedrock", "gateway-a"),
-                ("https://gateway-b.example.com/bedrock", "gateway-b"),
-            ] {
-                set_bedrock_settings(cx, settings(Some(endpoint), header))?;
-                send_test_completion(&provider, cx).await?;
-                let requests = requests.lock();
-                let (uri, headers) = requests.last().context("gateway request")?;
-                assert!(uri.starts_with(endpoint));
-                assert_eq!(
-                    headers.get("x-test-route").context("gateway header")?,
-                    header
-                );
-            }
-            assert_eq!(
-                requests.lock().len(),
-                count_before_gateways + 2,
-                "gateway edits send no listing calls"
-            );
-            *old_listing.lock() = false;
-            set_bedrock_settings(cx, settings(None, "direct-again"))?;
-            cx.run_until_parked();
-            finish_listing(&provider, cx).await?;
-            assert_eq!(
-                offered_ids(&provider, cx),
-                ["vendor.current", "vendor.manual"]
-            );
             send_test_completion(&provider, cx).await?;
-            {
-                let requests = requests.lock();
-                let (uri, headers) = requests.last().context("direct request")?;
-                assert!(uri.starts_with("https://bedrock-runtime.us-east-1.amazonaws.com/"));
-                assert_eq!(
-                    headers.get("x-test-route").context("direct header")?,
-                    "direct-again"
-                );
-            }
-            release
-                .send(())
-                .map_err(|_| anyhow!("old response receiver dropped"))?;
-            cx.run_until_parked();
-            assert_eq!(
-                offered_ids(&provider, cx),
-                ["vendor.current", "vendor.manual"]
+            let requests = requests.lock();
+            assert!(
+                requests
+                    .iter()
+                    .all(|(uri, _, _)| uri.starts_with(endpoint) && uri.contains("converse-stream")),
+                "only inference requests are sent, and only to the endpoint: {requests:?}"
             );
-            Ok::<_, anyhow::Error>(())
+            let (_, headers, body) = requests.last().context("inference request")?;
+            assert_eq!(
+                headers.get("x-test-route").context("custom header")?,
+                "gateway"
+            );
+            let body: Value = serde_json::from_str(body)?;
+            assert_eq!(
+                body["guardrailConfig"]["guardrailIdentifier"],
+                "test-guardrail"
+            );
+            anyhow::Ok(())
         };
-        scenario
-            .await
-            .expect("endpoint settings scenario should complete");
+        scenario.await.expect("custom endpoint scenario");
     }
 
     #[gpui::test]
@@ -5306,134 +4881,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn listing_deadline_covers_all_calls_and_pages(cx: &mut gpui::TestAppContext) {
-        let scenario = async {
-            init_provider_test(cx);
-            for (application_timeout, foundation_timeout) in
-                [(false, false), (true, false), (false, true)]
-            {
-                let (release_first_page, first_page) = futures::channel::oneshot::channel::<()>();
-                let first_page = first_page
-                    .map(|result| result.expect("release first page"))
-                    .boxed()
-                    .shared();
-                let (entered, mut requests) = futures::channel::mpsc::unbounded();
-                let client = http_client::FakeHttpClient::create(move |request| {
-                    let first_page = first_page.clone();
-                    let entered = entered.clone();
-                    async move {
-                        if request.uri() == CAPABILITY_CATALOG_URL {
-                            return json_response(404, serde_json::json!({}));
-                        }
-                        let application = request
-                            .uri()
-                            .query()
-                            .is_some_and(|query| query.contains("APPLICATION"));
-                        let system = request
-                            .uri()
-                            .query()
-                            .is_some_and(|query| query.contains("SYSTEM_DEFINED"));
-                        if foundation_timeout && request.uri().path() == "/foundation-models" {
-                            entered
-                                .unbounded_send("foundation")
-                                .context("foundation started")?;
-                            return futures::future::pending().await;
-                        }
-                        if application_timeout && application {
-                            entered
-                                .unbounded_send("application")
-                                .context("application started")?;
-                            return futures::future::pending().await;
-                        }
-                        if !application_timeout && !foundation_timeout && system {
-                            if request
-                                .uri()
-                                .query()
-                                .is_some_and(|query| query.contains("nextToken"))
-                            {
-                                entered
-                                    .unbounded_send("second")
-                                    .context("second page started")?;
-                                return futures::future::pending().await;
-                            }
-                            entered
-                                .unbounded_send("first")
-                                .context("first page started")?;
-                            first_page.await;
-                            let mut body = listing_response(&request, &["vendor.chat"]);
-                            body["nextToken"] = "page-two".into();
-                            return json_response(200, body);
-                        }
-                        json_response(200, listing_response(&request, &["vendor.chat"]))
-                    }
-                });
-                let client = Tokio::spawn_result(&cx.to_async(), async move {
-                    Ok(build_control_plane_client(
-                        AwsHttpClient::new(client),
-                        BedrockRequestAuth::ApiKey {
-                            api_key: "test-key".into(),
-                        },
-                        None,
-                        "us-east-1".into(),
-                    )
-                    .await)
-                })
-                .await?;
-                // The fake transport needs no Tokio I/O. Keep the paginator
-                // and deadline on the executor that the test clock drives.
-                let deadline = cx.background_executor.timer(LIST_MODELS_TIMEOUT);
-                let runtime = cx.update(|cx| Tokio::handle(cx));
-                let listing = cx.background_executor.spawn(async move {
-                    let mut listing = Box::pin(bedrock::list_models(&client, deadline));
-                    futures::future::poll_fn(move |task_context| {
-                        // Smithy's identity cache creates a Tokio timeout even
-                        // for the static token, which resolves in this poll.
-                        let _entered = runtime.enter();
-                        listing.as_mut().poll(task_context)
-                    })
-                    .await
-                });
-                let first = requests.next().await.context("listing started")?;
-                if foundation_timeout || application_timeout {
-                    assert_eq!(
-                        first,
-                        if foundation_timeout {
-                            "foundation"
-                        } else {
-                            "application"
-                        }
-                    );
-                    cx.run_until_parked();
-                    cx.executor().advance_clock(LIST_MODELS_TIMEOUT);
-                    // This sender is unused in this scenario; its receiver is never polled.
-                    drop(release_first_page);
-                } else {
-                    assert_eq!(first, "first");
-                    cx.executor().advance_clock(Duration::from_secs(20));
-                    release_first_page
-                        .send(())
-                        .map_err(|_| anyhow!("first page receiver dropped"))?;
-                    assert_eq!(
-                        requests.next().await.context("second page started")?,
-                        "second"
-                    );
-                    cx.executor().advance_clock(Duration::from_secs(10));
-                }
-                cx.run_until_parked();
-                let error = listing
-                    .now_or_never()
-                    .context("listing must complete at the shared deadline")?
-                    .expect_err("any deadline must fail the listing");
-                assert!(error.to_string().contains("listing deadline"));
-            }
-            Ok::<_, anyhow::Error>(())
-        };
-        scenario
-            .await
-            .expect("listing deadline scenario should complete");
-    }
-
-    #[gpui::test]
     async fn signed_out_settings_models_do_not_resolve_credentials_or_send_requests(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -5492,156 +4939,27 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn credential_operations_follow_submission_order(cx: &mut gpui::TestAppContext) {
-        let scenario = async {
-            init_provider_test(cx);
-            set_bedrock_settings(
-                cx,
-                serde_json::json!({"endpoint_url":"https://gateway.test"}),
-            )?;
-            let store =
-                Arc::new(credentials_provider::test_support::FakeCredentialsProvider::default());
-            let provider = cx.update(|cx| new_test_provider_with_credentials(store.clone(), cx));
-            let credential = |key: &str| BedrockCredentials {
-                bearer_token: Some(key.into()),
-                ..Default::default()
-            };
-            let blocked = store.defer_next_mutation();
-            let first = provider.state.update(cx, |state, cx| {
-                state.set_static_credentials(credential("first"), cx)
-            });
-            cx.run_until_parked();
-            let second = provider.state.update(cx, |state, cx| {
-                state.set_static_credentials(credential("second"), cx)
-            });
-            cx.run_until_parked();
-            assert!(store.state.lock().keys.is_empty());
-            blocked
-                .send(())
-                .map_err(|_| anyhow!("first save dropped"))?;
-            second.await?;
-            first.await?;
-            assert_eq!(
-                store.state.lock().keys.get(AMAZON_AWS_URL),
-                Some(&serde_json::to_vec(&credential("second"))?)
+    async fn failed_credential_delete_is_reported(cx: &mut gpui::TestAppContext) {
+        init_provider_test(cx);
+        let store =
+            Arc::new(credentials_provider::test_support::FakeCredentialsProvider::default());
+        let provider = cx.update(|cx| new_test_provider_with_credentials(store.clone(), cx));
+        provider
+            .state
+            .update(cx, |state, _| state.set_auth(api_key_auth()));
+        let failed_delete = store.defer_next_mutation();
+        let delete = provider.state.update(cx, |state, cx| state.reset_auth(cx));
+        drop(failed_delete);
+        let error = delete.await.expect_err("fake deletion failed");
+        provider.state.read_with(cx, |state, _| {
+            assert!(
+                state
+                    .credential_delete_error
+                    .as_deref()
+                    .is_some_and(|message| message.contains(&error.to_string()))
             );
-            let blocked = store.defer_next_mutation();
-            let delete = provider.state.update(cx, |state, cx| state.reset_auth(cx));
-            cx.run_until_parked();
-            let read = cx.update(|cx| provider.authenticate(cx));
-            cx.run_until_parked();
-            store.assert_reads(&[]);
-            blocked.send(()).map_err(|_| anyhow!("delete dropped"))?;
-            delete.await?;
-            assert!(matches!(
-                read.await,
-                Err(AuthenticateError::CredentialsNotFound)
-            ));
-            assert!(!cx.update(|cx| provider.is_authenticated(cx)));
-            store.assert_reads(&[AMAZON_AWS_URL]);
-
-            store.state.lock().keys.insert(
-                AMAZON_AWS_URL.into(),
-                serde_json::to_vec(&credential("next"))?,
-            );
-            let blocked = store.defer_read(AMAZON_AWS_URL);
-            let read = cx.update(|cx| provider.authenticate(cx));
-            cx.run_until_parked();
-            set_bedrock_settings(
-                cx,
-                serde_json::json!({"endpoint_url":"https://next.test", "region":"eu-west-1"}),
-            )?;
-            cx.run_until_parked();
-            blocked.send(()).map_err(|_| anyhow!("read dropped"))?;
-            read.await?;
-            provider.state.read_with(cx, |state, _| {
-                assert_eq!(state.auth, credential("next").into_auth());
-            });
-            let failed_delete = store.defer_next_mutation();
-            let delete = provider.state.update(cx, |state, cx| state.reset_auth(cx));
-            drop(failed_delete);
-            let error = delete.await.expect_err("fake deletion failed");
-            provider.state.read_with(cx, |state, _| {
-                assert!(
-                    state
-                        .credential_delete_error
-                        .as_deref()
-                        .is_some_and(|message| message.contains(&error.to_string()))
-                );
-                assert!(!state.is_authenticated());
-            });
-            anyhow::Ok(())
-        }
-        .await;
-        scenario.expect("ordered credential operations");
-    }
-
-    #[gpui::test]
-    async fn pending_credential_reads_cannot_overwrite_new_auth_or_a_reset(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let scenario = async {
-            init_provider_test(cx);
-            set_bedrock_settings(
-                cx,
-                serde_json::json!({"endpoint_url": "https://gateway.example.com"}),
-            )?;
-            for reset in [false, true] {
-                let credentials = Arc::new(
-                    credentials_provider::test_support::FakeCredentialsProvider::default(),
-                );
-                let encoded = |key: &str| {
-                    serde_json::to_vec(&BedrockCredentials {
-                        bearer_token: Some(key.into()),
-                        ..Default::default()
-                    })
-                };
-                credentials
-                    .state
-                    .lock()
-                    .keys
-                    .insert(AMAZON_AWS_URL.into(), encoded("old")?);
-                let release = credentials.defer_read(AMAZON_AWS_URL);
-                let provider =
-                    cx.update(|cx| new_test_provider_with_credentials(credentials.clone(), cx));
-                let pending = cx.update(|cx| provider.authenticate(cx));
-                cx.run_until_parked();
-                credentials.assert_reads(&[AMAZON_AWS_URL]);
-                if reset {
-                    let release_delete = credentials.defer_next_mutation();
-                    let deletion = provider.state.update(cx, |state, cx| state.reset_auth(cx));
-                    cx.run_until_parked();
-                    release
-                        .send(())
-                        .map_err(|_| anyhow!("credential receiver dropped"))?;
-                    pending.await?;
-                    assert!(!cx.update(|cx| provider.is_authenticated(cx)));
-                    release_delete
-                        .send(())
-                        .map_err(|_| anyhow!("delete receiver dropped"))?;
-                    deletion.await?;
-                } else {
-                    credentials
-                        .state
-                        .lock()
-                        .keys
-                        .insert(AMAZON_AWS_URL.into(), encoded("new")?);
-                    let next = cx.update(|cx| provider.authenticate(cx));
-                    release
-                        .send(())
-                        .map_err(|_| anyhow!("credential receiver dropped"))?;
-                    pending.await?;
-                    next.await?;
-                    provider.state.read_with(cx, |state, _| {
-                    assert!(matches!(&state.auth, Some(BedrockAuth::ApiKey { api_key }) if api_key == "new"));
-                });
-                }
-            }
-            Ok::<_, anyhow::Error>(())
-        };
-        scenario
-            .await
-            .expect("credential read scenario should complete");
+            assert!(!state.is_authenticated());
+        });
     }
 
     #[gpui::test]
@@ -5714,135 +5032,6 @@ mod tests {
         scenario
             .await
             .expect("authentication settings scenario should complete");
-    }
-
-    #[gpui::test]
-    async fn manual_catalog_refresh_recovers_immediately_and_keeps_one_loop(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        async {
-            init_provider_test(cx);
-            set_bedrock_settings(
-                cx,
-                serde_json::json!({"endpoint_url": "https://gateway.example.com"}),
-            )?;
-            let count = Arc::new(parking_lot::Mutex::new(0));
-            let client = http_client::FakeHttpClient::create({
-                let count = count.clone();
-                move |request| {
-                    assert_eq!(request.uri(), CAPABILITY_CATALOG_URL);
-                    let status = {
-                        let mut count = count.lock();
-                        *count += 1;
-                        if *count == 1 { 404 } else { 200 }
-                    };
-                    async move {
-                        json_response(
-                            status,
-                            serde_json::json!({"amazon-bedrock": {"models": {
-                                "us.vendor.chat": capability_entry("Chat", serde_json::json!({})),
-                            }}}),
-                        )
-                    }
-                }
-            });
-            let provider = cx.update(|cx| new_test_provider(client, cx));
-            provider
-                .state
-                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
-            cx.run_until_parked();
-            assert_eq!(*count.lock(), 1);
-            assert!(offered_ids(&provider, cx).is_empty());
-            cx.update(|cx| {
-                provider.refresh_models(cx);
-                provider.refresh_models(cx);
-            });
-            cx.run_until_parked();
-            assert_eq!(*count.lock(), 2);
-            assert_eq!(offered_ids(&provider, cx), ["vendor.chat"]);
-            cx.executor()
-                .advance_clock(model_catalog_cache::REFRESH_INTERVAL);
-            cx.run_until_parked();
-            assert_eq!(*count.lock(), 3, "one hourly refresh loop");
-            provider
-                .state
-                .update(cx, |state, cx| state.reset_auth(cx))
-                .await?;
-            cx.executor()
-                .advance_clock(model_catalog_cache::REFRESH_INTERVAL * 2);
-            cx.run_until_parked();
-            assert_eq!(
-                *count.lock(),
-                3,
-                "signed out providers do not refresh catalogs"
-            );
-            Ok::<_, anyhow::Error>(())
-        }
-        .await
-        .expect("manual refresh scenario should complete");
-    }
-
-    #[gpui::test]
-    async fn signing_out_cancels_pending_listing_and_catalog_fetch(cx: &mut gpui::TestAppContext) {
-        async {
-            init_provider_test(cx);
-            let (release, response) = futures::channel::oneshot::channel::<()>();
-            let response = response
-                .map(|result| result.expect("release responses"))
-                .boxed()
-                .shared();
-            let (entered, mut requests) = futures::channel::mpsc::unbounded();
-            let count = Arc::new(parking_lot::Mutex::new(0));
-            let client = http_client::FakeHttpClient::create({
-                let response = response.clone();
-                let count = count.clone();
-                move |request| {
-                    let response = response.clone();
-                    let entered = entered.clone();
-                    *count.lock() += 1;
-                    async move {
-                        entered.unbounded_send(()).context("request entered")?;
-                        response.await;
-                        let body = if request.uri() == CAPABILITY_CATALOG_URL {
-                            serde_json::json!({"amazon-bedrock": {"models": {
-                                "us.vendor.chat": capability_entry("Chat", serde_json::json!({})),
-                            }}})
-                        } else {
-                            listing_response(&request, &["vendor.chat"])
-                        };
-                        json_response(200, body)
-                    }
-                }
-            });
-            let fs = fs::FakeFs::new(cx.background_executor.clone());
-            let provider = cx.update(|cx| new_test_provider_with_fs(client, fs.clone(), cx));
-            provider
-                .state
-                .update(cx, |state, cx| state.change_auth(api_key_auth(), false, cx));
-            for _ in 0..4 {
-                requests.next().await.context("pending request")?;
-            }
-            provider
-                .state
-                .update(cx, |state, cx| state.reset_auth(cx))
-                .await?;
-            release
-                .send(())
-                .map_err(|_| anyhow!("response receiver dropped"))?;
-            cx.executor()
-                .advance_clock(model_catalog_cache::REFRESH_INTERVAL * 2);
-            cx.run_until_parked();
-            assert_eq!(*count.lock(), 4);
-            assert!(offered_ids(&provider, cx).is_empty());
-            provider.state.read_with(cx, |state, _| {
-                assert!(!state.is_authenticated());
-                assert!(state.capability_catalog.is_empty());
-            });
-            assert!(fs.metadata(Path::new(TEST_CACHE_PATH)).await?.is_none());
-            Ok::<_, anyhow::Error>(())
-        }
-        .await
-        .expect("sign-out cancellation scenario should complete");
     }
 
     #[gpui::test]
@@ -6754,23 +5943,34 @@ mod tests {
     }
 
     #[test]
-    fn test_always_on_adaptive_model_replays_only_its_own_reasoning() -> Result<()> {
-        use bedrock::bedrock_client::types::ContentBlockDeltaEvent;
+    fn reasoning_is_replayed_only_to_the_model_that_produced_it() -> Result<()> {
+        use bedrock::bedrock_client::types::{ContentBlockDeltaEvent, ContentBlockStopEvent};
 
-        let model = converse_model("anthropic.claude-example", Some(adaptive_thinking(true)));
-        let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::ContentBlockDelta(
-            ContentBlockDeltaEvent::builder()
-                .content_block_index(0)
-                .delta(ContentBlockDelta::ReasoningContent(
-                    ReasoningContentBlockDelta::Signature("signature".into()),
-                ))
-                .build()?,
-        ))]);
-        let events = completion_events(&model, response)?;
-        let details = events.iter().find_map(|event| match event {
-            LanguageModelCompletionEvent::ReasoningDetails(value) => Some(Arc::new(value.clone())),
-            _ => None,
-        });
+        let reasoning_delta = |delta| -> Result<Result<BedrockStreamingResponse>> {
+            Ok(Ok(ConverseStreamOutput::ContentBlockDelta(
+                ContentBlockDeltaEvent::builder()
+                    .content_block_index(0)
+                    .delta(ContentBlockDelta::ReasoningContent(delta))
+                    .build()?,
+            )))
+        };
+        let reasoning_details = |events: &[LanguageModelCompletionEvent]| {
+            events.iter().find_map(|event| match event {
+                LanguageModelCompletionEvent::ReasoningDetails(value) => {
+                    Some(Arc::new(value.clone()))
+                }
+                _ => None,
+            })
+        };
+
+        let claude = converse_model("anthropic.claude-example", Some(adaptive_thinking(true)));
+        let events = completion_events(
+            &claude,
+            futures::stream::iter([reasoning_delta(ReasoningContentBlockDelta::Signature(
+                "signature".into(),
+            ))?]),
+        )?;
+        let details = reasoning_details(&events);
         assert!(details.is_some());
         let signature = events
             .iter()
@@ -6782,7 +5982,7 @@ mod tests {
         assert_eq!(signature, "signature");
 
         for (model, replays_reasoning) in [
-            (model, true),
+            (claude.clone(), true),
             (
                 converse_model("anthropic.claude-other", Some(adaptive_thinking(true))),
                 false,
@@ -6813,6 +6013,82 @@ mod tests {
                 model.id
             );
         }
+
+        let openai = converse_model("openai.chat", Some(reasoning()));
+        let events = completion_events(
+            &openai,
+            futures::stream::iter([
+                reasoning_delta(ReasoningContentBlockDelta::RedactedContent(
+                    BedrockBlob::new([0]),
+                ))?,
+                reasoning_delta(ReasoningContentBlockDelta::RedactedContent(
+                    BedrockBlob::new([255]),
+                ))?,
+                Ok(ConverseStreamOutput::ContentBlockStop(
+                    ContentBlockStopEvent::builder()
+                        .content_block_index(0)
+                        .build()?,
+                )),
+            ]),
+        )?;
+        let openai_details = reasoning_details(&events).context("reasoning source")?;
+        assert_eq!(
+            *openai_details,
+            serde_json::json!({"bedrock_model": "openai.chat"})
+        );
+        let data = events
+            .iter()
+            .find_map(|event| match event {
+                LanguageModelCompletionEvent::RedactedThinking { data } => Some(data.clone()),
+                _ => None,
+            })
+            .context("opaque reasoning")?;
+
+        // A route whose foundation model is unknown is identified by a hash,
+        // so its name is not stored in the thread.
+        let unknown = |id| {
+            converse_model_from_settings(
+                &settings_entry(id, None),
+                None,
+                &CapabilityCatalog::default(),
+            )
+        };
+        let private = unknown("team-a/chat");
+        let private_source = reasoning_source(&private);
+        assert!(!private_source.contains("team-a") && !private_source.contains("chat"));
+        let private_details = Arc::new(serde_json::json!({"bedrock_model": private_source}));
+
+        for (model, details, replays_reasoning) in [
+            (openai.clone(), Some(openai_details.clone()), true),
+            (claude, Some(openai_details), false),
+            (openai, None, false),
+            (private, Some(private_details.clone()), true),
+            (unknown("team-b/chat"), Some(private_details.clone()), false),
+            (
+                converse_model("vendor.chat", None),
+                Some(private_details),
+                false,
+            ),
+        ] {
+            let request = replay_history(
+                &model,
+                vec![
+                    MessageContent::RedactedThinking(data.clone()),
+                    MessageContent::Text("answer".into()),
+                ],
+                details,
+            )?;
+            assert_eq!(
+                request.messages[0].content().iter().any(|content| matches!(
+                    content,
+                    BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::RedactedContent(bytes))
+                        if bytes.as_ref() == [0, 255]
+                )),
+                replays_reasoning,
+                "{}",
+                model.id
+            );
+        }
         Ok(())
     }
 
@@ -6837,35 +6113,48 @@ mod tests {
                     output: None,
                 })
             })
-            .collect();
-        let request = into_bedrock(
-            LanguageModelRequest {
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: results,
-                    cache: false,
-                    reasoning_details: None,
-                }],
-                ..Default::default()
-            },
-            &converse_model("openai.gpt-example", Some(reasoning())),
-            None,
-            None,
-        )?;
-        let kinds = request.messages[0]
-            .content()
-            .iter()
-            .map(|content| match content {
-                BedrockInnerContent::ToolResult(_) => "result",
-                BedrockInnerContent::Image(_) => "image",
-                _ => "other",
-            })
             .collect::<Vec<_>>();
-        assert_eq!(kinds, ["result", "result", "image", "image"]);
+        let request_for = |base_model_id| {
+            into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: results.clone(),
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    ..Default::default()
+                },
+                &converse_model(base_model_id, Some(reasoning())),
+                None,
+                None,
+            )
+        };
+        let kinds = |request: &bedrock::Request| {
+            request.messages[0]
+                .content()
+                .iter()
+                .map(|content| match content {
+                    BedrockInnerContent::ToolResult(_) => "result",
+                    BedrockInnerContent::Image(_) => "image",
+                    _ => "other",
+                })
+                .collect::<Vec<_>>()
+        };
+        let request = request_for("openai.gpt-example")?;
+        assert_eq!(kinds(&request), ["result", "result", "image", "image"]);
         assert!(matches!(
             &request.messages[0].content()[1],
             BedrockInnerContent::ToolResult(result)
                 if matches!(result.content().first(), Some(BedrockToolResultContentBlock::Text(_)))
+        ));
+
+        let request = request_for("xai.chat")?;
+        assert_eq!(kinds(&request), ["result", "result"]);
+        assert!(matches!(
+            &request.messages[0].content()[1],
+            BedrockInnerContent::ToolResult(result)
+                if matches!(result.content().first(), Some(BedrockToolResultContentBlock::Image(_)))
         ));
         Ok(())
     }
