@@ -29,6 +29,9 @@ impl NativeViewId {
 
 /// A view owned by the platform's UI toolkit, shown inside a GPUI window.
 ///
+/// Only macOS shows native views so far, where the view is an `NSView`.
+/// [`NativeView::new`] fails on every other platform.
+///
 /// The view is composited beneath the window's GPUI content and shows through
 /// wherever this handle is used as an element, so elements painted after it
 /// cover it like they would cover any other element. The view is treated as
@@ -71,7 +74,8 @@ impl NativeView {
     ///
     /// # Errors
     ///
-    /// Fails on platforms that cannot composite native views.
+    /// Fails on platforms that cannot composite native views, which is every
+    /// platform but macOS for now.
     ///
     /// # Safety
     ///
