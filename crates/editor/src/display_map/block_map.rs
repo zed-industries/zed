@@ -222,6 +222,10 @@ impl<T> BlockPlacement<T> {
 }
 
 impl BlockPlacement<Anchor> {
+    pub(crate) fn is_above_start(&self) -> bool {
+        matches!(self, BlockPlacement::Above(Anchor::Min))
+    }
+
     #[ztracing::instrument(skip_all)]
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         self.start()
@@ -484,6 +488,13 @@ impl Block {
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
             Block::Spacer { .. } => false,
+        }
+    }
+
+    pub(crate) fn is_above_start(&self) -> bool {
+        match self {
+            Block::Custom(block) => block.placement.is_above_start(),
+            _ => false,
         }
     }
 
