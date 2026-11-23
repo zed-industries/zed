@@ -2972,6 +2972,9 @@ impl Project {
             self.git_store.update(cx, |git_store, cx| {
                 git_store.shared(remote_id, self.collab_client.clone().into(), cx)
             });
+            self.settings_observer.update(cx, |settings_observer, cx| {
+                settings_observer.shared(remote_id, self.collab_client.clone().into(), cx)
+            });
         }
         cx.emit(Event::Reshared);
         Ok(())

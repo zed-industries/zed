@@ -22,8 +22,8 @@ use gpui::{
     UpdateGlobal, px, size,
 };
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, FakeLspAdapter, Language,
-    LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
+    Buffer, Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, FakeLspAdapter,
+    Language, LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{Formatter, FormatterList, LanguageSettings},
     rust_lang, tree_sitter_rust, tree_sitter_typescript,
 };
@@ -4355,12 +4355,14 @@ async fn test_local_settings_after_host_adds_worktree_and_reconnects(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
 ) {
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
@@ -4402,9 +4404,9 @@ async fn test_local_settings_after_host_adds_worktree_and_reconnects(
         .await
         .unwrap();
     executor.run_until_parked();
-    let guest_settings = |cx: &TestAppContext| {
+    let guest_settings = |buffer: &Entity<Buffer>, cx: &TestAppContext| {
         cx.read(|cx| {
-            let settings = LanguageSettings::for_buffer(buffer_b.read(cx), cx);
+            let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
             (
                 settings.tab_size.get(),
                 settings.hard_tabs,
@@ -4412,7 +4414,7 @@ async fn test_local_settings_after_host_adds_worktree_and_reconnects(
             )
         })
     };
-    assert_eq!(guest_settings(cx_b), (2, true, 42));
+    assert_eq!(guest_settings(&buffer_b, cx_b), (2, true, 42));
 
     project_a
         .update(cx_a, |project, cx| {
@@ -4425,7 +4427,7 @@ async fn test_local_settings_after_host_adds_worktree_and_reconnects(
         project_b.read_with(cx_b, |project, cx| project.worktrees(cx).count()),
         2
     );
-    assert_eq!(guest_settings(cx_b), (2, true, 42));
+    assert_eq!(guest_settings(&buffer_b, cx_b), (2, true, 42));
 
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
@@ -4448,7 +4450,17 @@ async fn test_local_settings_after_host_adds_worktree_and_reconnects(
         .unwrap();
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| assert!(!project.is_disconnected(cx)));
-    assert_eq!(guest_settings(cx_b), (4, false, 80));
+    assert_eq!(guest_settings(&buffer_b, cx_b), (4, false, 42));
+
+    let project_c = client_c.join_remote_project(project_id, cx_c).await;
+    let buffer_c = project_c
+        .update(cx_c, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("a/a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    assert_eq!(guest_settings(&buffer_c, cx_c), (4, false, 42));
 
     client_a
         .fs()
@@ -4458,7 +4470,8 @@ async fn test_local_settings_after_host_adds_worktree_and_reconnects(
         )
         .await;
     executor.run_until_parked();
-    assert_eq!(guest_settings(cx_b), (4, false, 43));
+    assert_eq!(guest_settings(&buffer_b, cx_b), (4, false, 43));
+    assert_eq!(guest_settings(&buffer_c, cx_c), (4, false, 43));
 
     project_a
         .update(cx_a, |project, cx| {
@@ -4471,7 +4484,7 @@ async fn test_local_settings_after_host_adds_worktree_and_reconnects(
         project_b.read_with(cx_b, |project, cx| project.worktrees(cx).count()),
         3
     );
-    assert_eq!(guest_settings(cx_b), (4, false, 43));
+    assert_eq!(guest_settings(&buffer_b, cx_b), (4, false, 43));
 }
 
 #[gpui::test(iterations = 10)]
