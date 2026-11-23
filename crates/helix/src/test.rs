@@ -171,6 +171,28 @@ async fn test_append_at_empty_selection_at_eof(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_insert_mode_highlights_selections(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("#[abc|]# def");
+    cx.simulate_keys("ix");
+    cx.assert_editor_background_highlights(HighlightKey::HelixInsertSelections, "x«abc» def");
+    cx.simulate_keys("<esc>");
+    cx.assert_editor_background_highlights(HighlightKey::HelixInsertSelections, "xabc def");
+
+    cx.set_state("#[abc|]# def");
+    cx.simulate_keys("axy");
+    cx.assert_editor_background_highlights(HighlightKey::HelixInsertSelections, "«abcxy» def");
+
+    // After `i` a single character is the cursor, after `a` it is selected.
+    cx.set_state("#[a|]#bc");
+    cx.simulate_keys("ix");
+    cx.assert_editor_background_highlights(HighlightKey::HelixInsertSelections, "xabc");
+    cx.set_state("#[a|]#bc");
+    cx.simulate_keys("ax");
+    cx.assert_editor_background_highlights(HighlightKey::HelixInsertSelections, "«ax»bc");
+}
+
+#[gpui::test]
 async fn test_single_grapheme_selection_is_highlighted_as_cursor(cx: &mut TestAppContext) {
     let mut cx = HelixTestContext::new(cx).await;
     cx.set_state("#[f|]#oo foo");

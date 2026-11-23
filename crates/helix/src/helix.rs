@@ -10,7 +10,9 @@ mod selection;
 #[cfg(test)]
 mod test;
 
-use editor::{Editor, EditorEvent, EditorSettings, MultiBufferOffset, SelectionEffects};
+use editor::{
+    Editor, EditorEvent, EditorSettings, HighlightKey, MultiBufferOffset, SelectionEffects,
+};
 use gpui::{
     Action, App, AppContext as _, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
     Subscription, WeakEntity, Window, actions,
@@ -255,6 +257,7 @@ impl Helix {
 
     fn deactivate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         editor.unregister_addon::<HelixAddon>();
+        editor.clear_background_highlights(HighlightKey::HelixInsertSelections, cx);
         // When the `vim` crate takes over it configures the editor itself, and
         // its settings observer runs before ours.
         if VimModeSetting::is_enabled(cx) || HelixModeSetting::is_enabled(cx) {
@@ -440,10 +443,14 @@ impl Helix {
                     }
                 });
             }
-            EditorEvent::SelectionsChanged { local: true } if self.mode != Mode::Insert => {
-                self.update_editor(cx, |_, editor, cx| {
-                    Self::ensure_selections_width(editor, window, cx)
-                });
+            EditorEvent::SelectionsChanged { local: true } => {
+                if self.mode == Mode::Insert {
+                    self.highlight_insert_mode_ranges(cx);
+                } else {
+                    self.update_editor(cx, |_, editor, cx| {
+                        Self::ensure_selections_width(editor, window, cx)
+                    });
+                }
             }
             EditorEvent::TransactionBegun { transaction_id } => {
                 self.transaction_begun(*transaction_id);

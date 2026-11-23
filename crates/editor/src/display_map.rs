@@ -168,6 +168,7 @@ pub enum HighlightKey {
     DocumentHighlightWrite,
     EditPredictionHighlight,
     Editor,
+    HelixInsertSelections,
     HighlightOnYank,
     HighlightsTreeView(usize),
     HoverState,

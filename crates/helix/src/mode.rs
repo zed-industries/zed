@@ -1,10 +1,13 @@
-use editor::{Anchor, Editor, MultiBufferOffset, SelectionEffects, ToOffset as _};
+use editor::{
+    Anchor, Editor, HighlightKey, MultiBufferOffset, MultiBufferSnapshot, SelectionEffects,
+    ToOffset as _,
+};
 use gpui::{Context, Window, actions};
 use language::{SelectionGoal, TransactionId};
 
 use crate::{
     Helix, Mode,
-    selection::{HelixRange, prev_grapheme_boundary},
+    selection::{HelixRange, next_grapheme_boundary, prev_grapheme_boundary},
 };
 
 actions!(
@@ -136,11 +139,13 @@ impl Helix {
             fixed_sides: fixed_sides.unwrap_or_default(),
             first_transaction: None,
         });
+        self.highlight_insert_mode_ranges(cx);
     }
 
     fn exit_insert_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let session = self.insert_session.take();
         self.update_editor(cx, |_, editor, cx| {
+            editor.clear_background_highlights(HighlightKey::HelixInsertSelections, cx);
             editor.dismiss_menus_and_popups(false, window, cx);
             let Some(session) = session else {
                 return;
@@ -175,38 +180,84 @@ impl Helix {
     }
 }
 
-#[cfg(test)]
 impl Helix {
-    /// The selections Helix would show during insert mode, where Zed only
-    /// has cursors: the text typed so far belongs to them.
-    pub(crate) fn insert_mode_ranges(
+    /// Zed only has cursors during insert mode, so the selections Helix keeps
+    /// showing there are drawn as highlights, up to the cursors. After
+    /// [`InsertMode`], a single grapheme is the normal mode cursor rather than
+    /// a selection, so it is not highlighted.
+    pub(crate) fn highlight_insert_mode_ranges(&mut self, cx: &mut Context<Self>) {
+        let Some(kind) = self.insert_session.as_ref().map(|session| session.kind) else {
+            return;
+        };
+        self.update_editor(cx, |helix, editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let ranges = helix
+                .insert_mode_sides(editor, &snapshot)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(fixed_side, cursor)| fixed_side.min(cursor)..fixed_side.max(cursor))
+                .filter(|range| {
+                    !range.is_empty()
+                        && !(kind == InsertKind::Insert
+                            && next_grapheme_boundary(&snapshot, range.start) == range.end)
+                })
+                .map(|range| snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end))
+                .collect::<Vec<_>>();
+            editor.highlight_background(
+                HighlightKey::HelixInsertSelections,
+                &ranges,
+                |_, theme| theme.players().local().selection,
+                cx,
+            );
+        });
+    }
+
+    /// The fixed side and the cursor of each selection during insert mode.
+    fn insert_mode_sides(
         &self,
         editor: &Editor,
-        cx: &gpui::App,
-    ) -> Option<Vec<HelixRange>> {
+        snapshot: &MultiBufferSnapshot,
+    ) -> Option<Vec<(MultiBufferOffset, MultiBufferOffset)>> {
         let session = self.insert_session.as_ref()?;
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
         let cursors = editor
             .selections
             .disjoint_anchors_arc()
             .iter()
-            .map(|selection| selection.head().to_offset(&snapshot))
+            .map(|selection| selection.head().to_offset(snapshot))
             .collect::<Vec<_>>();
         if cursors.len() != session.fixed_sides.len() {
             return None;
         }
         Some(
-            cursors
+            session
+                .fixed_sides
+                .iter()
+                .map(|fixed_side| fixed_side.to_offset(snapshot))
+                .zip(cursors)
+                .collect(),
+        )
+    }
+}
+
+#[cfg(test)]
+impl Helix {
+    /// The selections Helix would show during insert mode: the text typed
+    /// so far belongs to them.
+    pub(crate) fn insert_mode_ranges(
+        &self,
+        editor: &Editor,
+        cx: &gpui::App,
+    ) -> Option<Vec<HelixRange>> {
+        let kind = self.insert_session.as_ref()?.kind;
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let sides = self.insert_mode_sides(editor, &snapshot)?;
+        Some(
+            sides
                 .into_iter()
-                .zip(&session.fixed_sides)
-                .map(|(cursor, fixed_side)| {
-                    let fixed_side = fixed_side.to_offset(&snapshot);
-                    match session.kind {
-                        InsertKind::Insert => HelixRange::new(fixed_side, cursor),
-                        InsertKind::Append => HelixRange::new(
-                            fixed_side,
-                            crate::selection::next_grapheme_boundary(&snapshot, cursor),
-                        ),
+                .map(|(fixed_side, cursor)| match kind {
+                    InsertKind::Insert => HelixRange::new(fixed_side, cursor),
+                    InsertKind::Append => {
+                        HelixRange::new(fixed_side, next_grapheme_boundary(&snapshot, cursor))
                     }
                 })
                 .collect(),
