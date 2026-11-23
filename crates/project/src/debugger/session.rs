@@ -2089,10 +2089,6 @@ impl Session {
         self.send_data_breakpoints(cx);
     }
 
-    pub fn breakpoints_enabled(&self) -> bool {
-        self.ignore_breakpoints
-    }
-
     pub fn loaded_sources(&mut self, cx: &mut Context<Self>) -> &[Source] {
         self.fetch(
             dap_command::LoadedSourcesCommand,

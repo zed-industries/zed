@@ -142,7 +142,7 @@ impl TableView {
             Some(data) => data,
             None => &Vec::new(),
         };
-        let schema = table.schema.clone();
+        let schema = &table.schema;
 
         let mut markdown = format!(
             "| {} |\n",
@@ -161,18 +161,15 @@ impl TableView {
         }
         markdown.push_str("|\n");
 
-        let body = data
-            .iter()
-            .map(|record: &Value| {
-                let row_content = schema
-                    .fields
-                    .iter()
-                    .map(|field| MarkdownEscaped(&cell_content(record, &field.name)).to_string())
-                    .collect::<Vec<_>>();
+        let body = data.iter().map(|record: &Value| {
+            let row_content = schema
+                .fields
+                .iter()
+                .map(|field| MarkdownEscaped(&cell_content(record, &field.name)).to_string())
+                .collect::<Vec<_>>();
 
-                row_content.join(" | ")
-            })
-            .collect::<Vec<String>>();
+            row_content.join(" | ")
+        });
 
         for row in body {
             markdown.push_str(&format!("| {} |\n", row));

@@ -342,9 +342,6 @@ pub enum MessagePart {
     Thinking { thinking: Vec<ThinkingPart> },
 }
 
-// Backwards-compatibility alias for provider code that refers to ContentPart
-pub type ContentPart = MessagePart;
-
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ThinkingPart {

@@ -617,11 +617,6 @@ mod rng {
                 simple_text: std::env::var("SIMPLE_TEXT").is_ok_and(|v| !v.is_empty()),
             }
         }
-
-        pub fn with_simple_text(mut self) -> Self {
-            self.simple_text = true;
-            self
-        }
     }
 
     impl<T: Rng> Iterator for RandomCharIter<T> {

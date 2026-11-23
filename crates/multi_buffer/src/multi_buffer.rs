@@ -38,7 +38,7 @@ use smallvec::SmallVec;
 use std::{
     any::type_name,
     borrow::Cow,
-    cell::{Cell, OnceCell, Ref, RefCell},
+    cell::{OnceCell, Ref, RefCell},
     cmp::{self, Ordering},
     fmt,
     future::Future,
@@ -89,7 +89,9 @@ pub struct MultiBuffer {
     title: Option<String>,
     /// The writing capability of the multi-buffer.
     capability: Capability,
-    buffer_changed_since_sync: Rc<Cell<bool>>,
+    /// Ids of the buffers that changed or were added since the last sync. Buffers add their ids
+    /// through [`Buffer::record_changes`].
+    changed_buffers: Rc<RefCell<HashSet<BufferId>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -408,9 +410,6 @@ impl Sub<OffsetUtf16> for MultiBufferOffsetUtf16 {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct BufferOffsetUtf16(pub OffsetUtf16);
-
 impl MultiBufferOffset {
     const ZERO: Self = Self(0);
     pub fn saturating_sub(self, other: MultiBufferOffset) -> usize {
@@ -678,6 +677,78 @@ struct BufferStateSnapshot {
     pub(crate) path_key: PathKey,
     path_key_index: PathKeyIndex,
     buffer_snapshot: BufferSnapshot,
+    status: BufferStatus,
+}
+
+/// Buffer flags that `MultiBufferSnapshot` aggregates across its buffers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BufferStatus {
+    is_dirty: bool,
+    has_deleted_file: bool,
+    has_conflict: bool,
+}
+
+impl BufferStatus {
+    fn new(buffer: &Buffer) -> Self {
+        Self {
+            is_dirty: buffer.is_dirty(),
+            has_deleted_file: buffer
+                .file()
+                .is_some_and(|file| file.disk_state().is_deleted()),
+            has_conflict: buffer.has_conflict(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct BufferStatusCounts {
+    dirty: usize,
+    deleted_file: usize,
+    conflict: usize,
+}
+
+impl BufferStatusCounts {
+    fn add(&mut self, status: BufferStatus) {
+        self.dirty += status.is_dirty as usize;
+        self.deleted_file += status.has_deleted_file as usize;
+        self.conflict += status.has_conflict as usize;
+    }
+
+    fn remove(&mut self, status: BufferStatus) {
+        self.dirty -= status.is_dirty as usize;
+        self.deleted_file -= status.has_deleted_file as usize;
+        self.conflict -= status.has_conflict as usize;
+    }
+}
+
+/// Buffer state snapshots by buffer id, with counts of the buffers that have each status flag.
+#[derive(Clone, Debug, Default)]
+struct BufferStateSnapshots {
+    snapshots: TreeMap<BufferId, BufferStateSnapshot>,
+    status_counts: BufferStatusCounts,
+}
+
+impl std::ops::Deref for BufferStateSnapshots {
+    type Target = TreeMap<BufferId, BufferStateSnapshot>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshots
+    }
+}
+
+impl BufferStateSnapshots {
+    fn insert(&mut self, buffer_id: BufferId, buffer_state: BufferStateSnapshot) {
+        self.status_counts.add(buffer_state.status);
+        if let Some(old_buffer_state) = self.snapshots.insert_or_replace(buffer_id, buffer_state) {
+            self.status_counts.remove(old_buffer_state.status);
+        }
+    }
+
+    fn remove(&mut self, buffer_id: &BufferId) {
+        if let Some(buffer_state) = self.snapshots.remove(buffer_id) {
+            self.status_counts.remove(buffer_state.status);
+        }
+    }
 }
 
 impl fmt::Debug for BufferStateSnapshot {
@@ -693,15 +764,12 @@ impl fmt::Debug for BufferStateSnapshot {
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
-    buffers: TreeMap<BufferId, BufferStateSnapshot>,
+    buffers: BufferStateSnapshots,
     path_keys: Arc<IndexSet<PathKey>>,
     diffs: SumTree<DiffStateSnapshot>,
     diff_transforms: SumTree<DiffTransform>,
     non_text_state_update_count: usize,
     edit_count: usize,
-    is_dirty: bool,
-    has_deleted_file: bool,
-    has_conflict: bool,
     has_inverted_diff: bool,
     singleton: bool,
     trailing_excerpt_update_count: usize,
@@ -1200,24 +1268,6 @@ pub enum ExpandExcerptDirection {
     UpAndDown,
 }
 
-impl ExpandExcerptDirection {
-    pub fn should_expand_up(&self) -> bool {
-        match self {
-            ExpandExcerptDirection::Up => true,
-            ExpandExcerptDirection::Down => false,
-            ExpandExcerptDirection::UpAndDown => true,
-        }
-    }
-
-    pub fn should_expand_down(&self) -> bool {
-        match self {
-            ExpandExcerptDirection::Up => false,
-            ExpandExcerptDirection::Down => true,
-            ExpandExcerptDirection::UpAndDown => true,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndentGuide {
     pub buffer_id: BufferId,
@@ -1286,17 +1336,17 @@ impl MultiBuffer {
             singleton: false,
             capability,
             title: None,
-            buffer_changed_since_sync: Default::default(),
+            changed_buffers: Default::default(),
             history: History::default(),
         }
     }
 
     pub fn clone(&self, new_cx: &mut Context<Self>) -> Self {
         let mut buffers = BTreeMap::default();
-        let buffer_changed_since_sync = Rc::new(Cell::new(false));
+        let changed_buffers = Rc::new(RefCell::new(self.changed_buffers.borrow().clone()));
         for (buffer_id, buffer_state) in self.buffers.iter() {
             buffer_state.buffer.update(new_cx, |buffer, _| {
-                buffer.record_changes(Rc::downgrade(&buffer_changed_since_sync));
+                buffer.record_changes(Rc::downgrade(&changed_buffers));
             });
             buffers.insert(
                 *buffer_id,
@@ -1322,7 +1372,7 @@ impl MultiBuffer {
             capability: self.capability,
             history: self.history.clone(),
             title: self.title.clone(),
-            buffer_changed_since_sync,
+            changed_buffers,
         }
     }
 
@@ -1390,8 +1440,6 @@ impl MultiBuffer {
         self.read(cx).has_conflict()
     }
 
-    // The `is_empty` signature doesn't match what clippy expects
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self, cx: &App) -> MultiBufferOffset {
         self.read(cx).len()
     }
@@ -1868,9 +1916,6 @@ impl MultiBuffer {
             diff_transforms: _,
             non_text_state_update_count: _,
             edit_count: _,
-            is_dirty,
-            has_deleted_file,
-            has_conflict,
             has_inverted_diff,
             singleton: _,
             trailing_excerpt_update_count,
@@ -1887,9 +1932,6 @@ impl MultiBuffer {
         *buffers = Default::default();
         *diffs = Default::default();
         *trailing_excerpt_update_count += 1;
-        *is_dirty = false;
-        *has_deleted_file = false;
-        *has_conflict = false;
         *has_inverted_diff = false;
 
         let edits = Self::sync_diff_transforms(
@@ -2507,14 +2549,15 @@ impl MultiBuffer {
 
     #[ztracing::instrument(skip_all)]
     fn sync(&self, cx: &App) {
-        let changed = self.buffer_changed_since_sync.replace(false);
-        if !changed {
+        let changed_buffer_ids = mem::take(&mut *self.changed_buffers.borrow_mut());
+        if changed_buffer_ids.is_empty() {
             return;
         }
         let edits = Self::sync_from_buffer_changes(
             &mut self.snapshot.borrow_mut(),
             &self.buffers,
             &self.diffs,
+            &changed_buffer_ids,
             cx,
         );
         if !edits.is_empty() {
@@ -2524,11 +2567,17 @@ impl MultiBuffer {
 
     fn sync_mut(&mut self, cx: &App) -> &mut MultiBufferSnapshot {
         let snapshot = self.snapshot.get_mut();
-        let changed = self.buffer_changed_since_sync.replace(false);
-        if !changed {
+        let changed_buffer_ids = mem::take(&mut *self.changed_buffers.borrow_mut());
+        if changed_buffer_ids.is_empty() {
             return snapshot;
         }
-        let edits = Self::sync_from_buffer_changes(snapshot, &self.buffers, &self.diffs, cx);
+        let edits = Self::sync_from_buffer_changes(
+            snapshot,
+            &self.buffers,
+            &self.diffs,
+            &changed_buffer_ids,
+            cx,
+        );
 
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
@@ -2541,6 +2590,7 @@ impl MultiBuffer {
         snapshot: &mut MultiBufferSnapshot,
         buffers: &BTreeMap<BufferId, BufferState>,
         diffs: &HashMap<BufferId, DiffState>,
+        changed_buffer_ids: &HashSet<BufferId>,
         cx: &App,
     ) -> Vec<Edit<MultiBufferOffset>> {
         let MultiBufferSnapshot {
@@ -2551,9 +2601,6 @@ impl MultiBuffer {
             diff_transforms: _,
             non_text_state_update_count,
             edit_count,
-            is_dirty,
-            has_deleted_file,
-            has_conflict,
             has_inverted_diff: _,
             singleton: _,
             trailing_excerpt_update_count: _,
@@ -2562,13 +2609,13 @@ impl MultiBuffer {
             use_extended_diff_range: _,
             show_headers: _,
         } = snapshot;
-        *is_dirty = false;
-        *has_deleted_file = false;
-        *has_conflict = false;
 
         if !diffs.is_empty() {
             let mut diffs_to_add = Vec::new();
-            for (id, diff) in diffs {
+            for (id, diff) in changed_buffer_ids
+                .iter()
+                .filter_map(|id| diffs.get_key_value(id))
+            {
                 if find_diff_state(buffer_diff, *id).is_none_or(|existing_diff| {
                     if existing_diff.main_buffer.is_none() {
                         return false;
@@ -2580,7 +2627,7 @@ impl MultiBuffer {
                             .changed_since(existing_diff.base_text().version())
                 }) {
                     if diffs_to_add.capacity() == 0 {
-                        diffs_to_add.reserve(diffs.len());
+                        diffs_to_add.reserve(changed_buffer_ids.len());
                     }
                     diffs_to_add.push(sum_tree::Edit::Insert(diff.snapshot(*id, cx)));
                 }
@@ -2591,7 +2638,10 @@ impl MultiBuffer {
         let mut paths_to_edit = Vec::new();
         let mut non_text_state_updated = false;
         let mut edited = false;
-        for buffer_state in buffers.values() {
+        for buffer_state in changed_buffer_ids
+            .iter()
+            .filter_map(|buffer_id| buffers.get(buffer_id))
+        {
             let buffer = buffer_state.buffer.read(cx);
             let last_snapshot = buffer_snapshots
                 .get(&buffer.remote_id())
@@ -2603,7 +2653,10 @@ impl MultiBuffer {
                 current_version.changed_since(last_snapshot.buffer_snapshot.version());
             let buffer_non_text_state_updated = non_text_state_update_count
                 > last_snapshot.buffer_snapshot.non_text_state_update_count();
-            if buffer_edited || buffer_non_text_state_updated {
+            if buffer_edited
+                || buffer_non_text_state_updated
+                || BufferStatus::new(buffer) != last_snapshot.status
+            {
                 paths_to_edit.push((
                     last_snapshot.path_key.clone(),
                     last_snapshot.path_key_index,
@@ -2618,11 +2671,6 @@ impl MultiBuffer {
 
             edited |= buffer_edited;
             non_text_state_updated |= buffer_non_text_state_updated;
-            *is_dirty |= buffer.is_dirty();
-            *has_deleted_file |= buffer
-                .file()
-                .is_some_and(|file| file.disk_state().is_deleted());
-            *has_conflict |= buffer.has_conflict();
         }
         if edited {
             *edit_count += 1;
@@ -2648,6 +2696,7 @@ impl MultiBuffer {
                     path_key: path.clone(),
                     path_key_index,
                     buffer_snapshot: buffer.snapshot(),
+                    status: BufferStatus::new(buffer),
                 },
             );
 
@@ -3383,7 +3432,29 @@ impl MultiBuffer {
     }
 
     fn check_invariants(&self, cx: &App) {
-        self.read(cx).check_invariants();
+        let snapshot = self.read(cx);
+        snapshot.check_invariants();
+
+        let mut status_counts = BufferStatusCounts::default();
+        for (buffer_id, buffer_state) in &self.buffers {
+            let buffer = buffer_state.buffer.read(cx);
+            let buffer_state_snapshot = snapshot
+                .buffers
+                .get(buffer_id)
+                .expect("each buffer should have a snapshot");
+            assert_eq!(
+                buffer_state_snapshot.buffer_snapshot.version(),
+                &buffer.version(),
+                "stale snapshot for buffer {buffer_id:?}"
+            );
+            assert_eq!(
+                buffer_state_snapshot.status,
+                BufferStatus::new(buffer),
+                "stale status for buffer {buffer_id:?}"
+            );
+            status_counts.add(buffer_state_snapshot.status);
+        }
+        assert_eq!(snapshot.buffers.status_counts, status_counts);
     }
 }
 
@@ -6354,15 +6425,15 @@ impl MultiBufferSnapshot {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.is_dirty
+        self.buffers.status_counts.dirty > 0
     }
 
     pub fn has_deleted_file(&self) -> bool {
-        self.has_deleted_file
+        self.buffers.status_counts.deleted_file > 0
     }
 
     pub fn has_conflict(&self) -> bool {
-        self.has_conflict
+        self.buffers.status_counts.conflict > 0
     }
 
     pub fn has_diagnostics(&self) -> bool {
@@ -6416,7 +6487,7 @@ impl MultiBufferSnapshot {
         self.lift_buffer_metadata::<MBD, _, _>(range, move |buffer, buffer_range| {
             Some(
                 buffer
-                    .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
+                    .diagnostics_in_range(buffer_range, false)
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
@@ -6443,7 +6514,7 @@ impl MultiBufferSnapshot {
         self.lift_buffer_metadata::<MBD, _, _>(range, move |buffer, buffer_range| {
             Some(
                 buffer
-                    .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
+                    .diagnostics_in_range(buffer_range, false)
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
@@ -6585,11 +6656,6 @@ impl MultiBufferSnapshot {
 
     fn try_path_for_anchor(&self, anchor: ExcerptAnchor) -> Option<&PathKey> {
         self.path_keys.get_index(anchor.path.0 as usize)
-    }
-
-    pub fn path_for_anchor(&self, anchor: ExcerptAnchor) -> &PathKey {
-        self.try_path_for_anchor(anchor)
-            .expect("invalid anchor: path was never added to multibuffer")
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
@@ -6962,7 +7028,6 @@ impl MultiBufferSnapshot {
         start..end
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     fn check_invariants(&self) {
         let excerpts = self.excerpts.items(());
 
@@ -8352,7 +8417,7 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 }
 
 impl ToOffset for Point {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         snapshot.point_to_offset(*self)
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
@@ -8362,7 +8427,7 @@ impl ToOffset for Point {
 
 impl ToOffset for MultiBufferOffset {
     #[track_caller]
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         assert!(
             *self <= snapshot.len(),
             "offset {} is greater than the snapshot.len() {}",
@@ -8377,7 +8442,7 @@ impl ToOffset for MultiBufferOffset {
 }
 
 impl ToOffset for MultiBufferOffsetUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         snapshot.offset_utf16_to_offset(*self)
     }
 
@@ -8387,7 +8452,7 @@ impl ToOffset for MultiBufferOffsetUtf16 {
 }
 
 impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         snapshot.point_utf16_to_offset(*self)
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
@@ -8396,28 +8461,28 @@ impl ToOffset for PointUtf16 {
 }
 
 impl ToPoint for MultiBufferOffset {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point {
         snapshot.offset_to_point(*self)
     }
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
         snapshot.offset_to_point_utf16(*self)
     }
 }
 
 impl ToPoint for Point {
-    fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, _: &MultiBufferSnapshot) -> Point {
         *self
     }
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
         snapshot.point_to_point_utf16(*self)
     }
 }
 
 impl ToPoint for PointUtf16 {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point {
         snapshot.point_utf16_to_point(*self)
     }
-    fn to_point_utf16<'a>(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
         *self
     }
 }

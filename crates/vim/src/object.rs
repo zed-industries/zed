@@ -1619,7 +1619,7 @@ pub fn expand_to_include_whitespace(
     let mut range = range.start.to_offset(map, Bias::Left)..range.end.to_offset(map, Bias::Right);
     let mut whitespace_included = false;
 
-    let chars = map.buffer_chars_at(range.end).peekable();
+    let chars = map.buffer_chars_at(range.end);
     for (char, offset) in chars {
         if char == '\n' && stop_at_newline {
             break;

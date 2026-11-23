@@ -1,4 +1,3 @@
-#![allow(clippy::reversed_empty_ranges)]
 use crate::TestServer;
 use call::{ActiveCall, Room};
 use client::ChannelId;

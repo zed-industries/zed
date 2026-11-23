@@ -5,14 +5,17 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 use futures::{FutureExt, StreamExt};
 
 use fs::*;
-use gpui::{BackgroundExecutor, TestAppContext};
+use gpui::{BackgroundExecutor, Task, TestAppContext};
 use serde_json::json;
 use tempfile::TempDir;
 use util::path;
@@ -784,6 +787,233 @@ async fn test_fake_fs_copy_and_remove_semantics(executor: BackgroundExecutor) {
     let root = Path::new(path!("/root"));
     assert_copy_and_remove_semantics(root, fs.as_ref()).await;
     assert_remove_file_unlinks_symlink(root, fs.as_ref()).await;
+}
+
+#[gpui::test]
+async fn test_realfs_file_locks(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let executor = cx.executor();
+    let temp_dir = TempDir::new().unwrap();
+    let fs = RealFs::new(None, executor.clone());
+    assert_file_lock_semantics(temp_dir.path(), fs, &executor).await;
+}
+
+#[gpui::test]
+async fn test_fake_fs_file_locks(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor.clone());
+    let root = Path::new(path!("/root"));
+    fs.create_dir(root).await.unwrap();
+    assert_file_lock_semantics(root, fs, &executor).await;
+}
+
+#[gpui::test]
+async fn test_realfs_lock_waiters_leave_threads_for_file_operations(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let executor = cx.executor();
+    let temp_dir = TempDir::new().unwrap();
+    let fs: Arc<dyn Fs> = RealFs::new(None, executor.clone());
+    let lock_path = temp_dir.path().join("file.lock");
+
+    let exclusive = fs
+        .lock_file(&lock_path, FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    // More waiters than there are threads for blocking file operations.
+    let waiters = (0..512)
+        .map(|_| spawn_lock_file(&fs, &lock_path, FileLockKind::Shared, &executor))
+        .collect::<Vec<_>>();
+    executor.run_until_parked();
+
+    // The holder of a lock must still be able to use the file system to finish its work.
+    fs.create_file(&temp_dir.path().join("file"), CreateOptions::default())
+        .await
+        .unwrap();
+    drop(exclusive);
+    futures::future::join_all(waiters).await;
+}
+
+fn spawn_lock_file(
+    fs: &Arc<dyn Fs>,
+    path: &Path,
+    kind: FileLockKind,
+    executor: &BackgroundExecutor,
+) -> Task<FileLock> {
+    let fs = fs.clone();
+    let path = path.to_owned();
+    executor.spawn(async move { fs.lock_file(&path, kind).await.unwrap() })
+}
+
+async fn assert_file_lock_semantics(root: &Path, fs: Arc<dyn Fs>, executor: &BackgroundExecutor) {
+    let lock_path = root.join("file.lock");
+
+    let shared = fs
+        .lock_file(&lock_path, FileLockKind::Shared)
+        .await
+        .unwrap();
+    assert!(fs.is_file(&lock_path).await, "locking creates the file");
+    let other_shared = fs
+        .try_lock_file(&lock_path, FileLockKind::Shared)
+        .await
+        .unwrap()
+        .expect("shared locks can be held together");
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_none(),
+        "an exclusive lock conflicts with a shared one"
+    );
+
+    let acquired = Arc::new(AtomicBool::new(false));
+    let exclusive = executor.spawn({
+        let fs = fs.clone();
+        let lock_path = lock_path.clone();
+        let acquired = acquired.clone();
+        async move {
+            let lock = fs
+                .lock_file(&lock_path, FileLockKind::Exclusive)
+                .await
+                .unwrap();
+            acquired.store(true, Ordering::SeqCst);
+            lock
+        }
+    });
+    drop(shared);
+    executor.run_until_parked();
+    assert!(
+        !acquired.load(Ordering::SeqCst),
+        "an exclusive lock waits for every shared lock to be released"
+    );
+    drop(other_shared);
+    let exclusive = exclusive.await;
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Shared)
+            .await
+            .unwrap()
+            .is_none(),
+        "a shared lock conflicts with an exclusive one"
+    );
+
+    let cancelled = spawn_lock_file(&fs, &lock_path, FileLockKind::Exclusive, executor);
+    executor.run_until_parked();
+    drop(cancelled);
+    drop(exclusive);
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_some(),
+        "dropping a lock releases it, and a wait that was cancelled doesn't take it"
+    );
+
+    // Windows can't always remove or truncate a file that is open, or create symlinks.
+    if !fs.is_fake() && cfg!(not(unix)) {
+        return;
+    }
+
+    let original = fs
+        .lock_file(&lock_path, FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    let waiter = spawn_lock_file(&fs, &lock_path, FileLockKind::Exclusive, executor);
+    executor.run_until_parked();
+    fs.remove_file(&lock_path, RemoveOptions::default())
+        .await
+        .unwrap();
+    drop(original);
+    drop(waiter.await);
+    assert!(
+        !fs.is_file(&lock_path).await,
+        "waiting for a lock doesn't recreate a file that was removed"
+    );
+
+    let original = fs
+        .lock_file(&lock_path, FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    let waiter = spawn_lock_file(&fs, &lock_path, FileLockKind::Exclusive, executor);
+    executor.run_until_parked();
+    fs.remove_file(&lock_path, RemoveOptions::default())
+        .await
+        .unwrap();
+    let replacement = fs
+        .try_lock_file(&lock_path, FileLockKind::Exclusive)
+        .await
+        .unwrap()
+        .expect("a file created in place of a removed one is not locked");
+    drop(original);
+    // The waiter is granted the lock on the removed file, not on its replacement.
+    drop(waiter.await);
+    drop(replacement);
+
+    let target_path = root.join("target.lock");
+    let link_path = root.join("link.lock");
+    fs.create_symlink(&link_path, target_path.clone())
+        .await
+        .unwrap();
+    let _through_link = fs
+        .lock_file(&link_path, FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    assert!(
+        fs.is_file(&target_path).await,
+        "locking a symlink creates its target"
+    );
+    assert!(
+        fs.try_lock_file(&target_path, FileLockKind::Shared)
+            .await
+            .unwrap()
+            .is_none(),
+        "a lock taken through a symlink is on its target"
+    );
+
+    let links_dir = root.join("links");
+    let elsewhere_dir = root.join("elsewhere");
+    fs.create_dir(&links_dir).await.unwrap();
+    fs.create_dir(&elsewhere_dir.join("subdir")).await.unwrap();
+    fs.create_symlink(
+        &links_dir.join("dirlink"),
+        PathBuf::from("../elsewhere/subdir"),
+    )
+    .await
+    .unwrap();
+    fs.create_symlink(
+        &links_dir.join("file.lock"),
+        PathBuf::from("dirlink/../target.lock"),
+    )
+    .await
+    .unwrap();
+    let _through_links = fs
+        .lock_file(&links_dir.join("file.lock"), FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    assert!(
+        fs.is_file(&elsewhere_dir.join("target.lock")).await,
+        "a `..` in a symlink's target applies to the directory the symlinks before it lead to"
+    );
+    assert!(!fs.is_file(&links_dir.join("target.lock")).await);
+
+    let truncated_path = root.join("truncated.lock");
+    let _held = fs
+        .lock_file(&truncated_path, FileLockKind::Shared)
+        .await
+        .unwrap();
+    fs.create_file(
+        &truncated_path,
+        CreateOptions {
+            overwrite: true,
+            ignore_if_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        fs.try_lock_file(&truncated_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_none(),
+        "truncating a file doesn't release the locks on it"
+    );
 }
 
 #[gpui::test]

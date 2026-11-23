@@ -88,7 +88,6 @@ enum State {
     Done = 3,
 }
 
-#[allow(dead_code)]
 pub(crate) struct PrefixComponent<'a> {
     /// The prefix as an unparsed `OsStr` slice.
     raw: &'a OsStr,

@@ -68,7 +68,6 @@ pub struct ConnectionState {
     #[serde(skip)]
     outgoing_tx: mpsc::UnboundedSender<Message>,
     next_message_id: Arc<AtomicU32>,
-    #[allow(clippy::type_complexity)]
     #[serde(skip)]
     response_channels: Arc<
         Mutex<
@@ -80,7 +79,6 @@ pub struct ConnectionState {
             >,
         >,
     >,
-    #[allow(clippy::type_complexity)]
     #[serde(skip)]
     stream_response_channels: Arc<
         Mutex<

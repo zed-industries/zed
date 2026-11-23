@@ -232,7 +232,6 @@ pub enum DebugEvent {
 pub struct ContextRetrievalStartedDebugEvent {
     pub project_entity_id: EntityId,
     pub timestamp: Instant,
-    pub search_prompt: String,
 }
 
 #[derive(Debug)]
@@ -1234,12 +1233,6 @@ impl EditPredictionStore {
         }
     }
 
-    pub fn clear_history_for_project(&mut self, project: &Entity<Project>) {
-        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
-            project_state.clear_history();
-        }
-    }
-
     pub fn edit_history_for_project(
         &self,
         project: &Entity<Project>,
@@ -1477,7 +1470,6 @@ impl EditPredictionStore {
                                 ContextRetrievalStartedDebugEvent {
                                     project_entity_id: project_entity_id,
                                     timestamp: Instant::now(),
-                                    search_prompt: String::new(),
                                 },
                             ))
                             .ok();
@@ -3207,20 +3199,6 @@ impl EditPredictionStore {
     }
 
     #[cfg(feature = "cli-support")]
-    pub fn set_context_for_buffer(
-        &mut self,
-        project: &Entity<Project>,
-        related_files: Vec<RelatedFile>,
-        cx: &mut Context<Self>,
-    ) {
-        self.get_or_init_project(project, cx)
-            .context
-            .update(cx, |store, cx| {
-                store.set_related_files(related_files, cx);
-            });
-    }
-
-    #[cfg(feature = "cli-support")]
     pub fn set_recent_paths_for_project(
         &mut self,
         project: &Entity<Project>,
@@ -3235,32 +3213,6 @@ impl EditPredictionStore {
                 cursor_position: None,
             })
             .collect();
-    }
-
-    pub fn recently_opened_files_for_project(&self, project: &Entity<Project>) -> Vec<RecentFile> {
-        self.projects
-            .get(&project.entity_id())
-            .map(|project_state| {
-                project_state
-                    .recently_opened_files
-                    .iter()
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    pub fn recently_viewed_files_for_project(&self, project: &Entity<Project>) -> Vec<RecentFile> {
-        self.projects
-            .get(&project.entity_id())
-            .map(|project_state| {
-                project_state
-                    .recently_viewed_files
-                    .iter()
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     fn is_file_open_source(

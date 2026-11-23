@@ -1,8 +1,11 @@
+use super::auth_status::{
+    ConnectionAuthStatus, from_v1 as auth_status_from_v1, update_v1 as handle_auth_status_update,
+};
 use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions, FlattenAcpResult as _,
     ForegroundWork, ReadOnlyConfigOptions, UnsupportedVersion, apply_subagent_update,
     drain_foreground_queue, enqueue_notification, enqueue_request, first_class_terminal_auth_task,
-    handle_v2_complete_elicitation, handle_v2_create_elicitation, map_acp_error,
+    handle_elicitation, handle_v2_complete_elicitation, map_acp_error,
     mcp_configurations_for_project, respond_err, respond_result, runtime, session_thread,
     terminal_auth_task_id, transport, with_v2_client_ingress, work_dirs_from_session_info,
 };
@@ -22,13 +25,14 @@ use agent_client_protocol::{
     v2::schema as acp_v2,
 };
 use anyhow::anyhow;
-use async_channel;
 use collections::HashMap;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::{Future, FutureExt as _};
-use project::agent_server_store::{AgentServerCommand, AgentServerStore, AllAgentServersSettings};
+use project::agent_server_store::{
+    AgentServerStore, AllAgentServersSettings, ResolvedAgentServerCommand,
+};
 use project::{AgentId, Project};
 use serde::Deserialize;
 use settings::{AgentConfigOptionValue, SettingsStore};
@@ -77,6 +81,7 @@ pub struct AcpConnection {
     sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     pending_sessions: RefCell<HashMap<acp_v2::SessionId, PendingAcpSession>>,
     auth_methods: Vec<acp_v2::AuthMethod>,
+    auth_status: Option<Rc<ConnectionAuthStatus>>,
     agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
     /// Whether Zed advertised the subagents RFD, so the agent reports subagents with it.
@@ -372,7 +377,7 @@ impl AgentSessionList for AcpSessionList {
 pub async fn connect(
     agent_id: AgentId,
     project: Entity<Project>,
-    command: AgentServerCommand,
+    command: ResolvedAgentServerCommand,
     agent_server_store: WeakEntity<AgentServerStore>,
     default_mode: Option<acp_v2::SessionConfigValueId>,
     default_config_options: HashMap<String, AgentConfigOptionValue>,
@@ -381,7 +386,7 @@ pub async fn connect(
     let conn = AcpConnection::stdio(
         agent_id,
         project,
-        command.clone(),
+        command,
         agent_server_store,
         default_mode,
         default_config_options,
@@ -485,6 +490,10 @@ fn client_builder(
         )
         // --- Notification handlers (agent→client) ---
         .on_receive_notification(
+            on_notification!(handle_auth_status_update),
+            agent_client_protocol::on_receive_notification!(),
+        )
+        .on_receive_notification(
             on_notification!(handle_session_notification),
             agent_client_protocol::on_receive_notification!(),
         )
@@ -553,12 +562,16 @@ impl AcpConnection {
     pub async fn stdio(
         agent_id: AgentId,
         project: Entity<Project>,
-        command: AgentServerCommand,
+        command: ResolvedAgentServerCommand,
         agent_server_store: WeakEntity<AgentServerStore>,
         default_mode: Option<acp_v2::SessionConfigValueId>,
         default_config_options: HashMap<String, AgentConfigOptionValue>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        let ResolvedAgentServerCommand {
+            command,
+            installation_lease,
+        } = command;
         let original_command = command.clone();
         let transport::StdioProcess {
             child,
@@ -585,7 +598,9 @@ impl AcpConnection {
         let client_capabilities = client_capabilities_for_agent(&agent_id, acp_beta);
 
         let accepts_subagent_updates = client_capabilities.subagents.is_some();
+        let auth_status = acp_beta.then(ConnectionAuthStatus::new);
         let dispatch_context = ClientContext {
+            auth_status: auth_status.as_ref().map(Rc::downgrade).unwrap_or_default(),
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
@@ -619,13 +634,7 @@ impl AcpConnection {
                 .context("Failed to receive ACP connection handle")
         }
         .boxed_local();
-        let status_fut = child
-            .0
-            .status()
-            .map(|status| {
-                status.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
-            })
-            .boxed_local();
+        let status_fut = child.exit_status(installation_lease);
         let (connection, status_fut, _) = runtime::race_startup(
             connection_rx,
             status_fut,
@@ -732,9 +741,11 @@ impl AcpConnection {
             move |cx| defaults.observe_settings(agent_id, cx)
         });
 
-        Ok(Self {
+        let auth_status = auth_status.filter(|_| response.agent_capabilities.auth.status.is_some());
+        let result = Self {
             id: agent_id,
             auth_methods,
+            auth_status,
             agent_server_store,
             connection,
             telemetry_id,
@@ -753,7 +764,9 @@ impl AcpConnection {
             _wait_task: wait_task,
             _stderr_task: stderr_task,
             _child: Some(child),
-        })
+        };
+        cx.update(|cx| result.refresh_auth_status(cx));
+        Ok(result)
     }
 
     pub fn prompt_capabilities(&self) -> acp_v2::PromptCapabilities {
@@ -787,6 +800,7 @@ impl AcpConnection {
             sessions,
             pending_sessions: RefCell::new(HashMap::default()),
             auth_methods: vec![],
+            auth_status: None,
             agent_server_store,
             agent_capabilities,
             accepts_subagent_updates,
@@ -838,7 +852,8 @@ impl AcpConnection {
             session_id,
             AcpSession {
                 thread: thread.downgrade(),
-                is_subagent: false,
+                subagent_root: None,
+                replay: None,
                 suppress_abort_err: false,
                 session_modes,
                 config_options,
@@ -1608,6 +1623,28 @@ impl AgentConnection for AcpConnection {
         &self.auth_methods
     }
 
+    fn auth_status(&self) -> Option<watch::Receiver<Option<acp_v2::AuthStatusResponse>>> {
+        Some(self.auth_status.as_ref()?.receiver())
+    }
+
+    fn refresh_auth_status(&self, cx: &App) {
+        if let Some(status) = &self.auth_status {
+            let request = self
+                .connection
+                .send_request(acp::AuthStatusRequest::new())
+                .block_task();
+            status.query(
+                async move {
+                    request
+                        .await
+                        .ok()
+                        .map(|response| auth_status_from_v1(response.state, response.accounts))
+                },
+                cx,
+            );
+        }
+    }
+
     fn terminal_auth_task(
         &self,
         method_id: &acp_v2::AuthMethodId,
@@ -2296,6 +2333,7 @@ pub mod test_support {
 
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let dispatch_context = ClientContext {
+            auth_status: Default::default(),
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
@@ -2442,6 +2480,7 @@ mod tests {
     use super::super::*;
     use super::*;
     use futures::StreamExt as _;
+    use project::agent_server_store::AgentServerCommand;
     use settings::Settings as _;
 
     #[test]
@@ -3224,9 +3263,9 @@ mod tests {
         assert_eq!(
             v2_response(response, cx, "pre-cancelled permission")
                 .await
-                .expect_err("RPC cancellation before registration")
-                .code,
-            ErrorCode::RequestCancelled
+                .expect("RPC cancellation before registration")
+                .outcome,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         cx.run_until_parked();
         assert_eq!(
@@ -3258,9 +3297,9 @@ mod tests {
         assert_eq!(
             v2_response(first, cx, "permission RPC cancellation")
                 .await
-                .expect_err("RPC cancellation")
-                .code,
-            ErrorCode::RequestCancelled
+                .expect("RPC cancellation")
+                .outcome,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         harness.thread.update(cx, |thread, cx| {
             assert!(thread.permission_request(first_id).is_none());
@@ -3479,9 +3518,9 @@ mod tests {
             assert_eq!(
                 v2_response(response, cx, "pre-cancelled elicitation")
                     .await
-                    .expect_err("RPC cancellation before registration")
-                    .code,
-                ErrorCode::RequestCancelled
+                    .expect("RPC cancellation before registration")
+                    .action,
+                acp_v2::ElicitationAction::Cancel
             );
             harness.thread.read_with(cx, |thread, _| {
                 assert_eq!(thread.entries().len(), entry_count);
@@ -3504,9 +3543,9 @@ mod tests {
             assert_eq!(
                 v2_response(first, cx, "elicitation RPC cancellation")
                     .await
-                    .expect_err("RPC cancellation")
-                    .code,
-                ErrorCode::RequestCancelled
+                    .expect("RPC cancellation")
+                    .action,
+                acp_v2::ElicitationAction::Cancel
             );
             assert!((&mut second).now_or_never().is_none());
             let check = |first_status: &ElicitationStatus, second_status: &ElicitationStatus| {
@@ -7253,7 +7292,7 @@ mod tests {
         let startup = AcpConnection::stdio(
             AgentId::new("test-agent"),
             project,
-            command,
+            ResolvedAgentServerCommand::without_installation_lease(command),
             agent_server_store,
             None,
             HashMap::default(),
@@ -7366,7 +7405,7 @@ exec cat >/dev/null
                 let connection = AcpConnection::stdio(
                     AgentId::new("subagent-agent"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     agent_server_store.clone(),
                     None,
                     HashMap::default(),
@@ -7529,7 +7568,7 @@ exit 7
                 AcpConnection::stdio(
                     AgentId::new("exiting-agent"),
                     project.clone(),
-                    command,
+                    ResolvedAgentServerCommand::without_installation_lease(command),
                     agent_server_store,
                     None,
                     HashMap::default(),
@@ -7915,6 +7954,7 @@ exit 7
             active_request_scopes: None,
             pending_session_updates: None,
             accepts_subagent_updates,
+            auth_status: Default::default(),
         };
         // `TestAppContext::spawn` hands out an `AsyncApp` by value, whereas the
         // production path uses `Context::spawn` which hands out `&mut AsyncApp`.
@@ -8297,6 +8337,7 @@ exit 7
             sessions: Rc::new(RefCell::new(HashMap::default())),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: store.clone(),
+            auth_status: Default::default(),
             active_request_scopes: None,
             pending_session_updates: None,
             accepts_subagent_updates: false,
@@ -8440,7 +8481,8 @@ exit 7
             parent_session_id.clone(),
             AcpSession {
                 thread: parent.downgrade(),
-                is_subagent: false,
+                subagent_root: None,
+                replay: None,
                 suppress_abort_err: false,
                 session_modes: None,
                 config_options: None,
@@ -8449,6 +8491,7 @@ exit 7
             },
         );
         let context_for = |accepts_subagent_updates, cx: &mut gpui::TestAppContext| ClientContext {
+            auth_status: Default::default(),
             sessions: sessions.clone(),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: cx.new(|_| ElicitationStore::default()),
@@ -8657,6 +8700,7 @@ exit 7
             sessions: Rc::new(RefCell::new(HashMap::default())),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: cx.new(|_| ElicitationStore::default()),
+            auth_status: Default::default(),
             active_request_scopes: None,
             pending_session_updates: None,
             accepts_subagent_updates: false,
@@ -10293,7 +10337,7 @@ fn handle_create_elicitation(
                 .map_err(agent_client_protocol::Error::from)
         })
     });
-    handle_v2_create_elicitation(args, responder, cx, ctx);
+    handle_elicitation(args, responder, false, cx, ctx);
 }
 
 fn handle_complete_elicitation(

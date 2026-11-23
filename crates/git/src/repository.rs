@@ -271,21 +271,6 @@ impl Branch {
             .strip_prefix("refs/remotes/")
             .and_then(|stripped| stripped.split("/").next())
     }
-
-    pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
-        self.upstream
-            .as_ref()
-            .and_then(|upstream| upstream.tracking.status())
-    }
-
-    pub fn priority_key(&self) -> (bool, Option<i64>) {
-        (
-            self.is_head,
-            self.most_recent_commit
-                .as_ref()
-                .map(|commit| commit.commit_timestamp),
-        )
-    }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -428,6 +413,25 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(
     worktrees
 }
 
+fn main_worktree_index(raw_worktrees: &str, worktrees: &[Worktree]) -> Option<usize> {
+    let normalized = raw_worktrees.replace("\r\n", "\n");
+    let main_entry = normalized.split("\n\n").next()?;
+    let mut main_worktree_path = None;
+    for line in main_entry.lines() {
+        let line = line.trim();
+        if line == "bare" {
+            return None;
+        }
+        if let Some(path) = line.strip_prefix("worktree ") {
+            main_worktree_path = Some(Path::new(path));
+        }
+    }
+    let main_worktree_path = main_worktree_path?;
+    worktrees
+        .iter()
+        .position(|worktree| worktree.path == main_worktree_path)
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Upstream {
     pub ref_name: SharedString,
@@ -443,10 +447,6 @@ impl Upstream {
         self.ref_name
             .strip_prefix("refs/remotes/")
             .and_then(|stripped| stripped.split("/").next())
-    }
-
-    pub fn stripped_ref_name(&self) -> Option<&str> {
-        self.ref_name.strip_prefix("refs/remotes/")
     }
 
     pub fn branch_name(&self) -> Option<&str> {
@@ -479,10 +479,6 @@ impl From<UpstreamTrackingStatus> for UpstreamTracking {
 }
 
 impl UpstreamTracking {
-    pub fn is_gone(&self) -> bool {
-        matches!(self, UpstreamTracking::Gone)
-    }
-
     pub fn status(&self) -> Option<UpstreamTrackingStatus> {
         match self {
             UpstreamTracking::Gone => None,
@@ -1824,11 +1820,13 @@ impl GitRepository for RealGitRepository {
                     );
                 }
 
+                // `git` blocks once an unread stderr pipe fills, for example with one ambiguity
+                // warning per `HEAD` lookup when `refs/tags/HEAD` exists.
                 let mut process = git
                     .build_command(&["cat-file", "--batch"])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
+                    .stderr(Stdio::null())
                     .kill_on_drop(true)
                     .spawn()?;
 
@@ -2226,6 +2224,9 @@ impl GitRepository for RealGitRepository {
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let git = self.git_binary();
         let main_worktree_path = original_repo_path_from_common_dir(&self.common_dir);
+        let own_working_directory = (self.git_dir == self.common_dir)
+            .then(|| self.working_directory.clone())
+            .flatten();
         self.executor
             .spawn(async move {
                 let output = git
@@ -2234,10 +2235,23 @@ impl GitRepository for RealGitRepository {
                     .await?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    Ok(parse_worktrees_from_str(
-                        &stdout,
-                        main_worktree_path.as_deref(),
-                    ))
+                    let mut worktrees =
+                        parse_worktrees_from_str(&stdout, main_worktree_path.as_deref());
+                    // When the common directory is not `<checkout>/.git`, `git worktree list` prints the Git directory itself as the main worktree.
+                    if main_worktree_path.is_none()
+                        && let Some(index) = main_worktree_index(&stdout, &worktrees)
+                    {
+                        match (own_working_directory, worktrees.get_mut(index)) {
+                            (Some(working_directory), Some(worktree)) => {
+                                worktree.path = working_directory;
+                                worktree.is_main = true;
+                            }
+                            _ => {
+                                worktrees.remove(index);
+                            }
+                        }
+                    }
+                    Ok(worktrees)
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git worktree list failed: {stderr}");
@@ -2786,7 +2800,7 @@ impl GitRepository for RealGitRepository {
         async move {
             let git = git?;
             git.run_remote_command(Some(askpass), &env, &["commit", "--quiet", "-m"], |cmd| {
-                cmd.arg(&message.to_string())
+                cmd.arg(message.as_str())
                     .arg("--cleanup=strip")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
@@ -3780,7 +3794,6 @@ impl GitBinary {
         Ok(String::from_utf8(output.stdout)?)
     }
 
-    #[allow(clippy::disallowed_methods)]
     pub(crate) fn build_command<S>(&self, args: &[S]) -> util::command::Command
     where
         S: AsRef<OsStr>,
@@ -5864,6 +5877,33 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_load_revisions_with_ambiguous_head(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("file"), "contents").unwrap();
+        git_command(repo_dir.path(), ["add", "file"]);
+        git_command(repo_dir.path(), ["commit", "-m", "Initial commit"]);
+        git_command(repo_dir.path(), ["update-ref", "refs/tags/HEAD", "HEAD"]);
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Writes about 150 KB of warnings to stderr, more than a pipe buffer holds.
+        let results = repo
+            .load_revisions(vec!["HEAD:file".to_string(); 4000])
+            .await
+            .unwrap();
+        assert_eq!(results, vec![Some(b"contents".to_vec()); 4000]);
+    }
+
+    #[gpui::test]
     async fn test_blame_at_revision(cx: &mut TestAppContext) {
         disable_git_global_config();
         cx.executor().allow_parking();
@@ -5929,6 +5969,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(first_sha.clone(), 0..1)]
         );
+    }
+
+    #[gpui::test]
+    async fn test_blame_untracked_path_with_large_contents(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("committed.txt"), "line one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "First commit"]);
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Git exits without reading stdin for a path that isn't in HEAD.
+        let blame = repo
+            .blame(
+                repo_path("untracked.txt"),
+                Rope::from("line\n".repeat(1 << 20)),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+        assert_eq!(blame.entries, Vec::new());
     }
 
     #[gpui::test]
@@ -6341,6 +6411,103 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing, None);
+    }
+
+    #[gpui::test]
+    async fn test_worktrees_of_a_repository_with_a_separate_git_dir(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let git_dir = temp_dir.path().join("clones").join("repo.git");
+        let checkout_dir = temp_dir.path().join("checkouts").join("repo");
+        let linked_dir = temp_dir.path().join("linked");
+        fs::create_dir_all(temp_dir.path().join("clones")).unwrap();
+        fs::create_dir_all(&checkout_dir).unwrap();
+        git_command(
+            &checkout_dir,
+            [
+                OsStr::new("init"),
+                OsStr::new("-b"),
+                OsStr::new("main"),
+                OsStr::new("--separate-git-dir"),
+                git_dir.as_os_str(),
+            ],
+        );
+        git_command(
+            &checkout_dir,
+            ["commit", "--allow-empty", "-m", "Initial commit"],
+        );
+        git_command(
+            &checkout_dir,
+            [
+                OsStr::new("worktree"),
+                OsStr::new("add"),
+                linked_dir.as_os_str(),
+            ],
+        );
+        let checkout = RealGitRepository::new(
+            &checkout_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let linked = RealGitRepository::new(
+            &linked_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let checkout_path = fs::canonicalize(&checkout_dir).unwrap();
+        let linked_path = fs::canonicalize(&linked_dir).unwrap();
+        let paths_and_main_flags = |worktrees: Vec<Worktree>| {
+            worktrees
+                .into_iter()
+                .map(|worktree| (fs::canonicalize(worktree.path).unwrap(), worktree.is_main))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            paths_and_main_flags(checkout.worktrees().await.unwrap()),
+            vec![(checkout_path, true), (linked_path.clone(), false)]
+        );
+        assert_eq!(
+            paths_and_main_flags(linked.worktrees().await.unwrap()),
+            vec![(linked_path, false)]
+        );
+    }
+
+    #[test]
+    fn test_main_worktree_index() {
+        let worktree = |path: &str, is_bare: bool| Worktree {
+            path: PathBuf::from(path),
+            ref_name: None,
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare,
+        };
+        let indices = [
+            (
+                "worktree /clones/repo.git\nHEAD abc123\n\nworktree /linked\nHEAD abc123\n\n",
+                vec![worktree("/clones/repo.git", false), worktree("/linked", false)],
+            ),
+            (
+                "worktree /clones/repo.git\r\nHEAD abc123\r\n\r\nworktree /linked\r\nHEAD abc123\r\n",
+                vec![worktree("/linked", false), worktree("/clones/repo.git", false)],
+            ),
+            (
+                "worktree /repo.git\nHEAD abc123\nbare\n\nworktree /linked\nHEAD abc123\n\n",
+                vec![worktree("/repo.git", true), worktree("/linked", false)],
+            ),
+            (
+                "worktree /repo.git\nbare\n\nworktree /linked\nHEAD abc123\n\n",
+                vec![worktree("/linked", false)],
+            ),
+        ]
+        .map(|(raw_worktrees, worktrees)| main_worktree_index(raw_worktrees, &worktrees));
+        assert_eq!(indices, [Some(0), Some(1), None, None]);
     }
 
     #[gpui::test]

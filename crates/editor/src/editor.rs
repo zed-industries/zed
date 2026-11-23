@@ -346,9 +346,6 @@ pub enum ConflictsTheirs {}
 pub enum ConflictsOursMarker {}
 pub enum ConflictsTheirsMarker {}
 
-pub struct HunkAddedColor;
-pub struct HunkRemovedColor;
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
     Yes,
@@ -1050,7 +1047,6 @@ pub struct Editor {
     show_diff_review_button: bool,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
-    buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
     highlighted_rows: TypeIdHashMap<Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
@@ -1921,8 +1917,6 @@ impl Editor {
             .clone_state(&self.scroll_manager, &my_snapshot, &clone_snapshot, cx);
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
-        clone.buffers_with_disabled_indent_guides =
-            self.buffers_with_disabled_indent_guides.clone();
         clone.enable_mouse_wheel_zoom = self.enable_mouse_wheel_zoom;
         clone.enable_lsp_data = self.enable_lsp_data;
         clone.needs_initial_data_update = self.enable_lsp_data;
@@ -2440,7 +2434,6 @@ impl Editor {
             show_diff_review_button: false,
             show_wrap_guides: None,
             show_indent_guides,
-            buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
             highlighted_rows: Default::default(),
             background_highlights: HashMap::default(),
@@ -3852,7 +3845,6 @@ impl Editor {
                         |_, theme| theme.colors().editor_document_highlight_write_background,
                         cx,
                     );
-                    cx.notify();
                 })
                 .log_err();
             }
@@ -5174,11 +5166,10 @@ impl Editor {
                         let autoclose_enabled =
                             self.use_autoclose && snapshot_settings.use_autoclose;
                         if autoclose_enabled {
-                            let start = snapshot.anchor_after(selection_head);
-                            let end = snapshot.anchor_after(selection_head);
+                            let anchor = snapshot.anchor_after(selection_head);
                             self.autoclose_regions.push(AutocloseRegion {
                                 selection_id: selection.id,
-                                range: start..end,
+                                range: anchor..anchor,
                                 pair,
                             });
                         }
