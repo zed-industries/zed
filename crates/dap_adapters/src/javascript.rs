@@ -60,12 +60,29 @@ impl JsDebugAdapter {
         .context("Couldn't find JavaScript dap directory")
     }
 
-    async fn install_dwarf_debugging(&self, delegate: &Arc<dyn DapDelegate>) -> Result<()> {
+    async fn install_dwarf_debugging(
+        &self,
+        delegate: &Arc<dyn DapDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
         let js_debug_directory = self.installed_version_directory().await?.join("js-debug");
         let node_runtime = delegate.node_runtime();
+        let bill = node_runtime::ResourceExecutionBill {
+            root: node_runtime::ExecutionBillRoot::Debugger {
+                name: Self::ADAPTER_NAME.into(),
+            },
+            reasoning: vec!["Set up WebAssembly debugging".into()],
+        };
         let installed_version = node_runtime
-            .npm_package_installed_version(&js_debug_directory, Self::DWARF_DEBUGGING_PACKAGE_NAME)
-            .await?
+            .execute_command(
+                node_runtime::InstalledNpmPackageVersion {
+                    directory: js_debug_directory.clone(),
+                    package: Self::DWARF_DEBUGGING_PACKAGE_NAME.into(),
+                },
+                bill.clone(),
+                cx,
+            )
+            .await??
             .map(|version| version.to_string());
         if installed_version.as_deref() == Some(Self::DWARF_DEBUGGING_PACKAGE_VERSION) {
             return Ok(());
@@ -76,14 +93,18 @@ impl JsDebugAdapter {
             Self::DWARF_DEBUGGING_PACKAGE_NAME
         ));
         node_runtime
-            .npm_install_packages(
-                &js_debug_directory,
-                &[(
-                    Self::DWARF_DEBUGGING_PACKAGE_NAME,
-                    Self::DWARF_DEBUGGING_PACKAGE_VERSION,
-                )],
+            .execute_command(
+                node_runtime::InstallNpmPackages {
+                    directory: js_debug_directory,
+                    packages: vec![(
+                        Self::DWARF_DEBUGGING_PACKAGE_NAME.into(),
+                        Self::DWARF_DEBUGGING_PACKAGE_VERSION.into(),
+                    )],
+                },
+                bill,
+                cx,
             )
-            .await
+            .await?
     }
 
     async fn get_installed_binary(
@@ -93,7 +114,7 @@ impl JsDebugAdapter {
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
         user_env: Option<HashMap<String, String>>,
-        _: &mut AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
@@ -193,8 +214,17 @@ impl JsDebugAdapter {
             command: Some(
                 delegate
                     .node_runtime()
-                    .binary_path()
-                    .await?
+                    .execute_command(
+                        node_runtime::NodeBinaryPath,
+                        node_runtime::ResourceExecutionBill {
+                            root: node_runtime::ExecutionBillRoot::Debugger {
+                                name: Self::ADAPTER_NAME.into(),
+                            },
+                            reasoning: vec!["Start the JavaScript debug adapter".into()],
+                        },
+                        cx,
+                    )
+                    .await??
                     .to_string_lossy()
                     .into_owned(),
             ),
@@ -558,7 +588,7 @@ impl DebugAdapter for JsDebugAdapter {
             // Don't install the DWARF debugging if the user has specified their own debugger path
             // we don't want to mess up their install.
             if user_installed_path.is_none()
-                && let Err(error) = self.install_dwarf_debugging(delegate).await
+                && let Err(error) = self.install_dwarf_debugging(delegate, cx).await
             {
                 delegate.output_to_console(format!(
                     "Failed to install {}: {error:#}",

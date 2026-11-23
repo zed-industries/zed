@@ -34,6 +34,8 @@ pub enum ExecutionBillRoot {
     Extension { id: SharedString },
     Debugger { name: SharedString },
     LanguageServer { name: SharedString },
+    Formatter { name: SharedString },
+    AgentServer { name: SharedString },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,6 +139,8 @@ impl ResourcePermissionRequest {
             ExecutionBillRoot::Extension { id } => format!("Extension: {id}"),
             ExecutionBillRoot::Debugger { name } => format!("Debugger: {name}"),
             ExecutionBillRoot::LanguageServer { name } => format!("Language server: {name}"),
+            ExecutionBillRoot::Formatter { name } => format!("Formatter: {name}"),
+            ExecutionBillRoot::AgentServer { name } => format!("Agent server: {name}"),
         };
         let mut description = format!("{operation}\n\nnpm runtime: {}\n{requester}", payload.name);
         for reason in &bill.reasoning {

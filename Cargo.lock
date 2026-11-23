@@ -511,6 +511,7 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
+ "node_runtime",
  "notifications",
  "ordered-float 5.5.0",
  "parking_lot",

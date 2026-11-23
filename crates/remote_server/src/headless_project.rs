@@ -141,7 +141,6 @@ impl HeadlessProject {
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
-        languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let managed_resources = cx.new(|cx| {
             ManagedResourceStore::new(ManagedResourceSettings::get_global(cx).0.clone(), {
@@ -165,6 +164,8 @@ impl HeadlessProject {
                 }
             })
         });
+        let node_runtime = node_runtime.with_managed_resources(managed_resources.clone());
+        languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let outgoing = cx.subscribe(&managed_resources, |this, _, event: &StateUpdated, cx| {
             let snapshot = event.0.clone().into_content();
             let written = cx.global::<SettingsStore>().update_server_settings_file(

@@ -27,6 +27,88 @@ use std::{
 };
 
 #[test]
+fn cancelling_npm_stops_its_process() -> Result<()> {
+    use futures::{
+        FutureExt as _,
+        future::{Either, select},
+    };
+    use std::time::{Duration, Instant};
+
+    if env::var_os(CHILD).is_some() {
+        let directory = env::current_dir()?;
+        paths::set_custom_data_dir(&directory.join("data").to_string_lossy());
+        return smol::block_on(async {
+            let runtime = NodeRuntime::new(
+                Arc::new(http_client::BlockedHttpClient),
+                None,
+                watch::channel(Some(NodeBinaryOptions {
+                    use_paths: Some((directory.join("node"), directory.join("npm"))),
+                    ..Default::default()
+                }))
+                .1,
+            );
+            let running = runtime
+                .run_npm_subcommand(Some(&directory), "install", &[])
+                .boxed();
+            let started = async {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    if let Ok(pid) = smol::fs::read_to_string(directory.join("npm.pid")).await
+                        && !pid.trim().is_empty()
+                    {
+                        return Ok(pid.trim().to_owned());
+                    }
+                    anyhow::ensure!(Instant::now() < deadline, "npm did not start");
+                    smol::Timer::after(Duration::from_millis(10)).await;
+                }
+            }
+            .boxed();
+            let (pid, running) = match select(running, started).await {
+                Either::Left((result, _)) => {
+                    anyhow::bail!("npm ended before cancellation: {result:?}")
+                }
+                Either::Right((pid, running)) => (pid?, running),
+            };
+            drop(running);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let alive = smol::process::Command::new("/bin/kill")
+                    .args(["-0", &pid])
+                    .output()
+                    .await?
+                    .status
+                    .success();
+                if !alive {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    let killed = smol::process::Command::new("/bin/kill")
+                        .args(["-KILL", &pid])
+                        .output()
+                        .await?;
+                    anyhow::ensure!(killed.status.success(), "could not clean up npm fixture");
+                    anyhow::bail!("cancelled npm process was still running");
+                }
+                smol::Timer::after(Duration::from_millis(10)).await;
+            }
+        });
+    }
+    let directory = tempfile::tempdir()?;
+    fake_node(directory.path(), "echo v22.0.0")?;
+    let npm = directory.path().join("npm");
+    fs::write(
+        &npm,
+        "#!/bin/sh\necho $$ > \"$0.pid\"\nexec /bin/sleep 30\n",
+    )?;
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o755))?;
+    run_child_test(
+        "cancelling_npm_stops_its_process",
+        directory.path(),
+        directory.path(),
+    )
+}
+
+#[test]
 fn configured_runtime_keeps_node_available_when_npm_is_missing() -> Result<()> {
     if env::var_os(CHILD).is_some() {
         let directory = env::current_dir()?;

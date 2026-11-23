@@ -3273,8 +3273,17 @@ async fn spawn_companion(
     cx: &mut AsyncApp,
 ) -> Result<(u16, util::command::Child)> {
     let binary_path = node_runtime
-        .binary_path()
-        .await
+        .execute_command(
+            node_runtime::NodeBinaryPath,
+            node_runtime::ResourceExecutionBill {
+                root: node_runtime::ExecutionBillRoot::Debugger {
+                    name: "JavaScript".into(),
+                },
+                reasoning: vec!["Start the browser debug companion".into()],
+            },
+            cx,
+        )
+        .await?
         .context("getting node path")?;
     let path = cx
         .spawn(async move |cx| get_or_install_companion(node_runtime, cx).await)
@@ -3311,14 +3320,33 @@ async fn spawn_companion(
 async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Result<PathBuf> {
     const PACKAGE_NAME: &str = "@zed-industries/js-debug-companion-cli";
 
-    async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
+    async fn install_latest_version(
+        dir: PathBuf,
+        node: NodeRuntime,
+        bill: node_runtime::ResourceExecutionBill,
+        cx: &mut AsyncApp,
+    ) -> Result<PathBuf> {
         let temp_dir = tempfile::tempdir().context("creating temporary directory")?;
-        node.npm_install_latest_packages(temp_dir.path(), &[PACKAGE_NAME])
-            .await
-            .context("installing latest companion package")?;
+        node.execute_command(
+            node_runtime::InstallNpmPackages {
+                directory: temp_dir.path().to_path_buf(),
+                packages: vec![(PACKAGE_NAME.into(), "latest".into())],
+            },
+            bill.clone(),
+            cx,
+        )
+        .await?
+        .context("installing latest companion package")?;
         let version = node
-            .npm_package_installed_version(temp_dir.path(), PACKAGE_NAME)
-            .await
+            .execute_command(
+                node_runtime::InstalledNpmPackageVersion {
+                    directory: temp_dir.path().to_path_buf(),
+                    package: PACKAGE_NAME.into(),
+                },
+                bill,
+                cx,
+            )
+            .await?
             .context("getting installed companion version")?
             .context("companion was not installed")?;
         let version_folder = dir.join(version.to_string());
@@ -3329,10 +3357,9 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
     }
 
     let dir = paths::debug_adapters_dir().join("js-debug-companion");
-    let (latest_installed_version, latest_version) = cx
+    let latest_installed_version = cx
         .background_spawn({
             let dir = dir.clone();
-            let node = node.clone();
             async move {
                 smol::fs::create_dir_all(&dir)
                     .await
@@ -3355,26 +3382,39 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
                     })
                     .max_by_key(|(_, version)| version.clone());
 
-                let latest_version = node
-                    .npm_package_latest_version(PACKAGE_NAME)
-                    .await
-                    .log_err();
-                anyhow::Ok((latest_installed_version, latest_version))
+                anyhow::Ok(latest_installed_version)
             }
         })
         .await?;
+
+    let bill = node_runtime::ResourceExecutionBill {
+        root: node_runtime::ExecutionBillRoot::Debugger {
+            name: "JavaScript".into(),
+        },
+        reasoning: vec!["Set up the browser debug companion".into()],
+    };
+    let latest_version = node
+        .execute_command(
+            node_runtime::LatestNpmPackageVersion {
+                package: PACKAGE_NAME.into(),
+            },
+            bill.clone(),
+            cx,
+        )
+        .await?
+        .log_err();
 
     let path = if let Some((installed_path, installed_version)) = latest_installed_version {
         if let Some(latest_version) = latest_version
             && latest_version != installed_version
         {
-            cx.background_spawn(install_latest_version(dir.clone(), node.clone()))
-                .detach();
+            let update =
+                cx.spawn(async move |cx| install_latest_version(dir, node, bill, cx).await);
+            cx.update(|cx| update.detach_and_log_err(cx));
         }
         Ok(installed_path)
     } else {
-        cx.background_spawn(install_latest_version(dir.clone(), node.clone()))
-            .await
+        install_latest_version(dir, node, bill, cx).await
     };
 
     Ok(path?

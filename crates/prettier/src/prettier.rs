@@ -306,9 +306,18 @@ impl Prettier {
             "no prettier server package found at {prettier_server:?}"
         );
 
-        let node_path = executor
-            .spawn(async move { node.binary_path().await })
-            .await?;
+        let node_path = node
+            .execute_command(
+                node_runtime::NodeBinaryPath,
+                node_runtime::ResourceExecutionBill {
+                    root: node_runtime::ExecutionBillRoot::Formatter {
+                        name: "Prettier".into(),
+                    },
+                    reasoning: vec!["Start the Prettier server".into()],
+                },
+                &mut cx,
+            )
+            .await??;
         let server_name = LanguageServerName("prettier".into());
         let server_binary = LanguageServerBinary {
             path: node_path,

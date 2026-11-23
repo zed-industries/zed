@@ -22,7 +22,7 @@ use language::{
     point_to_lsp, range_from_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
-use node_runtime::{NodeRuntime, VersionStrategy};
+use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use project::{DisableAiSettings, Project};
@@ -575,7 +575,7 @@ impl Copilot {
         cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
-            let server_path = get_copilot_lsp(fs, node_runtime).await?;
+            let server_path = get_copilot_lsp(fs, node_runtime, cx).await?;
 
             let arguments: Vec<OsString> = vec!["--stdio".into()];
             let binary = LanguageServerBinary {
@@ -1344,32 +1344,70 @@ async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
 }
 
-async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
+async fn get_copilot_lsp(
+    fs: Arc<dyn Fs>,
+    node_runtime: NodeRuntime,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<PathBuf> {
     const PACKAGE_NAME: &str = "@github/copilot-language-server";
     const SERVER_PATH: &str =
         "node_modules/@github/copilot-language-server/dist/language-server.js";
 
+    let bill = node_runtime::ResourceExecutionBill {
+        root: node_runtime::ExecutionBillRoot::LanguageServer {
+            name: "GitHub Copilot".into(),
+        },
+        reasoning: vec!["Set up the Copilot language server".into()],
+    };
     let latest_version = node_runtime
-        .npm_package_latest_version(PACKAGE_NAME)
-        .await?;
+        .execute_command(
+            node_runtime::LatestNpmPackageVersion {
+                package: PACKAGE_NAME.into(),
+            },
+            bill.clone(),
+            cx,
+        )
+        .await??;
     let server_path = paths::copilot_dir().join(SERVER_PATH);
     let binary_path = copilot_lsp_native_binary_path()?;
 
     fs.create_dir(paths::copilot_dir()).await?;
 
-    let should_install = !fs.is_file(&binary_path).await
-        || node_runtime
-            .should_install_npm_package(
-                PACKAGE_NAME,
-                &server_path,
-                paths::copilot_dir(),
-                VersionStrategy::Latest(&latest_version),
+    let should_install = if !fs.is_file(&binary_path).await
+        || fs
+            .metadata(&server_path)
+            .await
+            .log_err()
+            .flatten()
+            .is_none()
+    {
+        true
+    } else {
+        node_runtime
+            .execute_command(
+                node_runtime::InstalledNpmPackageVersion {
+                    directory: paths::copilot_dir().clone(),
+                    package: PACKAGE_NAME.into(),
+                },
+                bill.clone(),
+                cx,
             )
-            .await;
+            .await?
+            .log_err()
+            .flatten()
+            .is_none_or(|installed| installed < latest_version)
+    };
     if should_install {
         node_runtime
-            .npm_install_latest_packages(paths::copilot_dir(), &[PACKAGE_NAME])
-            .await?;
+            .execute_command(
+                node_runtime::InstallNpmPackages {
+                    directory: paths::copilot_dir().clone(),
+                    packages: vec![(PACKAGE_NAME.into(), "latest".into())],
+                },
+                bill,
+                cx,
+            )
+            .await??;
     }
 
     if fs.is_file(&binary_path).await {

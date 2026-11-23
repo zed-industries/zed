@@ -654,12 +654,12 @@ impl PrettierStore {
                         if needs_install {
                             log::info!("Initializing default prettier with plugins {new_plugins:?}");
                             let installed_plugins = new_plugins.clone();
-                            cx.background_spawn(async move {
-                                install_prettier_packages(fs.as_ref(), new_plugins, node).await?;
+                            async {
+                                install_prettier_packages(fs.as_ref(), new_plugins, node, cx).await?;
                                 // Save the server file last, so the reinstall need could be determined by the absence of the file.
                                 save_prettier_server_file(fs.as_ref()).await?;
                                 anyhow::Ok(())
-                            })
+                            }
                                 .await
                                 .context("prettier & plugins install")
                                 .map_err(Arc::new)?;
@@ -904,6 +904,7 @@ async fn install_prettier_packages(
     fs: &dyn Fs,
     plugins_to_install: HashSet<Arc<str>>,
     node: NodeRuntime,
+    cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
     let packages_to_install = plugins_to_install
         .iter()
@@ -926,13 +927,24 @@ async fn install_prettier_packages(
     }
 
     log::info!("Installing default prettier and plugins: {packages_to_install:?}");
-    let borrowed_packages = packages_to_install
-        .iter()
-        .map(|package_name| package_name.as_str())
-        .collect::<Vec<_>>();
-    node.npm_install_latest_packages(default_prettier_dir, &borrowed_packages)
-        .await
-        .context("fetching formatter packages")?;
+    node.execute_command(
+        node_runtime::InstallNpmPackages {
+            directory: default_prettier_dir.to_path_buf(),
+            packages: packages_to_install
+                .into_iter()
+                .map(|package| (package, "latest".to_owned()))
+                .collect(),
+        },
+        node_runtime::ResourceExecutionBill {
+            root: node_runtime::ExecutionBillRoot::Formatter {
+                name: "Prettier".into(),
+            },
+            reasoning: vec!["Install Prettier and its plugins".into()],
+        },
+        cx,
+    )
+    .await?
+    .context("fetching formatter packages")?;
     anyhow::Ok(())
 }
 

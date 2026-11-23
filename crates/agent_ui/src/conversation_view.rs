@@ -2672,15 +2672,30 @@ impl ConversationView {
                         let agent_server_store = project.agent_server_store().clone();
                         agent_server_store.update(cx, |store, cx| {
                             store.node_runtime().map(|node_runtime| {
-                                cx.background_spawn(async move { node_runtime.binary_path().await })
+                                cx.spawn(async move |_, cx| {
+                                    node_runtime
+                                        .execute_command(
+                                            node_runtime::NodeBinaryPath,
+                                            node_runtime::ResourceExecutionBill {
+                                                root:
+                                                    node_runtime::ExecutionBillRoot::AgentServer {
+                                                        name: "Agent login".into(),
+                                                    },
+                                                reasoning: vec![
+                                                    "Run the agent's terminal login command".into(),
+                                                ],
+                                            },
+                                            cx,
+                                        )
+                                        .await?
+                                })
                             })
                         })
                     });
 
                     if let Some(resolve_task) = resolved_node_runtime {
-                        if let Ok(node_path) = resolve_task.await {
-                            task.command = Some(node_path.to_string_lossy().to_string());
-                        }
+                        let node_path = resolve_task.await?;
+                        task.command = Some(node_path.to_string_lossy().to_string());
                     }
                 }
             }

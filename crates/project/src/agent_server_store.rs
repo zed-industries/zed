@@ -401,6 +401,7 @@ impl AgentServerStore {
                                         fs: fs.clone(),
                                         http_client: http_client.clone(),
                                         node_runtime: node_runtime.clone(),
+                                        registry_id: Arc::from(name.as_str()),
                                         project_environment: project_environment.clone(),
                                         installation_dir: paths::external_agents_dir()
                                             .join("registry")
@@ -1120,6 +1121,7 @@ struct LocalRegistryArchiveAgent {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
+    registry_id: Arc<str>,
     project_environment: Entity<ProjectEnvironment>,
     installation_dir: PathBuf,
     version: SharedString,
@@ -1159,6 +1161,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
+        let registry_id = self.registry_id.clone();
         let project_environment = self.project_environment.downgrade();
         let installation_dir = self.installation_dir.clone();
         let targets = self.targets.clone();
@@ -1269,7 +1272,18 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             let cmd = &target_config.cmd;
 
             let cmd_path = if cmd == "node" {
-                node_runtime.binary_path().await?
+                node_runtime
+                    .execute_command(
+                        node_runtime::NodeBinaryPath,
+                        node_runtime::ResourceExecutionBill {
+                            root: node_runtime::ExecutionBillRoot::AgentServer {
+                                name: registry_id.into(),
+                            },
+                            reasoning: vec!["Start the registry agent".into()],
+                        },
+                        cx,
+                    )
+                    .await??
             } else {
                 if cmd.contains("..") {
                     anyhow::bail!("command path cannot contain '..': {}", cmd);
@@ -1385,7 +1399,11 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 
             let (package_name, package_spec) = bounded_npm_package_spec(&package);
             let node_modules_dir = install_dir.join("node_modules");
-            install_npx_package(&node_runtime, &install_dir, &package_spec).await?;
+            let bill = node_runtime::ResourceExecutionBill {
+                root: node_runtime::ExecutionBillRoot::AgentServer { name: registry_id.into() },
+                reasoning: vec!["Set up the registry agent".into()],
+            };
+            install_npx_package(&node_runtime, &install_dir, &package_spec, &bill, cx).await?;
             if let Some(incomplete_package_dir) =
                 find_incomplete_npm_package(fs.as_ref(), &node_modules_dir).await?
             {
@@ -1401,12 +1419,12 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 )
                 .await
                 .with_context(|| format!("removing {node_modules_dir:?}"))?;
-                install_npx_package(&node_runtime, &install_dir, &package_spec).await?;
+                install_npx_package(&node_runtime, &install_dir, &package_spec, &bill, cx).await?;
             }
             let executable =
                 node_runtime::read_package_executable(node_modules_dir, package_name).await?;
 
-            let node_binary = node_runtime.binary_path().await?;
+            let node_binary = node_runtime.execute_command(node_runtime::NodeBinaryPath, bill, cx).await??;
             env.extend(node_runtime::npm_command_env(&node_binary));
             env.extend(distribution_env);
             env.extend(extra_env);
@@ -1451,14 +1469,20 @@ async fn install_npx_package(
     node_runtime: &NodeRuntime,
     install_dir: &Path,
     package_spec: &str,
+    bill: &node_runtime::ResourceExecutionBill,
+    cx: &mut AsyncApp,
 ) -> Result<()> {
     node_runtime
-        .run_npm_subcommand(
-            Some(install_dir),
-            "install",
-            &[package_spec, "--save-exact"],
+        .execute_command(
+            node_runtime::RunNpmSubcommand {
+                directory: Some(install_dir.to_path_buf()),
+                subcommand: "install".into(),
+                args: vec![package_spec.into(), "--save-exact".into()],
+            },
+            bill.clone(),
+            cx,
         )
-        .await?;
+        .await??;
     Ok(())
 }
 
@@ -1825,6 +1849,7 @@ mod tests {
                 fs,
                 http_client,
                 node_runtime: NodeRuntime::unavailable(),
+                registry_id: "test-agent".into(),
                 project_environment,
                 installation_dir,
                 version: "1.0.0".into(),

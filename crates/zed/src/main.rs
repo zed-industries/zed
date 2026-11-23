@@ -566,7 +566,9 @@ fn main() {
         .detach();
         ui::observe_scrollbar_settings::<SettingsStore>(cx);
 
-        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
+        let managed_resources = AppState::create_managed_resources(fs.clone(), cx);
+        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx)
+            .with_managed_resources(managed_resources.clone());
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
@@ -653,7 +655,7 @@ fn main() {
         let app_session = cx.new(|cx| AppSession::new(session, cx));
 
         let app_state = Arc::new(AppState {
-            managed_resources: AppState::create_managed_resources(fs.clone(), cx),
+            managed_resources,
             languages,
             client: client.clone(),
             user_store,
