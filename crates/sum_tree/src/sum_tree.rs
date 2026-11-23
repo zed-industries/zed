@@ -1150,22 +1150,7 @@ impl<T: KeyedItem> SumTree<T> {
         item: T,
         cx: <T::Summary as Summary>::Context<'b>,
     ) -> Option<T> {
-        let mut replaced = None;
-        {
-            let mut cursor = self.cursor::<T::Key>(cx);
-            let mut new_tree = cursor.slice(&item.key(), Bias::Left);
-            if let Some(cursor_item) = cursor.item()
-                && cursor_item.key() == item.key()
-            {
-                replaced = Some(cursor_item.clone());
-                cursor.next();
-            }
-            new_tree.push(item, cx);
-            new_tree.append(cursor.suffix(), cx);
-            drop(cursor);
-            *self = new_tree
-        };
-        replaced
+        self.insert_sorted(std::iter::once(item), cx).pop()
     }
 
     pub fn remove(&mut self, key: &T::Key, cx: <T::Summary as Summary>::Context<'_>) -> Option<T> {
@@ -1196,6 +1181,18 @@ impl<T: KeyedItem> SumTree<T> {
 
         let mut removed = Vec::new();
         edits.sort_unstable_by_key(|item| item.key());
+
+        // A repeated key can replace items in more than one leaf, which only the slicing below
+        // handles.
+        if edits.iter().all(|edit| matches!(edit, Edit::Insert(_)))
+            && edits.is_sorted_by(|left, right| left.key() < right.key())
+        {
+            let items = edits.into_iter().filter_map(|edit| match edit {
+                Edit::Insert(item) => Some(item),
+                Edit::Remove(_) => None,
+            });
+            return self.insert_sorted(items, cx);
+        }
 
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
@@ -1238,6 +1235,157 @@ impl<T: KeyedItem> SumTree<T> {
         };
 
         removed
+    }
+
+    /// Inserts `items`, which are in key order with distinct keys, and returns the items they
+    /// replace. Changes the tree in place, cloning only the nodes that other trees share.
+    fn insert_sorted(
+        &mut self,
+        items: impl Iterator<Item = T>,
+        cx: <T::Summary as Summary>::Context<'_>,
+    ) -> Vec<T> {
+        let mut removed = Vec::new();
+        let mut items = items.map(|item| (item.key(), item)).peekable();
+        let siblings = self.insert_recursive(&mut items, T::Key::zero(cx), None, &mut removed, cx);
+        if !siblings.is_empty() {
+            let mut height = self.0.height();
+            let mut nodes = vec![self.clone()];
+            nodes.extend(siblings);
+            while nodes.len() > 1 {
+                height += 1;
+                nodes = Self::group_children(nodes, height, cx).collect();
+            }
+            if let Some(root) = nodes.pop() {
+                *self = root;
+            }
+        }
+        removed
+    }
+
+    /// Inserts the leading `items` with keys up to `bound` into this subtree, which starts at
+    /// `position`. Returns the siblings that the subtree splits off, in order.
+    fn insert_recursive<I: Iterator<Item = (T::Key, T)>>(
+        &mut self,
+        items: &mut std::iter::Peekable<I>,
+        mut position: T::Key,
+        bound: Option<&T::Key>,
+        removed: &mut Vec<T>,
+        cx: <T::Summary as Summary>::Context<'_>,
+    ) -> Vec<SumTree<T>> {
+        let node = Arc::make_mut(&mut self.0);
+        let (height, children) = match node {
+            Node::Internal {
+                height,
+                summary,
+                child_summaries,
+                child_trees,
+            } => {
+                let mut splits = Vec::new();
+                let child_count = child_trees.len();
+                let children = child_trees.iter_mut().zip(child_summaries.iter_mut());
+                for (index, (child_tree, child_summary)) in children.enumerate() {
+                    let Some((key, _)) = items.peek() else {
+                        break;
+                    };
+                    let mut child_end = position.clone();
+                    child_end.add_summary(child_summary, cx);
+                    // Keys past the end of the tree go to the last child.
+                    let child_bound = if index + 1 == child_count {
+                        bound
+                    } else {
+                        Some(&child_end)
+                    };
+                    if child_bound.is_none_or(|bound| key <= bound) {
+                        let siblings =
+                            child_tree.insert_recursive(items, position, child_bound, removed, cx);
+                        *child_summary = child_tree.summary().clone();
+                        if !siblings.is_empty() {
+                            splits.push((index, siblings));
+                        }
+                    }
+                    position = child_end;
+                }
+                if splits.is_empty() {
+                    *summary = sum(child_summaries.iter(), cx);
+                    return Vec::new();
+                }
+
+                let mut children = Vec::new();
+                let mut splits = splits.into_iter().peekable();
+                for (index, child_tree) in mem::take(child_trees).into_iter().enumerate() {
+                    children.push(child_tree);
+                    if let Some((_, siblings)) = splits.next_if(|split| split.0 == index) {
+                        children.extend(siblings);
+                    }
+                }
+                (*height, children)
+            }
+            Node::Leaf {
+                items: old_items, ..
+            } => {
+                let mut old_items = mem::take(old_items).into_iter().peekable();
+                let mut old_key = old_items.peek().map(T::key);
+                let mut merged = Vec::new();
+                while let Some((key, item)) =
+                    items.next_if(|(key, _)| bound.is_none_or(|bound| key <= bound))
+                {
+                    while old_key.as_ref().is_some_and(|old_key| *old_key < key) {
+                        merged.extend(old_items.next());
+                        old_key = old_items.peek().map(T::key);
+                    }
+                    if old_key.as_ref() == Some(&key) {
+                        removed.extend(old_items.next());
+                        old_key = old_items.peek().map(T::key);
+                    }
+                    merged.push(item);
+                }
+                merged.extend(old_items);
+
+                let mut merged = merged.into_iter();
+                let mut leaves = node_sizes(merged.len()).map(|size| {
+                    let items: ArrayVec<T, _, _> = merged.by_ref().take(size).collect();
+                    let item_summaries: ArrayVec<_, _, _> =
+                        items.iter().map(|item| item.summary(cx)).collect();
+                    Node::Leaf {
+                        summary: sum(item_summaries.iter(), cx),
+                        items,
+                        item_summaries,
+                    }
+                });
+                if let Some(first) = leaves.next() {
+                    *node = first;
+                }
+                return leaves.map(|leaf| SumTree(Arc::new(leaf))).collect();
+            }
+        };
+
+        let mut parents = Self::group_children(children, height, cx);
+        if let Some(first) = parents.next() {
+            *self = first;
+        }
+        parents.collect()
+    }
+
+    /// Groups nodes of one height under the fewest parents of the given height.
+    fn group_children(
+        children: Vec<SumTree<T>>,
+        height: u8,
+        cx: <T::Summary as Summary>::Context<'_>,
+    ) -> impl Iterator<Item = SumTree<T>> {
+        let mut children = children.into_iter();
+        node_sizes(children.len()).map(move |size| {
+            let child_trees: ArrayVec<SumTree<T>, _, _> = children.by_ref().take(size).collect();
+            let child_summaries: ArrayVec<_, _, _> = child_trees
+                .iter()
+                .map(|tree| tree.summary().clone())
+                .collect();
+            SumTree(Arc::new(Node::Internal {
+                height,
+                summary: sum(child_summaries.iter(), cx),
+                child_summaries,
+                child_trees,
+            }))
+        })
     }
 
     pub fn get<'a>(
@@ -1386,6 +1534,13 @@ where
         sum.add_summary(value, cx);
     }
     sum
+}
+
+/// Returns the sizes of the fewest nodes that hold `count` children, spread evenly so that none
+/// underflows.
+fn node_sizes(count: usize) -> impl Iterator<Item = usize> {
+    let node_count = count.div_ceil(2 * TREE_BASE);
+    (0..node_count).map(move |index| count / node_count + usize::from(index < count % node_count))
 }
 
 #[cfg(test)]
@@ -1796,6 +1951,81 @@ mod tests {
         assert_eq!(tree.get(&1, ()), Some(&1));
         assert_eq!(tree.get(&2, ()), Some(&2));
         assert_eq!(tree.get(&4, ()), Some(&4));
+
+        // Each insert of a repeated key replaces one item, here in two different leaves.
+        let mut tree = SumTree::from_iter([1u8, 2, 3, 5, 5, 6, 7, 8], ());
+        let removed = tree.edit(vec![Edit::Insert(5), Edit::Insert(5)], ());
+        assert_eq!(removed, vec![5, 5]);
+        assert_eq!(tree.items(()), vec![1, 2, 3, 5, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn test_inserts_in_place() {
+        use std::collections::BTreeSet;
+
+        fn check(tree: &SumTree<u8>, is_root: bool, may_underflow: bool) -> u8 {
+            let node = tree.0.as_ref();
+            let child_summaries = node.child_summaries();
+            assert!(is_root || may_underflow || !node.is_underflowing());
+            assert_eq!(node.summary(), &sum(child_summaries.iter(), ()));
+            match node {
+                Node::Leaf { items, .. } => {
+                    let item_summaries = items.iter().map(|item| item.summary(()));
+                    assert!(item_summaries.eq(child_summaries.iter().cloned()));
+                    0
+                }
+                Node::Internal {
+                    height,
+                    child_trees,
+                    ..
+                } => {
+                    for (child_tree, child_summary) in child_trees.iter().zip(child_summaries) {
+                        assert_eq!(child_tree.summary(), child_summary);
+                        assert_eq!(check(child_tree, false, may_underflow) + 1, *height);
+                    }
+                    *height
+                }
+            }
+        }
+
+        let mut rng = StdRng::seed_from_u64(0);
+        for _ in 0..1000 {
+            let mut tree = SumTree::<u8>::default();
+            let mut expected = BTreeSet::new();
+            let mut snapshots = Vec::new();
+            // Removals slice the tree, which leaves nodes that underflow.
+            let with_removals = rng.random();
+            for _ in 0..rng.random_range(1..10) {
+                // A narrow range puts a whole batch in a few leaves.
+                let (start, width) = (rng.random::<u8>(), if rng.random() { 8 } else { 255 });
+                let batch = (0..rng.random_range(1..40))
+                    .map(|_| start.wrapping_add(rng.random_range(0..=width)))
+                    .collect::<BTreeSet<u8>>();
+                let remove = with_removals && rng.random();
+                let edit: fn(u8) -> Edit<u8> = if remove { Edit::Remove } else { Edit::Insert };
+                let mut edits = batch.iter().copied().map(edit).collect::<Vec<_>>();
+                edits.shuffle(&mut rng);
+
+                let replaced = match edits.as_slice() {
+                    [Edit::Insert(item)] => tree.insert_or_replace(*item, ()).into_iter().collect(),
+                    _ => tree.edit(edits, ()),
+                };
+                assert!(replaced.iter().eq(batch.intersection(&expected)));
+                if remove {
+                    expected.retain(|item| !batch.contains(item));
+                } else {
+                    expected.extend(batch);
+                }
+                check(&tree, true, with_removals);
+                assert!(tree.iter().eq(&expected));
+                if rng.random() {
+                    snapshots.push((tree.clone(), expected.clone()));
+                }
+                for (snapshot, expected) in &snapshots {
+                    assert!(snapshot.iter().eq(expected));
+                }
+            }
+        }
     }
 
     #[test]
@@ -1815,7 +2045,7 @@ mod tests {
         assert_eq!(SumTree::from_iter(iterator, ()).items(()), vec![1]);
     }
 
-    #[derive(Clone, Default, Debug)]
+    #[derive(Clone, Default, Debug, PartialEq)]
     pub struct IntegersSummary {
         count: usize,
         sum: usize,
