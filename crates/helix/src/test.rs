@@ -154,6 +154,19 @@ async fn test_insert_and_append(cx: &mut TestAppContext) {
     cx.test(("#[a|]#b #(c|)#d", "ax<esc>", "#[ax|]#b #(cx|)#d"));
 }
 
+// Like Helix, appending at an empty selection at the end of the buffer adds
+// no line ending and selects nothing.
+#[gpui::test]
+async fn test_append_at_empty_selection_at_eof(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.test((
+        "foo#[|]#",
+        "abar<esc>",
+        "foobar#[|]#",
+        LineFeedHandling::AsIs,
+    ));
+}
+
 // The key context depends on the count, and the window only rebuilds it when
 // the editor is notified, so a quickly typed `0` after a digit was unbound.
 #[gpui::test]

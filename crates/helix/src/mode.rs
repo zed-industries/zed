@@ -94,6 +94,11 @@ impl Helix {
                 .iter()
                 .map(|selection| match kind {
                     InsertKind::Insert => snapshot.anchor_after(selection.end),
+                    // An empty selection (only possible at the end of the
+                    // buffer) stays empty, so it moves with the typed text.
+                    InsertKind::Append if selection.is_empty() => {
+                        snapshot.anchor_after(selection.start)
+                    }
                     InsertKind::Append => snapshot.anchor_before(selection.start),
                 })
                 .collect();
