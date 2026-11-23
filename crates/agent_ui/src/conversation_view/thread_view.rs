@@ -9460,7 +9460,8 @@ impl ThreadView {
         self.render_message_from_session(entry_ix, heading, sender, message, window, cx)
     }
 
-    /// A background command the user stopped did not finish on its own; say so.
+    /// A background command the user stopped, or that Zed quitting interrupted,
+    /// did not finish on its own; say so.
     fn background_command_heading(message: &acp_thread::UserMessage) -> &'static str {
         let status = match message.content.source_blocks().first() {
             Some(acp_v2::ContentBlock::Text(text)) => agent::background_result_status(&text.text),
@@ -9468,6 +9469,7 @@ impl ThreadView {
         };
         match status {
             Some("stopped") => "Background command stopped",
+            Some("interrupted") => "Background command interrupted",
             _ => "Background command finished",
         }
     }
