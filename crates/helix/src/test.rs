@@ -6,8 +6,9 @@ use editor::{
     HighlightKey, SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT,
     test::editor_test_context::EditorTestContext,
 };
-use gpui::{ClipboardItem, KeyBinding, TestAppContext, UpdateGlobal as _};
+use gpui::{ClipboardItem, KeyBinding, Modifiers, MouseButton, TestAppContext, UpdateGlobal as _};
 use indoc::indoc;
+use language::CursorShape;
 use modal_editor::ModeIndicatorSource as _;
 use settings::{SettingsStore, UseSystemClipboard};
 
@@ -656,4 +657,99 @@ async fn test_mode_status(cx: &mut TestAppContext) {
     assert_eq!(mode_status(&mut cx).0, "SELECT");
     cx.simulate_keys("i");
     assert_eq!(mode_status(&mut cx).0, "INSERT");
+}
+
+// Unlike vim mode, the mouse does not switch to select mode, like in Helix.
+#[gpui::test]
+async fn test_mouse_selection(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    // `pixel_position` measures from the drawn cursor, which is at the head
+    // of a backward selection.
+    cx.set_state("#[|o]#ne two three");
+
+    let start = cx.pixel_position("one twˇo three");
+    let end = cx.pixel_position("one ˇtwo three");
+    let click = cx.pixel_position("one two thˇree");
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(cx.mode(), Mode::Normal);
+    // TODO: Helix selects the characters under the pointer at both ends,
+    // `two` here (phase 3).
+    cx.assert_state("one #[|tw]#o three");
+
+    cx.simulate_click(click, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("one two th#[r|]#ee");
+}
+
+// Excerpt boundaries are line endings that motions and edits treat like
+// any other.
+#[gpui::test]
+async fn test_multibuffer(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new_multibuffer(cx, ["«one\ntwo»", "«three\nfour»"]);
+    cx.assert_state("#[o|]#ne\ntwo\nthree\nfour");
+
+    cx.simulate_keys("jj");
+    cx.assert_state("one\ntwo\n#[t|]#hree\nfour");
+    cx.simulate_keys("k");
+    cx.assert_state("one\n#[t|]#wo\nthree\nfour");
+    cx.simulate_keys("lll");
+    cx.assert_state("one\ntwo#[\n|]#three\nfour");
+    cx.simulate_keys("l");
+    cx.assert_state("one\ntwo\n#[t|]#hree\nfour");
+
+    cx.simulate_keys("hhaxy<esc>");
+    cx.assert_state("one\ntw#[oxy|]#\nthree\nfour");
+    cx.simulate_keys("lizz<esc>");
+    cx.assert_state("one\ntwoxyzz#[|\n]#three\nfour");
+}
+
+fn set_vim_settings(
+    cx: &mut EditorTestContext,
+    update: impl FnOnce(&mut settings::VimSettingsContent),
+) {
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| update(settings.vim.get_or_insert_default()));
+        });
+    });
+}
+
+#[gpui::test]
+async fn test_cursor_shape(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    let cursor_shape = |cx: &mut HelixTestContext| cx.editor(|editor, _, _| editor.cursor_shape());
+    cx.set_state("#[a|]#bc");
+    assert_eq!(cursor_shape(&mut cx), CursorShape::Block);
+
+    set_vim_settings(&mut cx, |vim| {
+        vim.cursor_shape = Some(settings::CursorShapeSettings {
+            normal: Some(settings::CursorShape::Underline),
+            visual: Some(settings::CursorShape::Bar),
+            insert: Some(settings::VimInsertModeCursorShape::Hollow),
+            replace: None,
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(cursor_shape(&mut cx), CursorShape::Underline);
+    cx.simulate_keys("v");
+    assert_eq!(cursor_shape(&mut cx), CursorShape::Bar);
+    cx.simulate_keys("<esc>i");
+    assert_eq!(cursor_shape(&mut cx), CursorShape::Hollow);
+}
+
+// Turning Helix mode off in insert mode leaves no Helix state behind.
+#[gpui::test]
+async fn test_turning_off_in_insert_mode(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("#[abc|]# def");
+    cx.simulate_keys("ix");
+    set_helix_mode(false, &mut cx);
+    cx.run_until_parked();
+    assert!(cx.editor(|editor, _, _| editor.addon::<HelixAddon>().is_none()));
+    cx.assert_editor_background_highlights(HighlightKey::HelixInsertSelections, "xabc def");
+    cx.simulate_keystrokes("y");
+    cx.assert_editor_state("xyˇabc def");
 }

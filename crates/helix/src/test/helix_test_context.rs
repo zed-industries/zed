@@ -124,6 +124,19 @@ impl HelixTestContext {
         Self { cx }
     }
 
+    /// A multibuffer of excerpts marked with `«»`, as in
+    /// [`EditorTestContext::new_multibuffer`].
+    pub fn new_multibuffer<const COUNT: usize>(
+        cx: &mut TestAppContext,
+        excerpts: [&str; COUNT],
+    ) -> Self {
+        init_test(cx);
+        let mut cx = EditorTestContext::new_multibuffer(cx, excerpts);
+        set_helix_mode(true, &mut cx);
+        set_helix_next_flag(true, &mut cx);
+        Self { cx }
+    }
+
     pub fn helix(&mut self) -> Entity<Helix> {
         self.cx.editor(|editor, _, _| {
             editor
