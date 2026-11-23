@@ -118,7 +118,9 @@ pub fn into_open_ai(
                                 ..
                             }) = messages.last_mut()
                             {
-                                *reasoning_content = Some(reasoning);
+                                reasoning_content
+                                    .get_or_insert_default()
+                                    .push_str(&reasoning);
                             }
                         }
                     }
@@ -735,13 +737,14 @@ fn add_message_content_part(
         (
             Role::Assistant,
             Some(crate::RequestMessage::Assistant {
-                content: Some(content),
+                content,
                 reasoning_details: existing_reasoning_details,
                 ..
             }),
-        ) if existing_reasoning_details == &reasoning_details => {
-            content.push_part(new_part);
-        }
+        ) if existing_reasoning_details == &reasoning_details => match content {
+            Some(content) => content.push_part(new_part),
+            None => *content = Some(crate::MessageContent::from(vec![new_part])),
+        },
         _ => {
             messages.push(match role {
                 Role::User => crate::RequestMessage::User {
@@ -2650,6 +2653,66 @@ mod tests {
                 expected
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn into_open_ai_keeps_text_after_a_tool_call_in_its_message() -> Result<()> {
+        let message = |role, content| LanguageModelRequestMessage {
+            role,
+            content,
+            cache: false,
+            reasoning_details: None,
+        };
+        let thinking = |text: &str| MessageContent::Thinking {
+            text: text.to_string(),
+            signature: None,
+        };
+        let tool_use = LanguageModelToolUse {
+            id: "call".into(),
+            name: "tool".into(),
+            raw_input: "{}".to_string(),
+            input: LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: "call".into(),
+            tool_name: "tool".into(),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text("ok".into())],
+            output: None,
+        };
+        let assistant_content = vec![
+            thinking("first"),
+            MessageContent::ToolUse(tool_use),
+            thinking(" second"),
+            MessageContent::Text("after the call".to_string()),
+        ];
+        let request = LanguageModelRequest {
+            messages: vec![
+                message(Role::Assistant, assistant_content),
+                message(Role::User, vec![MessageContent::ToolResult(tool_result)]),
+            ],
+            ..Default::default()
+        };
+        let chat = into_open_ai(
+            request,
+            "compatible-model",
+            false,
+            false,
+            None,
+            ChatCompletionMaxTokensParameter::MaxTokens,
+            None,
+            true,
+        )?;
+
+        let messages = serde_json::to_value(chat)?["messages"].clone();
+        assert_eq!(messages.as_array().map(Vec::len), Some(2));
+        assert_eq!(messages[0]["content"], "after the call");
+        assert_eq!(messages[0]["reasoning_content"], "first second");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call");
+        assert_eq!(messages[1]["role"], "tool");
         Ok(())
     }
 
