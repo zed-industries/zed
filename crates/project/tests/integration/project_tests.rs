@@ -4414,6 +4414,119 @@ async fn test_updating_lsp_settings_sends_one_did_change_configuration(
     );
 }
 
+#[gpui::test]
+async fn test_removing_worktree_notifies_settings_only_for_local_settings(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "" })).await;
+    fs.insert_tree(path!("/outside"), json!({ "b.rs": "" }))
+        .await;
+    fs.insert_tree(
+        path!("/with_settings"),
+        json!({ ".zed": { "settings.json": r#"{ "tab_size": 8 }"# } }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    let did_change_count = Arc::new(atomic::AtomicUsize::new(0));
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-lsp",
+            initializer: Some(Box::new({
+                let did_change_count = did_change_count.clone();
+                move |fake_server| {
+                    fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+                        |_, _| async move {
+                            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                                lsp::Location::new(
+                                    lsp::Uri::from_file_path(path!("/outside/b.rs")).unwrap(),
+                                    lsp::Range::default(),
+                                ),
+                            )))
+                        },
+                    );
+                    fake_server
+                        .handle_notification::<lsp::notification::DidChangeConfiguration, _>({
+                            let did_change_count = did_change_count.clone();
+                            move |_, _| {
+                                did_change_count.fetch_add(1, atomic::Ordering::Release);
+                            }
+                        });
+                }
+            })),
+            ..Default::default()
+        },
+    );
+    language_registry.add(rust_lang());
+
+    let (rs_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let _fake_rust_server = fake_rust_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+    did_change_count.store(0, atomic::Ordering::Release);
+
+    let definitions = project
+        .update(cx, |project, cx| project.definitions(&rs_buffer, 0, cx))
+        .await
+        .unwrap()
+        .unwrap();
+    cx.executor().run_until_parked();
+    let invisible_worktree_id = cx.update(|cx| {
+        assert_eq!(definitions.len(), 1);
+        let target_worktree_id = definitions[0]
+            .target
+            .buffer
+            .read(cx)
+            .file()
+            .unwrap()
+            .worktree_id(cx);
+        assert!(
+            project
+                .read(cx)
+                .worktree_for_id(target_worktree_id, cx)
+                .is_some_and(|worktree| !worktree.read(cx).is_visible())
+        );
+        target_worktree_id
+    });
+
+    cx.update(|_| drop(definitions));
+    cx.executor().run_until_parked();
+
+    assert!(project.read_with(cx, |project, cx| {
+        project.worktree_for_id(invisible_worktree_id, cx).is_none()
+    }));
+    assert_eq!(did_change_count.load(atomic::Ordering::Acquire), 0);
+
+    let (worktree_with_settings, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/with_settings"), true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_with_settings_id =
+        worktree_with_settings.read_with(cx, |worktree, _| worktree.id());
+    drop(worktree_with_settings);
+    cx.executor().run_until_parked();
+    did_change_count.store(0, atomic::Ordering::Release);
+
+    project.update(cx, |project, cx| {
+        project.remove_worktree(worktree_with_settings_id, cx)
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(did_change_count.load(atomic::Ordering::Acquire), 1);
+}
+
 #[gpui::test(iterations = 3)]
 async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
