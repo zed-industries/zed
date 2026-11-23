@@ -6207,11 +6207,67 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    async fn test_selection_follows_commit_after_head_changes(cx: &mut TestAppContext) {
-        init_test(cx);
+    fn test_oid(byte: u8) -> Oid {
+        Oid::from_bytes(&[byte; 20]).expect("test oid should be valid")
+    }
 
-        let fs = FakeFs::new(cx.executor());
+    fn set_linear_history(fs: &FakeFs, newest_first: &[Oid]) {
+        let dot_git = Path::new("/project/.git");
+        let parents_of = |index: usize| -> SmallVec<[Oid; 1]> {
+            newest_first.get(index + 1).copied().into_iter().collect()
+        };
+        fs.set_graph_commits(
+            dot_git,
+            newest_first
+                .iter()
+                .enumerate()
+                .map(|(index, sha)| {
+                    Arc::new(InitialGraphCommitData {
+                        sha: *sha,
+                        parents: parents_of(index),
+                        ref_names: if index == 0 {
+                            vec!["HEAD".into(), "refs/heads/main".into()]
+                        } else {
+                            Vec::new()
+                        },
+                    })
+                })
+                .collect(),
+        );
+        fs.set_commit_data(
+            dot_git,
+            newest_first.iter().enumerate().map(|(index, sha)| {
+                (
+                    CommitData {
+                        sha: *sha,
+                        parents: parents_of(index),
+                        author_name: "Author".into(),
+                        author_email: "author@example.com".into(),
+                        commit_timestamp: 0,
+                        subject: "Subject".into(),
+                        message: "Message".into(),
+                    },
+                    false,
+                )
+            }),
+        );
+        if let Some(head) = newest_first.first() {
+            fs.with_git_state(dot_git, true, |state| {
+                state.refs.insert("HEAD".into(), head.to_string());
+            })
+            .expect("fake repository should exist");
+        }
+    }
+
+    async fn open_git_graph_with_history<'a>(
+        fs: &Arc<FakeFs>,
+        newest_first: &[Oid],
+        cx: &'a mut TestAppContext,
+    ) -> (
+        Entity<Project>,
+        Entity<GitGraph>,
+        &'a mut gpui::VisualTestContext,
+    ) {
         fs.insert_tree(
             Path::new("/project"),
             json!({
@@ -6220,88 +6276,7 @@ mod tests {
             }),
         )
         .await;
-
-        let initial_commit = Oid::from_bytes(&[1; 20]).expect("initial commit should be valid");
-        let selected_commit = Oid::from_bytes(&[2; 20]).expect("selected commit should be valid");
-        let initial_head = Oid::from_bytes(&[3; 20]).expect("initial HEAD should be valid");
-        let updated_head = Oid::from_bytes(&[4; 20]).expect("updated HEAD should be valid");
-        fs.set_graph_commits(
-            Path::new("/project/.git"),
-            vec![
-                Arc::new(InitialGraphCommitData {
-                    sha: initial_head,
-                    parents: smallvec![selected_commit],
-                    ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
-                }),
-                Arc::new(InitialGraphCommitData {
-                    sha: selected_commit,
-                    parents: smallvec![initial_commit],
-                    ref_names: vec![],
-                }),
-                Arc::new(InitialGraphCommitData {
-                    sha: initial_commit,
-                    parents: smallvec![],
-                    ref_names: vec![],
-                }),
-            ],
-        );
-        fs.set_commit_data(
-            Path::new("/project/.git"),
-            [
-                (
-                    CommitData {
-                        sha: initial_commit,
-                        parents: smallvec![],
-                        author_name: "Author".into(),
-                        author_email: "author@example.com".into(),
-                        commit_timestamp: 1,
-                        subject: "Initial commit".into(),
-                        message: "Initial commit".into(),
-                    },
-                    false,
-                ),
-                (
-                    CommitData {
-                        sha: selected_commit,
-                        parents: smallvec![initial_commit],
-                        author_name: "Author".into(),
-                        author_email: "author@example.com".into(),
-                        commit_timestamp: 2,
-                        subject: "Selected commit".into(),
-                        message: "Selected commit".into(),
-                    },
-                    false,
-                ),
-                (
-                    CommitData {
-                        sha: initial_head,
-                        parents: smallvec![selected_commit],
-                        author_name: "Author".into(),
-                        author_email: "author@example.com".into(),
-                        commit_timestamp: 3,
-                        subject: "Initial HEAD".into(),
-                        message: "Initial HEAD".into(),
-                    },
-                    false,
-                ),
-                (
-                    CommitData {
-                        sha: updated_head,
-                        parents: smallvec![initial_head],
-                        author_name: "Author".into(),
-                        author_email: "author@example.com".into(),
-                        commit_timestamp: 4,
-                        subject: "Updated HEAD".into(),
-                        message: "Updated HEAD".into(),
-                    },
-                    false,
-                ),
-            ],
-        );
-        fs.with_git_state(Path::new("/project/.git"), true, |state| {
-            state.refs.insert("HEAD".into(), initial_head.to_string());
-        })
-        .expect("fake repository should exist");
+        set_linear_history(fs, newest_first);
 
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         cx.run_until_parked();
@@ -6327,14 +6302,77 @@ mod tests {
         });
         cx.run_until_parked();
 
+        (project, git_graph, cx)
+    }
+
+    async fn reload_git_graph(
+        project: &Entity<Project>,
+        git_graph: &Entity<GitGraph>,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+    }
+
+    fn selected_row_sha(graph: &GitGraph) -> Option<Oid> {
+        let index = graph.selected_entry_idx?;
+        Some(graph.graph_data.commits.get(index)?.data.sha)
+    }
+
+    #[gpui::test]
+    async fn test_selection_follows_commit_after_head_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let [first, second, third, fourth] = [1, 2, 3, 4].map(test_oid);
+        let (project, git_graph, cx) =
+            open_git_graph_with_history(&fs, &[third, second, first], cx).await;
+
         git_graph.update(cx, |graph, cx| {
             graph.select_entry(1, ScrollStrategy::Nearest, cx);
             graph.hovered_entry_idx = Some(1);
         });
         cx.run_until_parked();
 
+        set_linear_history(&fs, &[fourth, third, second, first]);
+        reload_git_graph(&project, &git_graph, cx).await;
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(2));
+            assert_eq!(selected_row_sha(graph), Some(second));
+            assert_eq!(graph.hovered_entry_idx, None);
+            assert_eq!(
+                graph
+                    .selected_commit_message
+                    .as_ref()
+                    .map(|message| message.sha),
+                Some(second)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_commit_details_are_kept_when_selected_commit_moves(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let [first, second, third, fourth] = [1, 2, 3, 4].map(test_oid);
+        let (project, git_graph, cx) =
+            open_git_graph_with_history(&fs, &[third, second, first], cx).await;
+
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(1, ScrollStrategy::Nearest, cx);
+        });
+        cx.run_until_parked();
+
         let expanded_dir = RepoPath::new("src").expect("repository path should be valid");
-        let message_before_refresh = git_graph.update(cx, |graph, _| {
+        let message_before_reload = git_graph.update(cx, |graph, _| {
             graph
                 .changed_files_expanded_dirs
                 .insert(expanded_dir.clone(), true);
@@ -6343,150 +6381,129 @@ mod tests {
                 .as_ref()
                 .map(|message| message.message.entity_id())
         });
-        assert!(message_before_refresh.is_some());
+        assert!(message_before_reload.is_some());
 
-        fs.set_graph_commits(
-            Path::new("/project/.git"),
-            vec![
-                Arc::new(InitialGraphCommitData {
-                    sha: updated_head,
-                    parents: smallvec![initial_head],
-                    ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
-                }),
-                Arc::new(InitialGraphCommitData {
-                    sha: initial_head,
-                    parents: smallvec![selected_commit],
-                    ref_names: vec![],
-                }),
-                Arc::new(InitialGraphCommitData {
-                    sha: selected_commit,
-                    parents: smallvec![initial_commit],
-                    ref_names: vec![],
-                }),
-                Arc::new(InitialGraphCommitData {
-                    sha: initial_commit,
-                    parents: smallvec![],
-                    ref_names: vec![],
-                }),
-            ],
-        );
-        fs.with_git_state(Path::new("/project/.git"), true, |state| {
-            state.refs.insert("HEAD".into(), updated_head.to_string());
-        })
-        .expect("fake repository should exist");
-
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
-        cx.run_until_parked();
-        cx.draw(
-            point(px(0.), px(0.)),
-            gpui::size(px(1200.), px(800.)),
-            |_, _| git_graph.clone().into_any_element(),
-        );
-        cx.run_until_parked();
+        set_linear_history(&fs, &[fourth, third, second, first]);
+        reload_git_graph(&project, &git_graph, cx).await;
 
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(
-                graph
-                    .graph_data
-                    .commits
-                    .iter()
-                    .map(|commit| commit.data.sha)
-                    .collect::<Vec<_>>(),
-                vec![updated_head, initial_head, selected_commit, initial_commit]
-            );
-            assert_eq!(graph.selected_entry_idx, Some(2));
-            assert_eq!(graph.hovered_entry_idx, None);
-            assert_eq!(
-                graph
-                    .selected_commit_message
-                    .as_ref()
-                    .map(|message| message.sha),
-                Some(selected_commit)
-            );
+            assert_eq!(selected_row_sha(graph), Some(second));
             assert_eq!(
                 graph
                     .selected_commit_message
                     .as_ref()
                     .map(|message| message.message.entity_id()),
-                message_before_refresh,
-                "details of an unchanged commit should not be reloaded"
+                message_before_reload
             );
             assert_eq!(
                 graph.changed_files_expanded_dirs.get(&expanded_dir),
                 Some(&true)
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_selection_is_cleared_when_selected_commit_is_removed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let [first, second, third, rewritten] = [1, 2, 3, 4].map(test_oid);
+        let (project, git_graph, cx) =
+            open_git_graph_with_history(&fs, &[third, second, first], cx).await;
 
         git_graph.update(cx, |graph, cx| {
-            graph.pending_select_sha = Some(initial_commit);
-            graph.select_entry(2, ScrollStrategy::Nearest, cx);
-            assert_eq!(graph.pending_select_sha, None);
-        });
-
-        git_graph.update_in(cx, |graph, window, cx| {
-            graph.pending_select_sha = Some(selected_commit);
-            graph.cancel(&Cancel, window, cx);
-        });
-        git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.pending_select_sha, None);
-            assert_eq!(graph.selected_entry_idx, None);
-        });
-
-        git_graph.update(cx, |graph, cx| {
-            graph.select_entry(2, ScrollStrategy::Nearest, cx);
+            graph.select_entry(1, ScrollStrategy::Nearest, cx);
         });
         cx.run_until_parked();
-        git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_commit_sha, Some(selected_commit));
-        });
 
-        fs.set_graph_commits(
-            Path::new("/project/.git"),
-            vec![
-                Arc::new(InitialGraphCommitData {
-                    sha: initial_head,
-                    parents: smallvec![initial_commit],
-                    ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
-                }),
-                Arc::new(InitialGraphCommitData {
-                    sha: initial_commit,
-                    parents: smallvec![],
-                    ref_names: vec![],
-                }),
-            ],
-        );
-        fs.with_git_state(Path::new("/project/.git"), true, |state| {
-            state.refs.insert("HEAD".into(), initial_head.to_string());
-        })
-        .expect("fake repository should exist");
-
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
-        cx.run_until_parked();
-        cx.draw(
-            point(px(0.), px(0.)),
-            gpui::size(px(1200.), px(800.)),
-            |_, _| git_graph.clone().into_any_element(),
-        );
-        cx.run_until_parked();
+        set_linear_history(&fs, &[rewritten, first]);
+        reload_git_graph(&project, &git_graph, cx).await;
 
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(
-                graph
-                    .graph_data
-                    .commits
-                    .iter()
-                    .map(|commit| commit.data.sha)
-                    .collect::<Vec<_>>(),
-                vec![initial_head, initial_commit]
-            );
+            assert_eq!(graph.graph_data.commits.len(), 2);
             assert_eq!(graph.selected_entry_idx, None);
             assert_eq!(graph.selected_commit_sha, None);
             assert_eq!(graph.pending_select_sha, None);
             assert!(graph.selected_commit_message.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_selection_is_kept_when_tag_is_created(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let [first, second, third] = [1, 2, 3].map(test_oid);
+        let (project, git_graph, cx) =
+            open_git_graph_with_history(&fs, &[third, second, first], cx).await;
+
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(1, ScrollStrategy::Nearest, cx);
+        });
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have an active repository")
+        });
+        repository
+            .update(cx, |repository, _| {
+                repository.create_tag("v1.0.0".to_string(), third.to_string())
+            })
+            .await
+            .expect("tag job should not be cancelled")
+            .expect("tag should be created");
+        reload_git_graph(&project, &git_graph, cx).await;
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.graph_data.commits.len(), 3);
+            assert_eq!(selected_row_sha(graph), Some(second));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reload_selects_pending_commit_over_previous_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let [first, second, third, fourth] = [1, 2, 3, 4].map(test_oid);
+        let (project, git_graph, cx) =
+            open_git_graph_with_history(&fs, &[third, second, first], cx).await;
+
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(1, ScrollStrategy::Nearest, cx);
+            graph.select_commit_by_sha(fourth, cx);
+            assert_eq!(graph.pending_select_sha, Some(fourth));
+        });
+        cx.run_until_parked();
+
+        set_linear_history(&fs, &[fourth, third, second, first]);
+        reload_git_graph(&project, &git_graph, cx).await;
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(selected_row_sha(graph), Some(fourth));
+            assert_eq!(graph.pending_select_sha, None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_selecting_or_cancelling_drops_pending_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let [first, second, third] = [1, 2, 3].map(test_oid);
+        let (_project, git_graph, cx) =
+            open_git_graph_with_history(&fs, &[third, second, first], cx).await;
+
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(1, ScrollStrategy::Nearest, cx);
+            graph.pending_select_sha = Some(first);
+            graph.select_entry(1, ScrollStrategy::Nearest, cx);
+            assert_eq!(graph.pending_select_sha, None);
+        });
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.pending_select_sha = Some(first);
+            graph.cancel(&Cancel, window, cx);
+            assert_eq!(graph.pending_select_sha, None);
+            assert_eq!(graph.selected_entry_idx, None);
         });
     }
 
@@ -7543,11 +7560,6 @@ mod tests {
             vec![vec![SharedString::from("HEAD -> main")]]
         );
 
-        git_graph.update(cx, |graph, cx| {
-            graph.select_entry(0, ScrollStrategy::Nearest, cx);
-        });
-        cx.run_until_parked();
-
         fs.set_graph_commits(
             Path::new("/project/.git"),
             vec![Arc::new(InitialGraphCommitData {
@@ -7579,9 +7591,6 @@ mod tests {
                 SharedString::from("tag: v1.0.0"),
             ]]
         );
-        git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(0));
-        });
     }
 
     #[gpui::test]
