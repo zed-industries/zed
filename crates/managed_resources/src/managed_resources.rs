@@ -318,10 +318,10 @@ impl ManagedResourceStore {
             let value = entry.value.clone();
             let pending = cx
                 .spawn({
-                    let id = id.clone();
-                    let bill = bill.clone();
-                    let context = context.clone();
-                    let key = key.clone();
+                    let id = id;
+                    let bill = bill;
+                    let context = context;
+                    let key = key;
                     async move |this, cx| {
                         let result = async {
                             if let Some(value) = value {
