@@ -1033,15 +1033,27 @@ pub struct DocumentColor {
     pub color_presentations: Vec<ColorPresentation>,
 }
 
+/// The bits of `value` with the sign of zero normalised away.
+///
+/// `PartialEq` for `f32` treats `0.0` and `-0.0` as equal, so a hash built on
+/// `to_bits` has to collapse them as well or equal keys land in different buckets.
+fn canonical_float_bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0.0f32.to_bits()
+    } else {
+        value.to_bits()
+    }
+}
+
 impl Eq for DocumentColor {}
 
 impl std::hash::Hash for DocumentColor {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.lsp_range.hash(state);
-        self.color.red.to_bits().hash(state);
-        self.color.green.to_bits().hash(state);
-        self.color.blue.to_bits().hash(state);
-        self.color.alpha.to_bits().hash(state);
+        canonical_float_bits(self.color.red).hash(state);
+        canonical_float_bits(self.color.green).hash(state);
+        canonical_float_bits(self.color.blue).hash(state);
+        canonical_float_bits(self.color.alpha).hash(state);
         self.resolved.hash(state);
         self.color_presentations.hash(state);
     }
@@ -7459,4 +7471,33 @@ fn provide_inline_values(
     }
 
     variables
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn document_color_hash_agrees_with_equality_on_signed_zero() {
+        let color = DocumentColor {
+            lsp_range: lsp::Range::default(),
+            color: lsp::Color {
+                red: 0.0,
+                green: 0.0,
+                blue: 0.0,
+                alpha: 0.0,
+            },
+            resolved: false,
+            color_presentations: Vec::new(),
+        };
+        let mut negated = color.clone();
+        negated.color.red = -0.0;
+        assert_eq!(color, negated);
+
+        let mut colors = HashSet::new();
+        colors.insert(color);
+        assert!(colors.contains(&negated));
+    }
 }
