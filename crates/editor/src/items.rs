@@ -17,6 +17,7 @@ use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
+use itertools::Itertools as _;
 use language::{
     Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT,
     Point, SelectionGoal,
@@ -1787,7 +1788,25 @@ impl SearchableItem for Editor {
         }
 
         if let Some(range) = enabled {
-            let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
+            let ranges = if self.selections.line_mode() {
+                let snapshot = self.display_snapshot(cx);
+                let buffer = snapshot.buffer_snapshot();
+                self.selections
+                    .all_adjusted(&snapshot)
+                    .into_iter()
+                    .map(|selection| selection.range())
+                    .coalesce(|previous, next| {
+                        if next.start <= previous.end {
+                            Ok(previous.start..previous.end.max(next.end))
+                        } else {
+                            Err((previous, next))
+                        }
+                    })
+                    .map(|line| buffer.anchor_before(line.start)..buffer.anchor_after(line.end))
+                    .collect::<Vec<_>>()
+            } else {
+                self.selections.disjoint_anchor_ranges().collect::<Vec<_>>()
+            };
 
             if ranges.iter().any(|s| s.start != s.end) {
                 self.set_search_within_ranges(&ranges, cx);
