@@ -1,65 +1,25 @@
+mod helix_test_context;
+
+use std::time::Duration;
+
 use editor::test::editor_test_context::EditorTestContext;
-use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _};
-use gpui::{ClipboardItem, KeyBinding, KeyContext, TestAppContext, UpdateGlobal as _};
+use gpui::{ClipboardItem, KeyBinding, TestAppContext, UpdateGlobal as _};
 use indoc::indoc;
 use modal_editor::ModeIndicatorSource as _;
-use settings::{HELIX_KEYMAP_PATH, KeybindSource, KeymapFile, SettingsStore, UseSystemClipboard};
-use vim_mode_setting::HelixNextFeatureFlag;
+use settings::{SettingsStore, UseSystemClipboard};
 
-use crate::{
-    DEFAULT_REGISTER, HelixAddon, HelixRegisters, Mode,
-    mode::{InsertMode, NormalMode, SelectMode},
+use crate::{DEFAULT_REGISTER, HelixAddon, HelixRegisters, Mode};
+use helix_test_context::{
+    HelixTestContext, LineFeedHandling, init_test, set_helix_mode, set_helix_next_flag,
 };
-
-fn init_test(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        let settings = SettingsStore::test(cx);
-        cx.set_global(settings);
-        theme_settings::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init(semver::Version::new(0, 0, 0), cx);
-        editor::init(cx);
-        crate::init(cx);
-        let mut bindings =
-            KeymapFile::load_asset(HELIX_KEYMAP_PATH, Some(KeybindSource::Helix), cx)
-                .expect("helix keymap should load");
-        for binding in &mut bindings {
-            binding.set_meta(KeybindSource::Helix.meta());
-        }
-        cx.bind_keys(bindings);
-    });
-}
-
-fn set_helix_mode(enabled: bool, cx: &mut EditorTestContext) {
-    cx.update(|_, cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| settings.helix_mode = Some(enabled));
-        });
-    });
-}
-
-fn set_helix_next_flag(enabled: bool, cx: &mut EditorTestContext) {
-    cx.update(|_, cx| {
-        let flags = if enabled {
-            vec![HelixNextFeatureFlag::NAME.to_string()]
-        } else {
-            Vec::new()
-        };
-        cx.update_flags(false, flags);
-    });
-}
-
-fn has_helix_addon(cx: &mut EditorTestContext) -> bool {
-    cx.editor(|editor, _, _| editor.addon::<HelixAddon>().is_some())
-}
-
-fn key_context_has_helix(cx: &mut EditorTestContext) -> bool {
-    cx.update_editor(|editor, window, cx| editor.key_context(window, cx).contains("Helix"))
-}
 
 #[gpui::test]
 async fn test_addon_follows_setting_and_flag(cx: &mut TestAppContext) {
     init_test(cx);
     let mut cx = EditorTestContext::new(cx).await;
+    let has_helix_addon = |cx: &mut EditorTestContext| {
+        cx.editor(|editor, _, _| editor.addon::<HelixAddon>().is_some())
+    };
     assert!(!has_helix_addon(&mut cx));
 
     set_helix_mode(true, &mut cx);
@@ -67,7 +27,6 @@ async fn test_addon_follows_setting_and_flag(cx: &mut TestAppContext) {
 
     set_helix_next_flag(true, &mut cx);
     assert!(has_helix_addon(&mut cx));
-    assert!(key_context_has_helix(&mut cx));
 
     set_helix_mode(false, &mut cx);
     assert!(!has_helix_addon(&mut cx));
@@ -79,89 +38,298 @@ async fn test_addon_follows_setting_and_flag(cx: &mut TestAppContext) {
     assert!(!has_helix_addon(&mut cx));
 }
 
-async fn helix_editor(cx: &mut TestAppContext) -> EditorTestContext {
-    init_test(cx);
-    let mut cx = EditorTestContext::new(cx).await;
-    set_helix_mode(true, &mut cx);
-    set_helix_next_flag(true, &mut cx);
-    cx
+#[gpui::test]
+async fn test_key_contexts(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    let key_context = |cx: &mut HelixTestContext| {
+        let context = cx.update_editor(|editor, window, cx| editor.key_context(window, cx));
+        (
+            context.contains("Helix"),
+            context.get("helix_mode").map(|mode| mode.to_string()),
+            context.contains("helix_count"),
+            context
+                .get("helix_pending")
+                .map(|pending| pending.to_string()),
+        )
+    };
+    cx.set_state("#[a|]#bc");
+    assert_eq!(
+        key_context(&mut cx),
+        (true, Some("normal".into()), false, None)
+    );
+
+    cx.simulate_keys("2");
+    assert_eq!(
+        key_context(&mut cx),
+        (true, Some("normal".into()), true, None)
+    );
+
+    cx.simulate_keys("v");
+    assert_eq!(
+        key_context(&mut cx),
+        (true, Some("select".into()), false, None)
+    );
+
+    // Keys after `"` must reach the editor as text, not as commands.
+    cx.simulate_keys("\"");
+    assert_eq!(
+        key_context(&mut cx),
+        (false, Some("select".into()), false, Some("register".into()))
+    );
+
+    cx.simulate_keys("ai");
+    assert_eq!(
+        key_context(&mut cx),
+        (false, Some("insert".into()), false, None)
+    );
 }
 
-fn mode(cx: &mut EditorTestContext) -> Option<Mode> {
-    cx.editor(|editor, _, cx| {
-        editor
-            .addon::<HelixAddon>()
-            .map(|addon| addon.entity.read(cx).mode)
-    })
+// Ported from `insert_mode_cursor_position` in `helix-term/tests/test/movement.rs`.
+#[gpui::test]
+async fn test_insert_mode_cursor_position(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.test(("#[|]#", "i", "#[|]#", LineFeedHandling::AsIs));
+
+    cx.test(("#[\n|]#", "i", "#[|\n]#"));
+    cx.test(("#[\n|]#", "i<esc>", "#[|\n]#"));
+    cx.test(("#[\n|]#", "i<esc>i", "#[|\n]#"));
 }
 
-fn key_context(cx: &mut EditorTestContext) -> KeyContext {
-    cx.update_editor(|editor, window, cx| editor.key_context(window, cx))
+// Ported from `insert_to_normal_mode_cursor_position` in
+// `helix-term/tests/test/movement.rs`, except the cases that need `<A-;>`.
+#[gpui::test]
+async fn test_insert_to_normal_mode_cursor_position(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.test((
+        indoc! {"\
+            #[f|]#oo
+            #(b|)#ar"
+        },
+        "a",
+        indoc! {"\
+            #[fo|]#o
+            #(ba|)#r"
+        },
+    ));
+
+    cx.test((
+        indoc! {"\
+            #[f|]#oo
+            #(b|)#ar"
+        },
+        "a<esc>",
+        indoc! {"\
+            #[f|]#oo
+            #(b|)#ar"
+        },
+    ));
+}
+
+// Ported from `cursor_position_append_eof` in `helix-term/tests/test/movement.rs`.
+#[gpui::test]
+async fn test_cursor_position_append_eof(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    // Selection is forwards
+    cx.test(("#[foo|]#", "abar<esc>", "#[foobar|]#\n"));
+
+    // Selection is backwards
+    cx.test(("#[|foo]#", "abar<esc>", "#[foobar|]#\n"));
+
+    // Zed buffers may lack the final line ending, which `a` adds like Helix.
+    cx.test((
+        "#[foo|]#",
+        "abar<esc>",
+        "#[foobar|]#\n",
+        LineFeedHandling::AsIs,
+    ));
+}
+
+#[gpui::test]
+async fn test_insert_and_append(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.test(("#[abc|]# def", "ixy<esc>", "xy#[|abc]# def"));
+    cx.test(("#[abc|]# def", "axy<esc>", "#[abcxy|]# def"));
+    cx.test(("#[|abc]# def", "axy<esc>", "#[abcxy|]# def"));
+    cx.test(("#[a|]#b #(c|)#d", "ix<esc>", "x#[|a]#b x#(|c)#d"));
+    cx.test(("#[a|]#b #(c|)#d", "ax<esc>", "#[ax|]#b #(cx|)#d"));
+}
+
+#[gpui::test]
+async fn test_insert_session_is_one_undo_step(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("#[a|]#bc");
+    cx.simulate_keys("ione");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.simulate_keys(" two<esc>");
+    cx.assert_state("one two#[|a]#bc");
+
+    cx.dispatch_action(editor::actions::Undo);
+    assert_eq!(cx.buffer_text(), "abc");
+}
+
+// Ported from `test_vertical_move` in `helix-core/src/movement.rs`.
+#[gpui::test]
+async fn test_vertical_move(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("abcd#[|\n]#efg\nwrs");
+    cx.simulate_keys("j");
+    assert_eq!(cx.cursor_coordinates(), (1, 3));
+}
+
+const SINGLE_LINE_SAMPLE: &str = "This is a simple alphabetic line";
+const MULTILINE_SAMPLE: &str = "\
+    Multiline\n\
+    text sample\n\
+    which\n\
+    is merely alphabetic\n\
+    and whitespaced\n\
+";
+
+// Ported from `horizontal_moves_through_single_line_text` in
+// `helix-core/src/movement.rs`, except moves by zero, which can't be typed.
+#[gpui::test]
+async fn test_horizontal_moves_through_single_line_text(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state(&format!("#[|]#{SINGLE_LINE_SAMPLE}"));
+    for (keys, coordinates) in [
+        ("l", (0, 1)),
+        ("2l", (0, 3)),
+        ("999l", (0, 32)),
+        ("999l", (0, 32)),
+        ("999h", (0, 0)),
+    ] {
+        cx.simulate_keys(keys);
+        assert_eq!(cx.cursor_coordinates(), coordinates, "after {keys}");
+    }
+}
+
+// Ported from `horizontal_moves_through_multiline_text` in
+// `helix-core/src/movement.rs`, except moves by zero, which can't be typed.
+#[gpui::test]
+async fn test_horizontal_moves_through_multiline_text(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state(&format!("#[|]#{MULTILINE_SAMPLE}"));
+    for (keys, coordinates) in [
+        ("11l", (1, 1)),
+        ("h", (1, 0)),
+        ("5h", (0, 5)),
+        ("999h", (0, 0)),
+        ("3l", (0, 3)),
+        ("999l", (5, 0)),
+        ("999l", (5, 0)),
+    ] {
+        cx.simulate_keys(keys);
+        assert_eq!(cx.cursor_coordinates(), coordinates, "after {keys}");
+    }
+}
+
+// Ported from `selection_extending_moves_in_single_line_text` in
+// `helix-core/src/movement.rs`.
+#[gpui::test]
+async fn test_selection_extending_moves_in_single_line_text(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state(&format!("#[|]#{SINGLE_LINE_SAMPLE}"));
+    cx.simulate_keys("vl");
+    cx.assert_state("#[Th|]#is is a simple alphabetic line");
+    cx.simulate_keys("5l");
+    cx.assert_state("#[This is|]# a simple alphabetic line");
+    cx.simulate_keys("3h");
+    cx.assert_state("#[This|]# is a simple alphabetic line");
+}
+
+// Ported from `vertical_moves_in_single_column` in
+// `helix-core/src/movement.rs`, except moves by zero, which can't be typed.
+#[gpui::test]
+async fn test_vertical_moves_in_single_column(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state(&format!("#[|]#{MULTILINE_SAMPLE}"));
+    for (keys, coordinates) in [
+        ("j", (1, 0)),
+        ("2j", (3, 0)),
+        ("j", (4, 0)),
+        ("999k", (0, 0)),
+        ("4j", (4, 0)),
+        ("5j", (5, 0)),
+        ("999j", (5, 0)),
+    ] {
+        cx.simulate_keys(keys);
+        assert_eq!(cx.cursor_coordinates(), coordinates, "after {keys}");
+    }
+}
+
+// Ported from `vertical_moves_jumping_column` in `helix-core/src/movement.rs`.
+#[gpui::test]
+async fn test_vertical_moves_jumping_column(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state(&format!("#[|]#{MULTILINE_SAMPLE}"));
+    for (keys, coordinates) in [
+        // Places cursor at the end of line
+        ("8l", (0, 8)),
+        // First descent preserves column as the target line is wider
+        ("j", (1, 8)),
+        // Second descent clamps column as the target line is shorter
+        ("j", (2, 5)),
+        // Third descent restores the original column
+        ("j", (3, 8)),
+        // Behaviour is preserved even through long jumps
+        ("999k", (0, 8)),
+        ("4j", (4, 8)),
+        ("999j", (5, 0)),
+    ] {
+        cx.simulate_keys(keys);
+        assert_eq!(cx.cursor_coordinates(), coordinates, "after {keys}");
+    }
+}
+
+#[gpui::test]
+async fn test_select_mode(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.test(("#[a|]#bc\ndef", "vlj", "#[abc\nde|]#f"));
+    cx.test(("ab#[c|]#\ndef", "vhh", "#[|abc]#\ndef"));
+    cx.test(("a#[b|]#c\ndef", "vjk<esc>", "a#[b|]#c\ndef"));
+    cx.test(("a#[b|]#c", "vlvl", "abc#[\n|]#"));
+
+    // At the end of the buffer, select mode selects the last character.
+    cx.test(("foo\n#[|]#", "v", "foo#[\n|]#", LineFeedHandling::AsIs));
+
+    // Like Helix, extending doesn't reach the empty line after the last
+    // line ending, while moving does.
+    cx.test(("#[f|]#oo\n", "vj", "#[f|]#oo\n", LineFeedHandling::AsIs));
+    cx.test(("#[f|]#oo\n", "j", "foo\n#[|]#", LineFeedHandling::AsIs));
 }
 
 #[gpui::test]
 async fn test_mode_switching(cx: &mut TestAppContext) {
-    let mut cx = helix_editor(cx).await;
-    cx.set_state("ˇabc");
-    assert_eq!(mode(&mut cx), Some(Mode::Normal));
-    cx.assert_editor_state("«aˇ»bc");
-    let context = key_context(&mut cx);
-    assert!(context.contains("Helix"));
-    assert_eq!(
-        context.get("helix_mode").map(|mode| mode.as_ref()),
-        Some("normal")
-    );
-
-    cx.dispatch_action(SelectMode);
-    assert_eq!(mode(&mut cx), Some(Mode::Select));
-    assert_eq!(
-        key_context(&mut cx)
-            .get("helix_mode")
-            .map(|mode| mode.as_ref()),
-        Some("select")
-    );
-
-    cx.dispatch_action(NormalMode);
-    assert_eq!(mode(&mut cx), Some(Mode::Normal));
-
-    cx.dispatch_action(InsertMode);
-    assert_eq!(mode(&mut cx), Some(Mode::Insert));
-    let context = key_context(&mut cx);
-    assert!(!context.contains("Helix"));
-    assert_eq!(
-        context.get("helix_mode").map(|mode| mode.as_ref()),
-        Some("insert")
-    );
-    cx.assert_editor_state("ˇabc");
-
-    cx.dispatch_action(NormalMode);
-    assert_eq!(mode(&mut cx), Some(Mode::Normal));
-    cx.assert_editor_state("«ˇa»bc");
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("#[a|]#bc");
+    assert_eq!(cx.mode(), Mode::Normal);
+    cx.simulate_keys("v");
+    assert_eq!(cx.mode(), Mode::Select);
+    cx.simulate_keys("v");
+    assert_eq!(cx.mode(), Mode::Normal);
+    cx.simulate_keys("v<esc>");
+    assert_eq!(cx.mode(), Mode::Normal);
+    cx.simulate_keys("i");
+    assert_eq!(cx.mode(), Mode::Insert);
+    cx.simulate_keys("<esc>");
+    assert_eq!(cx.mode(), Mode::Normal);
+    cx.simulate_keys("<esc>");
+    assert_eq!(cx.mode(), Mode::Normal);
+    cx.simulate_keys("va");
+    assert_eq!(cx.mode(), Mode::Insert);
 }
 
 #[gpui::test]
-async fn test_keymap(cx: &mut TestAppContext) {
-    let mut cx = helix_editor(cx).await;
-    cx.set_state(indoc! {"
-        ˇabc
-        def"});
-    cx.simulate_keystrokes("l j");
-    cx.assert_editor_state(indoc! {"
-        abc
-        d«eˇ»f"});
-
-    cx.simulate_keystrokes("v h k");
-    assert_eq!(mode(&mut cx), Some(Mode::Select));
-    cx.assert_editor_state(indoc! {"
-        «ˇabc
-        de»f"});
-
-    cx.simulate_keystrokes("escape");
-    assert_eq!(mode(&mut cx), Some(Mode::Normal));
-    cx.simulate_keystrokes("a x escape");
-    cx.assert_editor_state(indoc! {"
-        «abc
-        dexˇ»f"});
+async fn test_empty_selections_are_widened(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("#[a|]#bc");
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([editor::MultiBufferOffset(1)..editor::MultiBufferOffset(1)])
+        });
+    });
+    cx.run_until_parked();
+    cx.assert_state("a#[b|]#c");
 }
 
 fn lines(count: usize) -> String {
@@ -171,39 +339,30 @@ fn lines(count: usize) -> String {
         .join("\n")
 }
 
-fn cursor_row(cx: &mut EditorTestContext) -> u32 {
-    cx.update_editor(|editor, _, cx| {
-        let display_map = editor.display_snapshot(cx);
-        editor
-            .selections
-            .newest::<text::Point>(&display_map)
-            .head()
-            .row
-    })
-}
-
 #[gpui::test]
 async fn test_count(cx: &mut TestAppContext) {
-    let mut cx = helix_editor(cx).await;
-    cx.set_state(&format!("ˇ{}", lines(20)));
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state(&format!("#[|]#{}", lines(20)));
 
-    cx.simulate_keystrokes("3 j");
-    assert_eq!(cursor_row(&mut cx), 3);
+    cx.simulate_keys("3j");
+    assert_eq!(cx.cursor_coordinates(), (3, 0));
 
-    cx.simulate_keystrokes("1 0 j");
-    assert_eq!(cursor_row(&mut cx), 13);
+    cx.simulate_keys("10j");
+    assert_eq!(cx.cursor_coordinates(), (13, 0));
 
-    cx.simulate_keystrokes("1 0 k");
-    assert_eq!(cursor_row(&mut cx), 3);
+    cx.simulate_keys("10k");
+    assert_eq!(cx.cursor_coordinates(), (3, 0));
 
     // A zero without a count before it is not a count.
-    cx.simulate_keystrokes("0 j");
-    assert_eq!(cursor_row(&mut cx), 4);
+    cx.simulate_keys("0j");
+    assert_eq!(cx.cursor_coordinates(), (4, 0));
 }
 
+// The vim-based Helix mode kept the count through `editor::` commands, so
+// `10` `ctrl-s` `j` moved ten lines.
 #[gpui::test]
 async fn test_count_is_reset_by_other_commands(cx: &mut TestAppContext) {
-    let mut cx = helix_editor(cx).await;
+    let mut cx = HelixTestContext::new(cx).await;
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "ctrl-y",
@@ -211,66 +370,55 @@ async fn test_count_is_reset_by_other_commands(cx: &mut TestAppContext) {
             Some("Editor"),
         )])
     });
-    cx.set_state(&format!("ˇ{}", lines(20)));
+    cx.set_state(&format!("#[|]#{}", lines(20)));
 
-    cx.simulate_keystrokes("1 0 ctrl-y j");
-    assert_eq!(cursor_row(&mut cx), 1);
+    cx.simulate_keys("10<C-y>j");
+    assert_eq!(cx.cursor_coordinates(), (1, 0));
 
     // An unbound key is a command that does nothing, like in Helix.
-    cx.simulate_keystrokes("3 x j");
-    assert_eq!(cursor_row(&mut cx), 2);
+    cx.simulate_keys("3xj");
+    assert_eq!(cx.cursor_coordinates(), (2, 0));
 
-    cx.simulate_keystrokes("3 v j");
-    assert_eq!(cursor_row(&mut cx), 3);
+    cx.simulate_keys("3vj");
+    assert_eq!(cx.cursor_coordinates(), (3, 0));
 }
 
-fn selected_register(cx: &mut EditorTestContext) -> Option<char> {
-    cx.editor(|editor, _, cx| {
-        editor
-            .addon::<HelixAddon>()
-            .and_then(|addon| addon.entity.read(cx).selected_register)
-    })
+fn selected_register(cx: &mut HelixTestContext) -> Option<char> {
+    let helix = cx.helix();
+    cx.read(|cx| helix.read(cx).selected_register)
 }
 
 #[gpui::test]
 async fn test_select_register(cx: &mut TestAppContext) {
-    let mut cx = helix_editor(cx).await;
-    cx.set_state(&format!("ˇ{}", lines(5)));
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state(&format!("#[|]#{}", lines(5)));
 
-    cx.simulate_keystrokes("\"");
-    let context = key_context(&mut cx);
-    assert!(!context.contains("Helix"), "keys must arrive as text");
-    assert_eq!(
-        context.get("helix_pending").map(|pending| pending.as_ref()),
-        Some("register")
-    );
-    cx.simulate_keystrokes("j");
+    cx.simulate_keys("\"j");
     assert_eq!(selected_register(&mut cx), Some('j'));
-    assert_eq!(cursor_row(&mut cx), 0);
-    assert!(key_context(&mut cx).contains("Helix"));
+    assert_eq!(cx.cursor_coordinates(), (0, 0));
 
     // The register applies to the next command only.
-    cx.simulate_keystrokes("j");
+    cx.simulate_keys("j");
     assert_eq!(selected_register(&mut cx), None);
-    assert_eq!(cursor_row(&mut cx), 1);
+    assert_eq!(cx.cursor_coordinates(), (1, 0));
 
     // Digits after the register keep it, like in Helix.
-    cx.simulate_keystrokes("\" a 2");
+    cx.simulate_keys("\"a2");
     assert_eq!(selected_register(&mut cx), Some('a'));
-    cx.simulate_keystrokes("j");
-    assert_eq!(cursor_row(&mut cx), 3);
+    cx.simulate_keys("j");
+    assert_eq!(cx.cursor_coordinates(), (3, 0));
     assert_eq!(selected_register(&mut cx), None);
 
     // Selecting a register drops the count, like in Helix.
-    cx.simulate_keystrokes("2 \" a j");
-    assert_eq!(cursor_row(&mut cx), 4);
+    cx.simulate_keys("2\"aj");
+    assert_eq!(cx.cursor_coordinates(), (4, 0));
 
-    cx.simulate_keystrokes("\" escape");
+    cx.simulate_keys("\"<esc>");
     assert_eq!(selected_register(&mut cx), None);
-    assert!(key_context(&mut cx).contains("Helix"));
+    assert_eq!(cx.mode(), Mode::Normal);
 }
 
-fn set_use_system_clipboard(value: UseSystemClipboard, cx: &mut EditorTestContext) {
+fn set_use_system_clipboard(value: UseSystemClipboard, cx: &mut HelixTestContext) {
     cx.update(|_, cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
@@ -280,11 +428,11 @@ fn set_use_system_clipboard(value: UseSystemClipboard, cx: &mut EditorTestContex
     });
 }
 
-fn read_register(name: char, cx: &mut EditorTestContext) -> Option<Vec<String>> {
+fn read_register(name: char, cx: &mut HelixTestContext) -> Option<Vec<String>> {
     cx.editor(|editor, _, cx| HelixRegisters::read(name, editor, cx))
 }
 
-fn write_register(name: char, values: &[&str], is_yank: bool, cx: &mut EditorTestContext) {
+fn write_register(name: char, values: &[&str], is_yank: bool, cx: &mut HelixTestContext) {
     cx.update(|_, cx| {
         HelixRegisters::write(
             name,
@@ -296,14 +444,14 @@ fn write_register(name: char, values: &[&str], is_yank: bool, cx: &mut EditorTes
     .expect("register should be writable");
 }
 
-fn clipboard_text(cx: &mut EditorTestContext) -> Option<String> {
+fn clipboard_text(cx: &mut HelixTestContext) -> Option<String> {
     cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
 }
 
 #[gpui::test]
 async fn test_registers(cx: &mut TestAppContext) {
-    let mut cx = helix_editor(cx).await;
-    cx.set_state("«oneˇ» «twoˇ» three");
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("#[one|]# #(two|)# three");
 
     write_register('a', &["first", "second"], true, &mut cx);
     assert_eq!(
@@ -339,8 +487,8 @@ async fn test_registers(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_default_register_follows_use_system_clipboard(cx: &mut TestAppContext) {
-    let mut cx = helix_editor(cx).await;
-    let set_clipboard = |text: &str, cx: &mut EditorTestContext| {
+    let mut cx = HelixTestContext::new(cx).await;
+    let set_clipboard = |text: &str, cx: &mut HelixTestContext| {
         cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.to_string())))
     };
 
@@ -378,32 +526,28 @@ async fn test_default_register_follows_use_system_clipboard(cx: &mut TestAppCont
     );
 }
 
-fn mode_status(cx: &mut EditorTestContext) -> (String, String) {
-    cx.editor(|editor, _, cx| {
-        let helix = editor
-            .addon::<HelixAddon>()
-            .map(|addon| addon.entity.clone())
-            .expect("helix should be active");
-        let status = helix.read(cx).mode_status(cx);
-        (status.mode, status.pending)
-    })
-}
-
 #[gpui::test]
 async fn test_mode_status(cx: &mut TestAppContext) {
-    let mut cx = helix_editor(cx).await;
-    cx.set_state(&format!("ˇ{}", lines(5)));
+    let mut cx = HelixTestContext::new(cx).await;
+    let mode_status = |cx: &mut HelixTestContext| {
+        let helix = cx.helix();
+        cx.read(|cx| {
+            let status = helix.read(cx).mode_status(cx);
+            (status.mode, status.pending)
+        })
+    };
+    cx.set_state(&format!("#[|]#{}", lines(5)));
     assert_eq!(mode_status(&mut cx), ("NORMAL".into(), "".into()));
 
-    cx.simulate_keystrokes("\"");
+    cx.simulate_keys("\"");
     assert_eq!(mode_status(&mut cx), ("NORMAL".into(), "\"".into()));
-    cx.simulate_keystrokes("a 1 2");
+    cx.simulate_keys("a12");
     assert_eq!(mode_status(&mut cx), ("NORMAL".into(), "\"a12".into()));
-    cx.simulate_keystrokes("j");
+    cx.simulate_keys("j");
     assert_eq!(mode_status(&mut cx), ("NORMAL".into(), "".into()));
 
-    cx.simulate_keystrokes("v");
+    cx.simulate_keys("v");
     assert_eq!(mode_status(&mut cx).0, "SELECT");
-    cx.simulate_keystrokes("i");
+    cx.simulate_keys("i");
     assert_eq!(mode_status(&mut cx).0, "INSERT");
 }

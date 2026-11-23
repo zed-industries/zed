@@ -169,3 +169,42 @@ impl Helix {
         self.switch_mode(Mode::Normal, window, cx);
     }
 }
+
+#[cfg(test)]
+impl Helix {
+    /// The selections Helix would show during insert mode, where Zed only
+    /// has cursors: the text typed so far belongs to them.
+    pub(crate) fn insert_mode_ranges(
+        &self,
+        editor: &Editor,
+        cx: &gpui::App,
+    ) -> Option<Vec<HelixRange>> {
+        let session = self.insert_session.as_ref()?;
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let cursors = editor
+            .selections
+            .disjoint_anchors_arc()
+            .iter()
+            .map(|selection| selection.head().to_offset(&snapshot))
+            .collect::<Vec<_>>();
+        if cursors.len() != session.fixed_sides.len() {
+            return None;
+        }
+        Some(
+            cursors
+                .into_iter()
+                .zip(&session.fixed_sides)
+                .map(|(cursor, fixed_side)| {
+                    let fixed_side = fixed_side.to_offset(&snapshot);
+                    match session.kind {
+                        InsertKind::Insert => HelixRange::new(fixed_side, cursor),
+                        InsertKind::Append => HelixRange::new(
+                            fixed_side,
+                            crate::selection::next_grapheme_boundary(&snapshot, cursor),
+                        ),
+                    }
+                })
+                .collect(),
+        )
+    }
+}
