@@ -1,6 +1,6 @@
 use crate::{
-    AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
-    Style, Window, size,
+    AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, PathHash, Pixels,
+    Point, Size, Style, Window, size,
     util::{
         ceil_to_device_pixel, round_half_toward_zero, round_stroke_to_device_pixel,
         round_to_device_pixel,
@@ -44,7 +44,7 @@ pub struct TaffyLayoutEngine {
 
 /// Layout nodes requested by elements under one element ID path, in request order.
 ///
-/// Elements without IDs are told apart only by their order within the nearest ancestor
+/// Elements without IDs are distinguished only by their order within the nearest ancestor
 /// with one. Which node a request reuses only affects how much of Taffy's cache survives:
 /// a reused node's style, children and measure function are always brought up to date.
 #[derive(Default)]
@@ -65,7 +65,7 @@ struct CachedNode {
 
 #[derive(Default)]
 struct LayoutCache {
-    scopes: FxHashMap<u64, LayoutScope>,
+    scopes: FxHashMap<PathHash, LayoutScope>,
     nodes: SecondaryMap<DefaultKey, CachedNode>,
     /// Nodes no element requested last frame, detached from the tree. A request that
     /// misses reuses one before allocating, and those still unused at the end of this
@@ -120,7 +120,7 @@ impl TaffyLayoutEngine {
 
     pub fn request_layout(
         &mut self,
-        scope: u64,
+        scope: PathHash,
         style: &Style,
         rem_size: Pixels,
         scale_factor: f32,
@@ -131,7 +131,7 @@ impl TaffyLayoutEngine {
 
     pub fn request_measured_layout(
         &mut self,
-        scope: u64,
+        scope: PathHash,
         style: &Style,
         rem_size: Pixels,
         scale_factor: f32,
@@ -151,7 +151,7 @@ impl TaffyLayoutEngine {
 
     fn request_node(
         &mut self,
-        scope: u64,
+        scope: PathHash,
         style: &Style,
         rem_size: Pixels,
         scale_factor: f32,
