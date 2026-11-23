@@ -5859,7 +5859,7 @@ impl ThreadView {
             .partition(|(_, in_background)| *in_background);
         let has_in_turn = !in_turn.is_empty();
         if has_in_turn {
-            menu = menu.header("In This Turn");
+            menu = menu.header("Waiting for It");
             for (item, _) in in_turn {
                 menu = add_entry(menu, item);
             }
