@@ -569,7 +569,7 @@ pub fn parse_output_as_patch(
     output: &str,
     cursor_marker: &str,
 ) -> Result<String> {
-    let output = output.strip_suffix(V0615_END_MARKER).unwrap_or(output);
+    let output = output.trim_suffix(V0615_END_MARKER);
     if output.trim() == NO_EDITS {
         return Ok(String::new());
     }
@@ -614,7 +614,7 @@ fn pair_marker_spans(output: &str) -> Result<Vec<(String, String, String)>> {
         let (start_id, _, start_tag_end) = &tags[i];
         let (end_id, end_tag_start, _) = &tags[i + 1];
         let content = &output[*start_tag_end..*end_tag_start];
-        let content = content.strip_prefix('\n').unwrap_or(content);
+        let content = content.trim_prefix('\n');
         let content = multi_region::strip_marker_tags(content);
         spans.push((start_id.clone(), end_id.clone(), content));
         i += 2;
@@ -848,7 +848,7 @@ fn detect_trailing_deletion(old_span: &str, new_span: &str) -> Option<String> {
     }
     let deleted: Vec<&str> = lines[deletion_start..]
         .iter()
-        .map(|line| line.strip_prefix('-').unwrap_or(line))
+        .map(|line| line.trim_prefix('-'))
         .collect();
     if deleted.is_empty() {
         return None;

@@ -365,26 +365,18 @@ fn find_target(
 }
 
 fn is_numeric_string(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-
-    let (_, rest) = if let Some(r) = s.strip_prefix('-') {
-        (true, r)
-    } else {
-        (false, s)
-    };
+    let rest = s.trim_prefix('-');
 
     if rest.is_empty() {
         return false;
     }
 
     if let Some(digits) = rest.strip_prefix("0b").or_else(|| rest.strip_prefix("0B")) {
-        digits.is_empty() || digits.chars().all(|c| c == '0' || c == '1')
+        digits.chars().all(|c| c == '0' || c == '1')
     } else if let Some(digits) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
-        digits.is_empty() || digits.chars().all(|c| c.is_ascii_hexdigit())
+        digits.chars().all(|c| c.is_ascii_hexdigit())
     } else {
-        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit())
+        rest.chars().all(|c| c.is_ascii_digit())
     }
 }
 

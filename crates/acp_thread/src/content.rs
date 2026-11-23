@@ -235,8 +235,8 @@ fn annotations_to_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_client_protocol::schema::IndexMap;
     use serde_json::{Value, json};
-    use std::collections::BTreeMap;
 
     fn meta() -> serde_json::Map<String, Value> {
         serde_json::Map::from_iter([("origin".to_owned(), json!({"nested": [0, null, "value"]}))])
@@ -298,7 +298,7 @@ mod tests {
                 "visible text".into(),
                 acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
                     "_future",
-                    BTreeMap::from([("payload".into(), json!("private-payload"))]),
+                    IndexMap::from([("payload".into(), json!("private-payload"))]),
                 )),
             ],
         );
@@ -428,7 +428,7 @@ mod tests {
     fn rejects_v2_only_content_and_annotations() {
         rejects(acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
             "_custom",
-            BTreeMap::from([("payload".to_owned(), json!({"opaque": [1, 2]}))]),
+            IndexMap::from([("payload".to_owned(), json!({"opaque": [1, 2]}))]),
         )));
         rejects(acp_v2::ContentBlock::Image(
             acp_v2::ImageContent::new("AAE=", "image/png").annotations(

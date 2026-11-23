@@ -406,6 +406,7 @@ async fn predict_anthropic(
 
         let messages = vec![anthropic::Message {
             role: anthropic::Role::User,
+            output_config: None,
             content: vec![anthropic::RequestContent::Text {
                 text: prompt.input.clone(),
                 cache_control: None,

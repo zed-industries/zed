@@ -257,7 +257,7 @@ pub struct DomainPattern {
 impl DomainPattern {
     pub fn new(source: impl Into<String>) -> Result<Self> {
         let source = normalize_domain(&source.into());
-        let name = source.strip_prefix("*.").unwrap_or(&source);
+        let name = source.trim_prefix("*.");
         let valid_label = |label: &str| {
             !label.is_empty()
                 && label

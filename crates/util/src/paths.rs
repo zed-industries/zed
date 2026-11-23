@@ -102,8 +102,8 @@ impl<T: AsRef<Path>> PathExt for T {
     fn extension_or_hidden_file_name(&self) -> Option<&str> {
         let path = self.as_ref();
         let file_name = path.file_name()?.to_str()?;
-        if file_name.starts_with('.') {
-            return file_name.strip_prefix('.');
+        if let Some(hidden_file_name) = file_name.strip_prefix('.') {
+            return Some(hidden_file_name);
         }
 
         path.extension()
@@ -170,10 +170,6 @@ impl<T: AsRef<Path>> PathExt for T {
             .map(ToOwned::to_owned)
             .context("Failed to quote path")
     }
-}
-
-pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
-    strip_path_suffix(base, suffix).is_some()
 }
 
 /// Case-insensitive ASCII comparison of a path component to a literal
@@ -1208,18 +1204,6 @@ fn compare_strings_no_tiebreak(a: &str, b: &str, order: SortOrder) -> Ordering {
         SortOrder::Unicode => a.cmp(b),
         _ => natural_sort_no_tiebreak(a, b),
     }
-}
-
-pub fn compare_rel_paths(
-    (path_a, a_is_file): (&RelPath, bool),
-    (path_b, b_is_file): (&RelPath, bool),
-) -> Ordering {
-    compare_rel_paths_by(
-        (path_a, a_is_file),
-        (path_b, b_is_file),
-        SortMode::DirectoriesFirst,
-        SortOrder::Default,
-    )
 }
 
 pub fn compare_rel_paths_by(

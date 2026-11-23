@@ -12,7 +12,7 @@ workspace = true
 doctest = false
 
 [features]
-octo-client = ["dep:octocrab", "dep:jsonwebtoken", "dep:serde_json", "dep:tokio"]
+octo-client = ["dep:octocrab", "dep:jsonwebtoken", "dep:serde_json", "dep:tokio", "dep:rustls"]
 
 [dependencies]
 anyhow.workspace = true
@@ -31,6 +31,7 @@ octocrab = { workspace = true, features = [
     "timeout"
 ], optional = true }
 regex.workspace = true
+rustls = { workspace = true, optional = true }
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }

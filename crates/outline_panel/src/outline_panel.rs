@@ -1796,10 +1796,7 @@ impl OutlinePanel {
                 .first()
                 .is_some_and(|entry| entry.path.is_empty()),
             PanelEntry::Fs(FsEntry::ExternalFile(_)) => false,
-            PanelEntry::Outline(_) | PanelEntry::Search(_) => {
-                cx.notify();
-                return;
-            }
+            PanelEntry::Outline(_) | PanelEntry::Search(_) => return,
         };
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let is_foldable = auto_fold_dirs && !is_root && self.is_foldable(&entry);
@@ -5435,7 +5432,7 @@ impl OutlinePanel {
                 .child(list_contents.size_full().flex_shrink_1())
                 .custom_scrollbars(
                     Scrollbars::for_settings::<OutlinePanelSettingsScrollbarProxy>()
-                        .tracked_scroll_handle(&self.scroll_handle.clone())
+                        .tracked_scroll_handle(&self.scroll_handle)
                         .with_track_along(
                             ScrollAxes::Horizontal,
                             cx.theme().colors().panel_background,

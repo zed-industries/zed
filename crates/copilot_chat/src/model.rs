@@ -153,6 +153,8 @@ pub fn stream_completion(
                 } else {
                     AnthropicModelMode::Default
                 },
+                None,
+                false,
                 AnthropicPromptCacheMode::Legacy,
                 &PROVIDER_ID,
             )?;
@@ -918,7 +920,8 @@ fn into_copilot_chat(
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
                         | MessageContent::Image(_)
-                        | MessageContent::Compaction(_) => None,
+                        | MessageContent::Compaction(_)
+                        | MessageContent::ReasoningEffort { .. } => None,
                     }) {
                         buffer.push_str(string);
                     }

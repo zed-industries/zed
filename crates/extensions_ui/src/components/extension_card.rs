@@ -586,7 +586,7 @@ impl Component for ExtensionCard {
 
         div()
             .w_128()
-            .child(example_group(examples).vertical())
+            .child(example_group(examples))
             .into_any_element()
     }
 }

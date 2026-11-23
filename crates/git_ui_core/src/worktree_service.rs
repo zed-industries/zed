@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::anyhow;
@@ -41,7 +41,7 @@ pub struct RemoteBranchName {
 
 impl RemoteBranchName {
     pub fn parse(name: &str) -> Option<Self> {
-        let name = name.strip_prefix("refs/remotes/").unwrap_or(name);
+        let name = name.trim_prefix("refs/remotes/");
         let (remote_name, branch_name) = name.split_once('/')?;
         if remote_name.is_empty() || branch_name.is_empty() {
             return None;
@@ -1111,6 +1111,15 @@ async fn do_create_worktree(
     })
 }
 
+pub(crate) fn switch_worktree_paths(
+    worktree_path: &Path,
+    non_git_paths: &[PathBuf],
+) -> Vec<PathBuf> {
+    let mut all_paths = vec![worktree_path.to_path_buf()];
+    all_paths.extend(non_git_paths.iter().cloned());
+    all_paths
+}
+
 async fn do_switch_worktree(
     worktree_path: PathBuf,
     git_repo_work_dirs: Vec<PathBuf>,
@@ -1126,9 +1135,8 @@ async fn do_switch_worktree(
         .map(|work_dir| (work_dir.clone(), worktree_path.clone()))
         .collect();
 
-    let mut all_paths = vec![worktree_path];
+    let all_paths = switch_worktree_paths(&worktree_path, &non_git_paths);
     let has_non_git = !non_git_paths.is_empty();
-    all_paths.extend(non_git_paths.iter().cloned());
 
     open_worktree_workspace(
         all_paths,

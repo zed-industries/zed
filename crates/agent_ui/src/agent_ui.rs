@@ -89,7 +89,6 @@ pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
 };
-use zed_actions;
 pub use zed_actions::agent::CycleFavoriteModels;
 pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
@@ -312,14 +311,6 @@ actions!(
         CycleNextInlineAssist,
         /// Cycles to the previous inline assist suggestion.
         CyclePreviousInlineAssist,
-        /// Moves focus up in the interface.
-        FocusUp,
-        /// Moves focus down in the interface.
-        FocusDown,
-        /// Moves focus left in the interface.
-        FocusLeft,
-        /// Moves focus right in the interface.
-        FocusRight,
         /// Opens the active thread as a markdown file.
         OpenActiveThreadAsMarkdown,
         /// Opens the agent diff view to review changes.
@@ -379,6 +370,8 @@ actions!(
         ToggleThinkingEffortMenu,
         /// Toggles fast mode for models that support it.
         ToggleFastMode,
+        /// Switches between Fast and Ultrafast when faster responses are enabled.
+        CycleResponseSpeed,
         /// Scroll the output by one page up.
         ScrollOutputPageUp,
         /// Scroll the output by one page down.

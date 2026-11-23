@@ -175,7 +175,7 @@ fn patch_path(path: Option<&str>, prefix: &str) -> Result<Option<String>> {
     if path == "/dev/null" {
         return Ok(None);
     }
-    let path = path.strip_prefix(prefix).unwrap_or(path);
+    let path = path.trim_prefix(prefix);
     ensure!(
         !path.is_empty() && !path.split(['/', '\\']).any(|component| component == ".."),
         "empty patch path or parent traversal"

@@ -45,11 +45,6 @@ impl WebSearchRegistry {
         self.active_provider.clone()
     }
 
-    pub fn set_active_provider(&mut self, provider: Arc<dyn WebSearchProvider>) {
-        self.active_provider = Some(provider.clone());
-        self.providers.insert(provider.id(), provider);
-    }
-
     pub fn register_provider<T: WebSearchProvider + 'static>(
         &mut self,
         provider: T,
