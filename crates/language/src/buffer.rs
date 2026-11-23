@@ -6115,6 +6115,13 @@ impl CharClassifier {
         }
     }
 
+    /// Whether this classifier was scoped for completion queries, i.e. built via
+    /// `.scope_context(Some(CharScopeContext::Completion))`. Used to assert that a
+    /// classifier passed around for completion-query alignment is actually one.
+    pub fn is_completion_scoped(&self) -> bool {
+        self.scope_context == Some(CharScopeContext::Completion)
+    }
+
     pub fn ignore_punctuation(self, ignore_punctuation: bool) -> Self {
         Self {
             ignore_punctuation,

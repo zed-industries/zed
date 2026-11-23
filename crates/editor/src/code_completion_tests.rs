@@ -1,7 +1,7 @@
 use crate::code_context_menus::CompletionsMenu;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::TestAppContext;
-use language::CodeLabel;
+use language::{CharClassifier, CharScopeContext, CodeLabel};
 use lsp::{CompletionItem, CompletionItemKind, LanguageServerId};
 use project::{Completion, CompletionSource};
 use settings::SnippetSortOrder;
@@ -191,6 +191,17 @@ async fn test_sort_exact(cx: &mut TestAppContext) {
     let matches =
         filter_and_sort_matches("into", &completions, SnippetSortOrder::default(), cx).await;
     assert_eq!(matches[0].string, "into");
+}
+
+#[gpui::test]
+async fn test_sort_exact_with_dot_prefixed_filter_text(cx: &mut TestAppContext) {
+    let completions = vec![
+        CompletionBuilder::variable("abcd", Some(".abcd"), "0"),
+        CompletionBuilder::variable("abc", Some(".abc"), "1"),
+    ];
+    let matches =
+        filter_and_sort_matches("abc", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(matches[0].string, "abc");
 }
 
 #[gpui::test]
@@ -445,6 +456,69 @@ async fn test_sort_keeps_order_of_equal_keys(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_member_completion_order_with_dot_prefixed_filter_text(cx: &mut TestAppContext) {
+    // Regression test for #64472: without the alignment `Completion::match_candidate_text`
+    // performs, every candidate's fuzzy score collapses to the same value and sorting
+    // falls back to the language server's unfiltered `sort_text` order -- reproduced by
+    // the sort_text values below, which are deliberately assigned in that same wrong order.
+    //
+    // "abc"/"abcd" match right at their start; "xAbc"/"xyAbc" only match inside a
+    // later camelCase sub-word ("Abc"), same as e.g. "getUniform" matching "u".
+    let completions = vec![
+        CompletionBuilder::variable("xAbc", Some(".xAbc"), "0"),
+        CompletionBuilder::variable("xyAbc", Some(".xyAbc"), "1"),
+        CompletionBuilder::variable("abc", Some(".abc"), "2"),
+        CompletionBuilder::variable("abcd", Some(".abcd"), "3"),
+    ];
+
+    // Candidates are aligned to the query via `match_candidate_text`, so "abc" and
+    // "abcd" (which match right at their start) correctly outrank "xAbc" and
+    // "xyAbc" (which only match inside a later sub-word).
+    let matches = filter_and_sort_matches("a", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string.as_str())
+            .collect::<Vec<_>>(),
+        vec!["abc", "abcd", "xAbc", "xyAbc"]
+    );
+}
+
+#[test]
+fn test_match_candidate_text_trims_leading_non_word_prefix() {
+    let classifier = completion_scoped_classifier();
+    let completion = CompletionBuilder::variable("abc", Some(".abc"), "0");
+    assert_eq!(completion.match_candidate_text(&classifier), "abc");
+}
+
+#[test]
+fn test_match_candidate_text_unchanged_without_leading_prefix() {
+    let classifier = completion_scoped_classifier();
+    let completion = CompletionBuilder::variable("abc", None, "0");
+    assert_eq!(completion.match_candidate_text(&classifier), "abc");
+}
+
+#[test]
+fn test_match_candidate_text_keeps_all_punctuation_candidates_intact() {
+    // Trimming must not empty out a candidate that is entirely punctuation.
+    let classifier = completion_scoped_classifier();
+    let completion = CompletionBuilder::variable("->", Some("->"), "0");
+    assert_eq!(completion.match_candidate_text(&classifier), "->");
+}
+
+#[test]
+fn test_match_candidate_text_ignores_candidates_with_their_own_match_start() {
+    // Snippet-style completions compute their query from `match_start` directly
+    // against the buffer, not from `Editor::completion_query`, so their filter
+    // text should never be trimmed by the query's classifier.
+    let classifier = completion_scoped_classifier();
+    let mut completion = CompletionBuilder::variable("abc", Some(".abc"), "0");
+    completion.match_start =
+        Some(Anchor::min_max_range_for_buffer(BufferId::new(1).unwrap()).start);
+    assert_eq!(completion.match_candidate_text(&classifier), ".abc");
+}
+
 async fn test_for_each_prefix<F>(
     target: &str,
     completions: &Vec<Completion>,
@@ -459,6 +533,12 @@ async fn test_for_each_prefix<F>(
             filter_and_sort_matches(prefix, completions, SnippetSortOrder::default(), cx).await;
         test_fn(matches);
     }
+}
+
+/// A classifier scoped like the one `Editor::completion_query` builds, which is
+/// what `Completion::match_candidate_text` requires of its caller.
+fn completion_scoped_classifier() -> CharClassifier {
+    CharClassifier::default().scope_context(Some(CharScopeContext::Completion))
 }
 
 struct CompletionBuilder;
@@ -554,15 +634,21 @@ async fn filter_and_sort_matches(
     CompletionsMenu::sort_string_matches(matches, Some(query), snippet_sort_order, completions)
 }
 
+/// Builds match candidates via `Completion::match_candidate_text`, mirroring how
+/// `CompletionsMenu::new` aligns candidates to the query using the classifier at
+/// the cursor, so tests exercise the same alignment production relies on.
 async fn filter_matches(
     query: &str,
     completions: &Vec<Completion>,
     cx: &mut TestAppContext,
 ) -> Vec<StringMatch> {
+    let classifier = completion_scoped_classifier();
     let candidates: Arc<[StringMatchCandidate]> = completions
         .iter()
         .enumerate()
-        .map(|(id, completion)| StringMatchCandidate::new(id, completion.filter_text()))
+        .map(|(id, completion)| {
+            StringMatchCandidate::new(id, completion.match_candidate_text(&classifier))
+        })
         .collect();
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let background_executor = cx.executor();
