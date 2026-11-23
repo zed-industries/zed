@@ -4429,7 +4429,6 @@ impl MarkdownElementBuilder {
             line: rendered_line,
         }
         .into_any_element();
-        // For flex-wrapped containers, flushed text should wrap onto the next line
         if self.uses_flex_line_breaks() {
             self.append_child(div().min_w_0().child(child).into_any_element());
         } else {
