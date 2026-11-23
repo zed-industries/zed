@@ -1948,6 +1948,88 @@ async fn test_remote_completion_resolve_edit_ranges(
 }
 
 #[gpui::test]
+async fn test_remote_completion_context(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/code/project"), json!({ "lib.rs": "a." }))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let capabilities = lsp::ServerCapabilities {
+        completion_provider: Some(lsp::CompletionOptions {
+            trigger_characters: Some(vec![".".to_string()]),
+            ..lsp::CompletionOptions::default()
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+    project.update(cx, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+    let contexts = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut fake_servers = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName(SharedString::from("rust-analyzer")),
+            capabilities,
+            Some(Box::new({
+                let contexts = contexts.clone();
+                move |fake_server| {
+                    let contexts = contexts.clone();
+                    fake_server.set_request_handler::<lsp::request::Completion, _, _>(
+                        move |params, _| {
+                            contexts.lock().unwrap().push(params.context);
+                            async move { Ok(None) }
+                        },
+                    );
+                }
+            })),
+        )
+    });
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("worktree should open")
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("lib.rs")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    fake_servers.next().await.expect("LSP should start");
+    cx.run_until_parked();
+
+    let trigger_character = |character: &str| CompletionContext {
+        trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+        trigger_character: Some(character.to_string()),
+    };
+    for context in [trigger_character("."), trigger_character("!")] {
+        project
+            .update(cx, |project, cx| {
+                project.completions(&buffer, 2, context, cx)
+            })
+            .await
+            .expect("completions should load");
+    }
+    let invoked = CompletionContext {
+        trigger_kind: CompletionTriggerKind::INVOKED,
+        trigger_character: None,
+    };
+    assert_eq!(
+        *contexts.lock().unwrap(),
+        vec![Some(trigger_character(".")), Some(invoked)]
+    );
+}
+
+#[gpui::test]
 async fn test_remote_call_hierarchy(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(

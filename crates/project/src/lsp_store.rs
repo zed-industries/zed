@@ -10840,7 +10840,7 @@ impl LspStore {
         let buffer_handle = this.update(&mut cx, |this, cx| {
             this.buffer_store.read(cx).get_existing(buffer_id)
         })?;
-        let request = GetCompletions::from_proto(
+        let mut request = GetCompletions::from_proto(
             envelope.payload,
             this.clone(),
             buffer_handle.clone(),
@@ -10848,14 +10848,21 @@ impl LspStore {
         )
         .await?;
 
-        let server_to_query = match request.server_id {
-            Some(server_id) => LanguageServerToQuery::Other(server_id),
-            None => LanguageServerToQuery::FirstCapable,
-        };
-
         let response = this
-            .update(&mut cx, |this, cx| {
-                this.request_lsp(buffer_handle.clone(), server_to_query, request, cx)
+            .update(&mut cx, |lsp_store, cx| {
+                let server_to_query = match request.server_id {
+                    Some(server_id) => {
+                        request.context = lsp_store.completion_context_for_server(
+                            buffer_handle.read(cx),
+                            server_id,
+                            request.context.clone(),
+                            cx,
+                        );
+                        LanguageServerToQuery::Other(server_id)
+                    }
+                    None => LanguageServerToQuery::FirstCapable,
+                };
+                lsp_store.request_lsp(buffer_handle.clone(), server_to_query, request, cx)
             })
             .await?;
         this.update(&mut cx, |this, cx| {
