@@ -97,6 +97,9 @@ impl PendingInput {
 /// Attaches the Helix state to an editor.
 pub(crate) struct HelixAddon {
     pub(crate) entity: Entity<Helix>,
+    /// The editor's key context depends on the Helix state, and the window
+    /// only rebuilds it when the editor itself is notified.
+    _observe_state: Subscription,
 }
 
 impl editor::Addon for HelixAddon {
@@ -225,6 +228,7 @@ impl Helix {
         let helix = Helix::new(window, cx);
         editor.register_addon(HelixAddon {
             entity: helix.clone(),
+            _observe_state: cx.observe(&helix, |_, _, cx| cx.notify()),
         });
         helix.update(cx, |_, cx| {
             Self::action(editor, cx, |helix, &PushDigit(digit), _, cx| {

@@ -1,6 +1,6 @@
 mod helix_test_context;
 
-use std::time::Duration;
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use editor::test::editor_test_context::EditorTestContext;
 use gpui::{ClipboardItem, KeyBinding, TestAppContext, UpdateGlobal as _};
@@ -152,6 +152,21 @@ async fn test_insert_and_append(cx: &mut TestAppContext) {
     cx.test(("#[|abc]# def", "axy<esc>", "#[abcxy|]# def"));
     cx.test(("#[a|]#b #(c|)#d", "ix<esc>", "x#[|a]#b x#(|c)#d"));
     cx.test(("#[a|]#b #(c|)#d", "ax<esc>", "#[ax|]#b #(cx|)#d"));
+}
+
+// The key context depends on the count, and the window only rebuilds it when
+// the editor is notified, so a quickly typed `0` after a digit was unbound.
+#[gpui::test]
+async fn test_state_changes_notify_editor(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    let notified = Rc::new(Cell::new(false));
+    let _subscription = cx.update_editor({
+        let notified = notified.clone();
+        move |_, _, cx| cx.observe_self(move |_, _| notified.set(true))
+    });
+    let helix = cx.helix();
+    cx.update(|_, cx| helix.update(cx, |helix, cx| helix.push_digit(1, cx)));
+    assert!(notified.get());
 }
 
 #[gpui::test]
