@@ -285,17 +285,16 @@ impl LineDiff {
         let mut changed_len = 0;
         for hunk in diff.hunks() {
             if !hunk.before.is_empty() {
-                changed_len += old_line.content_len(hunk.before.clone());
+                changed_len += old_line.content_len(&hunk.before);
                 old_ranges.push(old_line.byte_range(hunk.before));
             }
             if !hunk.after.is_empty() {
-                changed_len += new_line.content_len(hunk.after.clone());
+                changed_len += new_line.content_len(&hunk.after);
                 new_ranges.push(new_line.byte_range(hunk.after));
             }
         }
 
-        let total_len = old_line.content_len(0..old_line.tokens.len() as u32)
-            + new_line.content_len(0..new_line.tokens.len() as u32);
+        let total_len = old_line.total_content_len() + new_line.total_content_len();
         let distance = changed_len as f32 / total_len.max(1) as f32;
         (distance <= MAX_LINE_DISTANCE).then_some(Self {
             distance,
@@ -308,8 +307,9 @@ impl LineDiff {
 struct TokenizedLine {
     tokens: Vec<Token>,
     offsets: Vec<usize>,
-    /// Non-whitespace byte counts up to each token boundary. Line distance ignores
-    /// whitespace, so shared indentation doesn't make unrelated lines look similar.
+    /// Non-whitespace byte counts from the line start up to each token boundary. Line
+    /// distance ignores whitespace, so shared indentation doesn't make unrelated lines
+    /// look similar.
     content_offsets: Vec<usize>,
 }
 
@@ -318,8 +318,12 @@ impl TokenizedLine {
         self.offsets[tokens.start as usize]..self.offsets[tokens.end as usize]
     }
 
-    fn content_len(&self, tokens: Range<u32>) -> usize {
+    fn content_len(&self, tokens: &Range<u32>) -> usize {
         self.content_offsets[tokens.end as usize] - self.content_offsets[tokens.start as usize]
+    }
+
+    fn total_content_len(&self) -> usize {
+        self.content_offsets.last().copied().unwrap_or(0)
     }
 }
 
@@ -328,21 +332,29 @@ fn tokenize_lines<'a>(
     language_scope: &Option<LanguageScope>,
     interner: &mut Interner<&'a str>,
 ) -> Vec<TokenizedLine> {
+    // Reused across lines so that each line's vectors are allocated once, at their final size.
+    let mut line_tokens = Vec::new();
     let mut offset = 0;
     text.split_inclusive('\n')
         .map(|line| {
             let text = line.trim_end_matches('\n');
-            let mut tokens = Vec::new();
-            let mut offsets = vec![offset];
-            let mut content_offsets = vec![0];
+            line_tokens.clear();
+            line_tokens.extend(tokenize(text, language_scope.clone()).flat_map(split_whitespace));
+            let tokens = line_tokens
+                .iter()
+                .map(|(token, _)| interner.intern(token))
+                .collect();
+            let mut offsets = Vec::with_capacity(line_tokens.len() + 1);
+            let mut content_offsets = Vec::with_capacity(line_tokens.len() + 1);
+            offsets.push(offset);
+            content_offsets.push(0);
             let mut content_offset = 0;
-            for token in tokenize(text, language_scope.clone()).flat_map(split_whitespace) {
-                tokens.push(interner.intern(token));
+            for (token, is_whitespace) in &line_tokens {
                 offset += token.len();
-                offsets.push(offset);
-                if !token.starts_with(char::is_whitespace) {
+                if !is_whitespace {
                     content_offset += token.len();
                 }
+                offsets.push(offset);
                 content_offsets.push(content_offset);
             }
             offset += line.len() - text.len();
@@ -356,10 +368,13 @@ fn tokenize_lines<'a>(
 }
 
 /// Splits a whitespace token into single characters, so re-indenting a line
-/// highlights only the added or removed whitespace, not the whole indent.
-fn split_whitespace(token: &str) -> impl Iterator<Item = &str> {
+/// highlights only the added or removed whitespace, not the whole indent. Returns
+/// each piece with whether it is whitespace.
+fn split_whitespace(token: &str) -> impl Iterator<Item = (&str, bool)> {
     let is_whitespace = token.starts_with(char::is_whitespace);
-    token.split_inclusive(move |_: char| is_whitespace)
+    token
+        .split_inclusive(move |_: char| is_whitespace)
+        .map(move |piece| (piece, is_whitespace))
 }
 
 /// Pairs old and new lines in order, minimizing the total cost where an
