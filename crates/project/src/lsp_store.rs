@@ -7944,6 +7944,7 @@ impl LspStore {
                 return Task::ready(Ok(Vec::new()));
             }
 
+            let requested_token = RequestedCompletionToken::new(position, &snapshot);
             let language = buffer.read(cx).language().cloned();
 
             let buffer = buffer.clone();
@@ -7999,7 +8000,11 @@ impl LspStore {
                         })
                         .collect::<Vec<_>>(),
                 );
-                Ok(requests.await.into_iter().flatten().collect::<Vec<_>>())
+                let mut responses = requests.await.into_iter().flatten().collect::<Vec<_>>();
+                buffer.read_with(cx, |buffer, _| {
+                    requested_token.retain_valid_completions(&mut responses, &buffer.snapshot())
+                });
+                Ok(responses)
             })
         } else if let Some(local) = self.as_local() {
             let snapshot = buffer.read(cx).snapshot();
@@ -8018,6 +8023,7 @@ impl LspStore {
                 context: context.clone(),
                 server_id: None,
             };
+            let requested_token = RequestedCompletionToken::new(position, &snapshot);
             let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
                 local
                     .language_servers_for_buffer(buffer, cx)
@@ -8108,7 +8114,11 @@ impl LspStore {
 
                 let responses: Vec<Option<CompletionResponse>> = join_all(futures).await;
 
-                Ok(responses.into_iter().flatten().collect())
+                let mut responses = responses.into_iter().flatten().collect::<Vec<_>>();
+                buffer.read_with(cx, |buffer, _| {
+                    requested_token.retain_valid_completions(&mut responses, &buffer.snapshot())
+                });
+                Ok(responses)
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))

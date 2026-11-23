@@ -1716,10 +1716,23 @@ async fn test_remote_completions_with_concurrent_edit(
                             params.text_document_position.position,
                             lsp::Position::new(0, 8)
                         );
-                        Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
-                            label: "boop".to_string(),
-                            ..lsp::CompletionItem::default()
-                        }])))
+                        Ok(Some(CompletionResponse::Array(vec![
+                            lsp::CompletionItem {
+                                label: "boop".to_string(),
+                                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(0, 8),
+                                        lsp::Position::new(0, 8),
+                                    ),
+                                    new_text: "boop".to_string(),
+                                })),
+                                ..lsp::CompletionItem::default()
+                            },
+                            lsp::CompletionItem {
+                                label: "stale".to_string(),
+                                ..lsp::CompletionItem::default()
+                            },
+                        ])))
                     },
                 );
             })),

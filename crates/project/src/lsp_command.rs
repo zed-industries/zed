@@ -1,8 +1,8 @@
 pub mod signature_help;
 
 use crate::{
-    CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentColor,
-    DocumentHighlight, DocumentSymbol, Hover, HoverBlock, HoverBlockKind, InlayHint,
+    CodeAction, CompletionResponse, CompletionSource, CoreCompletion, CoreCompletionResponse,
+    DocumentColor, DocumentHighlight, DocumentSymbol, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTextEdits,
     InlayHintTooltip, Location, LocationLink, LspAction, LspPullDiagnostics, MarkupContent,
     PrepareRenameResponse, ProjectPath, ProjectTransaction, PulledDiagnostics, ResolveState,
@@ -3157,6 +3157,92 @@ impl GetCompletions {
     }
 }
 
+pub(crate) struct RequestedCompletionToken {
+    position: Anchor,
+    version: Global,
+    prefix: Range<Anchor>,
+    separator: Anchor,
+}
+
+impl RequestedCompletionToken {
+    pub(crate) fn new(position: Anchor, snapshot: &BufferSnapshot) -> Self {
+        let offset = position.to_offset(snapshot);
+        let token_start = completion_token_range(snapshot, offset).start;
+        let prefix_end = snapshot.anchor_before(offset);
+        let prefix_start = if token_start < offset {
+            snapshot.anchor_after(token_start)
+        } else {
+            prefix_end
+        };
+        Self {
+            position,
+            version: snapshot.version().clone(),
+            prefix: prefix_start..prefix_end,
+            separator: snapshot.anchor_before(token_start),
+        }
+    }
+
+    pub(crate) fn retain_valid_completions(
+        &self,
+        responses: &mut [CompletionResponse],
+        snapshot: &BufferSnapshot,
+    ) {
+        if snapshot.version() == &self.version {
+            return;
+        }
+        let ranges = self.fallback_ranges(snapshot);
+        for response in responses {
+            let completions_count = response.completions.len();
+            response.completions.retain_mut(|completion| {
+                let CompletionSource::Lsp {
+                    insert_range,
+                    lsp_completion,
+                    lsp_defaults,
+                    ..
+                } = &mut completion.source
+                else {
+                    return true;
+                };
+                if completion_text_edit(lsp_completion, lsp_defaults.as_deref()).is_some() {
+                    return true;
+                }
+                let Some((replace_range, fallback_insert_range)) = ranges.clone() else {
+                    return false;
+                };
+                *insert_range = Some(fallback_insert_range);
+                completion.replace_range = replace_range;
+                true
+            });
+            if response.completions.len() != completions_count {
+                response.is_incomplete = true;
+            }
+        }
+    }
+
+    fn fallback_ranges(&self, snapshot: &BufferSnapshot) -> Option<(Range<Anchor>, Range<Anchor>)> {
+        let offset = self.position.to_offset(snapshot);
+        let prefix_start = self.prefix.start.to_offset(snapshot);
+        let separator_kept = self.separator.is_valid(snapshot);
+        let prefix_kept =
+            self.prefix.start.is_valid(snapshot) || self.prefix.end.is_valid(snapshot);
+        let classifier = snapshot
+            .char_classifier_at(offset)
+            .scope_context(Some(CharScopeContext::Completion));
+        let prefix_is_word = snapshot
+            .chars_for_range(prefix_start..offset)
+            .all(|character| classifier.is_word(character));
+        let token = completion_token_range(snapshot, offset);
+        let joined_across_deleted_separator = token.start < prefix_start && !separator_kept;
+        (prefix_kept && prefix_is_word && !joined_across_deleted_separator).then(|| {
+            let start = snapshot.anchor_before(token.start.min(prefix_start));
+            (
+                start..snapshot.anchor_after(token.end),
+                start..self.position,
+            )
+        })
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for GetCompletions {
     type Response = CoreCompletionResponse;
@@ -3232,32 +3318,7 @@ impl LspCommand for GetCompletions {
 
             let mut range_for_token = None;
             completions.retain(|lsp_completion| {
-                let lsp_edit = lsp_completion.text_edit.clone().or_else(|| {
-                    let default_text_edit = lsp_defaults.as_deref()?.edit_range.as_ref()?;
-                    let new_text = lsp_completion
-                        .text_edit_text
-                        .as_ref()
-                        .unwrap_or(&lsp_completion.label)
-                        .clone();
-                    match default_text_edit {
-                        CompletionListItemDefaultsEditRange::Range(range) => {
-                            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: *range,
-                                new_text,
-                            }))
-                        }
-                        CompletionListItemDefaultsEditRange::InsertAndReplace {
-                            insert,
-                            replace,
-                        } => Some(lsp::CompletionTextEdit::InsertAndReplace(
-                            lsp::InsertReplaceEdit {
-                                new_text,
-                                insert: *insert,
-                                replace: *replace,
-                            },
-                        )),
-                    }
-                });
+                let lsp_edit = completion_text_edit(lsp_completion, lsp_defaults.as_deref());
 
                 let edit = match lsp_edit {
                     // If the language server provides a range to overwrite, then
@@ -3273,15 +3334,10 @@ impl LspCommand for GetCompletions {
                     None => {
                         let range = range_for_token
                             .get_or_insert_with(|| {
-                                let offset = self.position.to_offset(&snapshot);
-                                let (range, kind) = snapshot
-                                    .surrounding_word(offset, Some(CharScopeContext::Completion));
-                                let range = if kind == Some(CharKind::Word) {
-                                    range
-                                } else {
-                                    offset..offset
-                                };
-
+                                let range = completion_token_range(
+                                    &snapshot,
+                                    self.position.to_offset(&snapshot),
+                                );
                                 snapshot.anchor_before(range.start)
                                     ..snapshot.anchor_after(range.end)
                             })
@@ -3489,6 +3545,44 @@ pub(crate) fn parse_completion_text_edit(
         replace_range,
         new_text: new_text.clone(),
     })
+}
+
+fn completion_text_edit(
+    lsp_completion: &lsp::CompletionItem,
+    lsp_defaults: Option<&lsp::CompletionListItemDefaults>,
+) -> Option<lsp::CompletionTextEdit> {
+    lsp_completion.text_edit.clone().or_else(|| {
+        let default_text_edit = lsp_defaults?.edit_range.as_ref()?;
+        let new_text = lsp_completion
+            .text_edit_text
+            .as_ref()
+            .unwrap_or(&lsp_completion.label)
+            .clone();
+        match default_text_edit {
+            CompletionListItemDefaultsEditRange::Range(range) => {
+                Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                    range: *range,
+                    new_text,
+                }))
+            }
+            CompletionListItemDefaultsEditRange::InsertAndReplace { insert, replace } => Some(
+                lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
+                    new_text,
+                    insert: *insert,
+                    replace: *replace,
+                }),
+            ),
+        }
+    })
+}
+
+fn completion_token_range(snapshot: &BufferSnapshot, offset: usize) -> Range<usize> {
+    let (range, kind) = snapshot.surrounding_word(offset, Some(CharScopeContext::Completion));
+    if kind == Some(CharKind::Word) {
+        range
+    } else {
+        offset..offset
+    }
 }
 
 #[async_trait(?Send)]
