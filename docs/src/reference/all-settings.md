@@ -1455,6 +1455,16 @@ Numbers from `0` to `106`, with `0` disabling contrast adjustment.
 }
 ```
 
+## Disable Mouse
+
+- Description: Whether to ignore all mouse and trackpad input, so Zed is used only from the keyboard.
+- Setting: `disable_mouse`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Reduce Motion
 
 - Description: Whether to reduce non-essential motion in the UI, such as loading spinners and pulsating labels, by rendering them in a static state.

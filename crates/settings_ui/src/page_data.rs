@@ -1429,7 +1429,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn cursor_section() -> [SettingsPageItem; 7] {
+    fn cursor_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Cursor"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1508,6 +1508,20 @@ fn appearance_page() -> SettingsPage {
                     pick: |settings_content| settings_content.hide_mouse.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.hide_mouse = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Disable Mouse",
+                description: "Whether to ignore all mouse and trackpad input.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("disable_mouse"),
+                    pick: |settings_content| settings_content.disable_mouse.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.disable_mouse = value;
                     },
                 }),
                 metadata: None,

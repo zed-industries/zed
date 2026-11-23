@@ -844,6 +844,26 @@ impl PlatformInput {
         }
     }
 
+    pub(crate) fn is_mouse_input(&self) -> bool {
+        match self {
+            PlatformInput::MouseDown(_)
+            | PlatformInput::MouseUp(_)
+            | PlatformInput::MousePressure(_)
+            | PlatformInput::MouseMove(_)
+            | PlatformInput::MouseExited(_)
+            | PlatformInput::Scroll(_)
+            | PlatformInput::Pinch(_)
+            | PlatformInput::FileDrop(_) => true,
+            PlatformInput::KeyDown(_)
+            | PlatformInput::KeyUp(_)
+            | PlatformInput::ModifiersChanged(_)
+            | PlatformInput::LongPress(_)
+            | PlatformInput::TouchDrag(_)
+            | PlatformInput::BackGesture(_)
+            | PlatformInput::Touch(_) => false,
+        }
+    }
+
     pub(crate) fn keyboard_event(&self) -> Option<&dyn Any> {
         match self {
             PlatformInput::KeyDown(event) => Some(event),

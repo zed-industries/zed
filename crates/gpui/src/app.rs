@@ -974,6 +974,7 @@ pub struct App {
     pub(crate) window_update_stack: Vec<WindowUpdateEntry>,
     pub(crate) mode: GpuiMode,
     pub(crate) cursor_hide_mode: CursorHideMode,
+    pub(crate) mouse_input_enabled: bool,
     pub(crate) reduce_motion: bool,
     /// Origin of the shared clock that phase-locks synced repeating animations.
     pub(crate) synced_animation_epoch: Instant,
@@ -1092,6 +1093,7 @@ impl App {
                 quit_mode: QuitMode::default(),
                 quitting: false,
                 cursor_hide_mode: CursorHideMode::default(),
+                mouse_input_enabled: true,
                 reduce_motion: false,
                 synced_animation_epoch,
                 power_mode,
@@ -1395,6 +1397,38 @@ impl App {
     /// to keyboard input.
     pub fn set_cursor_hide_mode(&mut self, mode: CursorHideMode) {
         self.cursor_hide_mode = mode;
+    }
+
+    /// Returns whether windows respond to input from the mouse and trackpad.
+    pub fn mouse_input_enabled(&self) -> bool {
+        self.mouse_input_enabled
+    }
+
+    /// Sets whether windows respond to input from the mouse and trackpad:
+    /// movement, buttons, scrolling, pinching, and files dragged in from
+    /// other applications. Keyboard, touch, and accessibility input are
+    /// unaffected.
+    pub fn set_mouse_input_enabled(&mut self, enabled: bool) {
+        if self.mouse_input_enabled == enabled {
+            return;
+        }
+        self.mouse_input_enabled = enabled;
+        if !enabled {
+            self.active_drag = None;
+            self.platform_owned_drag = None;
+            let windows = self.windows.keys().collect::<Vec<_>>();
+            self.defer(move |cx| {
+                for window in windows {
+                    if cx.windows.contains_key(window) {
+                        cx.update_window_id(window, |_, window, cx| {
+                            window.cancel_mouse_interaction(cx)
+                        })
+                        .log_err();
+                    }
+                }
+            });
+        }
+        self.refresh_windows();
     }
 
     /// Returns whether the cursor is currently visible according to the

@@ -321,6 +321,8 @@
   // 3. Hide on typing and on key bindings that resolve to an action:
   //    "on_typing_and_action"
   "hide_mouse": "on_typing_and_action",
+  // Whether to ignore all mouse and trackpad input.
+  "disable_mouse": false,
   // Whether to reduce non-essential motion in the UI, such as loading
   // spinners and pulsating labels, by rendering them in a static state.
   //

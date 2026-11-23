@@ -1320,6 +1320,7 @@ pub struct Window {
     /// The hitbox that has captured the pointer, if any.
     /// While captured, mouse events route to this hitbox regardless of hit testing.
     captured_hitbox: Option<HitboxId>,
+    pressed_mouse_buttons: SmallVec<[MouseButton; 2]>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
     #[cfg(feature = "profiler")]
@@ -2288,7 +2289,15 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move |event| {
                 handle
-                    .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
+                    .update(&mut cx, |_, window, cx| {
+                        if !cx.mouse_input_enabled && event.is_mouse_input() {
+                            return DispatchEventResult {
+                                propagate: true,
+                                default_prevented: false,
+                            };
+                        }
+                        window.dispatch_event(event, cx)
+                    })
                     .with_context(|| {
                         format!("dispatching input for window {:?}", handle.window_id())
                     })
@@ -2507,6 +2516,7 @@ impl Window {
             client_inset: None,
             image_cache_stack: Vec::new(),
             captured_hitbox: None,
+            pressed_mouse_buttons: SmallVec::new(),
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
             #[cfg(feature = "profiler")]
@@ -4151,7 +4161,11 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
-        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
+        self.mouse_hit_test = if cx.mouse_input_enabled {
+            self.next_frame.hit_test(self.mouse_position)
+        } else {
+            HitTest::default()
+        };
 
         // Now actually paint the elements.
         #[cfg(feature = "profiler")]
@@ -6141,11 +6155,16 @@ impl Window {
             PlatformInput::MouseDown(mouse_down) => {
                 self.mouse_position = mouse_down.position;
                 self.modifiers = mouse_down.modifiers;
+                if !self.pressed_mouse_buttons.contains(&mouse_down.button) {
+                    self.pressed_mouse_buttons.push(mouse_down.button);
+                }
                 PlatformInput::MouseDown(mouse_down)
             }
             PlatformInput::MouseUp(mouse_up) => {
                 self.mouse_position = mouse_up.position;
                 self.modifiers = mouse_up.modifiers;
+                self.pressed_mouse_buttons
+                    .retain(|button| *button != mouse_up.button);
                 PlatformInput::MouseUp(mouse_up)
             }
             PlatformInput::MousePressure(mouse_pressure) => {
@@ -6279,6 +6298,24 @@ impl Window {
             propagate: cx.propagate_event,
             default_prevented: self.default_prevented,
         }
+    }
+
+    pub(crate) fn cancel_mouse_interaction(&mut self, cx: &mut App) {
+        const OUTSIDE_WINDOW: Point<Pixels> = point(px(-1.), px(-1.));
+        let mouse_position = self.mouse_position;
+        for button in mem::take(&mut self.pressed_mouse_buttons) {
+            self.dispatch_event(
+                PlatformInput::MouseUp(MouseUpEvent {
+                    button,
+                    position: OUTSIDE_WINDOW,
+                    modifiers: self.modifiers,
+                    click_count: 1,
+                }),
+                cx,
+            );
+        }
+        self.mouse_position = mouse_position;
+        self.release_pointer();
     }
 
     fn promote_external_drag_to_platform(&mut self, event: &PlatformInput, cx: &mut App) {
@@ -8416,13 +8453,14 @@ mod tests {
 
     use crate::{
         AnyWindowHandle, AppContext as _, BackGestureEvent, BackGesturePhase, Bounds, ContentMask,
-        Context, CursorStyle, DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload,
-        ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle, InputEvent as _,
-        InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke, LongPressEvent, MouseButton,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PlatformInput, Point,
-        Render, RequestFrameOptions, ScaledPixels, StatefulInteractiveElement as _, Styled,
-        TestAppContext, ThermalState, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Underline,
-        UnderlineStyle, Window, WindowAppearance, WindowOptions, canvas, div, hsla, point, px,
+        Context, CursorStyle, DispatchPhase, DragMoveEvent, Empty, Entity, ExternalDragPayload,
+        ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle, HitboxBehavior, HitboxId,
+        InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke,
+        LongPressEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
+        ScrollDelta, ScrollEvent, StatefulInteractiveElement as _, Styled, TestAppContext,
+        ThermalState, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Underline, UnderlineStyle,
+        VisualTestContext, Window, WindowAppearance, WindowOptions, canvas, div, hsla, point, px,
         size,
     };
 
@@ -10999,6 +11037,128 @@ mod tests {
             cursor_observer.test_platform().cursor_style(),
             CursorStyle::IBeam
         );
+    }
+
+    struct MouseInputView {
+        focus_handle: FocusHandle,
+        mouse_down_count: usize,
+        click_count: usize,
+        scroll_count: usize,
+        key_down_count: usize,
+        hitbox_id: Rc<Cell<Option<HitboxId>>>,
+    }
+
+    impl Render for MouseInputView {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let hitbox_id = self.hitbox_id.clone();
+            div()
+                .id("mouse-input-target")
+                .size_full()
+                .track_focus(&self.focus_handle)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.mouse_down_count += 1),
+                )
+                .on_click(cx.listener(|this, _, _, _| this.click_count += 1))
+                .on_scroll(cx.listener(|this, _, _, _| this.scroll_count += 1))
+                .on_key_down(cx.listener(|this, _, _, _| this.key_down_count += 1))
+                .child(
+                    canvas(
+                        |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+                        move |_, hitbox, _, _| hitbox_id.set(Some(hitbox.id)),
+                    )
+                    .size_full(),
+                )
+        }
+    }
+
+    const MOUSE_INPUT_POSITION: Point<Pixels> = point(px(10.), px(10.));
+
+    fn add_mouse_input_view(
+        cx: &mut TestAppContext,
+    ) -> (Entity<MouseInputView>, &mut VisualTestContext) {
+        cx.add_window_view(|_, cx| MouseInputView {
+            focus_handle: cx.focus_handle(),
+            mouse_down_count: 0,
+            click_count: 0,
+            scroll_count: 0,
+            key_down_count: 0,
+            hitbox_id: Rc::default(),
+        })
+    }
+
+    #[gpui::test]
+    fn test_disabled_mouse_input_drops_clicks_and_scrolls(cx: &mut TestAppContext) {
+        let (view, cx) = add_mouse_input_view(cx);
+        let scroll = || ScrollEvent {
+            position: MOUSE_INPUT_POSITION,
+            delta: ScrollDelta::Pixels(point(px(0.), px(10.))),
+            ..Default::default()
+        };
+        let counts = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |view, _| (view.mouse_down_count, view.scroll_count))
+        };
+
+        cx.simulate_click(MOUSE_INPUT_POSITION, Modifiers::default());
+        cx.simulate_event(scroll());
+        assert_eq!(counts(cx), (1, 1));
+
+        cx.update(|_, cx| cx.set_mouse_input_enabled(false));
+        cx.simulate_click(MOUSE_INPUT_POSITION, Modifiers::default());
+        cx.simulate_event(scroll());
+        assert_eq!(counts(cx), (1, 1));
+
+        cx.update(|_, cx| cx.set_mouse_input_enabled(true));
+        cx.simulate_click(MOUSE_INPUT_POSITION, Modifiers::default());
+        cx.simulate_event(scroll());
+        assert_eq!(counts(cx), (2, 2));
+    }
+
+    #[gpui::test]
+    fn test_disabled_mouse_input_keeps_keyboard_input(cx: &mut TestAppContext) {
+        let (view, cx) = add_mouse_input_view(cx);
+        view.update_in(cx, |view, window, cx| window.focus(&view.focus_handle, cx));
+
+        cx.update(|_, cx| cx.set_mouse_input_enabled(false));
+        cx.simulate_keystrokes("a");
+
+        view.read_with(cx, |view, _| assert_eq!(view.key_down_count, 1));
+    }
+
+    #[gpui::test]
+    fn test_disabling_mouse_input_mid_click_does_not_complete_the_click(cx: &mut TestAppContext) {
+        let (view, cx) = add_mouse_input_view(cx);
+
+        cx.simulate_mouse_down(
+            MOUSE_INPUT_POSITION,
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.update(|_, cx| cx.set_mouse_input_enabled(false));
+        cx.update(|_, cx| cx.set_mouse_input_enabled(true));
+        cx.simulate_mouse_up(
+            MOUSE_INPUT_POSITION,
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+
+        view.read_with(cx, |view, _| assert_eq!(view.click_count, 0));
+    }
+
+    #[gpui::test]
+    fn test_disabling_mouse_input_releases_pointer_capture(cx: &mut TestAppContext) {
+        let (view, cx) = add_mouse_input_view(cx);
+        let hitbox_id = view.read_with(cx, |view, _| view.hitbox_id.clone());
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let hitbox_id = hitbox_id.get().expect("the canvas was painted");
+            window.capture_pointer(hitbox_id);
+        });
+
+        cx.update(|_, cx| cx.set_mouse_input_enabled(false));
+
+        cx.update(|window, _| assert_eq!(window.captured_hitbox(), None));
     }
 }
 

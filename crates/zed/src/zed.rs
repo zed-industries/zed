@@ -433,6 +433,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     .detach();
 
     init_cursor_hide_mode(cx);
+    init_disable_mouse(cx);
     init_app_appearance(cx);
     init_reduce_motion(cx);
     init_global_config_error_notifications(cx);
@@ -2053,6 +2054,21 @@ impl Settings for CursorHideModeSetting {
 
 fn init_cursor_hide_mode(cx: &mut App) {
     let apply = |cx: &mut App| cx.set_cursor_hide_mode(CursorHideModeSetting::get_global(cx).0);
+    apply(cx);
+    cx.observe_global::<SettingsStore>(apply).detach();
+}
+
+#[derive(Copy, Clone, Debug, settings::RegisterSetting)]
+struct DisableMouseSetting(bool);
+
+impl Settings for DisableMouseSetting {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(content.disable_mouse.unwrap_or_default())
+    }
+}
+
+fn init_disable_mouse(cx: &mut App) {
+    let apply = |cx: &mut App| cx.set_mouse_input_enabled(!DisableMouseSetting::get_global(cx).0);
     apply(cx);
     cx.observe_global::<SettingsStore>(apply).detach();
 }
@@ -6493,6 +6509,21 @@ mod tests {
                 .unwrap();
         }
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_disable_mouse_setting_toggles_mouse_input(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| assert!(cx.mouse_input_enabled()));
+
+        for disable_mouse in [true, false] {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.disable_mouse = Some(disable_mouse);
+                });
+            });
+            cx.update(|cx| assert_eq!(cx.mouse_input_enabled(), !disable_mouse));
+        }
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
