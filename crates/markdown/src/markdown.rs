@@ -6036,6 +6036,103 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_cull_offscreen_root_blocks(cx: &mut TestAppContext) {
+        use gpui::{
+            InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
+            Styled as _, div,
+        };
+
+        struct CullingTestView {
+            markdown: Entity<Markdown>,
+            scroll_handle: ScrollHandle,
+            rendered_text: Rc<RefCell<Option<RenderedText>>>,
+        }
+
+        impl Render for CullingTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let rendered_text = self.rendered_text.clone();
+                div()
+                    .id("scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .child(
+                        MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                            .show_root_block_markers()
+                            .cull_offscreen_root_blocks()
+                            .scroll_handle(self.scroll_handle.clone())
+                            .on_render(move |text| *rendered_text.borrow_mut() = Some(text)),
+                    )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let source = (0..200)
+            .map(|ix| format!("Paragraph {ix}\n\n"))
+            .collect::<String>();
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        let scroll_handle = ScrollHandle::new();
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (view, cx) = cx.add_window_view({
+            let scroll_handle = scroll_handle.clone();
+            let rendered_text = rendered_text.clone();
+            let markdown = markdown.clone();
+            move |_, _| CullingTestView {
+                markdown,
+                scroll_handle,
+                rendered_text,
+            }
+        });
+        cx.simulate_resize(size(px(600.), px(400.)));
+        cx.run_until_parked();
+
+        let mut redraw = |cx: &mut VisualTestContext| {
+            cx.update(|_, cx| view.update(cx, |_, cx| cx.notify()));
+            cx.run_until_parked();
+        };
+        let is_rendered = |paragraph: usize| {
+            let expected = format!("Paragraph {paragraph}");
+            rendered_text
+                .borrow()
+                .as_ref()
+                .expect("markdown should be rendered")
+                .lines
+                .iter()
+                .any(|line| line.layout.wrapped_text() == expected)
+        };
+
+        // The first frame lays out every block to measure it.
+        redraw(cx);
+        let full_max_offset = scroll_handle.max_offset();
+        assert!(full_max_offset.y > px(1000.));
+
+        // Later frames skip blocks far below the viewport but keep the same total height.
+        redraw(cx);
+        assert!(is_rendered(0));
+        assert!(!is_rendered(199));
+        assert!((scroll_handle.max_offset().y - full_max_offset.y).abs() < px(1.));
+
+        // After scrolling to the bottom, the blocks there are laid out instead.
+        scroll_handle.set_offset(point(px(0.), -full_max_offset.y));
+        redraw(cx);
+        assert!(is_rendered(199));
+        assert!(!is_rendered(0));
+        assert!((scroll_handle.max_offset().y - full_max_offset.y).abs() < px(1.));
+
+        // A selection needs the text of every block, so nothing is skipped.
+        markdown.update(cx, |markdown, cx| {
+            markdown.selection.start = 0;
+            markdown.selection.end = markdown.source().len();
+            cx.notify();
+        });
+        redraw(cx);
+        assert!(is_rendered(0));
+        assert!(is_rendered(199));
+    }
+
+    #[gpui::test]
     fn test_code_block_highlights_cached_at_parse_time(cx: &mut TestAppContext) {
         let source = "```rust\nfn main() {}\n```";
         let (language, markdown) = markdown_with_rust_language(source, cx);
