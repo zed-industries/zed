@@ -1170,6 +1170,11 @@ debug = "full"
 lto = false
 codegen-units = 16
 
+[workspace.lints.cargo]
+# Production-only dependencies appear unused in test-support builds.
+# cargo-shear serves the same purpose without these configuration-dependent warnings.
+unused_dependencies = "allow"
+
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow" }
 
