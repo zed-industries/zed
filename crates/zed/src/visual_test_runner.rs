@@ -2740,6 +2740,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                             speed: None,
                             thinking_enabled: false,
                             thinking_effort: None,
+                            thread_only: false,
                             ui_scroll_position: None,
                             draft_prompt: None,
                             sandboxed_terminal_temp_dir: None,

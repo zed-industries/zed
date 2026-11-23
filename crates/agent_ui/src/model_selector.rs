@@ -9,8 +9,8 @@ use collections::{HashSet, IndexMap};
 use futures::FutureExt;
 use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
-    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
-    TaskExt, WeakEntity,
+    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Modifiers,
+    Subscription, Task, TaskExt, WeakEntity,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
@@ -129,6 +129,32 @@ impl ModelPickerDelegate {
         self.selected_model.as_ref()
     }
 
+    pub fn refresh_selected_model(&mut self, cx: &mut Context<Picker<Self>>) {
+        let selected_model = self.selector.selected_model(cx);
+        cx.spawn(async move |this, cx| {
+            let selected_model = selected_model.await.ok();
+            this.update(cx, |this, cx| {
+                let delegate = &mut this.delegate;
+                let model_changed = delegate.selected_model.as_ref().map(|model| &model.id)
+                    != selected_model.as_ref().map(|model| &model.id);
+                delegate.selected_model = selected_model;
+                // The highlighted row is what Enter picks, so it has to follow the model.
+                if model_changed && let Some(index) = delegate.selected_model_index() {
+                    delegate.selected_index = index;
+                }
+                cx.notify();
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn selected_model_index(&self) -> Option<usize> {
+        let selected_model = self.selected_model.as_ref()?;
+        self.filtered_entries.iter().position(|entry| {
+            matches!(entry, ModelPickerEntry::Model(model_info, _) if model_info.id == selected_model.id)
+        })
+    }
+
     pub fn favorites_count(&self) -> usize {
         self.favorites.len()
     }
@@ -172,15 +198,13 @@ impl ModelPickerDelegate {
         let next_model = favorite_models[next_index].clone();
 
         self.selector
-            .select_model(next_model.id.clone(), true, cx)
+            .select_model(next_model.id.clone(), cx)
             .detach_and_log_err(cx);
 
         self.selected_model = Some(next_model);
 
         // Keep the picker selection aligned with the newly-selected model
-        if let Some(new_index) = self.filtered_entries.iter().position(|entry| {
-            matches!(entry, ModelPickerEntry::Model(model_info, _) if self.selected_model.as_ref().is_some_and(|selected| model_info.id == selected.id))
-        }) {
+        if let Some(new_index) = self.selected_model_index() {
             self.set_selected_index(new_index, window, cx);
         } else {
             cx.notify();
@@ -244,21 +268,7 @@ impl PickerDelegate for ModelPickerDelegate {
             this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_entries =
                     info_list_to_picker_entries(filtered_models, &favorites);
-                // Finds the currently selected model in the list
-                let new_index = this
-                    .delegate
-                    .selected_model
-                    .as_ref()
-                    .and_then(|selected| {
-                        this.delegate.filtered_entries.iter().position(|entry| {
-                            if let ModelPickerEntry::Model(model_info, _) = entry {
-                                model_info.id == selected.id
-                            } else {
-                                false
-                            }
-                        })
-                    })
-                    .unwrap_or(0);
+                let new_index = this.delegate.selected_model_index().unwrap_or(0);
                 this.set_selected_index(new_index, Some(picker::Direction::Down), true, window, cx);
                 cx.notify();
             })
@@ -266,14 +276,26 @@ impl PickerDelegate for ModelPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.confirm_with_modifiers(secondary, window.modifiers(), window, cx);
+    }
+
+    fn confirm_with_modifiers(
+        &mut self,
+        _secondary: bool,
+        modifiers: Modifiers,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
         if let Some(ModelPickerEntry::Model(model_info, _)) =
             self.filtered_entries.get(self.selected_index)
             && model_info.disabled.is_none()
         {
-            let save_to_settings = !window.modifiers().shift;
+            if modifiers.shift {
+                self.selector.mark_thread_only(cx);
+            }
             self.selector
-                .select_model(model_info.id.clone(), save_to_settings, cx)
+                .select_model(model_info.id.clone(), cx)
                 .detach_and_log_err(cx);
             self.selected_model = Some(model_info.clone());
             let current_index = self.selected_index;
@@ -485,7 +507,7 @@ async fn fuzzy_search(
 #[cfg(test)]
 mod tests {
     use gpui::{App, Modifiers, TestAppContext, VisualTestContext};
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     use super::*;
 
@@ -561,10 +583,8 @@ mod tests {
             .collect()
     }
 
-    fn confirm_second_model(
-        modifiers: Modifiers,
-        cx: &mut TestAppContext,
-    ) -> Vec<(AgentModelId, bool)> {
+    #[gpui::test]
+    fn confirming_model_selects_it_and_shift_makes_the_thread_thread_only(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -584,37 +604,85 @@ mod tests {
         cx.run_until_parked();
 
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
-        cx.simulate_modifiers_change(modifiers);
+        for (modifiers, expected_thread_only_marks) in
+            [(Modifiers::none(), 0), (Modifiers::shift(), 1)]
+        {
+            cx.simulate_modifiers_change(modifiers);
+            window_handle
+                .update(&mut cx, |picker, window, cx| {
+                    picker.delegate.set_selected_index(1, window, cx);
+                    picker.delegate.confirm(false, window, cx);
+                })
+                .unwrap();
+
+            assert_eq!(
+                model_selector.selected_models.borrow_mut().split_off(0),
+                [AgentModelId::new("manual")]
+            );
+            assert_eq!(
+                model_selector.thread_only_marks.get(),
+                expected_thread_only_marks
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn highlighted_row_follows_a_model_changed_outside_the_picker(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let model_selector = Rc::new(TestModelSelector::new());
+
+        let window_handle = cx.add_window({
+            let model_selector = model_selector.clone();
+            move |window, cx| {
+                let selector: Rc<dyn AgentModelSelector> = model_selector;
+                acp_model_selector(selector, cx.focus_handle(), window, cx)
+            }
+        });
+        cx.run_until_parked();
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         window_handle
             .update(&mut cx, |picker, window, cx| {
                 picker.delegate.set_selected_index(1, window, cx);
                 picker.delegate.confirm(false, window, cx);
             })
             .unwrap();
+        cx.run_until_parked();
 
-        model_selector.selected_models.borrow().clone()
-    }
+        *model_selector.selected_model.borrow_mut() = model_selector.models[0].clone();
+        window_handle
+            .update(&mut cx, |picker, _window, cx| {
+                picker.delegate.refresh_selected_model(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
 
-    #[gpui::test]
-    fn confirming_model_selects_model(cx: &mut TestAppContext) {
-        assert_eq!(
-            confirm_second_model(Modifiers::none(), cx),
-            [(AgentModelId::new("manual"), true)]
-        );
-    }
-
-    #[gpui::test]
-    fn confirming_model_with_shift_does_not_save_to_settings(cx: &mut TestAppContext) {
-        assert_eq!(
-            confirm_second_model(Modifiers::shift(), cx),
-            [(AgentModelId::new("manual"), false)]
-        );
+        window_handle
+            .update(&mut cx, |picker, _window, _cx| {
+                let delegate = &picker.delegate;
+                assert_eq!(
+                    delegate.active_model().map(|model| &model.id),
+                    Some(&AgentModelId::new("auto"))
+                );
+                assert!(matches!(
+                    delegate.filtered_entries.get(delegate.selected_index),
+                    Some(ModelPickerEntry::Model(model, _)) if model.id == AgentModelId::new("auto")
+                ));
+            })
+            .unwrap();
     }
 
     struct TestModelSelector {
         models: Vec<AgentModelInfo>,
         selected_model: RefCell<AgentModelInfo>,
-        selected_models: RefCell<Vec<(AgentModelId, bool)>>,
+        selected_models: RefCell<Vec<AgentModelId>>,
+        thread_only_marks: Cell<usize>,
     }
 
     impl TestModelSelector {
@@ -644,6 +712,7 @@ mod tests {
                 selected_model: RefCell::new(models[0].clone()),
                 models,
                 selected_models: RefCell::new(Vec::new()),
+                thread_only_marks: Cell::new(0),
             }
         }
     }
@@ -653,19 +722,16 @@ mod tests {
             Task::ready(Ok(AgentModelList::Flat(self.models.clone())))
         }
 
-        fn select_model(
-            &self,
-            model_id: AgentModelId,
-            save_to_settings: bool,
-            _cx: &mut App,
-        ) -> Task<Result<()>> {
-            self.selected_models
-                .borrow_mut()
-                .push((model_id.clone(), save_to_settings));
+        fn select_model(&self, model_id: AgentModelId, _cx: &mut App) -> Task<Result<()>> {
+            self.selected_models.borrow_mut().push(model_id.clone());
             if let Some(model) = self.models.iter().find(|model| model.id == model_id) {
                 *self.selected_model.borrow_mut() = model.clone();
             }
             Task::ready(Ok(()))
+        }
+
+        fn mark_thread_only(&self, _cx: &mut App) {
+            self.thread_only_marks.set(self.thread_only_marks.get() + 1);
         }
 
         fn selected_model(&self, _cx: &mut App) -> Task<Result<AgentModelInfo>> {

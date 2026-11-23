@@ -112,7 +112,8 @@
     },
   },
   {
-    "context": "AcpThread > Picker > Editor",
+    // `> Editor` is needed to beat the `Editor` binding for `shift-enter` above.
+    "context": "(ModelSelector || ProfileSelector) > Picker > Editor",
     "bindings": {
       "shift-enter": "menu::Confirm",
     },

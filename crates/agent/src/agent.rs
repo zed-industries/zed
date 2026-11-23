@@ -3053,12 +3053,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         })
     }
 
-    fn select_model(
-        &self,
-        model_id: AgentModelId,
-        save_to_settings: bool,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
+    fn select_model(&self, model_id: AgentModelId, cx: &mut App) -> Task<Result<()>> {
         log::debug!(
             "Setting model for session {}: {}",
             self.session_id,
@@ -3096,38 +3091,22 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         } = agent_settings::language_model_to_selection(&model, favorite.as_ref());
 
         thread.update(cx, |thread, cx| {
-            thread.set_model(model.clone(), cx);
-            thread.set_thinking_effort(effort.clone(), cx);
+            thread.set_model(model, cx);
+            thread.set_thinking_effort(effort, cx);
             thread.set_thinking_enabled(enable_thinking, cx);
             if let Some(speed) = speed {
-                thread.set_speed(speed, cx);
+                thread.set_speed(Some(speed), cx);
             }
+            thread.save_default_model(cx);
         });
 
-        if save_to_settings {
-            update_settings_file(
-                self.connection.0.read(cx).fs.clone(),
-                cx,
-                move |settings, cx| {
-                    let provider = model.provider_id().0.to_string();
-                    let model = model.id().0.to_string();
-                    let enable_thinking = thread.read(cx).thinking_enabled();
-                    let speed = thread.read(cx).speed();
-                    settings
-                        .agent
-                        .get_or_insert_default()
-                        .set_model(LanguageModelSelection {
-                            provider: provider.into(),
-                            model,
-                            enable_thinking,
-                            effort,
-                            speed,
-                        });
-                },
-            );
-        }
-
         Task::ready(Ok(()))
+    }
+
+    fn mark_thread_only(&self, cx: &mut App) {
+        if let Some(thread) = self.connection.thread(&self.session_id, cx) {
+            thread.update(cx, |thread, cx| thread.mark_thread_only(cx));
+        }
     }
 
     fn selected_model(&self, cx: &mut App) -> Task<Result<acp_thread::AgentModelInfo>> {
@@ -8760,7 +8739,7 @@ mod internal_tests {
         // Select a model
         let selector = connection.model_selector(&session_id).unwrap();
         let model_id = AgentModelId::new("fake/fake");
-        cx.update(|cx| selector.select_model(model_id.clone(), true, cx))
+        cx.update(|cx| selector.select_model(model_id.clone(), cx))
             .await
             .unwrap();
 
@@ -8805,11 +8784,9 @@ mod internal_tests {
         agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| {
-            selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), true, cx)
-        })
-        .await
-        .unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
+            .await
+            .unwrap();
         cx.run_until_parked();
 
         // Verify enable_thinking was written to settings as true.
@@ -8823,7 +8800,7 @@ mod internal_tests {
     }
 
     #[gpui::test]
-    async fn test_model_selection_without_saving_leaves_settings_unchanged(
+    async fn test_thread_only_model_selection_leaves_pending_default_save_intact(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -8831,20 +8808,7 @@ mod internal_tests {
         fs.create_dir(paths::settings_file().parent().unwrap())
             .await
             .unwrap();
-        let original_settings = json!({
-            "agent": {
-                "default_model": {
-                    "provider": "foo",
-                    "model": "bar"
-                }
-            }
-        })
-        .to_string();
-        fs.insert_file(
-            paths::settings_file(),
-            original_settings.clone().into_bytes(),
-        )
-        .await;
+        fs.insert_file(paths::settings_file(), b"{}".to_vec()).await;
         let project = Project::test(fs.clone(), [], cx).await;
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
@@ -8864,23 +8828,52 @@ mod internal_tests {
             .unwrap();
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
 
+        cx.update(|cx| {
+            let thinking_provider = Arc::new(FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            ));
+            thinking_provider.update_model("fake-thinking", |model| {
+                model.name = LanguageModelName::from("Fake Thinking".to_string());
+                model.supports_thinking = true;
+            });
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(thinking_provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        // The settings write for the first selection only runs once the file
+        // loads. Making the thread thread-only and switching away before then
+        // must not save the second model or leak its options into the first.
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(AgentModelId::new("fake/fake"), false, cx))
-            .await
-            .unwrap();
+        cx.update(|cx| {
+            selector
+                .select_model(AgentModelId::new("fake-corp/fake-thinking"), cx)
+                .detach_and_log_err(cx);
+            selector.mark_thread_only(cx);
+            selector
+                .select_model(AgentModelId::new("fake/fake"), cx)
+                .detach_and_log_err(cx);
+        });
         cx.run_until_parked();
 
         agent.read_with(cx, |agent, _| {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
                 assert_eq!(thread.model().unwrap().id().0, "fake");
+                assert!(!thread.thinking_enabled());
             });
         });
-
         let settings_content = fs.load(paths::settings_file()).await.unwrap();
+        let settings_json: serde_json::Value = serde_json::from_str(&settings_content).unwrap();
         assert_eq!(
-            settings_content, original_settings,
-            "selecting a model without saving should not modify settings"
+            settings_json["agent"]["default_model"]["model"],
+            json!("fake-thinking")
+        );
+        assert_eq!(
+            settings_json["agent"]["default_model"]["enable_thinking"],
+            json!(true)
         );
     }
 
@@ -8938,11 +8931,9 @@ mod internal_tests {
 
         // Select the thinking model via select_model.
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| {
-            selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), true, cx)
-        })
-        .await
-        .unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
+            .await
+            .unwrap();
 
         // select_model should have enabled thinking based on the model's supports_thinking().
         agent.read_with(cx, |agent, _| {
@@ -8957,7 +8948,7 @@ mod internal_tests {
 
         // Switch back to the non-thinking model.
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(AgentModelId::new("fake/fake"), true, cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake/fake"), cx))
             .await
             .unwrap();
 
@@ -9069,11 +9060,9 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| {
-            selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), true, cx)
-        })
-        .await
-        .unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
+            .await
+            .unwrap();
 
         // Verify thinking is enabled after selecting the thinking model.
         let thread = agent.read_with(cx, |agent, _| {
@@ -9084,7 +9073,9 @@ mod internal_tests {
                 thread.thinking_enabled(),
                 "thinking should be enabled after selecting thinking model"
             );
+            assert!(!thread.is_thread_only());
         });
+        cx.update(|cx| selector.mark_thread_only(cx));
 
         // Send a message so the thread gets persisted.
         let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
@@ -9120,6 +9111,7 @@ mod internal_tests {
                 thread.thinking_enabled(),
                 "thinking_enabled should be preserved when reloading a thread with a thinking model"
             );
+            assert!(thread.is_thread_only());
         });
 
         drop(reloaded_acp_thread);
@@ -9166,11 +9158,9 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| {
-            selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), true, cx)
-        })
-        .await
-        .unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+            .await
+            .unwrap();
 
         let thread = agent.read_with(cx, |agent, _| {
             agent.sessions.get(&session_id).unwrap().thread.clone()
@@ -9270,11 +9260,9 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| {
-            selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), true, cx)
-        })
-        .await
-        .unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+            .await
+            .unwrap();
 
         let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
         let send = cx.foreground_executor().spawn(send);
@@ -9393,11 +9381,9 @@ mod internal_tests {
         cx.run_until_parked();
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| {
-            selector.select_model(AgentModelId::new("other-corp/other-model-id"), true, cx)
-        })
-        .await
-        .unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("other-corp/other-model-id"), cx))
+            .await
+            .unwrap();
 
         thread.read_with(cx, |thread, _| {
             assert_eq!(thread.model().unwrap().id().0.as_ref(), "other-model-id");
@@ -10023,6 +10009,11 @@ mod internal_tests {
             turn.saved_thread().await.thinking_effort.as_deref(),
             Some("high")
         );
+
+        turn.thread
+            .update(cx, |thread, cx| thread.mark_thread_only(cx));
+        cx.run_until_parked();
+        assert!(turn.saved_thread().await.thread_only);
 
         turn.thread
             .update(cx, |thread, cx| thread.set_title("Renamed".into(), cx));

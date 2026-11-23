@@ -2,8 +2,9 @@ use anyhow::Result;
 use gpui::Action;
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, ScrollStrategy,
-    Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*, uniform_list,
+    Focusable, ListSizingBehavior, ListState, Modifiers, MouseButton, MouseUpEvent, Pixels,
+    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
+    uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
@@ -130,7 +131,7 @@ pub struct Picker<D: PickerDelegate> {
     head: Head,
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
-    confirm_on_update: Option<bool>,
+    confirm_on_update: Option<(bool, Modifiers)>,
     select_instead_of_open: bool,
     shape: shape::Shape,
     /// The size the picker opens at (and resets to). Defaults depend on whether
@@ -253,6 +254,18 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>);
+    /// What the picker calls on confirm, with the modifiers held at the time.
+    /// Override it as well as `confirm` when they matter, since a confirm can
+    /// wait for pending matches and `window.modifiers()` may change by then.
+    fn confirm_with_modifiers(
+        &mut self,
+        secondary: bool,
+        _modifiers: Modifiers,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.confirm(secondary, window, cx)
+    }
     /// Whether this delegate supports selecting multiple items at once. When
     /// `true`, the delegate owns the multi-selection state; the picker only
     /// drives the generic UX (toggle action, indicator, click routing).
@@ -1024,6 +1037,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let modifiers = window.modifiers();
         if self.pending_update_matches.is_some()
             && !self.delegate.finalize_update_matches(
                 self.query(cx),
@@ -1032,10 +1046,10 @@ impl<D: PickerDelegate> Picker<D> {
                 cx,
             )
         {
-            self.confirm_on_update = Some(false)
+            self.confirm_on_update = Some((false, modifiers))
         } else {
             self.pending_update_matches.take();
-            self.do_confirm(false, window, cx);
+            self.do_confirm(false, modifiers, window, cx);
         }
     }
 
@@ -1045,6 +1059,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let modifiers = window.modifiers();
         if self.pending_update_matches.is_some()
             && !self.delegate.finalize_update_matches(
                 self.query(cx),
@@ -1053,9 +1068,9 @@ impl<D: PickerDelegate> Picker<D> {
                 cx,
             )
         {
-            self.confirm_on_update = Some(true)
+            self.confirm_on_update = Some((true, modifiers))
         } else {
-            self.do_confirm(true, window, cx);
+            self.do_confirm(true, modifiers, window, cx);
         }
     }
 
@@ -1150,11 +1165,17 @@ impl<D: PickerDelegate> Picker<D> {
             self.delegate.toggle_item_selected(ix, window, cx);
             cx.notify();
         } else {
-            self.do_confirm(secondary, window, cx);
+            self.do_confirm(secondary, window.modifiers(), window, cx);
         }
     }
 
-    fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn do_confirm(
+        &mut self,
+        secondary: bool,
+        modifiers: Modifiers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.delegate.supports_multi_select() && self.delegate.selected_item_count() > 0 {
             self.select_instead_of_open = false;
             self.delegate.confirm_multi(secondary, window, cx);
@@ -1162,7 +1183,8 @@ impl<D: PickerDelegate> Picker<D> {
             self.set_query(&update_query, window, cx);
             self.set_selected_index(0, Some(Direction::Down), false, window, cx);
         } else {
-            self.delegate.confirm(secondary, window, cx)
+            self.delegate
+                .confirm_with_modifiers(secondary, modifiers, window, cx)
         }
     }
 
@@ -1253,8 +1275,8 @@ impl<D: PickerDelegate> Picker<D> {
                 delegate_pending_update_matches.await;
                 this.update_in(cx, |this, window, cx| {
                     this.matches_updated(scroll_behavior, window, cx);
-                    if let Some(secondary) = this.confirm_on_update.take() {
-                        this.do_confirm(secondary, window, cx);
+                    if let Some((secondary, modifiers)) = this.confirm_on_update.take() {
+                        this.do_confirm(secondary, modifiers, window, cx);
                     }
                 })
             }),
@@ -1650,7 +1672,7 @@ mod tests {
         items: Vec<bool>,
         selected_index: usize,
         confirmed_index: Rc<Cell<Option<usize>>>,
-        confirmations: Vec<(usize, bool)>,
+        confirmations: Vec<(usize, bool, Modifiers)>,
         match_update: Option<(Duration, usize)>,
         supports_multi_select: bool,
         selected_items: Vec<usize>,
@@ -1737,11 +1759,22 @@ mod tests {
         fn confirm(
             &mut self,
             secondary: bool,
+            window: &mut Window,
+            cx: &mut Context<Picker<Self>>,
+        ) {
+            self.confirm_with_modifiers(secondary, window.modifiers(), window, cx);
+        }
+
+        fn confirm_with_modifiers(
+            &mut self,
+            secondary: bool,
+            modifiers: Modifiers,
             _window: &mut Window,
             _cx: &mut Context<Picker<Self>>,
         ) {
             self.confirmed_index.set(Some(self.selected_index));
-            self.confirmations.push((self.selected_index, secondary));
+            self.confirmations
+                .push((self.selected_index, secondary, modifiers));
         }
 
         fn supports_multi_select(&self) -> bool {
@@ -1834,26 +1867,39 @@ mod tests {
             });
             cx.run_until_parked();
 
+            // The deferred confirm keeps the modifiers held when confirming, even
+            // once they're released before the matches finish.
+            cx.simulate_modifiers_change(Modifiers::shift());
             picker.update_in(cx, |picker, window, cx| {
                 if secondary {
                     picker.secondary_confirm(&menu::SecondaryConfirm, window, cx);
                 } else {
                     picker.confirm(&menu::Confirm, window, cx);
                 }
-                assert_eq!(picker.confirm_on_update, Some(secondary));
+                assert_eq!(
+                    picker.confirm_on_update,
+                    Some((secondary, Modifiers::shift()))
+                );
                 assert_eq!(picker.delegate.confirmations, Vec::new());
 
                 picker.delegate.match_update = Some((Duration::from_millis(50), 2));
                 picker.refresh(window, cx);
                 assert_eq!(picker.delegate.confirmations, Vec::new());
-                assert_eq!(picker.confirm_on_update, Some(secondary));
+                assert_eq!(
+                    picker.confirm_on_update,
+                    Some((secondary, Modifiers::shift()))
+                );
             });
+            cx.simulate_modifiers_change(Modifiers::none());
             cx.run_until_parked();
 
             cx.executor().advance_clock(Duration::from_millis(50));
             cx.run_until_parked();
             picker.read_with(cx, |picker, _| {
-                assert_eq!(picker.delegate.confirmations, vec![(2, secondary)]);
+                assert_eq!(
+                    picker.delegate.confirmations,
+                    vec![(2, secondary, Modifiers::shift())]
+                );
                 assert_eq!(picker.confirm_on_update, None);
                 assert!(picker.pending_update_matches.is_none());
             });
@@ -1862,7 +1908,10 @@ mod tests {
             cx.run_until_parked();
             picker.read_with(cx, |picker, _| {
                 assert_eq!(picker.delegate.selected_index(), 2);
-                assert_eq!(picker.delegate.confirmations, vec![(2, secondary)]);
+                assert_eq!(
+                    picker.delegate.confirmations,
+                    vec![(2, secondary, Modifiers::shift())]
+                );
             });
         }
     }
@@ -2015,7 +2064,7 @@ mod tests {
 
         // Confirming opens the whole selection and exits the mode.
         picker.update_in(cx, |picker, window, cx| {
-            picker.do_confirm(false, window, cx);
+            picker.do_confirm(false, Modifiers::none(), window, cx);
         });
         assert_eq!(multi_confirmed.take(), Some(vec![2, 0]));
         picker.update_in(cx, |picker, window, cx| {

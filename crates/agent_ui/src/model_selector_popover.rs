@@ -36,6 +36,12 @@ impl ModelSelectorPopover {
         self.selector.read(cx).delegate.active_model()
     }
 
+    pub fn refresh_selected_model(&self, cx: &mut Context<Self>) {
+        self.selector.update(cx, |selector, cx| {
+            selector.delegate.refresh_selected_model(cx);
+        });
+    }
+
     pub fn cycle_favorite_models(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.selector.update(cx, |selector, cx| {
             selector.delegate.cycle_favorite_models(window, cx);
@@ -70,7 +76,7 @@ impl Render for ModelSelectorPopover {
             }
         });
 
-        PickerPopoverMenu::new(
+        let popover_menu = PickerPopoverMenu::new(
             self.selector.clone(),
             Button::new("active-model", model_name)
                 .label_size(LabelSize::Small)
@@ -91,6 +97,9 @@ impl Render for ModelSelectorPopover {
             cx,
         )
         .with_handle(self.menu_handle.clone())
-        .render(window, cx)
+        .render(window, cx);
+
+        // The key context scopes the Shift+Enter binding to this picker.
+        div().key_context("ModelSelector").child(popover_menu)
     }
 }

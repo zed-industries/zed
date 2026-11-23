@@ -46,8 +46,8 @@ use notifications::status_toast::StatusToast;
 use project::ResolvedPath;
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
-    ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
-    SplitButtonStyle, Tab, ToggleState,
+    ButtonLike, CalloutBorderPosition, Checkbox, Indicator, SpinnerLabel, SpinnerVariant,
+    SplitButton, SplitButtonStyle, Tab, ToggleState,
 };
 use url::Url;
 use util::markdown::source_position_from_fragment;
@@ -1228,8 +1228,15 @@ impl ThreadView {
                         if matches!(this.thread_error, Some(ThreadError::NoModelSelected)) {
                             this.clear_thread_error(cx);
                         }
+                        if let Some(model_selector) = &this.model_selector {
+                            model_selector.update(cx, |model_selector, cx| {
+                                model_selector.refresh_selected_model(cx);
+                            });
+                        }
                     },
                 ));
+                // The thread-only indicator follows the thread's mark.
+                subscriptions.push(cx.observe(&native_thread, |_, _, cx| cx.notify()));
             }
         }
 
@@ -5743,6 +5750,7 @@ impl ThreadView {
                                     .children(self.render_activity_status_label(cx))
                                     .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
+                                    .children(self.render_thread_only_indicator(cx))
                                     .children(self.profile_selector.clone())
                                     .map(|this| match self.config_options_view.clone() {
                                         Some(config_view) => this.child(config_view),
@@ -5755,6 +5763,67 @@ impl ThreadView {
                     ),
             )
             .into_any()
+    }
+
+    fn render_thread_only_indicator(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let thread = self.as_native_thread(cx)?;
+        if !thread.read(cx).is_thread_only() {
+            return None;
+        }
+
+        let can_reset = thread.read(cx).can_reset_to_defaults(cx);
+        let thread = thread.downgrade();
+        let trigger = ButtonLike::new("thread-only-indicator")
+            .width(px(24.))
+            .aria_label("Thread-Only Mode")
+            .child(Indicator::dot().color(Color::Accent));
+        Some(
+            PopoverMenu::new("thread-only-menu")
+                .trigger_with_tooltip(trigger, Tooltip::text("Thread-Only Mode"))
+                .anchor(gpui::Anchor::BottomRight)
+                .offset(gpui::point(px(0.), px(-2.)))
+                .menu(move |window, cx| {
+                    let thread = thread.clone();
+                    Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                        menu.custom_row(|_window, _cx| {
+                            div()
+                                .max_w_72()
+                                .child(Label::new("Thread-Only Mode"))
+                                .child(
+                                    Label::new(
+                                        "Changes to the model, profile and other options in \
+                                         this thread aren't saved as your defaults.",
+                                    )
+                                    .color(Color::Muted),
+                                )
+                                .into_any_element()
+                        })
+                        .separator()
+                        .when(can_reset, |menu| {
+                            let thread = thread.clone();
+                            menu.entry(
+                                "Reset to Defaults",
+                                Some(Box::new(ResetThreadToDefaults)),
+                                move |_window, cx| {
+                                    thread
+                                        .update(cx, |thread, cx| thread.reset_to_defaults(cx))
+                                        .log_err();
+                                },
+                            )
+                        })
+                        .entry(
+                            "Save as Default",
+                            Some(Box::new(SaveThreadAsDefaults)),
+                            move |_window, cx| {
+                                thread
+                                    .update(cx, |thread, cx| thread.save_as_defaults(cx))
+                                    .log_err();
+                            },
+                        )
+                    }))
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_activity_status_label(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
@@ -6625,28 +6694,8 @@ impl ThreadView {
                     thread.update(cx, |thread, cx| {
                         let enable_thinking = !thread.thinking_enabled();
                         thread.set_thinking_enabled(enable_thinking, cx);
-
-                        let model_key = thread
-                            .model()
-                            .map(|model| (model.provider_id.0.to_string(), model.id.0.to_string()));
-                        let fs = thread.project().read(cx).fs().clone();
-                        update_settings_file(fs, cx, move |settings, _| {
-                            if let Some(agent) = settings.agent.as_mut() {
-                                if let Some((provider_id, model_id)) = &model_key {
-                                    agent.update_default_model(
-                                        provider_id,
-                                        model_id,
-                                        |default_model| {
-                                            default_model.enable_thinking = enable_thinking
-                                        },
-                                    );
-                                    agent.update_favorite_model(
-                                        provider_id,
-                                        model_id,
-                                        |favorite| favorite.enable_thinking = enable_thinking,
-                                    );
-                                }
-                            }
+                        thread.save_model_options(cx, move |model| {
+                            model.enable_thinking = enable_thinking
                         });
                     });
                 }
@@ -6760,57 +6809,21 @@ impl ThreadView {
                         menu.push_item(entry.handler({
                             let effort = effort_level.value;
                             let weak_self = weak_self.clone();
-                            move |_window, cx| {
-                                let effort = effort.clone();
+                            move |window, cx| {
+                                let effort = effort.to_string();
+                                let modifiers = window.modifiers();
                                 weak_self
                                     .update(cx, |this, cx| {
-                                        if let Some(thread) = this.as_native_thread(cx) {
-                                            thread.update(cx, |thread, cx| {
-                                                thread.set_thinking_effort(
-                                                    Some(effort.to_string()),
-                                                    cx,
-                                                );
-
-                                                let model_key = thread.model().map(|model| {
-                                                    (
-                                                        model.provider_id().0.to_string(),
-                                                        model.id().0.to_string(),
-                                                    )
-                                                });
-                                                let fs = thread.project().read(cx).fs().clone();
-                                                update_settings_file(fs, cx, move |settings, _| {
-                                                    if let Some(agent) = settings.agent.as_mut() {
-                                                        if let Some((provider_id, model_id)) =
-                                                            &model_key
-                                                        {
-                                                            agent.update_default_model(
-                                                                provider_id,
-                                                                model_id,
-                                                                |default_model| {
-                                                                    default_model.effort =
-                                                                        Some(effort.to_string())
-                                                                },
-                                                            );
-                                                            agent.update_favorite_model(
-                                                                provider_id,
-                                                                model_id,
-                                                                |favorite| {
-                                                                    favorite.effort =
-                                                                        Some(effort.to_string())
-                                                                },
-                                                            );
-                                                        }
-                                                    }
-                                                });
-                                            });
-                                        }
+                                        this.pick_native_agent_thinking_effort(
+                                            effort, modifiers, cx,
+                                        );
                                     })
                                     .ok();
                             }
                         }));
                     }
 
-                    menu
+                    menu.key_context("menu ThinkingEffortSelector")
                 }))
             })
             .with_handle(self.thinking_effort_menu_handle.clone())
@@ -13927,7 +13940,7 @@ impl ThreadView {
         else {
             return;
         };
-        let select = selector.select_model(model_id, true, cx);
+        let select = selector.select_model(model_id, cx);
         cx.spawn(async move |this, cx| {
             select.await?;
             this.update(cx, |this, cx| this.retry_generation(cx))?;
@@ -14025,24 +14038,48 @@ impl ThreadView {
             return;
         }
         thread.update(cx, |thread, cx| {
-            thread.set_speed(speed, cx);
+            thread.set_speed(Some(speed), cx);
+            thread.save_model_options(cx, move |model| model.speed = Some(speed));
+        });
+    }
 
-            let model_key = thread
-                .model()
-                .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
-            let fs = thread.project().read(cx).fs().clone();
-            update_settings_file(fs, cx, move |settings, _| {
-                if let Some(agent) = settings.agent.as_mut() {
-                    if let Some((provider_id, model_id)) = &model_key {
-                        agent.update_default_model(provider_id, model_id, |default_model| {
-                            default_model.speed = Some(speed)
-                        });
-                        agent.update_favorite_model(provider_id, model_id, |favorite| {
-                            favorite.speed = Some(speed)
-                        });
-                    }
-                }
-            });
+    fn reset_thread_to_defaults(
+        &mut self,
+        _: &ResetThreadToDefaults,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.as_native_thread(cx) {
+            thread.update(cx, |thread, cx| thread.reset_to_defaults(cx));
+        }
+    }
+
+    fn save_thread_as_defaults(
+        &mut self,
+        _: &SaveThreadAsDefaults,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.as_native_thread(cx) {
+            thread.update(cx, |thread, cx| thread.save_as_defaults(cx));
+        }
+    }
+
+    pub(super) fn pick_native_agent_thinking_effort(
+        &mut self,
+        effort: String,
+        modifiers: gpui::Modifiers,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+        thread.update(cx, |thread, cx| {
+            if modifiers.shift {
+                thread.mark_thread_only(cx);
+            }
+            thread.set_thinking_effort(Some(effort.clone()), cx);
+            thread.save_model_options(cx, move |model| model.effort = Some(effort.clone()));
         });
     }
 
@@ -14084,23 +14121,7 @@ impl ThreadView {
 
         thread.update(cx, |thread, cx| {
             thread.set_thinking_effort(Some(next_effort.clone()), cx);
-
-            let model_key = thread
-                .model()
-                .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
-            let fs = thread.project().read(cx).fs().clone();
-            update_settings_file(fs, cx, move |settings, _| {
-                if let Some(agent) = settings.agent.as_mut() {
-                    if let Some((provider_id, model_id)) = &model_key {
-                        agent.update_default_model(provider_id, model_id, |default_model| {
-                            default_model.effort = Some(next_effort.clone())
-                        });
-                        agent.update_favorite_model(provider_id, model_id, |favorite| {
-                            favorite.effort = Some(next_effort)
-                        });
-                    }
-                }
-            });
+            thread.save_model_options(cx, move |model| model.effort = Some(next_effort.clone()));
         });
     }
 }
@@ -14257,6 +14278,8 @@ impl Render for ThreadView {
             .on_action(cx.listener(|this, _: &CycleResponseSpeed, _, cx| {
                 this.cycle_response_speed(cx);
             }))
+            .on_action(cx.listener(Self::reset_thread_to_defaults))
+            .on_action(cx.listener(Self::save_thread_as_defaults))
             .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;

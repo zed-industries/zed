@@ -241,11 +241,16 @@
     "context": "AcpThread > ModeSelector",
     "bindings": {
       "ctrl-enter": "menu::Confirm",
+    },
+  },
+  {
+    "context": "(ModelSelector || ProfileSelector) > Picker",
+    "bindings": {
       "shift-enter": "menu::Confirm",
     },
   },
   {
-    "context": "AcpThread > Picker",
+    "context": "AcpThread > ThinkingEffortSelector",
     "bindings": {
       "shift-enter": "menu::Confirm",
     },

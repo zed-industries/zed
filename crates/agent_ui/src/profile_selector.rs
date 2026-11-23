@@ -4,14 +4,14 @@ use crate::{
 use agent_settings::{
     AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
 };
-use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, AnyView, App, BackgroundExecutor, Context, DismissEvent, Empty, Entity,
-    FocusHandle, Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
+    FocusHandle, Focusable, ForegroundExecutor, Modifiers, SharedString, Subscription, Task,
+    Window,
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use settings::{Settings as _, SettingsStore};
 use std::{
     sync::atomic::Ordering,
     sync::{Arc, atomic::AtomicBool},
@@ -36,6 +36,11 @@ pub trait ProfileProvider {
     /// Check if there is a model selected in the current context.
     fn model_selected(&self, cx: &App) -> bool;
 
+    /// Set the profile the user picked and save it as the default for new
+    /// threads. A thread-only pick makes the thread thread-only, which saves
+    /// nothing.
+    fn pick_profile(&self, profile_id: AgentProfileId, thread_only: bool, cx: &mut App);
+
     /// Whether the current workspace is restricted (has untrusted worktrees).
     ///
     /// In a restricted workspace, profiles that enable tools forbidden in
@@ -56,7 +61,6 @@ pub trait ProfileProvider {
 pub struct ProfileSelector {
     profiles: AvailableProfiles,
     pending_refresh: bool,
-    fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
     picker: Option<Entity<Picker<ProfilePickerDelegate>>>,
     picker_handle: PopoverMenuHandle<Picker<ProfilePickerDelegate>>,
@@ -66,7 +70,6 @@ pub struct ProfileSelector {
 
 impl ProfileSelector {
     pub fn new(
-        fs: Arc<dyn Fs>,
         provider: Arc<dyn ProfileProvider>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
@@ -79,7 +82,6 @@ impl ProfileSelector {
         Self {
             profiles: AgentProfile::available_profiles(cx),
             pending_refresh: false,
-            fs,
             provider,
             picker: None,
             picker_handle: PopoverMenuHandle::default(),
@@ -130,7 +132,6 @@ impl ProfileSelector {
             picker
         } else {
             let delegate = ProfilePickerDelegate::new(
-                self.fs.clone(),
                 self.provider.clone(),
                 self.profiles.clone(),
                 cx.foreground_executor().clone(),
@@ -159,6 +160,14 @@ impl ProfileSelector {
                     .refresh_profiles(profiles.clone(), query, cx);
             });
             self.pending_refresh = false;
+        }
+
+        // The thread's profile can change without a pick, and the highlighted
+        // row is what Enter picks when the picker opens.
+        if !self.picker_handle.is_deployed() {
+            picker.update(cx, |picker, cx| {
+                picker.delegate.highlight_current_profile(cx);
+            });
         }
 
         picker
@@ -247,7 +256,7 @@ impl Render for ProfileSelector {
             }
         }));
 
-        PickerPopoverMenu::new(
+        let popover_menu = PickerPopoverMenu::new(
             picker,
             trigger_button,
             tooltip,
@@ -255,8 +264,13 @@ impl Render for ProfileSelector {
             cx,
         )
         .with_handle(self.picker_handle.clone())
-        .render(window, cx)
-        .into_any_element()
+        .render(window, cx);
+
+        // The key context scopes the Shift+Enter binding to this picker.
+        div()
+            .key_context("ProfileSelector")
+            .child(popover_menu)
+            .into_any_element()
     }
 }
 
@@ -279,7 +293,6 @@ enum ProfilePickerEntry {
 }
 
 pub struct ProfilePickerDelegate {
-    fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
     foreground: ForegroundExecutor,
     background: BackgroundExecutor,
@@ -295,7 +308,6 @@ pub struct ProfilePickerDelegate {
 
 impl ProfilePickerDelegate {
     fn new(
-        fs: Arc<dyn Fs>,
         provider: Arc<dyn ProfileProvider>,
         profiles: AvailableProfiles,
         foreground: ForegroundExecutor,
@@ -308,7 +320,6 @@ impl ProfilePickerDelegate {
         let filtered_entries = Self::entries_from_candidates(&candidates);
 
         let mut this = Self {
-            fs,
             provider,
             foreground,
             background,
@@ -327,6 +338,15 @@ impl ProfilePickerDelegate {
             .unwrap_or_else(|| this.first_selectable_index().unwrap_or(0));
 
         this
+    }
+
+    fn highlight_current_profile(&mut self, cx: &mut Context<Picker<Self>>) {
+        if let Some(index) = self.index_of_profile(&self.provider.profile_id(cx))
+            && index != self.selected_index
+        {
+            self.selected_index = index;
+            cx.notify();
+        }
     }
 
     fn refresh_profiles(
@@ -571,27 +591,23 @@ impl PickerDelegate for ProfilePickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.confirm_with_modifiers(secondary, window.modifiers(), window, cx);
+    }
+
+    fn confirm_with_modifiers(
+        &mut self,
+        _secondary: bool,
+        modifiers: Modifiers,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
         match self.filtered_entries.get(self.selected_index) {
             Some(ProfilePickerEntry::Profile(entry)) => {
                 if let Some(candidate) = self.candidates.get(entry.candidate_index) {
                     let profile_id = candidate.id.clone();
-                    let fs = self.fs.clone();
-                    let provider = self.provider.clone();
-
-                    if !window.modifiers().shift {
-                        update_settings_file(fs, cx, {
-                            let profile_id = profile_id.clone();
-                            move |settings, _cx| {
-                                settings
-                                    .agent
-                                    .get_or_insert_default()
-                                    .set_profile(profile_id.0);
-                            }
-                        });
-                    }
-
-                    provider.set_profile(profile_id.clone(), cx);
+                    self.provider
+                        .pick_profile(profile_id.clone(), modifiers.shift, cx);
 
                     telemetry::event!(
                         "Agent Profile Switched",
@@ -849,7 +865,6 @@ impl PickerDelegate for ProfilePickerDelegate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
     use gpui::TestAppContext;
 
     #[gpui::test]
@@ -892,7 +907,6 @@ mod tests {
             let focus_handle = cx.focus_handle();
 
             let delegate = ProfilePickerDelegate {
-                fs: FakeFs::new(cx.background_executor().clone()),
                 provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
                 foreground: cx.foreground_executor().clone(),
                 background: cx.background_executor().clone(),
@@ -930,7 +944,6 @@ mod tests {
             let focus_handle = cx.focus_handle();
 
             let delegate = ProfilePickerDelegate {
-                fs: FakeFs::new(cx.background_executor().clone()),
                 provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
                 foreground: cx.foreground_executor().clone(),
                 background: cx.background_executor().clone(),
@@ -987,5 +1000,7 @@ mod tests {
         fn model_selected(&self, _cx: &App) -> bool {
             self.has_model
         }
+
+        fn pick_profile(&self, _profile_id: AgentProfileId, _thread_only: bool, _cx: &mut App) {}
     }
 }
