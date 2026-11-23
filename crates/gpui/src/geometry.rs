@@ -5,6 +5,7 @@
 use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
+use gpui_util::canonical_float_bits;
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -2980,19 +2981,9 @@ impl PartialOrd for Pixels {
 
 impl Ord for Pixels {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.total_cmp(&other.0)
-    }
-}
-
-/// The bits of `value` with the sign of zero normalised away.
-///
-/// `PartialEq` for `f32` treats `0.0` and `-0.0` as equal, so a hash built on
-/// `to_bits` has to collapse them as well or equal keys land in different buckets.
-pub(crate) fn canonical_float_bits(value: f32) -> u32 {
-    if value == 0.0 {
-        0.0f32.to_bits()
-    } else {
-        value.to_bits()
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or_else(|| self.0.total_cmp(&other.0))
     }
 }
 

@@ -1,22 +1,14 @@
-use std::collections::HashMap;
-use std::hash::Hash;
+use std::hash::{BuildHasher, RandomState};
 
 use gpui::{FontId, GlyphId, RenderGlyphParams, point, px};
-
-/// `Hash` must agree with `PartialEq`: two equal values have to land in the same
-/// bucket, or a map lookup with an equal key misses.
-fn assert_equal_values_hash_alike<T: Eq + Hash>(left: T, right: T) {
-    let mut map = HashMap::new();
-    map.insert(left, ());
-    assert!(map.contains_key(&right));
-}
 
 #[test]
 fn pixels_hash_agrees_with_equality_on_signed_zero() {
     let positive = px(0.0);
     let negative = -px(0.0);
     assert_eq!(positive, negative);
-    assert_equal_values_hash_alike(positive, negative);
+    let hasher = RandomState::new();
+    assert_eq!(hasher.hash_one(positive), hasher.hash_one(negative));
 }
 
 #[test]
@@ -31,9 +23,14 @@ fn render_glyph_params_hash_agrees_with_equality_on_signed_zero() {
         subpixel_rendering: false,
         dilation: 0,
     };
-    let mut negated = params.clone();
-    negated.font_size = px(-0.0);
-    negated.scale_factor = -0.0;
-    assert_eq!(params, negated);
-    assert_equal_values_hash_alike(params, negated);
+    let hasher = RandomState::new();
+    for (font_size, scale_factor) in [(-0.0, 0.0), (0.0, -0.0), (-0.0, -0.0)] {
+        let negated = RenderGlyphParams {
+            font_size: px(font_size),
+            scale_factor,
+            ..params.clone()
+        };
+        assert_eq!(params, negated);
+        assert_eq!(hasher.hash_one(&params), hasher.hash_one(&negated));
+    }
 }

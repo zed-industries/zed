@@ -138,7 +138,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    ResultExt as _, maybe,
+    ResultExt as _, canonical_float_bits, maybe,
     path_list::PathList,
     paths::{PathStyle, SanitizedPath},
     rel_path::RelPath,
@@ -1031,18 +1031,6 @@ pub struct DocumentColor {
     pub color: lsp::Color,
     pub resolved: bool,
     pub color_presentations: Vec<ColorPresentation>,
-}
-
-/// The bits of `value` with the sign of zero normalised away.
-///
-/// `PartialEq` for `f32` treats `0.0` and `-0.0` as equal, so a hash built on
-/// `to_bits` has to collapse them as well or equal keys land in different buckets.
-fn canonical_float_bits(value: f32) -> u32 {
-    if value == 0.0 {
-        0.0f32.to_bits()
-    } else {
-        value.to_bits()
-    }
 }
 
 impl Eq for DocumentColor {}
@@ -7475,7 +7463,7 @@ fn provide_inline_values(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::hash::{BuildHasher, RandomState};
 
     use super::*;
 
@@ -7492,12 +7480,25 @@ mod tests {
             resolved: false,
             color_presentations: Vec::new(),
         };
-        let mut negated = color.clone();
-        negated.color.red = -0.0;
-        assert_eq!(color, negated);
-
-        let mut colors = HashSet::new();
-        colors.insert(color);
-        assert!(colors.contains(&negated));
+        let hasher = RandomState::new();
+        for [red, green, blue, alpha] in [
+            [-0.0, 0.0, 0.0, 0.0],
+            [0.0, -0.0, 0.0, 0.0],
+            [0.0, 0.0, -0.0, 0.0],
+            [0.0, 0.0, 0.0, -0.0],
+            [-0.0; 4],
+        ] {
+            let negated = DocumentColor {
+                color: lsp::Color {
+                    red,
+                    green,
+                    blue,
+                    alpha,
+                },
+                ..color.clone()
+            };
+            assert_eq!(color, negated);
+            assert_eq!(hasher.hash_one(&color), hasher.hash_one(&negated));
+        }
     }
 }
