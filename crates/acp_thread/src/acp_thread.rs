@@ -11641,6 +11641,40 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_v2_terminal_output_starts_lines_at_column_zero(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let terminal_id = acp_v2::TerminalId::new("piped-terminal");
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_display_terminal(
+                    terminal_id.clone(),
+                    DisplayTerminalPatch {
+                        output: MaybeUndefined::Value(DisplayTerminalOutput {
+                            data: b"snapshot one\nsnapshot two\n".to_vec(),
+                            meta: None,
+                        }),
+                        ..Default::default()
+                    },
+                    cx,
+                )?;
+                thread.append_display_terminal_output(terminal_id.clone(), b"chunk one\n", cx)?;
+                thread.append_display_terminal_output(terminal_id.clone(), b"split crlf\r", cx)?;
+                thread.append_display_terminal_output(terminal_id.clone(), b"\nlast", cx)
+            })
+            .expect("snapshot and chunks");
+        let terminal = thread.read_with(cx, |thread, _| {
+            thread.terminal(terminal_id.clone()).expect("terminal")
+        });
+        terminal.read_with(cx, |terminal, cx| {
+            assert_eq!(
+                terminal.inner().read(cx).get_content().trim_end(),
+                "snapshot one\nsnapshot two\nchunk one\nsplit crlf\nlast"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_v2_terminal_patch_tristate_metadata_and_output_ordering(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;

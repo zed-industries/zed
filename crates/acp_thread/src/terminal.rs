@@ -761,7 +761,7 @@ impl Terminal {
             "Cannot patch a client-owned terminal"
         );
         self.terminal
-            .update(cx, |terminal, cx| terminal.write_raw_output(data, cx));
+            .update(cx, |terminal, cx| terminal.write_output(data, cx));
         self.refresh_output(cx);
         cx.notify();
         Ok(())
