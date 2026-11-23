@@ -61,6 +61,14 @@ fn thinking_opt_out_fallback(model_id: &str) -> Option<Thinking> {
     }
 }
 
+/// Whether the model's default opt-out still produces thinking between tools.
+pub fn defaults_to_between_tools_on_opt_out(model_id: &str) -> bool {
+    matches!(
+        thinking_opt_out_fallback(model_id),
+        Some(Thinking::BetweenTools)
+    )
+}
+
 fn requires_adaptive_thinking(model_id: &str) -> bool {
     model_version_at_least(model_id, |family| match family {
         "opus" => Some((4, 7)),

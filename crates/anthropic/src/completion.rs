@@ -318,9 +318,29 @@ pub fn into_anthropic(
     let mut any_message_wants_cache = false;
     let supports_system_updates = crate::supports_mid_conversation_system_messages(&model);
 
+    let opt_out = if request.thinking_allowed {
+        None
+    } else if let Some(types) = thinking_types
+        && (types.disabled.is_some() || types.between_tools.is_some())
+    {
+        if types.disabled.as_ref().is_some_and(|mode| mode.supported) {
+            Some(Thinking::Disabled)
+        } else if types
+            .between_tools
+            .as_ref()
+            .is_some_and(|mode| mode.supported)
+        {
+            Some(Thinking::BetweenTools)
+        } else {
+            None
+        }
+    } else {
+        crate::thinking_opt_out_fallback(&model)
+    };
+    let between_tools = matches!(opt_out, Some(Thinking::BetweenTools));
     let replay_effort = allows_per_message_effort
         && crate::supports_per_message_effort(&model)
-        && request.thinking_allowed
+        && (request.thinking_allowed || between_tools)
         && matches!(mode, AnthropicModelMode::AdaptiveThinking);
     let mut baseline_effort = None;
     let mut effective_effort = None;
@@ -498,22 +518,8 @@ pub fn into_anthropic(
             }),
             AnthropicModelMode::Default => None,
         }
-    } else if let Some(types) = thinking_types
-        && (types.disabled.is_some() || types.between_tools.is_some())
-    {
-        if types.disabled.as_ref().is_some_and(|mode| mode.supported) {
-            Some(Thinking::Disabled)
-        } else if types
-            .between_tools
-            .as_ref()
-            .is_some_and(|mode| mode.supported)
-        {
-            Some(Thinking::BetweenTools)
-        } else {
-            None
-        }
     } else {
-        crate::thinking_opt_out_fallback(&model)
+        opt_out
     };
 
     let temperature = if crate::rejects_custom_temperature(&model) {
@@ -545,17 +551,18 @@ pub fn into_anthropic(
             LanguageModelToolChoice::None => ToolChoice::None,
         }),
         metadata: None,
-        output_config: if request.thinking_allowed
-            && matches!(mode, AnthropicModelMode::AdaptiveThinking)
-        {
-            baseline_effort
-                .or_else(|| request.thinking_effort.as_deref()?.parse().ok())
-                .map(|effort| crate::OutputConfig {
-                    effort: Some(effort),
-                })
-        } else {
-            None
-        },
+        output_config: baseline_effort
+            .or_else(|| {
+                if request.thinking_allowed && matches!(mode, AnthropicModelMode::AdaptiveThinking)
+                {
+                    request.thinking_effort.as_deref()?.parse().ok()
+                } else {
+                    None
+                }
+            })
+            .map(|effort| crate::OutputConfig {
+                effort: Some(effort),
+            }),
         stop_sequences: Vec::new(),
         speed: request.speed.map(Into::into),
         temperature,
@@ -990,52 +997,56 @@ mod tests {
             effort: effort.into(),
         };
         let sonnet = "claude-sonnet-5-5";
-        let request = into_anthropic(
-            LanguageModelRequest {
-                thinking_allowed: true,
-                thinking_effort: Some("medium".into()),
-                messages: vec![
-                    message(Role::User, vec!["First".into()]),
-                    message(
-                        Role::System,
-                        vec![
-                            effort(LanguageModelVendor::OpenAi, "medium"),
-                            effort(LanguageModelVendor::Anthropic, "low"),
-                        ],
-                    ),
-                    message(Role::Assistant, vec!["Answer".into()]),
-                    message(Role::User, vec!["Next".into()]),
-                    message(
-                        Role::System,
-                        vec![
-                            "Opus instructions".into(),
-                            effort(LanguageModelVendor::Anthropic, "low"),
-                            effort(LanguageModelVendor::Anthropic, "high"),
-                        ],
-                    ),
-                    message(Role::Assistant, vec!["Opus answer".into()]),
-                    message(Role::User, vec!["Back to Sonnet".into()]),
-                    message(
-                        Role::System,
-                        vec![
-                            "Before".into(),
-                            effort(LanguageModelVendor::Anthropic, "low"),
-                            "After".into(),
-                            effort(LanguageModelVendor::Anthropic, "medium"),
-                        ],
-                    ),
-                ],
-                ..Default::default()
-            },
-            sonnet.into(),
-            1.0,
-            4096,
-            AnthropicModelMode::AdaptiveThinking,
-            None,
-            true,
-            AnthropicPromptCacheMode::Automatic,
-            &ANTHROPIC_PROVIDER_ID,
-        )?;
+        let shared_request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("medium".into()),
+            messages: vec![
+                message(Role::User, vec!["First".into()]),
+                message(
+                    Role::System,
+                    vec![
+                        effort(LanguageModelVendor::OpenAi, "medium"),
+                        effort(LanguageModelVendor::Anthropic, "low"),
+                    ],
+                ),
+                message(Role::Assistant, vec!["Answer".into()]),
+                message(Role::User, vec!["Next".into()]),
+                message(
+                    Role::System,
+                    vec![
+                        "Opus instructions".into(),
+                        effort(LanguageModelVendor::Anthropic, "low"),
+                        effort(LanguageModelVendor::Anthropic, "high"),
+                    ],
+                ),
+                message(Role::Assistant, vec!["Opus answer".into()]),
+                message(Role::User, vec!["Back to Sonnet".into()]),
+                message(
+                    Role::System,
+                    vec![
+                        "Before".into(),
+                        effort(LanguageModelVendor::Anthropic, "low"),
+                        "After".into(),
+                        effort(LanguageModelVendor::Anthropic, "medium"),
+                    ],
+                ),
+            ],
+            ..Default::default()
+        };
+        let convert = |request| {
+            into_anthropic(
+                request,
+                sonnet.into(),
+                1.0,
+                4096,
+                AnthropicModelMode::AdaptiveThinking,
+                None,
+                true,
+                AnthropicPromptCacheMode::Automatic,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+        };
+        let request = convert(shared_request.clone())?;
         let wire = serde_json::to_value(request)?;
         assert_eq!(wire["output_config"], serde_json::json!({"effort":"low"}));
         assert_eq!(
@@ -1050,6 +1061,25 @@ mod tests {
                 {"role":"system","content":[{"type":"text","text":"BeforeAfter"}],"output_config":{"effort":"medium"}}
             ])
         );
+
+        let mut between_tools = shared_request;
+        between_tools.thinking_allowed = false;
+        between_tools.thinking_effort = None;
+        between_tools.messages.extend([
+            message(Role::Assistant, vec!["Sonnet answer".into()]),
+            message(Role::User, vec!["Use a tool".into()]),
+        ]);
+        let request = convert(between_tools)?;
+        assert!(matches!(request.thinking, Some(Thinking::BetweenTools)));
+        let off_wire = serde_json::to_value(request)?;
+        assert_eq!(off_wire["output_config"], wire["output_config"]);
+        assert!(
+            off_wire["messages"]
+                .as_array()
+                .unwrap()
+                .starts_with(wire["messages"].as_array().unwrap())
+        );
+
         Ok(())
     }
 
