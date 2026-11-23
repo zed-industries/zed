@@ -1,8 +1,12 @@
 use crate::git_status_icon;
+use collections::HashMap;
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::{Project, git_store::Repository};
+use project::{
+    Project,
+    git_store::{Repository, RepositoryId},
+};
 use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use workspace::{ModalView, Workspace};
@@ -35,17 +39,17 @@ impl RepositorySelector {
         cx: &mut Context<Self>,
     ) -> Self {
         let git_store = project_handle.read(cx).git_store().clone();
-        let repository_entries = git_store.update(cx, |git_store, _cx| {
-            let mut repos: Vec<_> = git_store.repositories().values().cloned().collect();
-
-            repos.sort_by(|a, b| {
-                a.read(_cx)
-                    .display_name()
-                    .to_lowercase()
-                    .cmp(&b.read(_cx).display_name().to_lowercase())
-            });
-
-            repos
+        let display_names = git_store.read(cx).display_names(cx);
+        let mut repository_entries: Vec<_> = git_store
+            .read(cx)
+            .repositories()
+            .values()
+            .cloned()
+            .collect();
+        repository_entries.sort_by(|a, b| {
+            display_name_of(&display_names, a, cx)
+                .to_lowercase()
+                .cmp(&display_name_of(&display_names, b, cx).to_lowercase())
         });
         let filtered_repositories = repository_entries.clone();
 
@@ -60,6 +64,7 @@ impl RepositorySelector {
             filtered_repositories,
             active_repository,
             selected_index,
+            display_names,
         };
 
         let picker = cx.new(|cx| {
@@ -127,22 +132,19 @@ pub struct RepositorySelectorDelegate {
     filtered_repositories: Vec<Entity<Repository>>,
     active_repository: Option<Entity<Repository>>,
     selected_index: usize,
+    display_names: HashMap<RepositoryId, SharedString>,
 }
 
-impl RepositorySelectorDelegate {
-    pub fn update_repository_entries(&mut self, all_repositories: Vec<Entity<Repository>>) {
-        self.repository_entries = all_repositories.clone();
-        self.filtered_repositories = all_repositories;
-        self.selected_index = self
-            .active_repository
-            .as_ref()
-            .and_then(|active| {
-                self.filtered_repositories
-                    .iter()
-                    .position(|repo| repo == active)
-            })
-            .unwrap_or(0);
-    }
+fn display_name_of(
+    display_names: &HashMap<RepositoryId, SharedString>,
+    repository: &Entity<Repository>,
+    cx: &App,
+) -> SharedString {
+    let repository = repository.read(cx);
+    display_names
+        .get(&repository.id)
+        .cloned()
+        .unwrap_or_else(|| repository.display_name())
 }
 
 impl PickerDelegate for RepositorySelectorDelegate {
@@ -188,7 +190,12 @@ impl PickerDelegate for RepositorySelectorDelegate {
 
         let repo_names: Vec<(Entity<Repository>, String)> = all_repositories
             .iter()
-            .map(|repo| (repo.clone(), repo.read(cx).display_name().to_lowercase()))
+            .map(|repo| {
+                (
+                    repo.clone(),
+                    display_name_of(&self.display_names, repo, cx).to_lowercase(),
+                )
+            })
             .collect();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -209,11 +216,11 @@ impl PickerDelegate for RepositorySelectorDelegate {
 
             this.update_in(cx, |this, window, cx| {
                 let mut sorted_repositories = filtered_repositories;
+                let display_names = &this.delegate.display_names;
                 sorted_repositories.sort_by(|a, b| {
-                    a.read(cx)
-                        .display_name()
+                    display_name_of(display_names, a, cx)
                         .to_lowercase()
-                        .cmp(&b.read(cx).display_name().to_lowercase())
+                        .cmp(&display_name_of(display_names, b, cx).to_lowercase())
                 });
                 let selected_index = this
                     .delegate
@@ -223,7 +230,6 @@ impl PickerDelegate for RepositorySelectorDelegate {
                     .unwrap_or(0);
                 this.delegate.filtered_repositories = sorted_repositories;
                 this.delegate.set_selected_index(selected_index, window, cx);
-                cx.notify();
             })
             .ok();
         })
@@ -253,8 +259,8 @@ impl PickerDelegate for RepositorySelectorDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let repo_info = self.filtered_repositories.get(ix)?;
+        let display_name = display_name_of(&self.display_names, repo_info, cx);
         let repo = repo_info.read(cx);
-        let display_name = repo.display_name();
         let summary = repo.status_summary();
         let is_active = self
             .active_repository
@@ -267,8 +273,10 @@ impl PickerDelegate for RepositorySelectorDelegate {
             .toggle_state(selected)
             .child(
                 h_flex()
+                    .w_full()
+                    .min_w_0()
                     .gap_1()
-                    .child(Label::new(display_name))
+                    .child(Label::new(display_name).single_line().truncate().flex_1())
                     .when(is_active, |this| {
                         this.child(
                             Icon::new(IconName::Check)

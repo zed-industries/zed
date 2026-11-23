@@ -523,7 +523,7 @@ pub fn extract_editable_region_from_markers(text: &str) -> Option<String> {
 
     let raw = &text[content_start..content_end];
     let result = strip_marker_tags(raw);
-    let result = result.strip_suffix('\n').unwrap_or(&result).to_string();
+    let result = result.trim_suffix('\n').to_string();
     Some(result)
 }
 
@@ -1819,7 +1819,7 @@ If you'd like to contribute, please take a look at the contributing guide.
         )
         .unwrap();
 
-        let core = encoded.strip_suffix("<|end|>").unwrap_or(&encoded);
+        let core = encoded.trim_suffix("<|end|>");
         for marker in collect_relative_marker_tags(core) {
             let tag_start = marker.tag_start;
             assert!(

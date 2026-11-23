@@ -1,7 +1,6 @@
 mod worktree_settings_tests;
 
 use anyhow::Result;
-use encoding_rs;
 use fs::{FakeFs, Fs, PathEventKind, RealFs, RemoveOptions};
 use git::{DOT_GIT, GITIGNORE, REPO_EXCLUDE};
 use gpui::{
@@ -2125,20 +2124,15 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 
     let path = PathBuf::from("/root/one/node_modules/c/lib");
 
-    // No work happens when files and directories change within an unloaded directory.
-    let prev_fs_call_count = fs.read_dir_call_count() + fs.metadata_call_count();
-    // When we open a directory, we check each ancestor whether it's a git
-    // repository. That means we have an fs.metadata call per ancestor that we
-    // need to subtract here.
-    let ancestors = path.ancestors().count();
+    // No work happens when files and directories change within an unloaded
+    // directory. Checking whether ancestors are git repositories uses `is_file`
+    // and `read_link`, which `FakeFs` does not count as directory scans.
+    let prev_read_dir_count = fs.read_dir_call_count();
 
     fs.create_dir(path.as_ref()).await.unwrap();
     cx.executor().run_until_parked();
 
-    assert_eq!(
-        fs.read_dir_call_count() + fs.metadata_call_count() - prev_fs_call_count - ancestors,
-        0
-    );
+    assert_eq!(fs.read_dir_call_count(), prev_read_dir_count);
 }
 
 #[gpui::test]
@@ -3851,17 +3845,15 @@ async fn test_random_worktree_operations_during_initial_scan(
 
     let settings = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().settings());
 
-    for (i, snapshot) in snapshots.into_iter().enumerate().rev() {
-        let mut updated_snapshot = snapshot.clone();
+    for (i, mut snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
-            if update.scan_id >= updated_snapshot.scan_id() as u64 {
-                updated_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
+            if update.scan_id >= snapshot.scan_id() as u64 {
+                snapshot.apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
         assert_eq!(
-            updated_snapshot.entries(true, 0).collect::<Vec<_>>(),
+            snapshot.entries(true, 0).collect::<Vec<_>>(),
             final_snapshot.entries(true, 0).collect::<Vec<_>>(),
             "wrong updates after snapshot {i}: {updates:#?}",
         );
@@ -5304,6 +5296,14 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
     )
     .await
     .unwrap();
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.snapshot()
+                .root_repo_work_directory()
+                .map(|path| path.as_ref()),
+            Some(Path::new(path!("/linked_worktree"))),
+        );
+    });
     tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
     cx.run_until_parked();

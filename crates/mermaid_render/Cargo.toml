@@ -19,6 +19,19 @@ test-support = []
 anyhow.workspace = true
 gpui.workspace = true
 merman = { workspace = true, features = [
+    "diagram-class",
+    "diagram-er",
+    "diagram-flowchart",
+    "diagram-gantt",
+    "diagram-git-graph",
+    "diagram-journey",
+    "diagram-mindmap",
+    "diagram-pie",
+    "diagram-quadrant-chart",
+    "diagram-sequence",
+    "diagram-state",
+    "diagram-timeline",
+    "diagram-xychart",
     "layout-cytoscape",
     "svg",
 ] }
@@ -28,6 +41,7 @@ tracing.workspace = true
 ztracing.workspace = true
 
 [dev-dependencies]
+assets.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 mermaid_render = { workspace = true, features = ["test-support"] }
 usvg.workspace = true

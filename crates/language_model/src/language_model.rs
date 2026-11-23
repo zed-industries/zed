@@ -129,6 +129,9 @@ pub struct LanguageModel {
     /// request. Only meaningful when `supports_thinking` is `true`.
     pub supports_disabling_thinking: bool,
     pub supports_fast_mode: bool,
+    pub supports_ultrafast_mode: bool,
+    /// Whether instruction updates can retain their positions in conversation history.
+    pub supports_system_prompt_updates: bool,
     /// The effort levels that can be used when thinking.
     pub supported_effort_levels: Arc<[LanguageModelEffortLevel]>,
     /// Whether this model supports provider-side automatic context
@@ -220,6 +223,8 @@ impl LanguageModel {
             supports_thinking: false,
             supports_disabling_thinking: true,
             supports_fast_mode: false,
+            supports_ultrafast_mode: false,
+            supports_system_prompt_updates: false,
             supported_effort_levels: Arc::default(),
             supports_server_side_compaction: false,
             supports_explicit_compaction: false,
@@ -317,6 +322,14 @@ impl LanguageModel {
 
     pub fn supports_fast_mode(&self) -> bool {
         self.supports_fast_mode
+    }
+
+    pub fn supports_speed(&self, speed: Speed) -> bool {
+        match speed {
+            Speed::Standard => true,
+            Speed::Fast => self.supports_fast_mode(),
+            Speed::Ultrafast => self.supports_ultrafast_mode,
+        }
     }
 
     pub fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
@@ -748,7 +761,7 @@ impl LanguageModelCostInfo {
     }
 
     fn cost_value_to_string(cost: &f64) -> SharedString {
-        if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
+        if (cost.fract() - 0.0).abs() < f64::EPSILON {
             SharedString::from(format!("{:.0}", cost))
         } else {
             SharedString::from(format!("{:.2}", cost))

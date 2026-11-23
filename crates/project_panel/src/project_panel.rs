@@ -14,7 +14,6 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fs::TrashId;
-use git;
 use git::status::GitSummary;
 use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
@@ -107,6 +106,9 @@ struct State {
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
     visible_entries: Vec<VisibleEntriesForWorktree>,
+    /// Directories known to show no rows when expanded, from the same snapshot as
+    /// `visible_entries`.
+    empty_dir_ids: HashSet<ProjectEntryId>,
     max_width_item_index: Option<usize>,
     edit_state: Option<EditState>,
     temporarily_unfolded_pending_state: Option<TemporaryUnfoldedPendingState>,
@@ -127,6 +129,7 @@ impl State {
             last_worktree_root_id: None,
             ancestors: Default::default(),
             visible_entries: Default::default(),
+            empty_dir_ids: Default::default(),
             max_width_item_index: None,
             edit_state: old.edit_state.clone(),
             temporarily_unfolded_pending_state: None,
@@ -917,6 +920,7 @@ impl ProjectPanel {
                     temporarily_unfolded_pending_state: None,
                     last_worktree_root_id: Default::default(),
                     visible_entries: Default::default(),
+                    empty_dir_ids: Default::default(),
                     ancestors: Default::default(),
                     expanded_dir_ids: Default::default(),
                     unfolded_dir_ids: Default::default(),
@@ -2073,14 +2077,14 @@ impl ProjectPanel {
         };
         let filename = self.filename_editor.read(cx).text(cx);
         if !filename.is_empty() {
-            if filename.is_empty() {
+            let trimmed_filename = filename.trim();
+            if trimmed_filename.is_empty() {
                 edit_state.validation_state =
                     ValidationState::Error("File or directory name cannot be empty.".to_string());
                 cx.notify();
                 return;
             }
 
-            let trimmed_filename = filename.trim();
             if trimmed_filename != filename {
                 edit_state.validation_state = ValidationState::Warning(
                     "File or directory name contains leading or trailing whitespace.".to_string(),
@@ -2109,7 +2113,7 @@ impl ProjectPanel {
                         already_exists = true;
                     }
                 } else {
-                    let new_path = match entry.path.clone().parent() {
+                    let new_path = match entry.path.parent() {
                         Some(parent) => parent.join(&filename),
                         None => filename.to_owned(),
                     };
@@ -2155,9 +2159,7 @@ impl ProjectPanel {
             // on windows, trailing dots are ignored in paths
             // this can cause project panel to create a new entry with a trailing dot
             // while the actual one without the dot gets populated by the file watcher
-            while let Some(trimmed) = filename.strip_suffix('.') {
-                filename = trimmed.to_string();
-            }
+            filename.truncate(filename.trim_end_matches('.').len());
         }
         if filename.trim().is_empty() {
             return None;
@@ -3976,9 +3978,7 @@ impl ProjectPanel {
 
                         // Create parent directories if needed
                         if let Some(parent) = destination_path.parent() {
-                            if !parent.exists() {
-                                fs.create_dir(parent).await.log_err();
-                            }
+                            fs.create_dir(parent).await.log_err();
                         }
 
                         let download_task = this.update(cx, |this, cx| {
@@ -4631,7 +4631,10 @@ impl ProjectPanel {
 
         let visible_worktrees: Vec<_> = project
             .visible_worktrees(cx)
-            .map(|worktree| worktree.read(cx).snapshot())
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (worktree.snapshot(), worktree.is_local())
+            })
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
@@ -4639,7 +4642,7 @@ impl ProjectPanel {
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
-                    for worktree_snapshot in visible_worktrees {
+                    for (worktree_snapshot, is_local) in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
                         let mut new_entry_parent_id = None;
@@ -4731,11 +4734,6 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if (!hide_gitignore || !entry.is_ignored)
-                                && (!hide_hidden || !entry.is_hidden)
-                            {
-                                visible_worktree_entries.push(entry.to_owned());
-                            }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
                             {
                                 entry.id == new_entry_id || {
@@ -4746,9 +4744,24 @@ impl ProjectPanel {
                             } else {
                                 false
                             };
+                            if is_entry_shown(&entry, hide_gitignore, hide_hidden) {
+                                // A remote host sends a directory it has not loaded yet as `Dir`,
+                                // so only a local one counts.
+                                let is_loaded = is_local && entry.kind == EntryKind::Dir;
+                                // A missing chevron reads as "empty", so a directory keeps it until
+                                // it is loaded.
+                                if is_loaded
+                                    && !precedes_new_entry
+                                    && !worktree_snapshot.child_entries(&entry.path).any(|child| {
+                                        is_entry_shown(child, hide_gitignore, hide_hidden)
+                                    })
+                                {
+                                    new_state.empty_dir_ids.insert(entry.id);
+                                }
+                                visible_worktree_entries.push(entry.to_owned());
+                            }
                             if precedes_new_entry
-                                && (!hide_gitignore || !entry.is_ignored)
-                                && (!hide_hidden || !entry.is_hidden)
+                                && is_entry_shown(&entry, hide_gitignore, hide_hidden)
                             {
                                 visible_worktree_entries.push(Self::create_new_git_entry(
                                     entry.entry,
@@ -7141,6 +7154,10 @@ impl ProjectPanel {
         let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
         let (chevron, icon) = Self::entry_icons(entry, is_expanded, cx);
+        // Without a folder icon, the chevron is all that tells a folder from a file.
+        let hide_chevron =
+            folder_indicator.shows_icon() && self.state.empty_dir_ids.contains(&entry.id);
+        let chevron = if hide_chevron { None } else { chevron };
 
         let path_style = self.project.read(cx).path_style(cx);
         let (depth, difference) =
@@ -7514,6 +7531,10 @@ fn entry_file_name<'a>(entry: &'a Entry, root_name: &'a RelPath) -> &'a str {
         .path
         .file_name()
         .unwrap_or_else(|| root_name.as_unix_str())
+}
+
+fn is_entry_shown(entry: &Entry, hide_gitignore: bool, hide_hidden: bool) -> bool {
+    (!hide_gitignore || !entry.is_ignored) && (!hide_hidden || !entry.is_hidden)
 }
 
 fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {

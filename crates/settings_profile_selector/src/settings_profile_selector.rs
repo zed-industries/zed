@@ -285,7 +285,6 @@ fn display_name(profile_name: &Option<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
     use project::{FakeFs, Project};

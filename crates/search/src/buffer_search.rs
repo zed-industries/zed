@@ -1237,17 +1237,6 @@ impl BufferSearchBar {
         self.search_options.contains(search_option)
     }
 
-    pub fn enable_search_option(
-        &mut self,
-        search_option: SearchOptions,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.search_options.contains(search_option) {
-            self.toggle_search_option(search_option, window, cx)
-        }
-    }
-
     pub fn set_search_within_selection(
         &mut self,
         search_within_selection: Option<FilteredSearchRange>,
@@ -1558,7 +1547,7 @@ impl BufferSearchBar {
                             false,
                             None,
                         ) {
-                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Ok(query) => query,
                             Err(e) => {
                                 self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);
@@ -1577,7 +1566,7 @@ impl BufferSearchBar {
                             false,
                             None,
                         ) {
-                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Ok(query) => query,
                             Err(e) => {
                                 self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);
@@ -4272,6 +4261,89 @@ mod tests {
         assert_eq!(
             editor.read_with(cx, |this, cx| this.text(cx)),
             "\\n100 \\n200 \\n100"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_replace_capture_reference_followed_by_non_ascii_text(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("第1回 开端\n第12回 风起\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"第(\d+)回",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "第$1章",
+            replace_all: true,
+            expected_text: "第1章 开端\n第12章 风起\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("第7回 归来\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"第(\d+)回",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "第$1章",
+            replace_all: false,
+            expected_text: "第7章 归来\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("2e étage, 3e étage\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"(\d+)e\b",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "$1ème",
+            replace_all: true,
+            expected_text: "2ème étage, 3ème étage\n".to_string(),
+        })
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_search_does_not_attach_the_replacement(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("2e étage\n", window, cx)
+        });
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("$1ème", window, cx);
+            });
+        });
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search(r"(\d+)e\b", Some(SearchOptions::REGEX), true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            let active_search = search_bar.active_search.as_ref().unwrap();
+            assert_eq!(active_search.replacement(), None);
+            search_bar.replace_all(&ReplaceAll, window, cx);
+        });
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "2ème étage\n"
         );
     }
 

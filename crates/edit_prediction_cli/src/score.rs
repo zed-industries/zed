@@ -546,14 +546,8 @@ pub fn print_report(
 
         // Print token change percentile summary (only for predictions with a patch)
         if !patch_inserted_tokens.is_empty() {
-            patch_inserted_tokens.sort_unstable();
-            patch_deleted_tokens.sort_unstable();
-            let mut patch_total_tokens: Vec<usize> = patch_inserted_tokens
-                .iter()
-                .zip(patch_deleted_tokens.iter())
-                .map(|(i, d)| i + d)
-                .collect();
-            patch_total_tokens.sort_unstable();
+            let (patch_inserted_tokens, patch_deleted_tokens, patch_total_tokens) =
+                sorted_token_counts(patch_inserted_tokens, patch_deleted_tokens);
 
             let patch_rate = predictions_with_patch as f32 / total_scores as f32 * 100.0;
             println!();
@@ -766,6 +760,22 @@ fn percentile(sorted_values: &[usize], p: usize) -> usize {
     sorted_values[idx.min(sorted_values.len() - 1)]
 }
 
+fn sorted_token_counts(
+    mut inserted_tokens: Vec<usize>,
+    mut deleted_tokens: Vec<usize>,
+) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+    // Sum before sorting so each total comes from one prediction.
+    let mut total_tokens: Vec<usize> = inserted_tokens
+        .iter()
+        .zip(&deleted_tokens)
+        .map(|(inserted, deleted)| inserted + deleted)
+        .collect();
+    inserted_tokens.sort_unstable();
+    deleted_tokens.sort_unstable();
+    total_tokens.sort_unstable();
+    (inserted_tokens, deleted_tokens, total_tokens)
+}
+
 fn truncate_name(name: &str, max_len: usize) -> String {
     if name.len() <= max_len {
         name.to_string()
@@ -863,6 +873,15 @@ mod tests {
         assert_eq!(summary.avg_retrieved_context_bytes, Some(10.0));
         assert_eq!(summary.total_retrieved_context_bytes, Some(10));
         assert_eq!(summary.retrieved_context_examples, Some(1));
+    }
+
+    #[test]
+    fn token_totals_are_summed_per_prediction() {
+        let (inserted, deleted, total) = sorted_token_counts(vec![10, 0, 5], vec![0, 10, 1]);
+
+        assert_eq!(inserted, vec![0, 5, 10]);
+        assert_eq!(deleted, vec![0, 1, 10]);
+        assert_eq!(total, vec![6, 10, 10]);
     }
 
     fn example_with_related_files(

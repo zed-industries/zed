@@ -847,7 +847,7 @@ pub struct BranchPickerSettingsContent {
     pub date_style: Option<GitDateStyle>,
     /// Whether to show author name as part of the commit information.
     ///
-    /// Default: false
+    /// Default: true
     pub show_author_name: Option<bool>,
 }
 

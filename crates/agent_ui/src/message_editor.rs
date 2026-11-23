@@ -9,7 +9,7 @@ use crate::{
     },
     mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
-use acp_thread::MentionUri;
+use acp_thread::{AgentDescriptionFormat, MentionUri};
 use agent::ThreadStore;
 use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Result, anyhow};
@@ -31,6 +31,7 @@ use gpui::{
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
 use project::AgentId;
+use project::lsp_store::CompletionDocumentation;
 use project::{
     CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectPath, Worktree,
 };
@@ -47,6 +48,7 @@ use zed_actions::agent::{Chat, PasteRaw};
 
 #[derive(Default)]
 pub struct SessionCapabilities {
+    description_format: AgentDescriptionFormat,
     prompt_capabilities: acp_v2::PromptCapabilities,
     available_commands: Vec<acp_v2::AvailableCommand>,
     available_skills: Vec<AvailableSkill>,
@@ -54,13 +56,15 @@ pub struct SessionCapabilities {
 
 impl SessionCapabilities {
     pub fn new(
+        description_format: AgentDescriptionFormat,
         prompt_capabilities: acp_v2::PromptCapabilities,
         available_commands: Vec<acp_v2::AvailableCommand>,
         available_skills: Vec<AvailableSkill>,
     ) -> Self {
         Self {
+            description_format,
             prompt_capabilities,
-            available_commands,
+            available_commands: slash_commands(available_commands),
             available_skills,
         }
     }
@@ -69,7 +73,12 @@ impl SessionCapabilities {
         prompt_capabilities: acp_v2::PromptCapabilities,
         available_commands: Vec<acp_v2::AvailableCommand>,
     ) -> Self {
-        Self::new(prompt_capabilities, available_commands, Vec::new())
+        Self::new(
+            AgentDescriptionFormat::PlainText,
+            prompt_capabilities,
+            available_commands,
+            Vec::new(),
+        )
     }
 
     pub fn prompt_capabilities(&self) -> &acp_v2::PromptCapabilities {
@@ -117,7 +126,16 @@ impl SessionCapabilities {
             .iter()
             .map(|command| AvailableCommand {
                 name: command.name().to_owned().into(),
-                description: command.description().to_owned().into(),
+                documentation: match self.description_format {
+                    AgentDescriptionFormat::PlainText => {
+                        CompletionDocumentation::MultiLinePlainText(command.description().into())
+                    }
+                    AgentDescriptionFormat::Markdown => {
+                        CompletionDocumentation::NonInteractiveMarkdown(
+                            command.description().into(),
+                        )
+                    }
+                },
                 requires_argument: matches!(
                     command_input(command),
                     Some(acp_v2::AvailableCommandInput::Text(_))
@@ -137,7 +155,7 @@ impl SessionCapabilities {
     }
 
     pub fn set_available_commands(&mut self, available_commands: Vec<acp_v2::AvailableCommand>) {
-        self.available_commands = available_commands;
+        self.available_commands = slash_commands(available_commands);
     }
 
     pub fn set_available_skills(&mut self, available_skills: Vec<AvailableSkill>) {
@@ -249,7 +267,16 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
-/// Command kinds Zed doesn't know are offered as plain commands without input.
+/// Each command type defines how its entries are invoked, and only `command` entries are
+/// invoked as `/name`. ACP forbids showing any other type as a slash command, including
+/// types Zed doesn't know. `AcpThread` keeps the complete list.
+fn slash_commands(commands: Vec<acp_v2::AvailableCommand>) -> Vec<acp_v2::AvailableCommand> {
+    commands
+        .into_iter()
+        .filter(|command| matches!(command, acp_v2::AvailableCommand::Command(_)))
+        .collect()
+}
+
 fn command_input(command: &acp_v2::AvailableCommand) -> Option<&acp_v2::AvailableCommandInput> {
     match command {
         acp_v2::AvailableCommand::Command(command) => command.input.as_ref(),
@@ -750,7 +777,13 @@ impl MessageEditor {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).text(cx).trim().is_empty()
+        self.editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .chars_at(MultiBufferOffset(0))
+            .all(char::is_whitespace)
     }
 
     pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
@@ -2314,7 +2347,7 @@ mod tests {
     use std::{ops::Range, path::Path, path::PathBuf, rc::Rc, sync::Arc};
 
     use super::PromptLocalCommand;
-    use acp_thread::MentionUri;
+    use acp_thread::{AgentDescriptionFormat, MentionUri};
     use agent::{ThreadStore, outline};
     use agent_client_protocol::v2::schema as acp_v2;
     use base64::Engine as _;
@@ -2360,6 +2393,7 @@ mod tests {
             warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
+            AgentDescriptionFormat::PlainText,
             acp_v2::PromptCapabilities::default(),
             vec![acp_v2::AvailableCommand::Command(acp_v2::Command::new(
                 "help", "Get help",
@@ -2375,8 +2409,41 @@ mod tests {
     }
 
     #[test]
+    fn replaced_command_descriptions_keep_the_connections_format() {
+        use project::lsp_store::CompletionDocumentation;
+
+        for format in [
+            AgentDescriptionFormat::PlainText,
+            AgentDescriptionFormat::Markdown,
+        ] {
+            let mut capabilities =
+                SessionCapabilities::new(format, Default::default(), vec![], vec![]);
+            let source = "**Read** [docs](https://example.org)";
+            capabilities.set_available_commands(vec![acp_v2::AvailableCommand::Command(
+                acp_v2::Command::new("read", source),
+            )]);
+            let commands = capabilities.completion_commands();
+            let [command] = commands.as_slice() else {
+                panic!("one command")
+            };
+            match (format, &command.documentation) {
+                (
+                    AgentDescriptionFormat::Markdown,
+                    CompletionDocumentation::NonInteractiveMarkdown(text),
+                )
+                | (
+                    AgentDescriptionFormat::PlainText,
+                    CompletionDocumentation::MultiLinePlainText(text),
+                ) => assert_eq!(text, source),
+                _ => panic!("incorrect completion documentation format"),
+            }
+        }
+    }
+
+    #[test]
     fn test_completion_commands_derive_category_from_meta() {
         let session_capabilities = SessionCapabilities::new(
+            AgentDescriptionFormat::PlainText,
             acp_v2::PromptCapabilities::default(),
             vec![
                 acp_v2::AvailableCommand::Command(
@@ -2411,17 +2478,18 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_commands_offer_unknown_command_kinds_without_input() {
-        let command: acp_v2::AvailableCommand = serde_json::from_value(json!({
-            "type": "_future_kind",
-            "name": "future",
-            "description": "Future command",
-            "input": {"type": "text", "hint": "not a known input"},
-        }))
+    fn test_only_command_entries_are_slash_commands() {
+        let commands: Vec<acp_v2::AvailableCommand> = serde_json::from_value(json!([
+            {"type": "command", "name": "help", "description": "Get help"},
+            {"type": "_future_kind", "name": "future", "description": "Future command",
+                "input": {"type": "text", "hint": "not a known input"}},
+            {"type": "skill", "name": "pdf", "description": "Read PDFs"},
+        ]))
         .expect("unknown command kinds parse");
-        let session_capabilities = SessionCapabilities::new(
+        let mut session_capabilities = SessionCapabilities::new(
+            AgentDescriptionFormat::Markdown,
             acp_v2::PromptCapabilities::default(),
-            vec![command],
+            commands.clone(),
             Vec::new(),
         );
 
@@ -2431,9 +2499,18 @@ mod tests {
             .unwrap_or_else(|commands: Vec<_>| {
                 panic!("expected one command, got {}", commands.len())
             });
-        assert_eq!(command.name.as_ref(), "future");
-        assert_eq!(command.description.as_ref(), "Future command");
-        assert!(!command.requires_argument);
+        assert_eq!(command.name.as_ref(), "help");
+
+        session_capabilities.set_available_commands(commands[1..].to_vec());
+        assert!(session_capabilities.completion_commands().is_empty());
+        assert!(!session_capabilities.has_slash_completions());
+        MessageEditor::validate_slash_commands(
+            "/future",
+            session_capabilities.available_commands(),
+            session_capabilities.available_skills(),
+            &AgentId::from("Zed"),
+        )
+        .expect_err("other command kinds are not invoked as slash commands");
     }
 
     #[test]

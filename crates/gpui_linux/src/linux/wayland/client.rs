@@ -1004,7 +1004,6 @@ impl WaylandConnection {
         let mut in_progress_outputs = HashMap::default();
         #[allow(clippy::mutable_key_type)]
         let mut wl_outputs: HashMap<ObjectId, wl_output::WlOutput> = HashMap::default();
-        #[allow(clippy::mutable_key_type)]
         let mut output_globals: HashMap<u32, ObjectId> = HashMap::default();
         globals.contents().with_list(|list| -> anyhow::Result<()> {
             for global in list {
@@ -1194,6 +1193,27 @@ impl WaylandConnection {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
                             client.cursor.set_size(size);
+                        }
+                    }
+                    XDPEvent::TextScaleFactor(scale) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let common = client.borrow().common.clone();
+                            let callback = {
+                                let mut common = common.borrow_mut();
+                                if common.text_scale_factor == scale {
+                                    None
+                                } else {
+                                    common.text_scale_factor = scale;
+                                    common.callbacks.text_scale_factor_change.take()
+                                }
+                            };
+                            if let Some(mut callback) = callback {
+                                callback();
+                                let mut common = common.borrow_mut();
+                                if common.callbacks.text_scale_factor_change.is_none() {
+                                    common.callbacks.text_scale_factor_change = Some(callback);
+                                }
+                            }
                         }
                     }
                 }
@@ -2386,9 +2406,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.mouse_focused_window = Some(window.clone());
 
-                    if state.enter_token.is_some() {
-                        state.enter_token = None;
-                    }
+                    state.enter_token = None;
                     state.restore_cursor_after_hide();
                     if let Some(style) = state.cursor_style {
                         if let Some(cursor_shape_device) = &state.cursor_shape_device {

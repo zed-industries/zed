@@ -27,14 +27,6 @@ use std::{
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 use util::{archive::extract_zip, rel_path::RelPath};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DapStatus {
-    None,
-    CheckingForUpdate,
-    Downloading,
-    Failed { error: String },
-}
-
 #[async_trait]
 pub trait DapDelegate: Send + Sync + 'static {
     fn worktree_id(&self) -> WorktreeId;
@@ -265,11 +257,6 @@ pub enum DownloadedFileType {
     Vsix,
     GzipTar,
     Zip,
-}
-
-pub struct GithubRepo {
-    pub repo_name: String,
-    pub repo_owner: String,
 }
 
 pub async fn download_adapter_from_github(

@@ -2538,7 +2538,13 @@ impl BufferSnapshot {
     where
         D: TextDimension,
     {
-        self.text_summary_for_range(0..self.offset_for_anchor(anchor))
+        if anchor.is_min() {
+            D::zero(())
+        } else if anchor.is_max() {
+            D::from_text_summary(&self.visible_text.summary())
+        } else {
+            self.text_summary_for_range(0..self.offset_for_anchor(anchor))
+        }
     }
 
     pub fn offset_for_anchor(&self, anchor: &Anchor) -> usize {

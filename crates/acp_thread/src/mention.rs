@@ -605,13 +605,13 @@ enum DecodePercentEscapes {
 }
 
 fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
-    let range = fragment.strip_prefix("L").unwrap_or(fragment);
+    let range = fragment.trim_prefix("L");
 
     let (start, end) = if let Some((start, end)) = range.split_once(":") {
         (start, end)
     } else if let Some((start, end)) = range.split_once("-") {
         // Also handle L10-20 or L10-L20 format
-        (start, end.strip_prefix("L").unwrap_or(end))
+        (start, end.trim_prefix("L"))
     } else {
         // Single line number like L1872 - treat as a range of one line
         (range, range)

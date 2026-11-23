@@ -139,6 +139,8 @@ For Zed's native agent configuration, see [Zed Agent](./zed-agent.md).
 
 ## Agent-Specific Auth and Config {#agent-auth-config}
 
+When an agent offers model selection, mode, thinking effort, or a Fast Mode toggle, those controls appear in the message composer. Open **Agent Options** for the agent's other settings.
+
 External Agents may have their own sign-in flow, API key setup, subscription behavior, environment variables, and config files.
 
 Examples:

@@ -5,6 +5,7 @@
 use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
+use gpui_util::canonical_float_bits;
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -1186,6 +1187,37 @@ impl<T: PartialOrd + Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Defa
         let top_left = self.origin.min(&other.origin);
         let bottom_right = self.bottom_right().max(&other.bottom_right());
         Bounds::from_corners(top_left, bottom_right)
+    }
+
+    /// Computes the smallest `Bounds` that covers the area of both `Bounds`.
+    ///
+    /// Unlike [`Bounds::union`], an empty `Bounds` covers nothing, so joining with it returns
+    /// the other `Bounds` unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let empty = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 0, height: 10 },
+    /// };
+    ///
+    /// assert_eq!(bounds.join(&empty), bounds);
+    /// assert_eq!(empty.join(&bounds), bounds);
+    /// ```
+    pub fn join(&self, other: &Self) -> Self {
+        if self.is_empty() {
+            other.clone()
+        } else if other.is_empty() {
+            self.clone()
+        } else {
+            self.union(other)
+        }
     }
 }
 
@@ -2949,13 +2981,15 @@ impl PartialOrd for Pixels {
 
 impl Ord for Pixels {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.total_cmp(&other.0)
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or_else(|| self.0.total_cmp(&other.0))
     }
 }
 
 impl std::hash::Hash for Pixels {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
+        canonical_float_bits(self.0).hash(state);
     }
 }
 
@@ -3135,7 +3169,7 @@ impl From<usize> for DevicePixels {
 /// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
 /// dimensions and positions can be specified in a way that scales appropriately across different
 /// display resolutions.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
+#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Neg, Div, DivAssign, PartialEq)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub f32);
 
@@ -3286,6 +3320,18 @@ impl Mul<ScaledPixels> for usize {
 impl MulAssign<f32> for ScaledPixels {
     fn mul_assign(&mut self, rhs: f32) {
         self.0 *= rhs;
+    }
+}
+
+impl std::iter::Sum for ScaledPixels {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + b)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a ScaledPixels> for ScaledPixels {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + *b)
     }
 }
 
@@ -3773,7 +3819,7 @@ pub const fn relative(fraction: f32) -> DefiniteLength {
 
 /// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
 pub const fn phi() -> DefiniteLength {
-    relative(1.618_034)
+    relative(std::f32::consts::GOLDEN_RATIO)
 }
 
 /// Constructs a `Rems` value representing a length in rems.
@@ -4050,6 +4096,37 @@ mod tests {
         ] {
             assert_eq!(px(value).to_i32(), expected);
         }
+    }
+
+    #[test]
+    fn test_bounds_join() {
+        let bounds = Bounds {
+            origin: Point { x: 5.0, y: 5.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        let other = Bounds {
+            origin: Point { x: 20.0, y: 0.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        assert_eq!(bounds.join(&other), bounds.union(&other));
+
+        let empty = Bounds {
+            origin: Point { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 0.0,
+                height: 10.0,
+            },
+        };
+        assert_eq!(bounds.join(&empty), bounds);
+        assert_eq!(empty.join(&bounds), bounds);
+        assert_eq!(Bounds::default().join(&bounds), bounds);
+        assert_ne!(bounds.union(&empty), bounds);
     }
 
     #[test]

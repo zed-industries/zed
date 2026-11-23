@@ -65,11 +65,11 @@ impl CanonicalPathBuf {
 
         #[cfg(target_os = "macos")]
         {
-            // `canonicalize_allowing_missing_components` resolves through the
-            // nearest existing ancestor so a not-yet-created path still yields
-            // the real path Seatbelt will match against.
+            // `canonicalize_allowing_missing_leaf` resolves through the existing
+            // parent so a not-yet-created leaf still yields the real path
+            // Seatbelt will match against.
             Ok(Self {
-                path: super::canonicalize_allowing_missing_components(path),
+                path: super::canonicalize_allowing_missing_leaf(path),
             })
         }
         #[cfg(target_os = "linux")]
@@ -238,7 +238,7 @@ fn require_windows_grant_shape(path: &Path) -> io::Result<()> {
     // Linux-absolute (WSL): exactly one leading '/'.
     let is_wsl = text.starts_with('/') && !text.starts_with("//");
     // Windows drive (NTFS): `X:...`, optionally behind the `\\?\` verbatim prefix.
-    let drive = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    let drive = text.trim_prefix(r"\\?\");
     let drive = drive.as_bytes();
     let is_windows_drive = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
     if is_wsl || is_windows_drive {

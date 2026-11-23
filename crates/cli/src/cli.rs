@@ -72,6 +72,8 @@ pub enum CliRequest {
     SetOpenBehavior {
         behavior: CliBehaviorSetting,
     },
+    /// Print a diagnostic snapshot of the app's GPUI and platform state.
+    DebugState,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

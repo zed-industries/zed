@@ -338,6 +338,18 @@ impl WgpuContext {
         }
     }
 
+    pub fn supports_transient_attachments(&self) -> bool {
+        #[cfg(target_family = "wasm")]
+        if self.backend == WgpuBackend::BrowserWebGpu {
+            // wgpu passes usage bits straight to the browser without knowing
+            // whether it recognizes this one.
+            return js_sys::Reflect::get(&js_sys::global(), &"GPUTextureUsage".into())
+                .and_then(|usage| js_sys::Reflect::has(&usage, &"TRANSIENT_ATTACHMENT".into()))
+                .unwrap_or(false);
+        }
+        true
+    }
+
     #[cfg(target_family = "wasm")]
     pub async fn new_web(
         canvas: &web_sys::HtmlCanvasElement,
@@ -440,18 +452,12 @@ impl WgpuContext {
         }
 
         let color_atlas_texture_format = Self::select_color_texture_format(adapter)?;
-        #[cfg(target_family = "wasm")]
-        let required_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+        let base_limits = if Self::requires_texture_instance_data(adapter) {
             wgpu::Limits::downlevel_webgl2_defaults()
-                .using_resolution(adapter.limits())
-                .using_alignment(adapter.limits())
         } else {
             wgpu::Limits::downlevel_defaults()
-                .using_resolution(adapter.limits())
-                .using_alignment(adapter.limits())
         };
-        #[cfg(not(target_family = "wasm"))]
-        let required_limits = wgpu::Limits::downlevel_defaults()
+        let required_limits = base_limits
             .using_resolution(adapter.limits())
             .using_alignment(adapter.limits());
 
@@ -726,8 +732,18 @@ impl WgpuContext {
         self.backend
     }
 
-    pub fn uses_webgl_instance_data(&self) -> bool {
-        matches!(self.backend, WgpuBackend::Gl) && cfg!(target_family = "wasm")
+    pub fn uses_texture_instance_data(&self) -> bool {
+        Self::requires_texture_instance_data(&self.adapter)
+    }
+
+    fn requires_texture_instance_data(adapter: &wgpu::Adapter) -> bool {
+        if adapter.get_info().backend != wgpu::Backend::Gl {
+            return false;
+        }
+        !adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::VERTEX_STORAGE | wgpu::DownlevelFlags::FRAGMENT_STORAGE)
     }
 
     pub fn supports_dual_source_blending(&self) -> bool {

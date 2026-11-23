@@ -220,7 +220,7 @@ impl McpServer {
                     Self::handle_call_tool(request_id, request.params, &tools, &outgoing_tx, cx)
                         .await;
                 } else if request.method == ListTools::METHOD {
-                    Self::handle_list_tools(request.id.unwrap(), &tools, &outgoing_tx);
+                    Self::handle_list_tools(request_id, &tools, &outgoing_tx);
                 } else if let Some(handler) = handlers.borrow().get(&request.method.as_ref()) {
                     let outgoing_tx = outgoing_tx.clone();
 

@@ -5,6 +5,9 @@ publish.workspace = true
 edition.workspace = true
 license = "GPL-3.0-or-later"
 
+[features]
+test-support = []
+
 [dependencies]
 file_icons.workspace = true
 futures.workspace = true
@@ -20,8 +23,10 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+clock.workspace = true
 editor = {workspace = true, features = ["test-support"]}
 gpui = {workspace = true, features = ["test-support"]}
+rpc = {workspace = true, features = ["test-support"]}
 serde_json.workspace = true
 theme = {workspace = true, features = ["test-support"]}
 theme_settings.workspace = true

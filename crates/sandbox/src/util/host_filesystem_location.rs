@@ -93,11 +93,6 @@ impl HostFilesystemLocation {
     /// target. Protection against a *later* swap comes from persisting the
     /// resolved canonical path and rebuilding the grant with [`Self::reopen`],
     /// which verifies it.
-    ///
-    /// On macOS `raw` doesn't need to exist: missing trailing components are
-    /// resolved through the nearest existing ancestor, so a path can be
-    /// protected before it is created. On Linux the path must exist, because
-    /// the captured identity is an open handle to it.
     pub fn capture(raw: impl AsRef<Path>) -> std::io::Result<Self> {
         let raw = raw.as_ref();
         Ok(Self {
@@ -145,6 +140,25 @@ impl HostFilesystemLocation {
             canonical_path: self.canonical_or_raw_path().display(),
             is_redirected: self.is_redirected(),
         }
+    }
+
+    /// Whether this location is the same file or directory as `ancestor`, or
+    /// lies somewhere beneath it.
+    ///
+    /// Both locations were resolved when they were captured, and this compares
+    /// what they resolved to then: the open directory handles on Linux, the
+    /// canonical paths on macOS. It does not look the paths up again, so a
+    /// symlink swapped in since capture cannot change the answer.
+    ///
+    /// On Windows, a location is not resolved when it is captured. There this
+    /// compares the two paths exactly as the caller wrote them, without
+    /// following symlinks in either one.
+    ///
+    /// This is the check [`crate::Sandbox::new`] uses to reject a writable path
+    /// inside a protected path, or a path disallowing reads inside a path
+    /// allowing reads, so callers can drop such entries up front.
+    pub fn is_within(&self, ancestor: &HostFilesystemLocation) -> bool {
+        crate::location_is_within(self, ancestor)
     }
 
     /// The captured canonical path, falling back to the raw path only on

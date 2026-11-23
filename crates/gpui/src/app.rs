@@ -55,8 +55,8 @@ use crate::{
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
     Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
     SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator, WindowingRequest,
+    ThermalState, Window, WindowAppearance, WindowBounds, WindowButtonLayout, WindowHandle,
+    WindowId, WindowInvalidator, WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -912,6 +912,7 @@ pub struct App {
     pub(crate) keystroke_observers: SingleSubscriberSet<KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SingleSubscriberSet<KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SingleSubscriberSet<Handler>,
+    pub(crate) text_scale_factor_observers: SingleSubscriberSet<Handler>,
     missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SingleSubscriberSet<Handler>,
     pub(crate) display_observers: SingleSubscriberSet<DisplayHandler>,
@@ -971,7 +972,7 @@ pub struct App {
     pub(crate) name: Option<&'static str>,
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
 
-    pub(crate) window_update_stack: Vec<WindowId>,
+    pub(crate) window_update_stack: Vec<WindowUpdateEntry>,
     pub(crate) mode: GpuiMode,
     pub(crate) cursor_hide_mode: CursorHideMode,
     pub(crate) reduce_motion: bool,
@@ -991,8 +992,14 @@ pub struct App {
     _ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct WindowUpdateEntry {
+    window_id: WindowId,
+    bounds: WindowBounds,
+    display_id: Option<DisplayId>,
+}
+
 impl App {
-    #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
@@ -1062,6 +1069,7 @@ impl App {
                 keystroke_observers: SingleSubscriberSet::new(),
                 keystroke_interceptors: SingleSubscriberSet::new(),
                 keyboard_layout_observers: SingleSubscriberSet::new(),
+                text_scale_factor_observers: SingleSubscriberSet::new(),
                 missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SingleSubscriberSet::new(),
                 display_observers: SingleSubscriberSet::new(),
@@ -1114,6 +1122,18 @@ impl App {
                     cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_mapper = cx.platform.keyboard_mapper();
                     cx.keyboard_layout_observers
+                        .clone()
+                        .retain(move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_text_scale_factor_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.text_scale_factor_observers
                         .clone()
                         .retain(move |callback| (callback)(cx));
                 }
@@ -1334,6 +1354,17 @@ impl App {
         F: 'static + FnMut(&mut App),
     {
         self.keyboard_layout_observers.insert(Box::new(move |cx| {
+            callback(cx);
+            true
+        }))
+    }
+
+    /// Invokes a handler when the text scale factor changes
+    pub fn on_text_scale_factor_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        self.text_scale_factor_observers.insert(Box::new(move |cx| {
             callback(cx);
             true
         }))
@@ -1599,6 +1630,40 @@ impl App {
         self.platform.active_window()
     }
 
+    /// Returns the display containing the window that is currently focused at the platform level.
+    pub fn active_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        let (display_id, _) = self.active_window_placement()?;
+        self.find_display(display_id?)
+    }
+
+    pub(crate) fn active_window_placement(&self) -> Option<(Option<DisplayId>, WindowBounds)> {
+        let window_id = self.active_window()?.window_id();
+
+        if let Some(state) = self
+            .window_update_stack
+            .iter()
+            .rev()
+            .find(|state| state.window_id == window_id)
+        {
+            return Some((state.display_id, state.bounds));
+        }
+
+        let window = self.windows.get(window_id)?.as_ref()?;
+        Some((window.display_id(), window.last_window_bounds()))
+    }
+
+    pub(crate) fn sync_window_update_entry(&mut self, window: &Window) {
+        if let Some(state) = self
+            .window_update_stack
+            .iter_mut()
+            .rev()
+            .find(|state| state.window_id == window.handle.id)
+        {
+            state.bounds = window.last_window_bounds();
+            state.display_id = window.display_id();
+        }
+    }
+
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `Window`, which can be used to interact with window-specific
     /// functionality.
@@ -1612,7 +1677,11 @@ impl App {
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
-                    cx.window_update_stack.push(id);
+                    cx.window_update_stack.push(WindowUpdateEntry {
+                        window_id: id,
+                        bounds: window.last_window_bounds(),
+                        display_id: window.display_id(),
+                    });
                     let root_view = build_root_view(&mut window, cx);
                     cx.window_update_stack.pop();
                     window.root.replace(root_view.into());
@@ -1685,6 +1754,66 @@ impl App {
             .iter()
             .find(|display| display.id() == id)
             .cloned()
+    }
+
+    /// Returns a diagnostic snapshot of app, display, and window state.
+    ///
+    /// This is for inspecting a running app that is misbehaving in a way that
+    /// is hard to reproduce. The layout is not stable and varies by platform;
+    /// do not parse it for program logic. A window that is being updated when
+    /// this is called is listed by ID only.
+    pub fn debug_state(&self) -> serde_json::Value {
+        let displays = self
+            .platform
+            .displays()
+            .into_iter()
+            .map(|display| {
+                serde_json::json!({
+                    "id": u64::from(display.id()),
+                    "uuid": display.uuid().ok().map(|uuid| uuid.to_string()),
+                    "bounds": display.bounds(),
+                    "visible_bounds": display.visible_bounds(),
+                    "refresh_interval_seconds": display
+                        .refresh_interval()
+                        .map(|interval| interval.as_secs_f64()),
+                })
+            })
+            .collect::<Vec<_>>();
+        let windows = self
+            .windows
+            .iter()
+            .map(|(window_id, window)| match window {
+                Some(window) => window.debug_state(),
+                None => serde_json::json!({ "id": window_id.as_u64(), "updating": true }),
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "compositor": self.platform.compositor_name(),
+            "thermal_state": format!("{:?}", self.platform.thermal_state()),
+            "power_mode": {
+                "cached": format!("{:?}", self.power_mode),
+                "platform": format!("{:?}", self.platform.power_mode()),
+            },
+            "window_appearance": format!("{:?}", self.platform.window_appearance()),
+            "cursor_visible": self.platform.is_cursor_visible(),
+            "active_window_id": self
+                .platform
+                .active_window()
+                .map(|handle| handle.window_id().as_u64()),
+            "window_stack": self.platform.window_stack().map(|stack| {
+                stack
+                    .into_iter()
+                    .map(|handle| handle.window_id().as_u64())
+                    .collect::<Vec<_>>()
+            }),
+            "primary_display_id": self
+                .platform
+                .primary_display()
+                .map(|display| u64::from(display.id())),
+            "displays": displays,
+            "windows": windows,
+            "platform": self.platform.debug_state(),
+        })
     }
 
     /// Returns the current thermal state of the system.
@@ -1828,6 +1957,11 @@ impl App {
     /// Returns the window button layout configuration when supported.
     pub fn button_layout(&self) -> Option<WindowButtonLayout> {
         self.platform.button_layout()
+    }
+
+    /// Returns the factor by which text should be scaled, on top of the window's scale factor.
+    pub fn text_scale_factor(&self) -> f32 {
+        self.platform.text_scale_factor()
     }
 
     /// Reads data from the platform clipboard.
@@ -1980,8 +2114,11 @@ impl App {
     ///
     /// Best-effort: some platforms cannot retract a notification once shown,
     /// in which case it ages out of the notification center on its own.
-    pub fn dismiss_system_notification(&self, tag: &str) {
-        self.platform.dismiss_system_notification(tag);
+    /// The task completes after the platform calls return, not after any
+    /// asynchronous work inside the operating system. Dropping it does not
+    /// cancel dismissal.
+    pub fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
+        self.platform.dismiss_system_notification(tag)
     }
 
     /// Registers the handler invoked when the user activates a system
@@ -3264,7 +3401,11 @@ impl App {
 
             let root_view = window.root.clone().unwrap();
 
-            cx.window_update_stack.push(window.handle.id);
+            cx.window_update_stack.push(WindowUpdateEntry {
+                window_id: window.handle.id,
+                bounds: window.last_window_bounds(),
+                display_id: window.display_id(),
+            });
             update(Some((root_view, &mut window, cx)));
             fn trail(window_id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
                 cx.window_update_stack.pop();
@@ -3349,7 +3490,7 @@ impl AppContext for App {
             cx.push_effect(Effect::EntityCreated {
                 entity: handle.into_any(),
                 tid: TypeId::of::<T>(),
-                window: cx.window_update_stack.last().cloned(),
+                window: cx.window_update_stack.last().map(|state| state.window_id),
             });
 
             cx.entities.insert(slot, entity)

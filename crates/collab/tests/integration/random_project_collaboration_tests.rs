@@ -1149,7 +1149,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         let range =
                                             if start > end { end..start } else { start..end };
                                         highlights.push(lsp::DocumentHighlight {
-                                            range: range_to_lsp(range.clone()).unwrap(),
+                                            range: range_to_lsp(range).unwrap(),
                                             kind: Some(lsp::DocumentHighlightKind::READ),
                                         });
                                     }
