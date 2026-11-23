@@ -1921,15 +1921,7 @@ async fn test_remote_completion_context(cx: &mut TestAppContext, server_cx: &mut
         trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
         trigger_character: Some(character.to_string()),
     };
-    let incomplete = CompletionContext {
-        trigger_kind: CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
-        trigger_character: None,
-    };
-    for context in [
-        trigger_character("."),
-        trigger_character("!"),
-        incomplete.clone(),
-    ] {
+    for context in [trigger_character("."), trigger_character("!")] {
         project
             .update(cx, |project, cx| {
                 project.completions(&buffer, 2, context, cx)
@@ -1937,41 +1929,13 @@ async fn test_remote_completion_context(cx: &mut TestAppContext, server_cx: &mut
             .await
             .expect("completions should load");
     }
-    let client = project.read_with(cx, |project, cx| {
-        project
-            .remote_client()
-            .expect("remote project")
-            .read(cx)
-            .proto_client()
-    });
-    for character in [".", "!"] {
-        let request = buffer.read_with(cx, |buffer, _| proto::GetCompletions {
-            project_id: proto::REMOTE_SERVER_PROJECT_ID,
-            buffer_id: buffer.remote_id().into(),
-            position: Some(language::proto::serialize_anchor(&buffer.anchor_after(2))),
-            version: language::proto::serialize_version(&buffer.version()),
-            trigger_character: Some(character.to_string()),
-            trigger_kind: proto::get_completions::TriggerKind::TriggerCharacter.into(),
-            ..proto::GetCompletions::default()
-        });
-        client
-            .request(request)
-            .await
-            .expect("completions without a server id should load");
-    }
     let invoked = CompletionContext {
         trigger_kind: CompletionTriggerKind::INVOKED,
         trigger_character: None,
     };
     assert_eq!(
         *contexts.lock().unwrap(),
-        vec![
-            Some(trigger_character(".")),
-            Some(invoked.clone()),
-            Some(incomplete),
-            Some(trigger_character(".")),
-            Some(invoked),
-        ]
+        vec![Some(trigger_character(".")), Some(invoked)]
     );
 }
 

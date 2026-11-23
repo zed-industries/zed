@@ -25406,19 +25406,19 @@ async fn test_completion_reuse(cx: &mut TestAppContext) {
     cx.assert_editor_state("obj.abˇb");
     check_displayed_completions(vec!["ab", "abc"], &mut cx);
 
-    let (release_stale_response, stale_response_released) = futures::channel::oneshot::channel();
-    let stale_response_released = Arc::new(Mutex::new(Some(stale_response_released)));
-    let (stale_request_received, mut stale_requests) = futures::channel::mpsc::unbounded();
+    let (release_stale_response, stale_response_released) = oneshot::channel();
+    let mut stale_response_released = Some(stale_response_released);
+    let (stale_request_received, mut stale_requests) = mpsc::unbounded();
     cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         stale_request_received.unbounded_send(()).ok();
-        let stale_response_released = stale_response_released.lock().take();
+        let stale_response_released = stale_response_released.take();
         async move {
             if let Some(stale_response_released) = stale_response_released {
                 stale_response_released.await.ok();
             }
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
-                    label: "a_only".into(),
+                    label: String::from("a_only"),
                     ..lsp::CompletionItem::default()
                 },
             ])))

@@ -6268,7 +6268,46 @@ impl LspStore {
             );
         }
 
-        let query_outcome = self.lsp_query_outcome(&buffer, server, &request, cx);
+        let query_outcome = buffer.update(cx, |buffer, cx| {
+            let mut early_response = None;
+            if let Some(local) = self.as_local() {
+                for (adapter, language_server) in local.language_servers_for_buffer(buffer, cx) {
+                    if let LanguageServerToQuery::Other(id) = server
+                        && language_server.server_id() != id
+                    {
+                        continue;
+                    }
+                    let mut applicable_capabilities =
+                        applicable_lsp_command_capabilities_for_buffer(
+                            local,
+                            &request,
+                            buffer,
+                            adapter,
+                            language_server,
+                            cx,
+                        )
+                        .peekable();
+                    if applicable_capabilities.peek().is_some() {
+                        match request.response_without_request(&mut applicable_capabilities) {
+                            None => {
+                                return LanguageServerQueryOutcome::Query(Arc::clone(
+                                    language_server,
+                                ));
+                            }
+                            Some(response) => {
+                                if early_response.is_none() {
+                                    early_response = Some(response);
+                                }
+                            }
+                        }
+                    }
+                    if let LanguageServerToQuery::Other(_) = server {
+                        break;
+                    }
+                }
+            }
+            LanguageServerQueryOutcome::Respond(early_response.unwrap_or_default())
+        });
         let language_server = match query_outcome {
             LanguageServerQueryOutcome::Query(language_server) => language_server,
             LanguageServerQueryOutcome::Respond(response) => return Task::ready(Ok(response)),
@@ -6368,55 +6407,6 @@ impl LspStore {
                     cx.clone(),
                 )
                 .await
-        })
-    }
-
-    fn lsp_query_outcome<R: LspCommand>(
-        &self,
-        buffer: &Entity<Buffer>,
-        server: LanguageServerToQuery,
-        request: &R,
-        cx: &mut App,
-    ) -> LanguageServerQueryOutcome<R::Response> {
-        buffer.update(cx, |buffer, cx| {
-            let mut early_response = None;
-            if let Some(local) = self.as_local() {
-                for (adapter, language_server) in local.language_servers_for_buffer(buffer, cx) {
-                    if let LanguageServerToQuery::Other(id) = server
-                        && language_server.server_id() != id
-                    {
-                        continue;
-                    }
-                    let mut applicable_capabilities =
-                        applicable_lsp_command_capabilities_for_buffer(
-                            local,
-                            request,
-                            buffer,
-                            adapter,
-                            language_server,
-                            cx,
-                        )
-                        .peekable();
-                    if applicable_capabilities.peek().is_some() {
-                        match request.response_without_request(&mut applicable_capabilities) {
-                            None => {
-                                return LanguageServerQueryOutcome::Query(Arc::clone(
-                                    language_server,
-                                ));
-                            }
-                            Some(response) => {
-                                if early_response.is_none() {
-                                    early_response = Some(response);
-                                }
-                            }
-                        }
-                    }
-                    if let LanguageServerToQuery::Other(_) = server {
-                        break;
-                    }
-                }
-            }
-            LanguageServerQueryOutcome::Respond(early_response.unwrap_or_default())
         })
     }
 
@@ -10860,18 +10850,7 @@ impl LspStore {
 
         let response = this
             .update(&mut cx, |lsp_store, cx| {
-                let server_id = request.server_id.or_else(|| {
-                    match lsp_store.lsp_query_outcome(
-                        &buffer_handle,
-                        LanguageServerToQuery::FirstCapable,
-                        &request,
-                        cx,
-                    ) {
-                        LanguageServerQueryOutcome::Query(server) => Some(server.server_id()),
-                        LanguageServerQueryOutcome::Respond(_) => None,
-                    }
-                });
-                let server_to_query = match server_id {
+                let server_to_query = match request.server_id {
                     Some(server_id) => {
                         request.context = lsp_store.completion_context_for_server(
                             buffer_handle.read(cx),
