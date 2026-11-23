@@ -684,6 +684,8 @@ jobs:
         path: target/release
     - name: release::publish_snap::setup_snapcraft
       uses: canonical/craft-actions/snapcraft/setup@d2add174925f9bca7b0a826010c8e1ce2a4bbc3d
+      with:
+        channel: latest/edge
     - name: ./script/snap-build --publish
       run: ./script/snap-build --publish
       env:
@@ -712,6 +714,8 @@ jobs:
         path: target/release
     - name: release::publish_snap::setup_snapcraft
       uses: canonical/craft-actions/snapcraft/setup@d2add174925f9bca7b0a826010c8e1ce2a4bbc3d
+      with:
+        channel: latest/edge
     - name: ./script/snap-build --publish
       run: ./script/snap-build --publish
       env:
