@@ -180,14 +180,17 @@ impl Helix {
         self.update_editor(cx, |_, editor, cx| {
             editor.clear_background_highlights(HighlightKey::HelixInsertSelections, cx);
             editor.dismiss_menus_and_popups(false, window, cx);
-            let Some(session) = session else {
-                return;
-            };
-            if let Some(transaction_id) = session.first_transaction {
+            // Without a session (insert mode as the default mode), the
+            // cursors just become selections.
+            if let Some(transaction_id) = session.as_ref().and_then(|s| s.first_transaction) {
                 editor.group_until_transaction(transaction_id, cx);
             }
-            let restore = editor.selections.count() == session.fixed_sides.len();
-            let mut fixed_sides = session.fixed_sides.iter();
+            let kind = session.as_ref().map(|session| session.kind);
+            let fixed_sides = session
+                .map(|session| session.fixed_sides)
+                .unwrap_or_default();
+            let restore = editor.selections.count() == fixed_sides.len();
+            let mut fixed_sides = fixed_sides.iter();
             editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
                 selections.move_offsets_with(&mut |snapshot, selection| {
                     let cursor = selection.head();
@@ -195,11 +198,11 @@ impl Helix {
                         .next()
                         .filter(|_| restore)
                         .map(|anchor| anchor.to_offset(snapshot));
-                    let range = match (session.kind, fixed_side) {
-                        (InsertKind::Insert, Some(end)) if cursor <= end => {
+                    let range = match (kind, fixed_side) {
+                        (Some(InsertKind::Insert), Some(end)) if cursor <= end => {
                             HelixRange::new(end, cursor)
                         }
-                        (InsertKind::Append, Some(start)) if start <= cursor => {
+                        (Some(InsertKind::Append), Some(start)) if start <= cursor => {
                             HelixRange::new(start, cursor)
                         }
                         _ => HelixRange::point(cursor),

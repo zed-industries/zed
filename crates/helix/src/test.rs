@@ -740,6 +740,22 @@ async fn test_cursor_shape(cx: &mut TestAppContext) {
     assert_eq!(cursor_shape(&mut cx), CursorShape::Hollow);
 }
 
+#[gpui::test]
+async fn test_default_mode(cx: &mut TestAppContext) {
+    init_test(cx);
+    let mut cx = EditorTestContext::new(cx).await;
+    set_vim_settings(&mut cx, |vim| {
+        vim.default_mode = Some(settings::ModeContent::Insert)
+    });
+    set_helix_mode(true, &mut cx);
+    set_helix_next_flag(true, &mut cx);
+    cx.set_state("ˇabc");
+    cx.simulate_keystrokes("x");
+    cx.assert_editor_state("xˇabc");
+    cx.simulate_keystrokes("escape");
+    cx.assert_editor_state("x«aˇ»bc");
+}
+
 // Turning Helix mode off in insert mode leaves no Helix state behind.
 #[gpui::test]
 async fn test_turning_off_in_insert_mode(cx: &mut TestAppContext) {
