@@ -1082,6 +1082,11 @@ pub struct Editor {
     /// Whether the cursor is offset one character to the left when something is
     /// selected (needed for vim visual mode)
     cursor_offset_on_selection: bool,
+    /// Whether a selection of a single grapheme counts as a cursor: it is
+    /// drawn without the selection background and does not hide the current
+    /// line or trigger selected text highlights (needed for helix, where the
+    /// cursor always selects the character under it)
+    single_grapheme_selections_are_cursors: bool,
     current_line_highlight: Option<CurrentLineHighlight>,
     /// Whether to collapse search match ranges to just their start position.
     /// When true, navigating to a match positions the cursor at the match
@@ -2470,6 +2475,7 @@ impl Editor {
                 .cursor_shape
                 .unwrap_or_default(),
             cursor_offset_on_selection: false,
+            single_grapheme_selections_are_cursors: false,
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -3366,6 +3372,46 @@ impl Editor {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
+    pub fn set_single_grapheme_selections_are_cursors(
+        &mut self,
+        are_cursors: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.single_grapheme_selections_are_cursors == are_cursors {
+            return;
+        }
+        self.single_grapheme_selections_are_cursors = are_cursors;
+        self.refresh_selected_text_highlights(&self.display_snapshot(cx), false, window, cx);
+        cx.notify();
+    }
+
+    /// Whether `range` is highlighted as a cursor rather than as selected text.
+    pub(crate) fn highlights_as_cursor(
+        &self,
+        range: Range<Point>,
+        buffer: &MultiBufferSnapshot,
+    ) -> bool {
+        // Longer than any reasonable grapheme cluster.
+        const MAX_GRAPHEME_LEN: usize = 64;
+
+        if range.start == range.end {
+            return true;
+        }
+        if !self.single_grapheme_selections_are_cursors {
+            return false;
+        }
+        let start = buffer.point_to_offset(range.start);
+        let end = buffer.point_to_offset(range.end);
+        if end - start > MAX_GRAPHEME_LEN {
+            return false;
+        }
+        let text = buffer.text_for_range(start..end).collect::<String>();
+        unicode_segmentation::UnicodeSegmentation::graphemes(text.as_str(), true)
+            .nth(1)
+            .is_none()
+    }
+
     /// Returns the anchor to use as the rename target for a selection.
     ///
     /// In selection-based modes, like vim's visual mode and helix, the rendered
@@ -3907,7 +3953,7 @@ impl Editor {
         let selection = self.selections.newest::<Point>(&snapshot);
         // If the selection spans multiple rows OR it is empty
         if selection.start.row != selection.end.row
-            || selection.start.column == selection.end.column
+            || self.highlights_as_cursor(selection.range(), snapshot.buffer_snapshot())
         {
             return None;
         }

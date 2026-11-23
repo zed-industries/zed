@@ -932,10 +932,11 @@ impl EditorElement {
                 let mut layouts = Vec::new();
                 let newest = editor.selections.newest(&editor.display_snapshot(cx));
                 for selection in local_selections.iter().cloned() {
-                    let is_empty = selection.start == selection.end;
+                    let is_empty =
+                        editor.highlights_as_cursor(selection.range(), snapshot.buffer_snapshot());
                     let is_newest = selection == newest;
 
-                    let layout = SelectionLayout::new(
+                    let mut layout = SelectionLayout::new(
                         selection,
                         editor.selections.line_mode(),
                         editor.cursor_offset_on_selection,
@@ -945,6 +946,11 @@ impl EditorElement {
                         editor.leader_id.is_none(),
                         None,
                     );
+                    if is_empty {
+                        // Otherwise the background shows through a blinking
+                        // or bar cursor.
+                        layout.range = layout.head..layout.head;
+                    }
                     if is_newest {
                         newest_selection_head = Some(layout.head);
                     }
@@ -13039,6 +13045,73 @@ mod tests {
                 assert!(!relative_rows.contains_key(&line_1_display_row));
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_single_grapheme_selections_as_cursors(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+        window
+            .update(cx, |editor, window, cx| {
+                editor.cursor_offset_on_selection = true;
+                editor.set_single_grapheme_selections_are_cursors(true, window, cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([
+                        Point::new(0, 0)..Point::new(0, 2),
+                        Point::new(3, 2)..Point::new(3, 3),
+                        Point::new(5, 6)..Point::new(6, 0),
+                    ]);
+                });
+            })
+            .unwrap();
+
+        let (_, state) = cx.draw(
+            point(px(500.), px(500.)),
+            size(px(500.), px(500.)),
+            |_, _| EditorElement::new(&editor, style),
+        );
+
+        let local_selections = &state.selections[0].1;
+        assert_eq!(local_selections.len(), 3);
+        // a selection of two characters is drawn as a selection
+        assert_eq!(
+            local_selections[0].range,
+            DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 2)
+        );
+        assert_eq!(
+            local_selections[0].head,
+            DisplayPoint::new(DisplayRow(0), 1)
+        );
+        // a selection of one character or a newline is drawn as a cursor
+        assert_eq!(
+            local_selections[1].range,
+            DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 2)
+        );
+        assert_eq!(
+            local_selections[2].range,
+            DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 6)
+        );
+        // and does not hide the current line
+        assert_eq!(
+            state
+                .active_rows
+                .iter()
+                .map(|(row, spec)| (*row, spec.selection))
+                .collect::<Vec<_>>(),
+            vec![
+                (DisplayRow(0), true),
+                (DisplayRow(3), false),
+                (DisplayRow(5), false)
+            ]
+        );
     }
 
     #[gpui::test]

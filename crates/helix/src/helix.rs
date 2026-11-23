@@ -269,6 +269,7 @@ impl Helix {
         editor.set_input_enabled(true);
         editor.set_expects_character_input(true);
         editor.set_cursor_offset_on_selection(false);
+        editor.set_single_grapheme_selections_are_cursors(false, window, cx);
         editor.set_edit_predictions_hidden_for_vim_mode(false, window, cx);
     }
 
@@ -412,6 +413,7 @@ impl Helix {
         editor.set_input_enabled(inserting);
         editor.set_expects_character_input(inserting || awaiting_input);
         editor.set_cursor_offset_on_selection(!inserting);
+        editor.set_single_grapheme_selections_are_cursors(mode == Mode::Normal, window, cx);
         editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
     }
 

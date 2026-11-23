@@ -2,7 +2,10 @@ mod helix_test_context;
 
 use std::{cell::Cell, rc::Rc, time::Duration};
 
-use editor::test::editor_test_context::EditorTestContext;
+use editor::{
+    HighlightKey, SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT,
+    test::editor_test_context::EditorTestContext,
+};
 use gpui::{ClipboardItem, KeyBinding, TestAppContext, UpdateGlobal as _};
 use indoc::indoc;
 use modal_editor::ModeIndicatorSource as _;
@@ -165,6 +168,30 @@ async fn test_append_at_empty_selection_at_eof(cx: &mut TestAppContext) {
         "foobar#[|]#",
         LineFeedHandling::AsIs,
     ));
+}
+
+#[gpui::test]
+async fn test_single_grapheme_selection_is_highlighted_as_cursor(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("#[f|]#oo foo");
+    cx.executor()
+        .advance_clock(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+    cx.assert_editor_background_highlights(HighlightKey::SelectedTextHighlight, "foo foo");
+
+    cx.set_state("#[fo|]#o foo");
+    cx.executor()
+        .advance_clock(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+    cx.assert_editor_background_highlights(HighlightKey::SelectedTextHighlight, "foo «fo»o");
+
+    // In select mode the character is selected text.
+    cx.set_state("#[f|]#oo foo");
+    cx.simulate_keys("v");
+    cx.executor()
+        .advance_clock(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+    cx.assert_editor_background_highlights(HighlightKey::SelectedTextHighlight, "foo «f»oo");
 }
 
 // The key context depends on the count, and the window only rebuilds it when
