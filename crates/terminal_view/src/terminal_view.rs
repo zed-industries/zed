@@ -2825,7 +2825,9 @@ mod tests {
         }
         draw_terminal(&terminal, &mut cx);
         cx.update(|_, cx| {
-            terminal_view.update(cx, |terminal_view, _| terminal_view.cursor_animation.reset());
+            terminal_view.update(cx, |terminal_view, _| {
+                terminal_view.cursor_animation.reset()
+            });
         });
         draw_terminal(&terminal, &mut cx);
         assert!(!cursor_animation_active(&terminal_view, &mut cx));

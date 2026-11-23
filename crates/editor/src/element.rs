@@ -18,8 +18,7 @@ use crate::{
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     cursor_animation::{
-        CursorAnimationState, CursorViewport, LogicalCursorPosition,
-        animated_corners_cover_target,
+        CursorAnimationState, CursorViewport, LogicalCursorPosition, animated_corners_cover_target,
     },
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,

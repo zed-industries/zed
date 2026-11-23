@@ -1035,9 +1035,11 @@ mod tests {
         let left_half = corners([(0.0, 0.0), (4.0, 0.0), (4.0, 20.0), (0.0, 20.0)]);
         assert!(!animated_corners_cover_target(target, &left_half));
 
-        let trail_spanning_target =
-            corners([(-16.0, 0.0), (8.0, 0.0), (8.0, 20.0), (-16.0, 20.0)]);
-        assert!(animated_corners_cover_target(target, &trail_spanning_target));
+        let trail_spanning_target = corners([(-16.0, 0.0), (8.0, 0.0), (8.0, 20.0), (-16.0, 20.0)]);
+        assert!(animated_corners_cover_target(
+            target,
+            &trail_spanning_target
+        ));
 
         let exact = corners([(0.0, 0.0), (8.0, 0.0), (8.0, 20.0), (0.0, 20.0)]);
         assert!(animated_corners_cover_target(target, &exact));
