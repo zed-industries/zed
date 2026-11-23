@@ -7,8 +7,8 @@ use gpui::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, WindowVisibility, point,
-    popup::PopupNotSupportedError, px,
+    WindowDecorations, WindowKind, WindowParams, WindowVisibility, popup::PopupNotSupportedError,
+    px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -33,7 +33,7 @@ use std::{
     cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
 };
 
-use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES, display_for_bounds};
+use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
 
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
@@ -252,7 +252,6 @@ pub struct Callbacks {
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
-    display_changed: Option<Box<dyn FnMut()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
     button_layout_changed: Option<Box<dyn FnMut()>>,
 }
@@ -273,7 +272,7 @@ pub struct X11WindowState {
     /// Taken when the window is dropped. Its GPU objects use the X connection, so they mustn't
     /// outlive the window, which a display mode switch relies on.
     renderer: Option<WgpuRenderer>,
-    display: Rc<X11Display>,
+    display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
     background_appearance: WindowBackgroundAppearance,
@@ -363,7 +362,7 @@ impl rwh::HasDisplayHandle for X11Window {
         };
         let screen_id = {
             let state = self.0.state.borrow();
-            state.x_screen_index as i32
+            u64::from(state.display.id()) as i32
         };
         let handle = rwh::XcbDisplayHandle::new(Some(non_zero), screen_id);
         Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
@@ -472,7 +471,6 @@ impl X11WindowState {
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
         x_main_screen_index: usize,
-        displays: &[Rc<X11Display>],
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
@@ -489,7 +487,7 @@ impl X11WindowState {
 
         let x_screen_index = params
             .display_id
-            .map_or(x_main_screen_index, X11Display::screen_index);
+            .map_or(x_main_screen_index, |did| u64::from(did) as usize);
 
         let visual_set = find_visuals(xcb, x_screen_index);
 
@@ -830,11 +828,7 @@ impl X11WindowState {
                 )?;
             }
 
-            let device_bounds = bounds.map(|value| value.0);
-            let display = display_for_bounds(displays, device_bounds)
-                .or_else(|| displays.first())
-                .cloned()
-                .context("X11 reported no displays")?;
+            let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
 
             Ok(Self {
                 parent,
@@ -939,7 +933,6 @@ impl X11Window {
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
         x_main_screen_index: usize,
-        displays: &[Rc<X11Display>],
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
@@ -959,7 +952,6 @@ impl X11Window {
                 xcb,
                 client_side_decorations_supported,
                 x_main_screen_index,
-                displays,
                 x_window,
                 atoms,
                 scale_factor,
@@ -1062,58 +1054,6 @@ impl X11Window {
 }
 
 impl X11WindowStatePtr {
-    /// The window's bounds in device pixels, relative to the root window.
-    pub(crate) fn root_device_bounds(&self) -> anyhow::Result<Bounds<i32>> {
-        let (root, size) = {
-            let state = self.state.borrow();
-            let scale_factor = state.scale_factor;
-            (
-                state.x_root_window,
-                state
-                    .bounds
-                    .size
-                    .map(|value| (f32::from(value) * scale_factor).round() as i32),
-            )
-        };
-        // `ConfigureNotify` positions are relative to the window manager's
-        // frame for reparented windows, so ask the server.
-        let origin = get_reply(
-            || "X11 TranslateCoordinates failed.",
-            self.xcb.translate_coordinates(self.x_window, root, 0, 0),
-        )?;
-        Ok(Bounds {
-            origin: point(i32::from(origin.dst_x), i32::from(origin.dst_y)),
-            size,
-        })
-    }
-
-    pub(crate) fn display(&self) -> Rc<X11Display> {
-        self.state.borrow().display.clone()
-    }
-
-    /// Moves the window to `display`, notifying GPUI when it's another
-    /// display. Rereading the same display only updates it; GPUI learns of
-    /// changes to its properties as a display configuration change.
-    pub(crate) fn set_display(&self, display: Rc<X11Display>) {
-        let moved = {
-            let mut state = self.state.borrow_mut();
-            let moved = state.display.id() != display.id();
-            state.display = display;
-            moved
-        };
-        if !moved {
-            return;
-        }
-        let callback = self.callbacks.borrow_mut().display_changed.take();
-        if let Some(mut callback) = callback {
-            callback();
-            self.callbacks
-                .borrow_mut()
-                .display_changed
-                .get_or_insert(callback);
-        }
-    }
-
     pub fn should_close(&self) -> bool {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(mut should_close) = cb.should_close.take() {
@@ -1560,7 +1500,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(self.0.state.borrow().display.clone() as Rc<dyn PlatformDisplay>)
+        Some(self.0.state.borrow().display.clone())
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -1816,9 +1756,9 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().moved = Some(callback);
     }
 
-    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.borrow_mut().display_changed = Some(callback);
-    }
+    // A GPUI display on X11 is an X screen, which spans every monitor, and a
+    // window never changes screen.
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
         self.0.callbacks.borrow_mut().should_close = Some(callback);

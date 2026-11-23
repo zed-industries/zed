@@ -35,7 +35,6 @@ wayland = [
 ]
 x11 = [
     "dep:accesskit_unix",
-    "uuid/v5",
     "gpui_wgpu",
     "ashpd",
 
