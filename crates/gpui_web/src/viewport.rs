@@ -11,7 +11,35 @@ pub(crate) struct WebViewport {
     safe_area_probes: [web_sys::HtmlElement; 4],
     pub(crate) visible_bounds: Bounds<Pixels>,
     pub(crate) insets: WindowInsets,
+    held_layout: Option<HeldLayout>,
 }
+
+/// The layout viewport as it was before a software keyboard could open.
+///
+/// Browsers disagree on what a keyboard resizes: Safari shrinks only the
+/// visual viewport, while Chrome on iOS and `interactive-widget=
+/// resizes-content` shrink the layout viewport with it, and a canvas sized
+/// to the page along with that. Holding the canvas at its keyboard-free
+/// height makes every browser report the keyboard the same way: as the part
+/// of the canvas the visual viewport no longer shows.
+///
+/// The page gives no other signal, so anything else that shortens the layout
+/// at the same width while held, such as entering split-screen, also reads as
+/// a keyboard until the hold ends.
+struct HeldLayout {
+    width: f64,
+    height: f64,
+    /// The inline canvas height to restore on release.
+    canvas_height: String,
+    /// When set, the hold ends once the layout is back at its held height,
+    /// or at this `Date.now()` time if it never gets there.
+    release_deadline: Option<f64>,
+}
+
+/// How long a released hold waits for the closing keyboard to give the
+/// layout its height back. Only reached when something other than the
+/// keyboard shortened the layout, which would otherwise hold forever.
+const KEYBOARD_CLOSE_TIMEOUT_MS: f64 = 1000.;
 
 impl WebViewport {
     pub(crate) fn new(document: &web_sys::Document) -> anyhow::Result<Self> {
@@ -21,6 +49,7 @@ impl WebViewport {
             safe_area_probes: [top?, right?, bottom?, left?],
             visible_bounds: Bounds::default(),
             insets: WindowInsets::default(),
+            held_layout: None,
         };
         let body = document
             .body()
@@ -45,7 +74,6 @@ impl WebViewport {
         window: &web_sys::Window,
         canvas: &web_sys::HtmlCanvasElement,
     ) -> anyhow::Result<bool> {
-        let canvas_bounds = canvas.get_bounding_client_rect();
         let document = window
             .document()
             .ok_or_else(|| anyhow::anyhow!("Missing document"))?;
@@ -53,7 +81,26 @@ impl WebViewport {
             .document_element()
             .ok_or_else(|| anyhow::anyhow!("Missing root"))?;
         let layout_width = root.client_width() as f64;
-        let layout_height = root.client_height() as f64;
+        let mut layout_height = root.client_height() as f64;
+        if let Some(held) = &self.held_layout {
+            // A keyboard only ever makes the layout shorter at the same
+            // width. Anything else is a rotation or a window resize, or a
+            // hold taken while a keyboard was still up: measure again.
+            let releasing = held.release_deadline.is_some();
+            if held.width != layout_width || layout_height > held.height {
+                self.restore_canvas_height(canvas);
+                if !releasing {
+                    self.hold_canvas_height(window, canvas);
+                }
+            } else if held.release_deadline.is_some_and(|deadline| {
+                layout_height >= held.height || js_sys::Date::now() >= deadline
+            }) {
+                self.restore_canvas_height(canvas);
+            } else {
+                layout_height = held.height;
+            }
+        }
+        let canvas_bounds = canvas.get_bounding_client_rect();
         let (left, top, width, height) = match window.visual_viewport() {
             Some(viewport) => (
                 viewport.offset_left(),
@@ -93,6 +140,92 @@ impl WebViewport {
         self.visible_bounds = visible_bounds;
         self.insets = insets;
         Ok(changed)
+    }
+
+    /// Keeps the canvas at its current height while a software keyboard may
+    /// be open, until [`Self::release_canvas_height`].
+    pub(crate) fn hold_canvas_height(
+        &mut self,
+        window: &web_sys::Window,
+        canvas: &web_sys::HtmlCanvasElement,
+    ) {
+        if let Some(held) = &mut self.held_layout {
+            match held.release_deadline.take() {
+                Some(deadline) if js_sys::Date::now() >= deadline => {
+                    self.restore_canvas_height(canvas);
+                }
+                // Still held, or the keyboard is still closing: the held
+                // height predates it, where a fresh measurement would not.
+                _ => return,
+            }
+        }
+        let Some(root) = window
+            .document()
+            .and_then(|document| document.document_element())
+        else {
+            return;
+        };
+        let style = canvas.style();
+        let canvas_height = style.get_property_value("height").unwrap_or_default();
+        let height = canvas.get_bounding_client_rect().height();
+        if let Err(error) = style.set_property("height", &format!("{height}px")) {
+            log::warn!("Failed to hold the canvas height: {error:?}");
+            return;
+        }
+        self.held_layout = Some(HeldLayout {
+            width: root.client_width() as f64,
+            height: root.client_height() as f64,
+            canvas_height,
+            release_deadline: None,
+        });
+    }
+
+    /// Ends the hold once the keyboard has closed.
+    ///
+    /// Releasing at once would resize the canvas to the page a still-closing
+    /// keyboard has shrunk, and a hold retaken before it finished closing
+    /// would measure that page as keyboard-free.
+    pub(crate) fn release_canvas_height(&mut self) {
+        if let Some(held) = &mut self.held_layout {
+            held.release_deadline
+                .get_or_insert_with(|| js_sys::Date::now() + KEYBOARD_CLOSE_TIMEOUT_MS);
+        }
+    }
+
+    fn restore_canvas_height(&mut self, canvas: &web_sys::HtmlCanvasElement) {
+        let Some(held) = self.held_layout.take() else {
+            return;
+        };
+        if let Err(error) = canvas.style().set_property("height", &held.canvas_height) {
+            log::warn!("Failed to release the canvas height: {error:?}");
+        }
+    }
+
+    /// Sets the canvas's own height, which a hold in progress restores to.
+    pub(crate) fn set_canvas_height(&mut self, canvas: &web_sys::HtmlCanvasElement, height: &str) {
+        match &mut self.held_layout {
+            Some(held) => held.canvas_height = height.to_string(),
+            None => {
+                canvas.style().set_property("height", height).ok();
+            }
+        }
+    }
+
+    /// The height a docked software keyboard takes from the page.
+    ///
+    /// Floating and split keyboards overlay the page and read as zero.
+    /// Returns `None` when a pinch zoom makes the visual viewport say nothing
+    /// about a keyboard.
+    pub(crate) fn keyboard_height(&self, window: &web_sys::Window) -> Option<f64> {
+        let viewport = window.visual_viewport()?;
+        if (viewport.scale() - 1.).abs() >= 0.001 {
+            return None;
+        }
+        let layout_height = match &self.held_layout {
+            Some(held) => held.height,
+            None => window.document()?.document_element()?.client_height() as f64,
+        };
+        Some((layout_height - viewport.height()).max(0.))
     }
 }
 
