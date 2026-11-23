@@ -998,6 +998,10 @@ impl Markdown {
         &self.source
     }
 
+    pub fn options(&self) -> MarkdownOptions {
+        self.options
+    }
+
     pub fn non_rendered_source_ranges(&self) -> Vec<Range<usize>> {
         if self.source != self.parsed_markdown.source {
             return Vec::new();
@@ -1701,6 +1705,49 @@ impl ParsedMarkdown {
             CodeBlockKind::Indented => None,
         }
     }
+}
+
+/// Like [`Markdown::non_rendered_source_ranges`], but parses `source` itself, so it also
+/// works for markdown that hasn't been parsed yet (see [`MarkdownOptions::defer_parsing`]).
+pub fn non_rendered_source_ranges(source: &str, options: MarkdownOptions) -> Vec<Range<usize>> {
+    let parsed = if options.parse_links_only {
+        ParsedMarkdown {
+            events: Arc::from(parse_links_only(source)),
+            ..Default::default()
+        }
+    } else {
+        let parsed = parse_markdown_with_options(
+            source,
+            options.parse_html,
+            options.parse_heading_slugs,
+            options.render_metadata_blocks,
+        );
+        ParsedMarkdown {
+            events: Arc::from(parsed.events),
+            link_definition_spans: Arc::from(parsed.link_definition_spans),
+            ..Default::default()
+        }
+    };
+    parsed.non_rendered_source_ranges()
+}
+
+/// `non_rendered_ranges` must be sorted by start and disjoint, as returned by
+/// [`Markdown::non_rendered_source_ranges`]. Matches may arrive in any order.
+pub fn filter_non_rendered_matches(
+    matches: Vec<Range<usize>>,
+    non_rendered_ranges: &[Range<usize>],
+) -> Vec<Range<usize>> {
+    matches
+        .into_iter()
+        .filter(|match_range| {
+            let candidate =
+                non_rendered_ranges.partition_point(|range| range.end <= match_range.start);
+
+            !non_rendered_ranges
+                .get(candidate)
+                .is_some_and(|range| range.start < match_range.end)
+        })
+        .collect()
 }
 
 struct PendingCodeBlock<'a> {

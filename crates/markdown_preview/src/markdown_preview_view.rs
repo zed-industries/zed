@@ -23,7 +23,7 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
-    MarkdownOptions, MarkdownStyle,
+    MarkdownOptions, MarkdownStyle, filter_non_rendered_matches,
 };
 use project::search::SearchQuery;
 use project::{Project, ProjectPath, image_store};
@@ -2190,25 +2190,6 @@ impl SearchableItem for MarkdownPreviewView {
                 .or(Some(matches.len().saturating_sub(1))),
         }
     }
-}
-
-/// `non_rendered_ranges` must be sorted by start and disjoint, as returned by
-/// [`Markdown::non_rendered_source_ranges`]. Matches may arrive in any order.
-fn filter_non_rendered_matches(
-    matches: Vec<Range<usize>>,
-    non_rendered_ranges: &[Range<usize>],
-) -> Vec<Range<usize>> {
-    matches
-        .into_iter()
-        .filter(|match_range| {
-            let candidate =
-                non_rendered_ranges.partition_point(|range| range.end <= match_range.start);
-
-            !non_rendered_ranges
-                .get(candidate)
-                .is_some_and(|range| range.start < match_range.end)
-        })
-        .collect()
 }
 
 impl SerializableItem for MarkdownPreviewView {

@@ -14,7 +14,9 @@ use gpui::{
     Action, Entity, EntityId, EventEmitter, FocusHandle, Focusable, KeyContext, Subscription, Task,
     TextStyle, WeakEntity, actions, prelude::*,
 };
-use markdown::Markdown;
+use markdown::{
+    Markdown, MarkdownOptions, filter_non_rendered_matches, non_rendered_source_ranges,
+};
 use multi_buffer::{Anchor, Event as MultiBufferEvent, MultiBufferOffset, MultiBufferSnapshot};
 use project::search::SearchQuery;
 use search::{SearchOption, SearchOptions, SearchSource};
@@ -112,6 +114,7 @@ enum SearchTarget {
         entry_ix: usize,
         markdown: Entity<Markdown>,
         source: SharedString,
+        options: MarkdownOptions,
     },
 }
 
@@ -368,10 +371,12 @@ impl ThreadSearchBar {
                 _ => {
                     for markdown in collect_markdowns(entry_ix, entry, &entry_view_state, cx) {
                         let source = markdown.read(cx).source().clone();
+                        let options = markdown.read(cx).options();
                         targets.push(SearchTarget::Markdown {
                             entry_ix,
                             markdown,
                             source,
+                            options,
                         });
                     }
                     if let AgentThreadEntry::ToolCall(tool_call) = entry
@@ -463,8 +468,16 @@ impl ThreadSearchBar {
                                 entry_ix,
                                 markdown,
                                 source,
+                                options,
                             } => {
                                 let ranges = query.search_str(&source);
+                                if ranges.is_empty() {
+                                    return None;
+                                }
+                                let ranges = filter_non_rendered_matches(
+                                    ranges,
+                                    &non_rendered_source_ranges(&source, options),
+                                );
                                 if ranges.is_empty() {
                                     return None;
                                 }
