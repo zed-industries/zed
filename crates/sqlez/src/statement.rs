@@ -441,6 +441,35 @@ mod test {
     }
 
     #[test]
+    fn statement_is_reset_when_callback_panics() {
+        let connection = Connection::open_memory(Some("statement_is_reset_when_callback_panics"));
+        connection
+            .exec(indoc! {"
+                CREATE TABLE numbers (
+                    number INTEGER
+                )"})
+            .unwrap()()
+        .unwrap();
+        connection
+            .exec("INSERT INTO numbers (number) VALUES (1), (2), (3)")
+            .unwrap()()
+        .unwrap();
+
+        let mut statement =
+            Statement::prepare(&connection, "SELECT number FROM numbers ORDER BY number").unwrap();
+
+        let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            statement
+                .map::<()>(|_| panic!("callback panicked"))
+                .unwrap();
+        }));
+        assert!(panic_result.is_err());
+
+        // Without a reset, stepping would resume after the row the callback panicked on.
+        assert_eq!(statement.rows::<i32>().unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
     pub fn maybe_returns_options() {
         let connection = Connection::open_memory(Some("maybe_returns_options"));
         connection
