@@ -40,8 +40,8 @@ fn bench_word_diff_ranges(criterion: &mut Criterion) {
         ),
         (
             "5x5_shifted",
-            "x aa\nx bb\nx cc\nx dd\nx ee\n".into(),
-            "x bb\nx cc\nx dd\nx ee\nx ff\n".into(),
+            "xx aa\nxx bb\nxx cc\nxx dd\nxx ee\n".into(),
+            "xx bb\nxx cc\nxx dd\nxx ee\nxx ff\n".into(),
         ),
         ("5x5_long_lines", long_lines(0), long_lines(10)),
     ];
