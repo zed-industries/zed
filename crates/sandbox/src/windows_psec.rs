@@ -890,6 +890,64 @@ mod tests {
     }
 
     #[test]
+    fn protected_paths_survive_changes_to_the_folder_above_them() {
+        // Only `.git\config` and `.git\hooks` are protected, as they are for
+        // a real checkout, so `.git` itself is an ordinary writable folder.
+        // Each attempt tries to get its own content to those paths without
+        // writing to them directly.
+        let attempts = [
+            (
+                "editing them after renaming the folder away, then renaming it back",
+                r"ren {git} moved & echo evil> {project}\moved\config & echo evil> {project}\moved\hooks\pre-commit & ren {project}\moved .git",
+            ),
+            (
+                "renaming the folder away and creating a new one in its place",
+                r"ren {git} moved & mkdir {git}\hooks & echo evil> {git}\config & echo evil> {git}\hooks\pre-commit",
+            ),
+            (
+                "renaming the folder away and leaving a junction in its place",
+                r"mkdir {project}\evil\hooks & echo evil> {project}\evil\config & echo evil> {project}\evil\hooks\pre-commit & ren {git} moved & mklink /J {git} {project}\evil",
+            ),
+        ];
+
+        for allow_fs_write in [false, true] {
+            for (description, attempt) in attempts {
+                let directory = tempfile::tempdir().unwrap();
+                let project = directory.path().to_path_buf();
+                let git = project.join(".git");
+                std::fs::create_dir_all(git.join("hooks")).unwrap();
+                std::fs::write(git.join("config"), "protected").unwrap();
+                std::fs::write(git.join("hooks").join("pre-commit"), "protected").unwrap();
+                let writable_paths: &[&Path] = if allow_fs_write { &[] } else { &[&project] };
+                let fs = fs_setup(
+                    allow_fs_write,
+                    writable_paths,
+                    &[&git.join("config"), &git.join("hooks")],
+                    &[],
+                    &[],
+                );
+                let spec = build_spec(&fs, NetworkAccess::None).unwrap();
+                let script = attempt
+                    .replace("{git}", &git.display().to_string())
+                    .replace("{project}", &project.display().to_string());
+
+                if run_sandboxed(&spec, &script).is_none() {
+                    return;
+                }
+
+                for file in [git.join("config"), git.join("hooks").join("pre-commit")] {
+                    assert_eq!(
+                        std::fs::read_to_string(&file).ok().as_deref(),
+                        Some("protected"),
+                        "{} should be untouched after {description} (allow_fs_write: {allow_fs_write})",
+                        file.display()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     #[expect(
         clippy::disallowed_methods,
         reason = "blocking on `mklink` is fine in a test"
