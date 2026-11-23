@@ -96,8 +96,8 @@ use language::{
     row_chunk::RowChunk,
 };
 use lsp::{
-    AdapterServerCapabilities, CodeActionKind, CompletionContext, DEFAULT_LSP_REQUEST_TIMEOUT,
-    DiagnosticServerCapabilities, DiagnosticSeverity, DiagnosticTag,
+    AdapterServerCapabilities, CodeActionKind, CompletionContext, CompletionTriggerKind,
+    DEFAULT_LSP_REQUEST_TIMEOUT, DiagnosticServerCapabilities, DiagnosticSeverity, DiagnosticTag,
     DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
     FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LanguageServer,
     LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName,
@@ -3703,7 +3703,6 @@ impl LocalLspStore {
         Ok(transaction)
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn edits_from_lsp(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -6525,7 +6524,7 @@ impl LspStore {
                             worktree_path,
                             language.name(),
                             language.manifest(),
-                            delegate.clone(),
+                            delegate,
                             cx,
                         )
                         .collect::<Vec<_>>();
@@ -8047,6 +8046,12 @@ impl LspStore {
                 this.update(cx, |lsp_store, cx| {
                     for server_id in server_ids {
                         let lsp_adapter = lsp_store.language_server_adapter_for_id(server_id);
+                        let context = lsp_store.completion_context_for_server(
+                            buffer.read(cx),
+                            server_id,
+                            context.clone(),
+                            cx,
+                        );
                         let lsp_timeout = lsp_timeout
                             .map(|lsp_timeout| cx.background_executor().timer(lsp_timeout));
                         let mut timeout = cx.background_spawn(async move {
@@ -8063,7 +8068,7 @@ impl LspStore {
                             LanguageServerToQuery::Other(server_id),
                             GetCompletions {
                                 position,
-                                context: context.clone(),
+                                context,
                                 server_id: Some(server_id),
                             },
                             cx,
@@ -8110,6 +8115,36 @@ impl LspStore {
         }
     }
 
+    fn completion_context_for_server(
+        &self,
+        buffer: &Buffer,
+        server_id: LanguageServerId,
+        mut context: CompletionContext,
+        cx: &App,
+    ) -> CompletionContext {
+        if context.trigger_kind != CompletionTriggerKind::TRIGGER_CHARACTER {
+            return context;
+        }
+        let Some(local) = self.as_local() else {
+            return context;
+        };
+        let Some(adapter) = self.language_server_adapter_for_id(server_id) else {
+            return context;
+        };
+
+        let triggers =
+            completion_trigger_characters_for_buffer(local, server_id, &adapter, buffer, cx);
+        if !context
+            .trigger_character
+            .as_ref()
+            .is_some_and(|trigger| triggers.contains(trigger))
+        {
+            context.trigger_kind = CompletionTriggerKind::INVOKED;
+            context.trigger_character = None;
+        }
+        context
+    }
+
     pub fn resolve_completions(
         &self,
         buffer: Entity<Buffer>,
@@ -8145,85 +8180,90 @@ impl LspStore {
                     .get_request_timeout()
             });
 
-            let resolutions = futures::stream::iter(completion_indices.into_iter().unique()).map(
-                |completion_index| {
-                    let completions = completions.clone();
-                    let resolvable_servers = resolvable_servers.clone();
-                    let client = client.clone();
-                    let lsp_store = lsp_store.clone();
-                    let buffer_snapshot = buffer_snapshot.clone();
-                    let mut cx = cx.clone();
-                    async move {
-                        let server_id = {
-                            let completion = &completions.borrow()[completion_index];
-                            completion.source.server_id()
-                        };
-                        let Some(server_id) = server_id else {
-                            resolve_word_completion(
-                                &buffer_snapshot,
-                                &mut completions.borrow_mut()[completion_index],
-                            );
-                            return false;
-                        };
+            let mut did_resolve = false;
+            if let Some((client, project_id)) = client {
+                for completion_index in completion_indices {
+                    let server_id = {
+                        let completion = &completions.borrow()[completion_index];
+                        completion.source.server_id()
+                    };
+                    if let Some(server_id) = server_id {
                         if !resolvable_servers.contains(&server_id) {
-                            return false;
+                            continue;
                         }
-                        if let Some((client, project_id)) = client {
-                            Self::resolve_completion_remote(
-                                project_id,
-                                server_id,
-                                buffer_id,
-                                completions,
-                                completion_index,
-                                client,
-                            )
-                            .await
-                            .log_err()
-                            .is_some()
-                        } else {
-                            let server_and_adapter = lsp_store
-                                .read_with(&mut cx, |lsp_store, _| {
-                                    let server = lsp_store.language_server_for_id(server_id)?;
-                                    let adapter = lsp_store
-                                        .language_server_adapter_for_id(server.server_id())?;
-                                    Some((server, adapter))
-                                })
-                                .ok()
-                                .flatten();
-                            let Some((server, adapter)) = server_and_adapter else {
-                                return false;
-                            };
-                            let resolved = Self::resolve_completion_local(
-                                server,
+                        if Self::resolve_completion_remote(
+                            project_id,
+                            server_id,
+                            buffer_id,
+                            completions.clone(),
+                            completion_index,
+                            client.clone(),
+                        )
+                        .await
+                        .log_err()
+                        .is_some()
+                        {
+                            did_resolve = true;
+                        }
+                    } else {
+                        resolve_word_completion(
+                            &buffer_snapshot,
+                            &mut completions.borrow_mut()[completion_index],
+                        );
+                    }
+                }
+            } else {
+                for completion_index in completion_indices {
+                    let server_id = {
+                        let completion = &completions.borrow()[completion_index];
+                        completion.source.server_id()
+                    };
+                    if let Some(server_id) = server_id {
+                        if !resolvable_servers.contains(&server_id) {
+                            continue;
+                        }
+                        let server_and_adapter = lsp_store
+                            .read_with(cx, |lsp_store, _| {
+                                let server = lsp_store.language_server_for_id(server_id)?;
+                                let adapter =
+                                    lsp_store.language_server_adapter_for_id(server.server_id())?;
+                                Some((server, adapter))
+                            })
+                            .ok()
+                            .flatten();
+                        let Some((server, adapter)) = server_and_adapter else {
+                            continue;
+                        };
+
+                        let resolved = Self::resolve_completion_local(
+                            server,
+                            completions.clone(),
+                            completion_index,
+                            request_timeout,
+                            true,
+                        )
+                        .await
+                        .log_err()
+                        .is_some();
+                        if resolved {
+                            Self::regenerate_completion_labels(
+                                adapter,
+                                &buffer_snapshot,
                                 completions.clone(),
                                 completion_index,
-                                request_timeout,
-                                true,
                             )
                             .await
-                            .log_err()
-                            .is_some();
-                            if resolved {
-                                Self::regenerate_completion_labels(
-                                    adapter,
-                                    &buffer_snapshot,
-                                    completions,
-                                    completion_index,
-                                )
-                                .await
-                                .log_err();
-                            }
-                            resolved
+                            .log_err();
+                            did_resolve = true;
                         }
+                    } else {
+                        resolve_word_completion(
+                            &buffer_snapshot,
+                            &mut completions.borrow_mut()[completion_index],
+                        );
                     }
-                },
-            );
-            let did_resolve = resolutions
-                .buffer_unordered(16)
-                .fold(false, |did_resolve, resolved| async move {
-                    did_resolve || resolved
-                })
-                .await;
+                }
+            }
 
             Ok(did_resolve)
         })
@@ -12218,9 +12258,7 @@ impl LspStore {
                         if progress.percentage.is_some() {
                             entry.percentage = progress.percentage;
                         }
-                        if progress.is_cancellable != entry.is_cancellable {
-                            entry.is_cancellable = progress.is_cancellable;
-                        }
+                        entry.is_cancellable = progress.is_cancellable;
                         did_update = true;
                     }
                 }
@@ -17176,14 +17214,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {
         let dir = self.language_registry.language_server_download_dir(name)?;
-
-        if !dir.exists() {
-            smol::fs::create_dir_all(&dir)
-                .await
-                .context("failed to create container directory")
-                .log_err()?;
-        }
-
+        smol::fs::create_dir_all(&dir)
+            .await
+            .context("failed to create container directory")
+            .log_err()?;
         Some(dir)
     }
 

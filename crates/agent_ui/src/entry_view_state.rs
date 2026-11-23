@@ -439,7 +439,7 @@ impl EntryViewState {
                                 let element = create_terminal(
                                     self.workspace.clone(),
                                     self.project.clone(),
-                                    terminal.clone(),
+                                    terminal,
                                     window,
                                     cx,
                                 )

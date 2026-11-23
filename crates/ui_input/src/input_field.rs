@@ -89,11 +89,6 @@ impl InputField {
         self
     }
 
-    pub fn label_min_width(mut self, width: impl Into<Length>) -> Self {
-        self.min_width = width.into();
-        self
-    }
-
     pub fn tab_index(mut self, index: isize) -> Self {
         self.tab_index = Some(index);
         self

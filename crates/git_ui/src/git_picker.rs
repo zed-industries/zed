@@ -485,24 +485,6 @@ impl Render for GitPicker {
     }
 }
 
-pub fn open_branches(
-    workspace: &mut Workspace,
-    _: &zed_actions::git::Branch,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    open_with_tab(workspace, GitPickerTab::Branches, window, cx);
-}
-
-pub fn open_stash(
-    workspace: &mut Workspace,
-    _: &zed_actions::git::ViewStash,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    open_with_tab(workspace, GitPickerTab::Stashes, window, cx);
-}
-
 fn open_with_tab(
     workspace: &mut Workspace,
     tab: GitPickerTab,

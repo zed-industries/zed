@@ -205,6 +205,6 @@ impl Component for SpinnerLabel {
             single_example("Sand Variant", SpinnerLabel::sand().into_any_element()),
         ];
 
-        example_group(examples).vertical().into_any_element()
+        example_group(examples).into_any_element()
     }
 }

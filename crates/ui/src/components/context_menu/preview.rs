@@ -212,6 +212,9 @@ impl MenuPreview {
                 .entry("Parent command", None, Self::handler(preview, |_| {})),
             Example::ParentRefresh => {
                 let values = &this.values;
+                let confirmations: SharedString =
+                    format!("{} changes", values.confirmations).into();
+                let disabled = values.trigger_state == TriggerState::Disabled;
                 menu.keep_open_on_confirm(false)
                     .entry("Before filters", None, Self::handler(preview, |_| {}))
                     .when(values.trigger_moved, |menu| {
@@ -252,8 +255,34 @@ impl MenuPreview {
                                 },
                             )
                             .id("filters")
-                            .icon(IconName::Filter)
-                            .disabled(values.trigger_state == TriggerState::Disabled),
+                            .disabled(disabled)
+                            .custom_trigger(move |_, _| {
+                                let color = if disabled {
+                                    Color::Disabled
+                                } else {
+                                    Color::Muted
+                                };
+                                h_flex()
+                                    .w_full()
+                                    .gap_3()
+                                    .justify_between()
+                                    .child(Label::new("Filters").color(if disabled {
+                                        Color::Disabled
+                                    } else {
+                                        Color::Default
+                                    }))
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(Label::new(confirmations.clone()).color(color))
+                                            .child(
+                                                Icon::new(IconName::ChevronRight)
+                                                    .size(IconSize::Small)
+                                                    .color(color),
+                                            ),
+                                    )
+                                    .into_any_element()
+                            }),
                         )
                     })
                     .entry("After filters", None, Self::handler(preview, |_| {}))

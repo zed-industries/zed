@@ -4,7 +4,6 @@ use editor::{
     Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer, MultiBuffer,
     SplittableEditor, multibuffer_context_lines,
 };
-use futures::{StreamExt as _, TryStreamExt as _, stream};
 use git_ui_core::file_diff_view::build_buffer_diff;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
@@ -47,37 +46,30 @@ async fn load_entries(
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<(Vec<Entry>, Option<PathBuf>)> {
-    let entries = stream::iter(diff_pairs.into_iter().enumerate())
-        .map(|(index, pair)| {
-            let project = project.clone();
-            let mut cx = cx.clone();
-            async move {
-                let old_path = PathBuf::from(&pair[0]);
-                let new_path = PathBuf::from(&pair[1]);
-                let old_buffer = project.update(&mut cx, |project, cx| {
-                    project.open_local_buffer(&old_path, cx)
-                });
-                let new_buffer = project.update(&mut cx, |project, cx| {
-                    project.open_local_buffer(&new_path, cx)
-                });
-                let (old_buffer, new_buffer) =
-                    futures::future::try_join(old_buffer, new_buffer).await?;
-                let diff = build_buffer_diff(&old_buffer, &new_buffer, &mut cx).await?;
-                anyhow::Ok(Entry {
-                    index,
-                    new_path,
-                    new_buffer,
-                    diff,
-                })
-            }
-        })
-        .buffered(16)
-        .try_collect::<Vec<_>>()
-        .await?;
-    let all_paths = entries
-        .iter()
-        .map(|entry| entry.new_path.clone())
-        .collect::<Vec<_>>();
+    let mut entries = Vec::with_capacity(diff_pairs.len());
+    let mut all_paths = Vec::with_capacity(diff_pairs.len());
+
+    for (ix, pair) in diff_pairs.into_iter().enumerate() {
+        let old_path = PathBuf::from(&pair[0]);
+        let new_path = PathBuf::from(&pair[1]);
+
+        let old_buffer = project
+            .update(cx, |project, cx| project.open_local_buffer(&old_path, cx))
+            .await?;
+        let new_buffer = project
+            .update(cx, |project, cx| project.open_local_buffer(&new_path, cx))
+            .await?;
+
+        let diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
+
+        all_paths.push(new_path.clone());
+        entries.push(Entry {
+            index: ix,
+            new_path,
+            new_buffer: new_buffer.clone(),
+            diff,
+        });
+    }
 
     let common_root = common_prefix(&all_paths);
     Ok((entries, common_root))
@@ -400,77 +392,13 @@ impl Render for MultiDiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::FutureExt as _;
     use gpui::BorrowAppContext;
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use project::{FakeFs, Project};
     use settings::{DiffViewStyle, SettingsStore};
-    use std::time::Duration;
     use util::path;
     use workspace::MultiWorkspace;
-
-    #[gpui::test(iterations = 10)]
-    async fn test_multi_diff_loads_files_concurrently(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-        });
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/test"),
-            serde_json::json!({
-                "old1.txt": "old one", "new1.txt": "new one",
-                "old2.txt": "old two", "new2.txt": "new two",
-                "old3.txt": "old three", "new3.txt": "new three"
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-        let pairs = [3, 1, 2]
-            .into_iter()
-            .map(|index| {
-                [
-                    format!("{}/old{index}.txt", path!("/test")),
-                    format!("{}/new{index}.txt", path!("/test")),
-                ]
-            })
-            .collect::<Vec<_>>();
-        for pair in &pairs {
-            for path in pair {
-                fs.set_load_delay(path, Duration::from_millis(40));
-            }
-        }
-        let mut task = cx.spawn(async move |mut cx| load_entries(pairs, &project, &mut cx).await);
-        cx.run_until_parked();
-        let mut elapsed_ms = 0;
-        let (entries, common_root) = loop {
-            cx.executor().advance_clock(Duration::from_millis(40));
-            elapsed_ms += 40;
-            cx.run_until_parked();
-            if let Some(result) = (&mut task).now_or_never() {
-                break result.unwrap();
-            }
-            assert!(elapsed_ms < 400, "multi-file diff did not finish loading");
-        };
-        assert_eq!(elapsed_ms, 40, "independent file reads must overlap");
-        assert_eq!(common_root, Some(PathBuf::from(path!("/test"))));
-        assert_eq!(entries.len(), 3);
-        for ((entry, index), word) in entries.iter().zip([3, 1, 2]).zip(["three", "one", "two"]) {
-            assert_eq!(
-                entry.new_path,
-                PathBuf::from(format!("{}/new{index}.txt", path!("/test")))
-            );
-            assert_eq!(
-                entry.new_buffer.read_with(cx, |buffer, _| buffer.text()),
-                format!("new {word}")
-            );
-        }
-        assert_eq!(
-            entries.iter().map(|entry| entry.index).collect::<Vec<_>>(),
-            vec![0, 1, 2]
-        );
-    }
 
     async fn test_init(
         cx: &mut TestAppContext,

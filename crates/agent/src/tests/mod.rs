@@ -3581,7 +3581,7 @@ async fn test_refusal(cx: &mut TestAppContext) {
     // If the model refuses to continue, the thread should remove all the messages after the last user message.
     fake.send_last_event(
         &model,
-        LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+        LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
     );
     let events = events.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events), vec![acp_v2::StopReason::Refusal]);
@@ -4195,6 +4195,79 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     send.collect::<Vec<_>>().await;
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.title(), Some("Hello world".into()))
+    });
+}
+
+#[gpui::test]
+async fn test_title_generation_disabled_by_settings(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    let set_auto_generate_thread_titles = |enabled, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.auto_generate_thread_titles = enabled;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        })
+    };
+    set_auto_generate_thread_titles(false, cx);
+
+    let summary_model = fake.model("summary");
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake.send_last_text(&model, "Hey!");
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+    assert_eq!(fake.pending_completions_for(&summary_model), Vec::new());
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+
+    set_auto_generate_thread_titles(true, cx);
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake.send_last_text(&model, "Hey again!");
+    fake.end_last(&model);
+    cx.run_until_parked();
+    let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+    fake.send_text(&summary_model, &summary_request, "Auto title\n");
+    fake.end_stream(&summary_model, &summary_request);
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Auto title".into()))
+    });
+
+    set_auto_generate_thread_titles(false, cx);
+    thread.update(cx, |thread, cx| {
+        assert!(thread.regenerate_title(cx));
+    });
+    cx.run_until_parked();
+    let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+    fake.send_text(&summary_model, &summary_request, "Manual title\n");
+    fake.end_stream(&summary_model, &summary_request);
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Manual title".into()))
     });
 }
 
@@ -7273,7 +7346,7 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
         }
         test.fake.send_last_event(
             &test.model,
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
         );
         test.fake.end_last(&test.model);
         assert_eq!(
@@ -7804,7 +7877,6 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
     });
     let action_log = cx.update(|cx| thread.read(cx).action_log.clone());
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project.clone(),
         thread.downgrade(),
@@ -7858,7 +7930,6 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
 
     let action_log = cx.new(|_cx| action_log::ActionLog::new(project.clone()));
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::DeletePathTool::new(project, action_log));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -7910,7 +7981,6 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::MovePathTool::new(project));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -7966,7 +8036,6 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::MovePathTool::new(project));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8024,7 +8093,6 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::CopyPathTool::new(project));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8068,7 +8136,6 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::WebSearchTool);
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8130,7 +8197,6 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
     });
     let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
         thread.downgrade(),
@@ -8198,7 +8264,6 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
     });
     let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
         thread.downgrade(),
@@ -8247,7 +8312,6 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8291,7 +8355,6 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8332,7 +8395,6 @@ async fn test_fetch_tool_prompts_for_ungranted_host(cx: &mut TestAppContext) {
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8380,7 +8442,6 @@ async fn test_fetch_tool_granted_host_skips_prompt(cx: &mut TestAppContext) {
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8422,7 +8483,6 @@ async fn test_fetch_tool_refuses_loopback_without_unsandboxed(cx: &mut TestAppCo
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8464,7 +8524,6 @@ async fn test_fetch_tool_unsandboxed_lifts_restrictions(cx: &mut TestAppContext)
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8525,7 +8584,6 @@ async fn test_fetch_tool_refuses_redirect_to_loopback(cx: &mut TestAppContext) {
             .unwrap())
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8584,7 +8642,6 @@ async fn test_fetch_tool_reauthorizes_redirect_to_new_host(cx: &mut TestAppConte
             .unwrap())
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8652,7 +8709,6 @@ async fn test_fetch_tool_follows_same_host_redirect(cx: &mut TestAppContext) {
         }
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 

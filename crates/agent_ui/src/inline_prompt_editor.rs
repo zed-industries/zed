@@ -14,17 +14,18 @@ use gpui::{
     Subscription, TextStyle, TextStyleRefinement, WeakEntity, Window, actions,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
+use language_model_selector::{LanguageModelSelector, language_model_picker, toggle_in_settings};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
-use settings::Settings;
+use settings::{Settings, update_settings_file};
 use std::cmp;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use ui::utils::WithRemSize;
-use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*};
 use uuid::Uuid;
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
@@ -33,7 +34,6 @@ use zed_actions::{
     editor::{MoveDown, MoveUp},
 };
 
-use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative};
 use crate::completion_provider::{
     PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
@@ -41,9 +41,7 @@ use crate::completion_provider::{
 use crate::mention_set::paste_images_as_context;
 use crate::mention_set::{MentionSet, crease_for_mention};
 use crate::terminal_codegen::TerminalCodegen;
-use crate::{
-    CycleFavoriteModels, CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext,
-};
+use crate::{CycleFavoriteModels, CycleNextInlineAssist, CyclePreviousInlineAssist};
 
 actions!(inline_assistant, [ThumbsUpResult, ThumbsDownResult]);
 
@@ -63,7 +61,7 @@ pub struct PromptEditor<T> {
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
     workspace: WeakEntity<Workspace>,
-    model_selector: Entity<AgentModelSelector>,
+    model_selector: Entity<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -299,6 +297,47 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         },
         ..Default::default()
     }
+}
+
+fn inline_assistant_model_selector(
+    fs: Arc<dyn Fs>,
+    focus_handle: FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<LanguageModelSelector> {
+    let picker = cx.new(|cx| {
+        language_model_picker(
+            |cx| LanguageModelRegistry::read_global(cx).inline_assistant_model(),
+            {
+                let fs = fs.clone();
+
+                move |model, cx| {
+                    let provider = model.provider_id().0.to_string();
+                    let model_id = model.id().0.to_string();
+
+                    update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .set_inline_assistant_model(provider, model_id);
+                    });
+                }
+            },
+            {
+                let fs = fs.clone();
+
+                move |model, should_be_favorite, cx| {
+                    toggle_in_settings(model, should_be_favorite, fs.clone(), cx)
+                }
+            },
+            true,
+            focus_handle,
+            window,
+            cx,
+        )
+    });
+
+    cx.new(|_cx| LanguageModelSelector::new(picker))
 }
 
 impl<T: 'static> Focusable for PromptEditor<T> {
@@ -1272,23 +1311,14 @@ impl PromptEditor<BufferCodegen> {
         });
 
         let mention_set = cx.new(|_cx| MentionSet::new(project, Some(thread_store.clone())));
-
-        let model_selector_menu_handle = PopoverMenuHandle::default();
+        let model_selector =
+            inline_assistant_model_selector(fs.clone(), prompt_editor.focus_handle(cx), window, cx);
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
-            editor: prompt_editor.clone(),
+            editor: prompt_editor,
             mention_set,
             workspace,
-            model_selector: cx.new(|cx| {
-                AgentModelSelector::new(
-                    fs,
-                    model_selector_menu_handle,
-                    prompt_editor.focus_handle(cx),
-                    ModelUsageContext::InlineAssistant,
-                    window,
-                    cx,
-                )
-            }),
+            model_selector,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -1421,23 +1451,14 @@ impl PromptEditor<TerminalCodegen> {
         });
 
         let mention_set = cx.new(|_cx| MentionSet::new(project, Some(thread_store.clone())));
-
-        let model_selector_menu_handle = PopoverMenuHandle::default();
+        let model_selector =
+            inline_assistant_model_selector(fs.clone(), prompt_editor.focus_handle(cx), window, cx);
 
         let mut this = Self {
-            editor: prompt_editor.clone(),
+            editor: prompt_editor,
             mention_set,
             workspace,
-            model_selector: cx.new(|cx| {
-                AgentModelSelector::new(
-                    fs,
-                    model_selector_menu_handle.clone(),
-                    prompt_editor.focus_handle(cx),
-                    ModelUsageContext::InlineAssistant,
-                    window,
-                    cx,
-                )
-            }),
+            model_selector,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,

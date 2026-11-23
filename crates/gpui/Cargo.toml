@@ -119,9 +119,10 @@ unicode-segmentation.workspace = true
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
-lyon = "1.0"
+lyon_path = "1.0.19"
 pin-project = "1.1.10"
 spin.workspace = true
+tiny-skia-path = "0.11"
 url.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 web-time = { workspace = true, optional = true }
@@ -181,7 +182,7 @@ postage = { workspace = true, features = ["blocking"] }
 web-time.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
 gpui_util.workspace = true
-lyon = { version = "1.0", features = ["extra"] }
+lyon_extra = "1.1.0"
 rand = { workspace = true, default-features = true }
 scheduler = { workspace = true, features = ["test-support"] }
 util_macros.workspace = true
@@ -190,6 +191,9 @@ util_macros.workspace = true
 http_client = { workspace = true, features = ["test-support"] }
 proptest.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 gpui_web.workspace = true
@@ -206,6 +210,14 @@ ignored = [
     "objc2-metal",
 ]
 ignored-paths = ["src/_ownership_and_data_flow.rs", "benches/focus_cleanup.rs"]
+
+[[example]]
+name = "native_view"
+path = "examples/native_view.rs"
+
+[[example]]
+name = "native_view_appkit_field"
+path = "examples/native_view_appkit_field.rs"
 
 [[example]]
 name = "hello_world"

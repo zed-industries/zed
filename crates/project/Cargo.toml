@@ -85,6 +85,7 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+time.workspace = true
 sha2.workspace = true
 shellexpand.workspace = true
 smallvec.workspace = true

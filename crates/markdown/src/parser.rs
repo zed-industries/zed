@@ -433,7 +433,7 @@ pub(crate) fn parse_markdown_with_options(
                             language_paths.insert(path_range.path.clone());
                             CodeBlockKind::FencedSrc(path_range)
                         } else {
-                            let language = SharedString::from(info.to_string());
+                            let language = SharedString::from(info);
                             language_names.insert(language.clone());
                             CodeBlockKind::FencedLang(language)
                         };
@@ -575,7 +575,7 @@ pub(crate) fn parse_markdown_with_options(
 
                 let mut last_len = parsed.len();
                 let mut ranges = vec![TextRange {
-                    source_range: range.clone(),
+                    source_range: range,
                     merged_range: 0..last_len,
                     parsed,
                 }];
@@ -597,7 +597,7 @@ pub(crate) fn parse_markdown_with_options(
                     };
                     let next_len = last_len + next_text.len();
                     ranges.push(TextRange {
-                        source_range: next_range.clone(),
+                        source_range: next_range,
                         merged_range: last_len..next_len,
                         parsed: next_text,
                     });
@@ -681,7 +681,7 @@ pub(crate) fn parse_markdown_with_options(
                             link_range.clone(),
                             MarkdownEvent::Start(MarkdownTag::Link {
                                 link_type: LinkType::Autolink,
-                                dest_url: SharedString::from(link.as_str().to_string()),
+                                dest_url: SharedString::from(link.as_str()),
                                 title: SharedString::default(),
                                 id: SharedString::default(),
                             }),
@@ -689,10 +689,7 @@ pub(crate) fn parse_markdown_with_options(
                         for (range, event) in link_events {
                             state.push_event(range, event);
                         }
-                        state.push_event(
-                            link_range.clone(),
-                            MarkdownEvent::End(MarkdownTagEnd::Link),
-                        );
+                        state.push_event(link_range, MarkdownEvent::End(MarkdownTagEnd::Link));
                     }
                 }
 
@@ -801,7 +798,7 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
             link_range.clone(),
             MarkdownEvent::Start(MarkdownTag::Link {
                 link_type: LinkType::Autolink,
-                dest_url: SharedString::from(link.as_str().to_string()),
+                dest_url: SharedString::from(link.as_str()),
                 title: SharedString::default(),
                 id: SharedString::default(),
             }),

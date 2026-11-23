@@ -270,7 +270,7 @@ impl GoogleLanguageModelProvider {
                 });
             };
             let request = google_ai::stream_generate_content(
-                http_client.as_ref(),
+                http_client,
                 &api_url,
                 &api_key,
                 request,
@@ -374,7 +374,12 @@ impl LanguageModelClient for GoogleLanguageModelProvider {
         };
         let request_limiter = self.request_limiters.for_model(&model.id);
         let mut request = request;
-        if request.max_output_tokens.is_some() {
+        if google_ai::supports_long_decode(&config.id) {
+            // Long decode only continues past one response's output limit when the budget allows
+            // it. Google accepts the whole context window as that budget.
+            request.max_output_tokens =
+                request.effective_max_output_tokens(Some(config.max_input_tokens));
+        } else if request.max_output_tokens.is_some() {
             request.max_output_tokens =
                 request.effective_max_output_tokens(config.max_output_tokens);
         }
@@ -443,5 +448,129 @@ fn available_model_to_google_model(available: &AvailableModel) -> google_ai::Mod
         mode: available.mode.unwrap_or_default(),
         supported_thinking_levels: Vec::new(),
         default_thinking_level: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
+    use futures::AsyncReadExt as _;
+    use gpui::TestAppContext;
+    use http_client::{AsyncBody, FakeHttpClient, Method, Response};
+    use language_model::{LanguageModelRequestMessage, MessageContent, Role};
+    use parking_lot::Mutex;
+    use serde_json::json;
+
+    #[gpui::test]
+    async fn catalog_models_drop_xhigh_effort_unless_supported(cx: &mut TestAppContext) {
+        let thinking_configs: Arc<Mutex<Vec<(String, serde_json::Value)>>> = Arc::default();
+        let max_output_tokens: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
+        let http_client = FakeHttpClient::create({
+            let thinking_configs = thinking_configs.clone();
+            let max_output_tokens = max_output_tokens.clone();
+            move |mut request| {
+                let thinking_configs = thinking_configs.clone();
+                let max_output_tokens = max_output_tokens.clone();
+                async move {
+                    if request.method() == Method::GET {
+                        let models = ["gemini-4-hydrogen", "gemini-4-argon"].map(|id| {
+                            json!({
+                                "name": format!("models/{id}"),
+                                "displayName": id,
+                                "inputTokenLimit": 1_048_576,
+                                "outputTokenLimit": 65_536,
+                                "supportedGenerationMethods": ["generateContent"],
+                                "thinking": true
+                            })
+                        });
+                        let catalog = json!({ "models": models });
+                        return Ok(Response::builder()
+                            .status(200)
+                            .body(AsyncBody::from(catalog.to_string()))?);
+                    }
+
+                    let mut body = String::new();
+                    request.body_mut().read_to_string(&mut body).await?;
+                    let body: serde_json::Value = serde_json::from_str(&body)?;
+                    thinking_configs.lock().push((
+                        request.uri().path().to_string(),
+                        body["generationConfig"]["thinkingConfig"].clone(),
+                    ));
+                    max_output_tokens
+                        .lock()
+                        .push(body["generationConfig"]["maxOutputTokens"].clone());
+                    Ok(Response::builder().status(200).body(AsyncBody::from(
+                        "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n\n",
+                    ))?)
+                }
+            }
+        });
+
+        let provider = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            GoogleLanguageModelProvider::new(
+                http_client,
+                Arc::new(FakeCredentialsProvider::default()),
+                cx,
+            )
+        });
+        cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let models = cx.read(|cx| provider.provided_models(cx));
+        let xhigh = models
+            .iter()
+            .find(|model| model.id.0.as_ref() == "gemini-4-hydrogen")
+            .and_then(|model| model.supported_effort_levels.last())
+            .unwrap()
+            .clone();
+        assert_eq!(xhigh.name.as_ref(), "Extra High");
+        let async_cx = cx.to_async();
+        for model_id in ["gemini-4-hydrogen", "gemini-4-argon"] {
+            let model = models
+                .iter()
+                .find(|model| model.id.0.as_ref() == model_id)
+                .unwrap();
+            let request = LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                thinking_allowed: true,
+                thinking_effort: Some(xhigh.value.to_string()),
+                ..Default::default()
+            };
+            let mut stream = provider
+                .stream_completion(model, request, &async_cx)
+                .await
+                .unwrap();
+            while let Some(event) = stream.next().await {
+                event.unwrap();
+            }
+        }
+
+        assert_eq!(
+            *thinking_configs.lock(),
+            [
+                (
+                    "/v1beta/models/gemini-4-hydrogen:streamGenerateContent".to_string(),
+                    json!({"thinkingLevel": "XHIGH", "includeThoughts": true}),
+                ),
+                (
+                    "/v1beta/models/gemini-4-argon:streamGenerateContent".to_string(),
+                    json!({"includeThoughts": true}),
+                ),
+            ]
+        );
+        assert_eq!(
+            *max_output_tokens.lock(),
+            [json!(1_048_576), json!(1_048_576)]
+        );
     }
 }

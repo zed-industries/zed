@@ -354,26 +354,23 @@ impl Component for ThemePreviewTile {
                     vec![]
                 }
             })
-            .child(
-                example_group(vec![single_example(
-                    "Default Themes",
-                    h_flex()
-                        .gap_4()
-                        .children(
-                            themes_to_preview
-                                .into_iter()
-                                .map(|theme| {
-                                    div()
-                                        .w(px(200.))
-                                        .h(px(140.))
-                                        .child(ThemePreviewTile::new(theme, 0.42))
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                        .into_any_element(),
-                )])
-                .grow(),
-            )
+            .child(example_group(vec![single_example(
+                "Default Themes",
+                h_flex()
+                    .gap_4()
+                    .children(
+                        themes_to_preview
+                            .into_iter()
+                            .map(|theme| {
+                                div()
+                                    .w(px(200.))
+                                    .h(px(140.))
+                                    .child(ThemePreviewTile::new(theme, 0.42))
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .into_any_element(),
+            )]))
             .into_any_element()
     }
 }

@@ -32,16 +32,16 @@ const RESPONSE_MESSAGE_PHASE_COMMENTARY: &str = "commentary";
 const RESPONSE_MESSAGE_PHASE_FINAL_ANSWER: &str = "final_answer";
 
 /// Translates the request's `Speed` into the corresponding OpenAI service tier.
-/// Only `Fast` produces a value; `Standard` leaves the field unset so that the
-/// project's default tier applies.
+/// `Standard` leaves the field unset so that the project's default tier applies.
 fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<ServiceTier> {
     match speed? {
         language_model_core::Speed::Fast => Some(ServiceTier::Priority),
+        language_model_core::Speed::Ultrafast => Some(ServiceTier::Ultrafast),
         language_model_core::Speed::Standard => None,
     }
 }
 
-/// Omitting effort enables reasoning on Sol/Luna, which then reject temperature.
+/// Omitting effort enables reasoning on Sol/Luna/Terra, which then reject temperature.
 fn temperature_for_model(
     model_id: &str,
     temperature: Option<f32>,
@@ -49,7 +49,9 @@ fn temperature_for_model(
 ) -> Option<f32> {
     temperature.filter(|_| match model_id {
         "gpt-6-astra" | "gpt-6.1-sol" => false,
-        "gpt-6-sol" | "gpt-6-luna" => reasoning_effort == Some(ReasoningEffort::None),
+        "gpt-6-sol" | "gpt-6-luna" | "gpt-6.1-terra" => {
+            reasoning_effort == Some(ReasoningEffort::None)
+        }
         _ => true,
     })
 }
@@ -301,15 +303,11 @@ pub fn into_open_ai_response(
     let mut replayed_reasoning_item_indexes = HashMap::default();
     let mut tool_use_kinds_by_id = HashMap::default();
     let mut system_instructions = Vec::new();
+    let mut in_initial_system_prompt = true;
     for (index, message) in messages.into_iter().enumerate() {
-        // System messages go to the top-level `instructions` field rather
-        // than the input item list. `instructions` is applied per request
-        // (the Responses API documents it as a system message inserted into
-        // the model's context), so the current system prompt survives when
-        // replaying provider compaction state replaces the accumulated input
-        // items below. This also matches the Codex backend, which rejects
-        // system-role input items outright.
-        if message.role == Role::System {
+        // Collect the initial prompt separately so a compaction window cannot
+        // discard it. Later instructions must retain their position.
+        if message.role == Role::System && in_initial_system_prompt {
             for content in message.content {
                 if let MessageContent::Text(text) = content
                     && !text.trim().is_empty()
@@ -318,6 +316,9 @@ pub fn into_open_ai_response(
                 }
             }
             continue;
+        }
+        if !message.contents_empty() {
+            in_initial_system_prompt = false;
         }
         append_message_to_response_items(
             message,
@@ -390,14 +391,22 @@ pub fn into_open_ai_response(
         Vec::new()
     };
 
+    let mut input = crate::responses::ResponseInput::new(provider_items, input_items);
+    if !system_instructions.is_empty() {
+        // Match Codex: the current system prompt precedes even a replayed
+        // compaction window, which is passed through unchanged.
+        input = input.with_leading_item(ResponseInputItem::Message(ResponseMessageItem {
+            role: crate::Role::Developer,
+            content: vec![ResponseInputContent::Text {
+                text: system_instructions.join("\n\n"),
+            }],
+            phase: None,
+        }));
+    }
     Ok(ResponseRequest {
         model: model_id.into(),
-        instructions: if system_instructions.is_empty() {
-            None
-        } else {
-            Some(system_instructions.join("\n\n"))
-        },
-        input: crate::responses::ResponseInput::new(provider_items, input_items),
+        instructions: None,
+        input,
         store: Some(false),
         include,
         stream,
@@ -696,7 +705,7 @@ fn flush_response_parts(
         role: match role {
             Role::User => crate::Role::User,
             Role::Assistant => crate::Role::Assistant,
-            Role::System => crate::Role::System,
+            Role::System => crate::Role::Developer,
         },
         content: parts.clone(),
         phase: match role {
@@ -900,7 +909,7 @@ impl OpenAiResponseEventMapper {
             }
             ResponsesStreamEvent::RefusalDelta { .. }
             | ResponsesStreamEvent::RefusalDone { .. } => {
-                self.pending_stop_reason = Some(StopReason::Refusal);
+                self.pending_stop_reason = Some(refusal_stop_reason("refusal"));
                 Vec::new()
             }
             ResponsesStreamEvent::FunctionCallArgumentsDelta { item_id, delta, .. } => {
@@ -993,8 +1002,9 @@ impl OpenAiResponseEventMapper {
                 let mut stop_reason = match reason {
                     Some("max_tokens" | "max_output_tokens") => StopReason::MaxTokens,
                     Some("content_filter") => {
-                        self.pending_stop_reason = Some(StopReason::Refusal);
-                        StopReason::Refusal
+                        let refusal = refusal_stop_reason("content_filter");
+                        self.pending_stop_reason = Some(refusal.clone());
+                        refusal
                     }
                     _ => self
                         .pending_stop_reason
@@ -1007,8 +1017,10 @@ impl OpenAiResponseEventMapper {
                 if response_output_contains_refusal(&response.output)
                     && !matches!(stop_reason, StopReason::MaxTokens)
                 {
-                    self.pending_stop_reason = Some(StopReason::Refusal);
-                    stop_reason = StopReason::Refusal;
+                    if !stop_reason.is_refusal() {
+                        stop_reason = refusal_stop_reason("refusal");
+                    }
+                    self.pending_stop_reason = Some(stop_reason.clone());
                 }
                 if self.pending_stop_reason.is_none() {
                     events.extend(self.emit_tool_calls_from_output(&response.output));
@@ -1135,7 +1147,7 @@ impl OpenAiResponseEventMapper {
         events.extend(self.capture_reasoning_items_from_output(&response.output));
 
         if response_output_contains_refusal(&response.output) {
-            self.pending_stop_reason = Some(StopReason::Refusal);
+            self.pending_stop_reason = Some(refusal_stop_reason("refusal"));
         }
 
         if self.pending_stop_reason.is_none() {
@@ -1179,8 +1191,8 @@ impl OpenAiResponseEventMapper {
                         Ok(input) => {
                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
-                                    id: LanguageModelToolUseId::from(call_id.clone()),
-                                    name: name.clone(),
+                                    id: LanguageModelToolUseId::from(call_id),
+                                    name,
                                     is_input_complete: true,
                                     input: LanguageModelToolUseInput::Json(input),
                                     raw_input: arguments.clone(),
@@ -1190,8 +1202,8 @@ impl OpenAiResponseEventMapper {
                         }
                         Err(error) => {
                             events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                id: LanguageModelToolUseId::from(call_id.clone()),
-                                tool_name: name.clone(),
+                                id: LanguageModelToolUseId::from(call_id),
+                                tool_name: name,
                                 raw_input: Arc::<str>::from(arguments.clone()),
                                 json_parse_error: error.to_string(),
                             }));
@@ -1454,6 +1466,14 @@ fn response_error_message(error: &ResponseError) -> String {
         (None, false) => message.to_string(),
         (None, true) => "response error".to_string(),
     }
+}
+
+fn refusal_stop_reason(reason: &str) -> StopReason {
+    StopReason::Refusal(Some(language_model_core::RefusalDetails {
+        reason: reason.into(),
+        categories: Vec::new(),
+        stage: Some(language_model_core::RefusalStage::Output),
+    }))
 }
 
 fn response_output_contains_refusal(output: &[ResponseOutputItem]) -> bool {
@@ -1927,8 +1947,12 @@ mod tests {
         let serialized = serde_json::to_value(&response).unwrap();
         let expected = json!({
             "model": "custom-model",
-            "instructions": "System context",
             "input": [
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{ "type": "input_text", "text": "System context" }]
+                },
                 {
                     "type": "message",
                     "role": "user",
@@ -2382,6 +2406,9 @@ mod tests {
         for (model_id, temperature, effort, expected_temperature) in [
             ("gpt-6.1-sol", Some(0.25), None, None),
             ("gpt-6.1-sol", None, None, None),
+            ("gpt-6.1-terra", Some(0.25), None, None),
+            ("gpt-6.1-terra", Some(0.25), Some(Medium), None),
+            ("gpt-6.1-terra", Some(0.25), Some(NoReasoning), Some(0.25)),
             ("gpt-6-astra", Some(0.25), None, None),
             ("gpt-6-astra", None, None, None),
             ("gpt-6-sol", Some(0.25), None, None),
@@ -2438,15 +2465,13 @@ mod tests {
         Ok(())
     }
 
-    /// `Speed::Fast` should translate to `service_tier: "priority"` on the
-    /// outgoing Responses request, while `Standard` / `None` should leave the
-    /// field unset so the project's default tier wins.
     #[test]
-    fn into_open_ai_response_sets_service_tier_for_fast_speed() -> Result<()> {
+    fn into_open_ai_response_sets_service_tier_for_speed() -> Result<()> {
         for (speed, expected) in [
             (None, None),
             (Some(Speed::Standard), None),
             (Some(Speed::Fast), Some("priority")),
+            (Some(Speed::Ultrafast), Some("ultrafast")),
         ] {
             let request = LanguageModelRequest {
                 thread_id: None,
@@ -3362,9 +3387,34 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         assert!(matches!(
-            mapped[0],
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal)
+            &mapped[0],
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details)))
+                if details.reason == "refusal" && details.categories.is_empty()
         ));
+    }
+
+    #[test]
+    fn responses_content_filter_preserves_structured_reason() {
+        let mapped = map_response_events(vec![
+            serde_json::from_value(json!({
+                "type": "response.incomplete",
+                "response": {
+                    "incomplete_details": {"reason": "content_filter"},
+                    "output": [{"type":"message","content":[{"type":"refusal","refusal":"Declined"}]}]
+                }
+            }))
+            .unwrap(),
+        ]);
+        assert_eq!(
+            mapped,
+            vec![LanguageModelCompletionEvent::Stop(StopReason::Refusal(
+                Some(language_model_core::RefusalDetails {
+                    reason: "content_filter".into(),
+                    categories: Vec::new(),
+                    stage: Some(language_model_core::RefusalStage::Output),
+                })
+            )),]
+        );
     }
 
     #[test]
@@ -3388,7 +3438,7 @@ mod tests {
         assert_eq!(mapped.len(), 1);
         assert!(matches!(
             mapped[0],
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal)
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(_))
         ));
     }
 
@@ -4374,18 +4424,24 @@ mod tests {
     fn open_ai_response_converts_to_compact_request_with_supported_controls() {
         let request = LanguageModelRequest {
             thread_id: Some("thread-123".to_string()),
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("Retain this context.".into())],
+            messages: [
+                (Role::System, "Preserve implementation details."),
+                (Role::User, "Retain this context."),
+            ]
+            .into_iter()
+            .map(|(role, text)| LanguageModelRequestMessage {
+                role,
+                content: vec![MessageContent::Text(text.into())],
                 cache: false,
                 reasoning_details: None,
-            }],
+            })
+            .collect(),
             speed: Some(Speed::Fast),
             compact_at_tokens: Some(100_000),
             ..Default::default()
         };
 
-        let mut response_request = into_open_ai_response(
+        let compact_request = into_open_ai_response(
             request,
             "gpt-5.4",
             true,
@@ -4395,23 +4451,25 @@ mod tests {
             false,
             &OPEN_AI_PROVIDER_ID,
         )
-        .unwrap();
-        response_request.instructions = Some("Preserve implementation details.".to_string());
-        let compact_request = response_request.into_compact_request();
+        .unwrap()
+        .into_compact_request();
 
         assert_eq!(
             serde_json::to_value(compact_request).unwrap(),
             json!({
                 "model": "gpt-5.4",
-                "instructions": "Preserve implementation details.",
-                "input": [{
-                    "type": "message",
-                    "role": "user",
-                    "content": [{
-                        "type": "input_text",
-                        "text": "Retain this context."
-                    }]
-                }],
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "developer",
+                        "content": [{"type": "input_text", "text": "Preserve implementation details."}]
+                    },
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Retain this context."}]
+                    }
+                ],
                 "prompt_cache_key": "thread-123",
                 "service_tier": "priority"
             })
@@ -4537,7 +4595,7 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_hoists_system_messages_into_instructions() {
+    fn into_open_ai_response_keeps_system_updates_as_developer_items() {
         let request = LanguageModelRequest {
             messages: vec![
                 LanguageModelRequestMessage {
@@ -4575,31 +4633,38 @@ mod tests {
         .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
-        assert_eq!(
-            serialized["instructions"],
-            json!("You are a coding assistant.\n\nPrefer terse answers.")
-        );
+        assert!(serialized.get("instructions").is_none());
         assert_eq!(
             serialized["input"],
             json!([
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        { "type": "input_text", "text": "You are a coding assistant." }
+                    ]
+                },
                 {
                     "type": "message",
                     "role": "user",
                     "content": [
                         { "type": "input_text", "text": "Hello." }
                     ]
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        { "type": "input_text", "text": "Prefer terse answers." }
+                    ]
                 }
             ])
         );
     }
 
-    /// Replaying provider compaction state discards all input items
-    /// accumulated before it, but the system prompt must not be lost with
-    /// them: it lives in the per-request `instructions` field, outside the
-    /// compacted window, so the model keeps running on the current prompt
-    /// rather than whatever was frozen into the window at compaction time.
+    /// Replaying provider compaction state must not discard the current system prompt.
     #[test]
-    fn into_open_ai_response_preserves_system_prompt_across_compaction_replay() {
+    fn into_open_ai_response_prepends_system_prompt_to_compaction_replay() {
         let state = provider_compaction_state_from_items(
             OPEN_AI_PROVIDER_ID,
             vec![json!({
@@ -4637,6 +4702,14 @@ mod tests {
                     cache: false,
                     reasoning_details: None,
                 },
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text(
+                        "Use the updated project context.".into(),
+                    )],
+                    cache: false,
+                    reasoning_details: None,
+                },
             ],
             ..Default::default()
         };
@@ -4654,10 +4727,17 @@ mod tests {
         .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
-        assert_eq!(serialized["instructions"], json!("Current system prompt."));
+        assert!(serialized.get("instructions").is_none());
         assert_eq!(
             serialized["input"],
             json!([
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        { "type": "input_text", "text": "Current system prompt." }
+                    ]
+                },
                 {
                     "type": "compaction",
                     "id": "cmp_1",
@@ -4668,6 +4748,13 @@ mod tests {
                     "role": "user",
                     "content": [
                         { "type": "input_text", "text": "Continue." }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        { "type": "input_text", "text": "Use the updated project context." }
                     ]
                 }
             ])

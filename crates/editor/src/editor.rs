@@ -112,7 +112,7 @@ pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
 };
-pub use git::blame::{BlameRenderer, GitBlame};
+pub use git::blame::{BlameRenderer, GitBlame, MAX_RELATIVE_TIMESTAMP};
 pub use git::{
     DefaultDiffHunkRenderer, DiffHunkRenderer, HiddenDiffHunkRenderer,
     HiddenUnstagedDiffHunkRenderer, render_diff_hunk_controls, set_blame_renderer,
@@ -346,9 +346,6 @@ pub enum ConflictsOurs {}
 pub enum ConflictsTheirs {}
 pub enum ConflictsOursMarker {}
 pub enum ConflictsTheirsMarker {}
-
-pub struct HunkAddedColor;
-pub struct HunkRemovedColor;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
@@ -1051,7 +1048,6 @@ pub struct Editor {
     show_diff_review_button: bool,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
-    buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
     highlighted_rows: TypeIdHashMap<Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
@@ -1922,8 +1918,6 @@ impl Editor {
             .clone_state(&self.scroll_manager, &my_snapshot, &clone_snapshot, cx);
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
-        clone.buffers_with_disabled_indent_guides =
-            self.buffers_with_disabled_indent_guides.clone();
         clone.enable_mouse_wheel_zoom = self.enable_mouse_wheel_zoom;
         clone.enable_lsp_data = self.enable_lsp_data;
         clone.needs_initial_data_update = self.enable_lsp_data;
@@ -2441,7 +2435,6 @@ impl Editor {
             show_diff_review_button: false,
             show_wrap_guides: None,
             show_indent_guides,
-            buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
             highlighted_rows: Default::default(),
             background_highlights: HashMap::default(),
@@ -3853,7 +3846,6 @@ impl Editor {
                         |_, theme| theme.colors().editor_document_highlight_write_background,
                         cx,
                     );
-                    cx.notify();
                 })
                 .log_err();
             }
@@ -4899,10 +4891,7 @@ impl Editor {
         // Fill in the environmental variables from the tree-sitter captures
         let mut captured_task_variables = TaskVariables::default();
         for (capture_name, value) in tasks.extra_variables.clone() {
-            captured_task_variables.insert(
-                task::VariableName::Custom(capture_name.into()),
-                value.clone(),
-            );
+            captured_task_variables.insert(task::VariableName::Custom(capture_name.into()), value);
         }
         project.update(cx, |project, cx| {
             project.task_store().update(cx, |task_store, cx| {
@@ -5178,11 +5167,10 @@ impl Editor {
                         let autoclose_enabled =
                             self.use_autoclose && snapshot_settings.use_autoclose;
                         if autoclose_enabled {
-                            let start = snapshot.anchor_after(selection_head);
-                            let end = snapshot.anchor_after(selection_head);
+                            let anchor = snapshot.anchor_after(selection_head);
                             self.autoclose_regions.push(AutocloseRegion {
                                 selection_id: selection.id,
-                                range: start..end,
+                                range: anchor..anchor,
                                 pair,
                             });
                         }
@@ -12548,11 +12536,10 @@ impl EditorSnapshot {
                 self.git_blame_gutter_max_author_length
                     .map(|max_author_length| {
                         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-                        const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
 
                         let max_char_count = max_author_length.min(renderer.max_author_length())
                             + ::git::SHORT_SHA_LENGTH
-                            + MAX_RELATIVE_TIMESTAMP.len();
+                            + renderer.max_timestamp_width(cx);
 
                         ch_advance * max_char_count
                             + renderer.blame_entry_non_text_width(window, cx)

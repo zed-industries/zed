@@ -16,7 +16,6 @@ use serde::Serialize;
 use settings::Settings;
 pub use task::DebugRequest;
 
-pub type ScopeId = u64;
 pub type VariableReference = u64;
 pub type StackFrameId = u64;
 

@@ -161,6 +161,9 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
     let fs = if persistent.allow_fs_write_all {
         SandboxFsPolicy::Unrestricted {
             protected_paths: Vec::new(),
+            protected_file_names: Vec::new(),
+            paths_disallowing_reads: Vec::new(),
+            paths_allowing_reads: Vec::new(),
         }
     } else {
         SandboxFsPolicy::Restricted {
@@ -176,6 +179,9 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
                     .filter_map(acp_thread::granted_write_path_to_location_or_log),
             ),
             protected_paths: Vec::new(),
+            protected_file_names: Vec::new(),
+            paths_disallowing_reads: Vec::new(),
+            paths_allowing_reads: Vec::new(),
         }
     };
     let network = if persistent.allow_all_hosts {
@@ -185,9 +191,14 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
     } else {
         SandboxNetPolicy::Restricted {
             allowed_domains: persistent.network_hosts.clone(),
+            allowed_tcp_ports: Vec::new(),
         }
     };
-    SandboxPolicy { fs, network }
+    SandboxPolicy {
+        fs,
+        network,
+        allowed_unix_sockets: Vec::new(),
+    }
 }
 
 /// Whether the sandboxed terminal can be exposed for this project.
@@ -439,6 +450,9 @@ impl ThreadSandboxGrants {
         let fs = if self.allow_fs_write_all {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         } else {
             SandboxFsPolicy::Restricted {
@@ -454,6 +468,9 @@ impl ThreadSandboxGrants {
                         .filter_map(acp_thread::granted_write_path_to_location_or_log),
                 ),
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         };
         let network = if self.network_any_host {
@@ -467,9 +484,14 @@ impl ThreadSandboxGrants {
                     .iter()
                     .map(|host| host.to_string())
                     .collect(),
+                allowed_tcp_ports: Vec::new(),
             }
         };
-        SandboxPolicy { fs, network }
+        SandboxPolicy {
+            fs,
+            network,
+            allowed_unix_sockets: Vec::new(),
+        }
     }
 
     /// Serialize these grants for persistence in the thread's database row.
@@ -699,14 +721,19 @@ mod tests {
                     .map(|p| HostFilesystemLocation::capture(p).expect("capture temp dir"))
                     .collect(),
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             },
             network: if hosts.is_empty() {
                 SandboxNetPolicy::Blocked
             } else {
                 SandboxNetPolicy::Restricted {
                     allowed_domains: hosts.iter().map(|h| h.to_string()).collect(),
+                    allowed_tcp_ports: Vec::new(),
                 }
             },
+            allowed_unix_sockets: Vec::new(),
         };
 
         // Unsandboxed on either side wins — the agent runs with ambient access.
@@ -813,12 +840,16 @@ mod tests {
                     HostFilesystemLocation::capture(build_dir.path()).expect("capture temp dir")
                 ],
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(
             policy.network,
             SandboxNetPolicy::Restricted {
-                allowed_domains: vec!["github.com".to_string()]
+                allowed_domains: vec!["github.com".to_string()],
+                allowed_tcp_ports: Vec::new(),
             }
         );
 
@@ -829,6 +860,9 @@ mod tests {
             SandboxFsPolicy::Restricted {
                 writable_paths: Vec::new(),
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(empty.network, SandboxNetPolicy::Blocked);
@@ -841,6 +875,9 @@ mod tests {
             policy.fs,
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);
@@ -865,12 +902,16 @@ mod tests {
                     HostFilesystemLocation::capture(log_dir.path()).expect("capture temp dir")
                 ],
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(
             policy.network,
             SandboxNetPolicy::Restricted {
-                allowed_domains: vec!["*.npmjs.org".to_string()]
+                allowed_domains: vec!["*.npmjs.org".to_string()],
+                allowed_tcp_ports: Vec::new(),
             }
         );
 
@@ -884,6 +925,9 @@ mod tests {
             policy.fs,
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);

@@ -1,11 +1,10 @@
 use std::fmt::Debug;
 
 use clock::ReplicaId;
-use collections::{BTreeMap, HashSet};
+use collections::BTreeMap;
 
 pub struct Network<T: Clone, R: rand::Rng> {
     inboxes: BTreeMap<ReplicaId, Vec<Envelope<T>>>,
-    disconnected_peers: HashSet<ReplicaId>,
     rng: R,
 }
 
@@ -18,31 +17,12 @@ impl<T: Clone, R: rand::Rng> Network<T, R> {
     pub fn new(rng: R) -> Self {
         Network {
             inboxes: BTreeMap::default(),
-            disconnected_peers: HashSet::default(),
             rng,
         }
     }
 
     pub fn add_peer(&mut self, id: ReplicaId) {
         self.inboxes.insert(id, Vec::new());
-    }
-
-    pub fn disconnect_peer(&mut self, id: ReplicaId) {
-        self.disconnected_peers.insert(id);
-        self.inboxes.get_mut(&id).unwrap().clear();
-    }
-
-    pub fn reconnect_peer(&mut self, id: ReplicaId, replicate_from: ReplicaId) {
-        assert!(self.disconnected_peers.remove(&id));
-        self.replicate(replicate_from, id);
-    }
-
-    pub fn is_disconnected(&self, id: ReplicaId) -> bool {
-        self.disconnected_peers.contains(&id)
-    }
-
-    pub fn contains_disconnected_peers(&self) -> bool {
-        !self.disconnected_peers.is_empty()
     }
 
     pub fn replicate(&mut self, old_replica_id: ReplicaId, new_replica_id: ReplicaId) {
@@ -55,13 +35,8 @@ impl<T: Clone, R: rand::Rng> Network<T, R> {
     }
 
     pub fn broadcast(&mut self, sender: ReplicaId, messages: Vec<T>) {
-        // Drop messages from disconnected peers.
-        if self.disconnected_peers.contains(&sender) {
-            return;
-        }
-
         for (replica, inbox) in self.inboxes.iter_mut() {
-            if *replica != sender && !self.disconnected_peers.contains(replica) {
+            if *replica != sender {
                 for message in &messages {
                     // Insert one or more duplicates of this message, potentially *before* the previous
                     // message sent by this peer to simulate out-of-order delivery.

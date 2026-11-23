@@ -28,7 +28,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use platform_title_bar::apply_title_bar_insets;
+use platform_title_bar::{SidebarWindowControls, TitleBarSettings, apply_title_bar_insets};
 use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
@@ -41,7 +41,7 @@ use util::ResultExt;
 use util::paths::PathExt;
 use workspace::{
     CloseWindow, ModalView, PathList, RecentWorkspace, SerializedWorkspaceLocation, Workspace,
-    WorkspaceDb, WorkspaceId,
+    WorkspaceDb, WorkspaceId, dedupe_recent_workspaces,
 };
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
@@ -859,30 +859,36 @@ impl ThreadsArchiveView {
 
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
-        let sidebar_on_left = matches!(
-            AgentSettings::get_global(cx).sidebar_side(),
-            settings::SidebarSide::Left
-        );
-        let sidebar_on_right = !sidebar_on_left;
-        let not_fullscreen = !window.is_fullscreen() && !window.is_simple_fullscreen();
-        let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
-        let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
-        let right_window_controls =
-            !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_right;
-        let header_height = platform_title_bar_height(window);
+        let SidebarWindowControls {
+            traffic_lights,
+            left: left_window_controls,
+            right: right_window_controls,
+        } = SidebarWindowControls::new(AgentSettings::get_global(cx).sidebar_side(), window, cx);
+        let title_bar_visible = TitleBarSettings::is_title_bar_visible(window, cx);
+        let header_height = if title_bar_visible {
+            platform_title_bar_height(window)
+        } else {
+            Tab::container_height(cx)
+        };
         let show_focus_keybinding =
             self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
 
         h_flex()
+            .debug_selector(|| "threads-archive-header".into())
             .h(header_height)
-            .map(|header| match window.window_decorations() {
-                Decorations::Client { .. } => apply_title_bar_insets(
-                    header,
-                    left_window_controls,
-                    right_window_controls,
-                    false,
-                ),
-                Decorations::Server => header.mt_px().pb_px(),
+            .map(|header| {
+                if !title_bar_visible {
+                    return header.mt_px();
+                }
+                match window.window_decorations() {
+                    Decorations::Client { .. } => apply_title_bar_insets(
+                        header,
+                        left_window_controls,
+                        right_window_controls,
+                        false,
+                    ),
+                    Decorations::Server => header.mt_px().pb_px(),
+                }
             })
             .when(left_window_controls, |this| {
                 this.children(Self::render_left_window_controls(window, cx))
@@ -906,6 +912,7 @@ impl ThreadsArchiveView {
             })
             .child(
                 h_flex()
+                    .debug_selector(|| "threads-archive-header-search".into())
                     .ml_1()
                     .min_w_0()
                     .w_full()
@@ -1137,10 +1144,11 @@ impl ProjectPickerModal {
             thread,
             archive_view,
             workspaces: Vec::new(),
+            this_window_workspace_ids: HashSet::default(),
+            recent_workspace_ids: HashSet::default(),
+            sibling_folder_positions: HashMap::default(),
             filtered_entries: Vec::new(),
             selected_index: 0,
-            current_workspace_id,
-            sibling_workspace_ids,
             focus_handle: cx.focus_handle(),
         };
 
@@ -1162,13 +1170,18 @@ impl ProjectPickerModal {
 
         let db = WorkspaceDb::global(cx);
         cx.spawn_in(window, async move |this, cx| {
-            let workspaces = db
-                .recent_project_workspaces(fs.as_ref())
-                .await
-                .log_err()
-                .unwrap_or_default();
+            let (workspaces, this_window_workspace_ids, recent_workspace_ids) =
+                load_project_picker_workspaces(
+                    &db,
+                    fs.as_ref(),
+                    current_workspace_id,
+                    &sibling_workspace_ids,
+                )
+                .await;
             this.update_in(cx, move |this, window, cx| {
                 this.picker.update(cx, move |picker, cx| {
+                    picker.delegate.this_window_workspace_ids = this_window_workspace_ids;
+                    picker.delegate.recent_workspace_ids = recent_workspace_ids;
                     picker.delegate.workspaces = workspaces;
                     picker.update_matches(picker.query(cx), window, cx)
                 })
@@ -1218,9 +1231,10 @@ enum ProjectPickerEntry {
 struct ProjectPickerDelegate {
     thread: ThreadMetadata,
     archive_view: WeakEntity<ThreadsArchiveView>,
-    current_workspace_id: Option<WorkspaceId>,
-    sibling_workspace_ids: HashSet<WorkspaceId>,
     workspaces: Vec<RecentWorkspace>,
+    this_window_workspace_ids: HashSet<WorkspaceId>,
+    recent_workspace_ids: HashSet<WorkspaceId>,
+    sibling_folder_positions: HashMap<usize, Vec<usize>>,
     filtered_entries: Vec<ProjectPickerEntry>,
     selected_index: usize,
     focus_handle: FocusHandle,
@@ -1250,13 +1264,12 @@ impl ProjectPickerDelegate {
             .log_err();
     }
 
-    fn is_current_workspace(&self, workspace_id: WorkspaceId) -> bool {
-        self.current_workspace_id == Some(workspace_id)
+    fn is_sibling_workspace(&self, workspace_id: WorkspaceId) -> bool {
+        self.this_window_workspace_ids.contains(&workspace_id)
     }
 
-    fn is_sibling_workspace(&self, workspace_id: WorkspaceId) -> bool {
-        self.sibling_workspace_ids.contains(&workspace_id)
-            && !self.is_current_workspace(workspace_id)
+    fn is_recent_workspace(&self, workspace_id: WorkspaceId) -> bool {
+        self.recent_workspace_ids.contains(&workspace_id)
     }
 
     fn selected_match(&self) -> Option<&StringMatch> {
@@ -1349,47 +1362,26 @@ impl PickerDelegate for ProjectPickerDelegate {
         let smart_case = query.chars().any(|c| c.is_uppercase());
         let is_empty_query = query.is_empty();
 
-        let sibling_candidates: Vec<_> = self
-            .workspaces
-            .iter()
-            .enumerate()
-            .filter(|(_, workspace)| self.is_sibling_workspace(workspace.workspace_id))
-            .map(|(id, workspace)| {
-                let combined_string = workspace
-                    .identity_paths
-                    .ordered_paths()
-                    .map(|path| path.compact().to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .concat();
-                StringMatchCandidate::new(id, &combined_string)
-            })
-            .collect();
+        let sibling_candidates = sibling_candidates(
+            self.workspaces
+                .iter()
+                .enumerate()
+                .filter(|(_, workspace)| self.is_sibling_workspace(workspace.workspace_id)),
+        );
 
-        let mut sibling_matches = gpui::block_on(fuzzy::match_strings(
+        let (sibling_matches, sibling_folder_positions) = gpui::block_on(match_siblings(
             &sibling_candidates,
             query,
             smart_case,
-            true,
-            100,
-            &Default::default(),
             cx.background_executor().clone(),
         ));
-
-        sibling_matches.sort_unstable_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.candidate_id.cmp(&b.candidate_id))
-        });
+        self.sibling_folder_positions = sibling_folder_positions;
 
         let recent_candidates: Vec<_> = self
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, workspace)| {
-                !self.is_current_workspace(workspace.workspace_id)
-                    && !self.is_sibling_workspace(workspace.workspace_id)
-            })
+            .filter(|(_, workspace)| self.is_recent_workspace(workspace.workspace_id))
             .map(|(id, workspace)| {
                 let combined_string = workspace
                     .identity_paths
@@ -1458,9 +1450,7 @@ impl PickerDelegate for ProjectPickerDelegate {
 
             if is_empty_query {
                 for (id, workspace) in self.workspaces.iter().enumerate() {
-                    if !self.is_current_workspace(workspace.workspace_id)
-                        && !self.is_sibling_workspace(workspace.workspace_id)
-                    {
+                    if self.is_recent_workspace(workspace.workspace_id) {
                         entries.push(ProjectPickerEntry::Workspace(StringMatch {
                             candidate_id: id,
                             score: 0.0,
@@ -1531,6 +1521,16 @@ impl PickerDelegate for ProjectPickerDelegate {
                 let workspace = self.workspaces.get(hit.candidate_id)?;
                 let location = &workspace.location;
 
+                let folder_paths = if self.is_sibling_workspace(workspace.workspace_id) {
+                    workspace
+                        .paths
+                        .ordered_paths()
+                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+
                 let ordered_paths: Vec<_> = workspace
                     .identity_paths
                     .ordered_paths()
@@ -1580,6 +1580,8 @@ impl PickerDelegate for ProjectPickerDelegate {
                     })
                     .collect();
 
+                let folder_positions = self.sibling_folder_positions.get(&hit.candidate_id);
+                let mut folder_start_offset = 0;
                 let highlighted_match = HighlightedMatchWithPaths {
                     prefix: match location {
                         SerializedWorkspaceLocation::Remote(options) => {
@@ -1588,7 +1590,27 @@ impl PickerDelegate for ProjectPickerDelegate {
                         _ => None,
                     },
                     match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
-                    paths: Vec::new(),
+                    paths: folder_paths
+                        .into_iter()
+                        .map(|folder_path| {
+                            let highlight_positions = folder_positions
+                                .into_iter()
+                                .flatten()
+                                .copied()
+                                .skip_while(|position| *position < folder_start_offset)
+                                .take_while(|position| {
+                                    *position < folder_start_offset + folder_path.len()
+                                })
+                                .map(|position| position - folder_start_offset)
+                                .collect();
+                            folder_start_offset += folder_path.len();
+                            HighlightedMatch {
+                                text: folder_path,
+                                highlight_positions,
+                                color: Color::Muted,
+                            }
+                        })
+                        .collect(),
                     active: false,
                 };
 
@@ -1646,9 +1668,133 @@ impl PickerDelegate for ProjectPickerDelegate {
     }
 }
 
+const SIBLING_ROW_LIMIT: usize = 100;
+
+fn sibling_candidates<'a>(
+    siblings: impl Iterator<Item = (usize, &'a RecentWorkspace)>,
+) -> Vec<StringMatchCandidate> {
+    siblings
+        .flat_map(|(workspace_index, workspace)| {
+            [&workspace.identity_paths, &workspace.paths]
+                .into_iter()
+                .enumerate()
+                .map(move |(field, paths)| {
+                    let combined_string = paths
+                        .ordered_paths()
+                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .concat();
+                    StringMatchCandidate::new(workspace_index * 2 + field, &combined_string)
+                })
+        })
+        .collect()
+}
+
+async fn match_siblings(
+    candidates: &[StringMatchCandidate],
+    query: &str,
+    smart_case: bool,
+    executor: gpui::BackgroundExecutor,
+) -> (Vec<StringMatch>, HashMap<usize, Vec<usize>>) {
+    sibling_rows(
+        fuzzy::match_strings(
+            candidates,
+            query,
+            smart_case,
+            true,
+            candidates.len(),
+            &Default::default(),
+            executor,
+        )
+        .await,
+        SIBLING_ROW_LIMIT,
+    )
+}
+
+fn sibling_rows(
+    mut field_matches: Vec<StringMatch>,
+    row_limit: usize,
+) -> (Vec<StringMatch>, HashMap<usize, Vec<usize>>) {
+    field_matches.sort_unstable_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.candidate_id.cmp(&b.candidate_id))
+    });
+    let mut rows = Vec::<StringMatch>::new();
+    let mut row_indices = HashMap::default();
+    let mut folder_positions = HashMap::default();
+    for field_match in field_matches {
+        let workspace_index = field_match.candidate_id / 2;
+        let row_index = *row_indices.entry(workspace_index).or_insert_with(|| {
+            rows.push(StringMatch {
+                candidate_id: workspace_index,
+                score: field_match.score,
+                positions: Vec::new(),
+                string: String::new(),
+            });
+            rows.len() - 1
+        });
+        if field_match.candidate_id % 2 == 1 {
+            folder_positions.insert(workspace_index, field_match.positions);
+        } else if let Some(row) = rows.get_mut(row_index) {
+            row.positions = field_match.positions;
+        }
+    }
+    rows.truncate(row_limit);
+    (rows, folder_positions)
+}
+
+async fn load_project_picker_workspaces(
+    db: &WorkspaceDb,
+    fs: &dyn Fs,
+    current_workspace_id: Option<WorkspaceId>,
+    sibling_workspace_ids: &HashSet<WorkspaceId>,
+) -> (
+    Vec<RecentWorkspace>,
+    HashSet<WorkspaceId>,
+    HashSet<WorkspaceId>,
+) {
+    let workspaces = db
+        .recent_project_workspaces_ungrouped(fs)
+        .await
+        .log_err()
+        .unwrap_or_default();
+    let is_current =
+        |workspace: &RecentWorkspace| current_workspace_id == Some(workspace.workspace_id);
+    let is_open =
+        |workspace: &RecentWorkspace| sibling_workspace_ids.contains(&workspace.workspace_id);
+    let this_window_workspace_ids = workspaces
+        .iter()
+        .filter(|workspace| is_open(workspace) && !is_current(workspace))
+        .map(|workspace| workspace.workspace_id)
+        .collect();
+    // The current workspace's group stays under "Recent Projects", as on `main`, so a newer member of it can still be chosen.
+    let this_window_group_keys = workspaces
+        .iter()
+        .filter(|workspace| is_open(workspace) && !is_current(workspace))
+        .map(|workspace| workspace.project_group_key())
+        .collect::<Vec<_>>();
+    let recent_workspace_ids = dedupe_recent_workspaces(workspaces.iter().cloned())
+        .into_iter()
+        .filter(|workspace| {
+            let project_group_key = workspace.project_group_key();
+            !is_current(workspace)
+                && !this_window_group_keys
+                    .iter()
+                    .any(|group_key| group_key.matches_identity(&project_group_key))
+        })
+        .map(|workspace| workspace.workspace_id)
+        .collect();
+    (workspaces, this_window_workspace_ids, recent_workspace_ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use db::sqlez::statement::Statement;
+    use std::path::Path;
+    use util::path;
 
     #[test]
     fn test_fuzzy_match_positions_returns_byte_indices() {
@@ -1699,5 +1845,202 @@ mod tests {
                 "position {pos} is not a valid UTF-8 boundary in {text:?}"
             );
         }
+    }
+    #[gpui::test]
+    async fn test_project_picker_lists_every_open_workspace_of_a_group(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let fs = fs::FakeFs::new(cx.executor());
+        let workspace_db = cx.update(|cx| WorkspaceDb::global(cx));
+        let mut workspace_ids = Vec::new();
+        for (folder, identity, timestamp) in [
+            (
+                path!("/store/a/repo"),
+                path!("/repo"),
+                "2026-01-05 00:00:00",
+            ),
+            (
+                path!("/store/b/repo"),
+                path!("/repo"),
+                "2026-01-04 00:00:00",
+            ),
+            (
+                path!("/store/c/repo"),
+                path!("/repo"),
+                "2026-01-03 00:00:00",
+            ),
+            (path!("/other"), path!("/other"), "2026-01-02 00:00:00"),
+            (
+                path!("/store/d/other"),
+                path!("/other"),
+                "2026-01-01 12:00:00",
+            ),
+            (
+                path!("/unrelated"),
+                path!("/unrelated"),
+                "2026-01-01 00:00:00",
+            ),
+        ] {
+            fs.create_dir(Path::new(folder)).await.unwrap();
+            let workspace_id = workspace_db.next_id().await.unwrap();
+            let paths = PathList::new(&[Path::new(folder)]).serialize();
+            let identity_paths = PathList::new(&[Path::new(identity)]).serialize();
+            workspace_db
+                .write(move |conn| {
+                    let mut statement = Statement::prepare(
+                        conn,
+                        "UPDATE workspaces SET paths = ?2, paths_order = ?3, identity_paths = ?4, identity_paths_order = ?5, timestamp = ?6 WHERE workspace_id = ?1",
+                    )?;
+                    let mut next_index = statement.bind(&workspace_id, 1)?;
+                    next_index = statement.bind(&paths.paths, next_index)?;
+                    next_index = statement.bind(&paths.order, next_index)?;
+                    next_index = statement.bind(&identity_paths.paths, next_index)?;
+                    next_index = statement.bind(&identity_paths.order, next_index)?;
+                    statement.bind(&timestamp, next_index)?;
+                    statement.exec()
+                })
+                .await
+                .unwrap();
+            workspace_ids.push(workspace_id);
+        }
+        let [newest, middle, oldest, other, _older_other, unrelated] = workspace_ids[..] else {
+            panic!("expected six workspaces");
+        };
+
+        let mut sections = Vec::new();
+        for (current, open_workspace_ids) in [
+            (newest, vec![newest, middle]),
+            (newest, vec![newest, middle, oldest]),
+            (unrelated, vec![unrelated, oldest]),
+            (newest, Vec::new()),
+            (oldest, Vec::new()),
+        ] {
+            let (_workspaces, this_window_workspace_ids, recent_workspace_ids) =
+                load_project_picker_workspaces(
+                    &workspace_db,
+                    fs.as_ref(),
+                    Some(current),
+                    &HashSet::from_iter(open_workspace_ids),
+                )
+                .await;
+            sections.push((this_window_workspace_ids, recent_workspace_ids));
+        }
+        assert_eq!(
+            sections,
+            vec![
+                (
+                    HashSet::from_iter([middle]),
+                    HashSet::from_iter([other, unrelated])
+                ),
+                (
+                    HashSet::from_iter([middle, oldest]),
+                    HashSet::from_iter([other, unrelated])
+                ),
+                (HashSet::from_iter([oldest]), HashSet::from_iter([other])),
+                (HashSet::default(), HashSet::from_iter([other, unrelated])),
+                (
+                    HashSet::default(),
+                    HashSet::from_iter([newest, other, unrelated])
+                ),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sibling_rows_match_their_project_and_their_folders(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let workspace = |id: i64, identity: &str, folder: &str| RecentWorkspace {
+            workspace_id: WorkspaceId::from_i64(id),
+            location: SerializedWorkspaceLocation::Local,
+            paths: PathList::new(&[Path::new(folder)]),
+            identity_paths: PathList::new(&[Path::new(identity)]),
+            path_style: None,
+            timestamp: chrono::Utc::now(),
+        };
+        let workspaces = [
+            workspace(
+                1,
+                path!("/work/zed"),
+                path!("/work/zed-worktrees/fix-crash"),
+            ),
+            workspace(2, path!("/work/zendesk-data"), path!("/work/zendesk-data")),
+        ];
+        let candidates = sibling_candidates(workspaces.iter().enumerate());
+
+        let mut matched_fields = Vec::new();
+        for query in ["zed", "fix", "data", "missing"] {
+            let (rows, folder_positions) =
+                match_siblings(&candidates, query, false, cx.executor()).await;
+            matched_fields.push(
+                rows.into_iter()
+                    .map(|row| {
+                        (
+                            row.candidate_id,
+                            !row.positions.is_empty(),
+                            folder_positions.contains_key(&row.candidate_id),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(
+            matched_fields,
+            [
+                vec![(0, true, true), (1, true, true)],
+                vec![(0, false, true)],
+                vec![(1, true, true)],
+                Vec::new(),
+            ]
+        );
+
+        let mut row_counts = Vec::new();
+        for (sibling_count, identity_directory) in [
+            (51, path!("/review")),
+            (100, path!("/review")),
+            (101, path!("/review")),
+            (101, path!("/p")),
+            (150, path!("/other")),
+        ] {
+            let workspaces = (0..sibling_count)
+                .map(|index| {
+                    let name = format!("project-{index:03}");
+                    let folder = Path::new(path!("/review")).join(&name);
+                    let identity = Path::new(identity_directory).join(format!("{index:03}"));
+                    let identity = if identity_directory == path!("/review") {
+                        folder.clone()
+                    } else {
+                        identity
+                    };
+                    RecentWorkspace {
+                        workspace_id: WorkspaceId::from_i64(index),
+                        location: SerializedWorkspaceLocation::Local,
+                        paths: PathList::new(&[folder.as_path()]),
+                        identity_paths: PathList::new(&[identity.as_path()]),
+                        path_style: None,
+                        timestamp: chrono::Utc::now(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let (rows, folder_positions) = match_siblings(
+                &sibling_candidates(workspaces.iter().enumerate()),
+                "p",
+                false,
+                cx.executor(),
+            )
+            .await;
+            let rows_with_both_highlights = rows
+                .iter()
+                .filter(|row| {
+                    !row.positions.is_empty() && folder_positions.contains_key(&row.candidate_id)
+                })
+                .count();
+            row_counts.push((rows.len(), rows_with_both_highlights));
+        }
+        assert_eq!(
+            row_counts,
+            [(51, 51), (100, 100), (100, 100), (100, 100), (100, 0)]
+        );
     }
 }

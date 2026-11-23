@@ -464,8 +464,7 @@ impl DevContainerManifest {
         })?;
 
         let dockerfile_path = features_content_dir.join("Dockerfile.extended");
-        let image_tag =
-            self.generate_features_image_tag(dockerfile_path.clone().display().to_string());
+        let image_tag = self.generate_features_image_tag(dockerfile_path.display().to_string());
 
         let build_info = FeaturesBuildInfo {
             dockerfile_path,
@@ -884,7 +883,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             ];
 
             for entrypoint in self.features.iter().filter_map(|f| f.entrypoint()) {
-                entrypoint_script_lines.push(entrypoint.clone());
+                entrypoint_script_lines.push(entrypoint);
             }
             entrypoint_script_lines.append(&mut vec![
                 "exec \"$@\"".to_string(),
@@ -1505,7 +1504,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     if let Some(service) = service_declarations.get_mut(network_service_name) {
                         service.ports.push(DockerComposeServicePort {
                             target: port.clone(),
-                            published: port.clone(),
+                            published: port,
                             ..Default::default()
                         });
                     } else {
@@ -1514,7 +1513,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                             DockerComposeService {
                                 ports: vec![DockerComposeServicePort {
                                     target: port.clone(),
-                                    published: port.clone(),
+                                    published: port,
                                     ..Default::default()
                                 }],
                                 ..Default::default()
@@ -1524,7 +1523,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 } else {
                     main_service.ports.push(DockerComposeServicePort {
                         target: port.clone(),
-                        published: port.clone(),
+                        published: port,
                         ..Default::default()
                     });
                 }
@@ -4220,12 +4219,7 @@ mod test {
         let given_docker_compose_config = DockerComposeResources {
             config: DockerComposeConfig {
                 name: Some("devcontainers".to_string()),
-                services: HashMap::from([(
-                    "found_service".to_string(),
-                    DockerComposeService {
-                        ..Default::default()
-                    },
-                )]),
+                services: HashMap::from([("found_service".to_string(), Default::default())]),
                 ..Default::default()
             },
             ..Default::default()
