@@ -1473,6 +1473,14 @@ mod imp {
             net_policy,
         );
         t.push(
+            "an address outside loopback, though nothing is allowed",
+            vec![],
+            allow.clone(),
+            Action::Shell(net("outward-address")),
+            Expected::Allowed,
+            read_all,
+        );
+        t.push(
             "ping sockets fail",
             vec![],
             allow,
@@ -1743,6 +1751,32 @@ def main(command, *args):
             code == 0
             and ipaddress.ip_address(address) in FAKE
         )
+    if command == "outward-address":
+        # getifaddrs finds an IPv4 address outside loopback, as programs that
+        # check whether they're online, such as Nix, require.
+        import ctypes
+        class Ifaddrs(ctypes.Structure):
+            pass
+        Ifaddrs._fields_ = [
+            ("next", ctypes.POINTER(Ifaddrs)),
+            ("name", ctypes.c_char_p),
+            ("flags", ctypes.c_uint),
+            ("address", ctypes.c_void_p),
+        ]
+        libc = ctypes.CDLL(None, use_errno=True)
+        head = ctypes.POINTER(Ifaddrs)()
+        assert libc.getifaddrs(ctypes.byref(head)) == 0, os.strerror(ctypes.get_errno())
+        addresses = []
+        entry = head
+        while entry:
+            address = entry.contents.address
+            if address and ctypes.c_ushort.from_address(address).value == socket.AF_INET:
+                # struct sockaddr_in: family, port, then the address.
+                octets = bytes((ctypes.c_ubyte * 4).from_address(address + 4))
+                addresses.append(ipaddress.ip_address(octets))
+            entry = entry.contents.next
+        libc.freeifaddrs(head)
+        return any(not address.is_loopback for address in addresses)
     if command == "resolve":
         # getaddrinfo: the sandbox's DNS answers.
         return ipaddress.ip_address(socket.gethostbyname(args[0])) in FAKE
