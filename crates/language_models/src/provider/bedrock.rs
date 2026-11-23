@@ -4704,12 +4704,12 @@ mod tests {
         });
 
         let models = cx.update(|cx| provider.provided_models(cx));
-        let [uncatalogued, listed, configured] = models.as_slice() else {
+        let [uncataloged, listed, configured] = models.as_slice() else {
             panic!("expected three models, got {}", models.len());
         };
-        assert_eq!(uncatalogued.id.0.as_ref(), "anthropic.claude-haiku-9");
+        assert_eq!(uncataloged.id.0.as_ref(), "anthropic.claude-haiku-9");
         assert!(
-            !uncatalogued.supports_thinking,
+            !uncataloged.supports_thinking,
             "a model the capability catalog does not know has no reasoning controls"
         );
         assert_eq!(listed.id.0.as_ref(), "anthropic.claude-sonnet-9");
