@@ -94,6 +94,21 @@ enum BlameSource<'a> {
     Revision(Oid),
 }
 
+#[derive(Default)]
+struct YieldBudget {
+    bytes_since_yield: usize,
+}
+
+impl YieldBudget {
+    async fn spend(&mut self, bytes: usize) {
+        self.bytes_since_yield += bytes;
+        if self.bytes_since_yield >= EXACT_ENCODING_YIELD_BYTES {
+            self.bytes_since_yield = 0;
+            smol::future::yield_now().await;
+        }
+    }
+}
+
 /// The contents as stored on disk, if that is what Git compares with history.
 async fn stored_contents<'a>(
     git: &GitBinary,
@@ -110,23 +125,16 @@ async fn stored_contents<'a>(
         .await
         .with_context(|| format!("reading git attributes of {:?}", path.as_unix_str()))
         .log_err()?;
-    if stdin_encoding == StdinEncoding::Utf8 {
+    if stdin_encoding == StdinEncoding::Utf8
+        || (encoding == ISO_2022_JP && stdin_encoding != StdinEncoding::WorkingTree)
+    {
         return None;
     }
-    let lines_encode_independently =
-        encoding != ISO_2022_JP || stdin_encoding == StdinEncoding::WorkingTree;
     let mut encoder = ExactEncoder::new(encoding, has_bom);
-    let mut bytes_since_yield = 0;
+    let mut budget = YieldBudget::default();
     for chunk in text::chunks_with_line_ending(content, line_ending) {
-        if !lines_encode_independently && chunk.contains(['¥', '‾']) {
-            return None;
-        }
         encoder.encode(chunk)?;
-        bytes_since_yield += chunk.len();
-        if bytes_since_yield >= EXACT_ENCODING_YIELD_BYTES {
-            bytes_since_yield = 0;
-            smol::future::yield_now().await;
-        }
+        budget.spend(chunk.len()).await;
     }
     encoder.finish()?;
     Some(BlameSource::StoredContents(
@@ -214,7 +222,12 @@ async fn history_has_textconv(git: &GitBinary, path: &RepoPath) -> Result<bool> 
     if drivers.is_empty() {
         return Ok(false);
     }
-    if drivers.iter().any(|driver| driver.contains('=')) {
+    let head = format!("HEAD:{}", path.as_unix_str());
+    let is_blob = preflight_output(git, &["cat-file", "-t", &head])
+        .await
+        .log_err()
+        .is_some_and(|output| output.status.success() && output.stdout.trim_ascii() == b"blob");
+    if !is_blob {
         return Ok(true);
     }
 
@@ -223,6 +236,15 @@ async fn history_has_textconv(git: &GitBinary, path: &RepoPath) -> Result<bool> 
     let marker = format!("zed-textconv-{}", Uuid::new_v4().simple());
     let mut args = Vec::new();
     for driver in drivers {
+        if driver.contains('=') {
+            args.push(format!(
+                "--config-env=diff.{driver}.textconv=ZED_BLAME_TEXTCONV"
+            ));
+            args.push(format!(
+                "--config-env=diff.{driver}.cachetextconv=ZED_BLAME_CACHE_TEXTCONV"
+            ));
+            continue;
+        }
         args.push("-c".to_string());
         args.push(format!("diff.{driver}.textconv=echo {marker} #"));
         args.push("-c".to_string());
@@ -230,10 +252,29 @@ async fn history_has_textconv(git: &GitBinary, path: &RepoPath) -> Result<bool> 
     }
     args.push("cat-file".to_string());
     args.push("--textconv".to_string());
-    args.push(format!("HEAD:{}", path.as_unix_str()));
+    for object in [head, format!(":{}", path.as_unix_str())] {
+        if probe_textconv(git, &args, &object, &marker)
+            .await
+            .log_err()
+            .unwrap_or(true)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 
+async fn probe_textconv(
+    git: &GitBinary,
+    args: &[String],
+    object: &str,
+    marker: &str,
+) -> Result<bool> {
     let mut child = git
-        .build_command(&args)
+        .build_command(args)
+        .arg(object)
+        .env("ZED_BLAME_TEXTCONV", format!("echo {marker} #"))
+        .env("ZED_BLAME_CACHE_TEXTCONV", "false")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -313,10 +354,12 @@ async fn run_git_blame(
         }
         let stdin = stdin.context("failed to get pipe to stdin of git blame command")?;
         let mut stdin = BufWriter::new(stdin);
+        let mut budget = YieldBudget::default();
         match source {
             BlameSource::Contents(contents, line_ending) => {
                 for chunk in text::chunks_with_line_ending(contents, line_ending) {
                     stdin.write_all(chunk.as_bytes()).await?;
+                    budget.spend(chunk.len()).await;
                 }
             }
             BlameSource::StoredContents(contents, line_ending, encoding, has_bom) => {
@@ -326,6 +369,7 @@ async fn run_git_blame(
                         .encode(chunk)
                         .context("encoding the contents to blame")?;
                     stdin.write_all(bytes).await?;
+                    budget.spend(chunk.len()).await;
                 }
                 let bytes = encoder.finish().context("encoding the contents to blame")?;
                 stdin.write_all(&bytes).await?;

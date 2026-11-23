@@ -17122,7 +17122,39 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
             windows_1252_text,
             "",
         ),
+        case(
+            "no_driver.py",
+            encoding_rs::WINDOWS_1252,
+            false,
+            windows_1252_text,
+            "-text",
+        ),
+        case(
+            "equals_driver.py",
+            encoding_rs::WINDOWS_1252,
+            false,
+            windows_1252_text,
+            "-text diff=legacy=latin",
+        ),
         Case {
+            committed_rows: Vec::new(),
+            ..case(
+                "directory_in_head.py",
+                encoding_rs::WINDOWS_1252,
+                false,
+                windows_1252_text,
+                "-text diff=windows_1252\ndirectory_in_head.py/original -text",
+            )
+        },
+        case(
+            "indexed/latin.py",
+            encoding_rs::WINDOWS_1252,
+            false,
+            windows_1252_text,
+            "-text",
+        ),
+        Case {
+            committed_rows: Vec::new(),
             stored_bytes: Some(b"\x1b$B>e$N9T\x1b(B\nplain\n\x1b$B:G8e$N9T\x1b(B\n"),
             ..case(
                 "iso_2022_jp.txt",
@@ -17225,7 +17257,10 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
         },
     ];
 
-    let root = TempTree::new(json!({ "project": {} }));
+    let root = TempTree::new(json!({ "project": {
+        "indexed": { ".gitattributes": "latin.py -text diff=windows_1252\n" },
+        "directory_in_head.py": {}
+    } }));
     let work_dir = root.path().join("project");
     git_init(&work_dir);
     git_config(
@@ -17243,6 +17278,11 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
         "iconv -f UTF-16 -t UTF-8",
         &work_dir,
     );
+    git_config(
+        "diff.legacy=latin.textconv",
+        "iconv -f WINDOWS-1252 -t UTF-8",
+        &work_dir,
+    );
     let attributes = cases
         .iter()
         .filter(|case| !case.attributes.is_empty())
@@ -17250,15 +17290,27 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
         .collect::<String>();
     std::fs::write(work_dir.join(".gitattributes"), attributes).unwrap();
     git_add(".gitattributes", &work_dir);
+    git_add("indexed/.gitattributes", &work_dir);
     for case in &cases {
         let bytes = match case.stored_bytes {
             Some(bytes) => bytes.to_vec(),
             None => file_content::encode_text(case.text.to_owned(), case.encoding, case.has_bom),
         };
-        std::fs::write(work_dir.join(case.file_name), bytes).unwrap();
+        let path = if case.file_name == "directory_in_head.py" {
+            "directory_in_head.py/original"
+        } else {
+            case.file_name
+        };
+        std::fs::write(work_dir.join(path), bytes).unwrap();
         git_add(case.file_name, &work_dir);
     }
     git_commit("Initial commit", &work_dir);
+    std::fs::remove_file(work_dir.join("indexed/.gitattributes")).unwrap();
+    let directory = work_dir.join("directory_in_head.py");
+    let bytes = std::fs::read(directory.join("original")).unwrap();
+    std::fs::remove_dir_all(&directory).unwrap();
+    std::fs::write(&directory, bytes).unwrap();
+    git_add("directory_in_head.py", &work_dir);
 
     let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
