@@ -43,9 +43,14 @@ trait Measure: Any {
     fn reuse(&mut self, previous: &mut dyn Measure) -> bool;
 }
 
-fn measure_mut(context: &mut NodeContext) -> &mut dyn Measure {
-    let measure: &mut Box<dyn Measure> = context;
-    &mut **measure
+/// Whether `measure` would measure the same sizes as `previous`.
+///
+/// Unlike the rest of a layout request, this reads the node's context, which with the
+/// `stacker` feature may only be done from a stack-safe function.
+#[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
+fn reuse_measure(measure: &mut NodeContext, previous: &mut NodeContext) -> bool {
+    let previous: &mut Box<dyn Measure> = previous;
+    measure.reuse(&mut **previous)
 }
 
 /// A measure function, and a key that `reuse` finds equal for measure functions
@@ -304,7 +309,7 @@ impl TaffyLayoutEngine {
         // Taffy cached from it; any other must invalidate them.
         if let Some(measure) = &mut context
             && let Some(previous) = contexts.get_mut(node_key(id))
-            && measure.reuse(measure_mut(previous))
+            && reuse_measure(measure, previous)
         {
             if let Some(measure) = context {
                 *previous = measure;

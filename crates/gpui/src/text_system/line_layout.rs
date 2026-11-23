@@ -600,12 +600,8 @@ impl LineLayoutCache {
             current_frame,
         } = &mut *self.state.borrow_mut();
         std::mem::swap(previous_frame, current_frame);
-        // Layouts that weren't used in the finished frame but are still held outside the
-        // cache stay cached. Text whose layout node kept its measurement from an earlier
-        // frame isn't shaped again while it's unchanged, and holds its lines; when the same
-        // text is shaped in another element, as when rows of a list move between elements,
-        // it would otherwise be shaped from scratch. Wrapped lines go first, since their
-        // unwrapped lines are held by the wrapped lines kept.
+        // Text that kept its measurement isn't shaped again, so the layouts it holds must
+        // stay cached. Wrapped lines go first, since they hold their unwrapped lines.
         keep_held_layouts(
             &mut previous_frame.wrapped_lines,
             &mut current_frame.wrapped_lines,
