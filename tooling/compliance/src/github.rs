@@ -240,9 +240,7 @@ impl<'de> serde::Deserialize<'de> for CommitMetadataBySha {
         let map = raw
             .into_iter()
             .map(|(key, value)| {
-                let sha = key
-                    .strip_prefix(CommitMetadataBySha::SHA_PREFIX)
-                    .unwrap_or(&key);
+                let sha = key.trim_prefix(CommitMetadataBySha::SHA_PREFIX);
                 (CommitSha::new(sha.to_owned()), value)
             })
             .collect();

@@ -645,7 +645,7 @@ impl EditPipeline {
                 };
 
                 let chunk = if strip_trailing_newline {
-                    chunk.strip_suffix('\n').unwrap_or(chunk)
+                    chunk.trim_suffix('\n')
                 } else {
                     chunk
                 };

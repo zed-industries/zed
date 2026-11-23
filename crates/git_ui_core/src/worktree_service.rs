@@ -41,7 +41,7 @@ pub struct RemoteBranchName {
 
 impl RemoteBranchName {
     pub fn parse(name: &str) -> Option<Self> {
-        let name = name.strip_prefix("refs/remotes/").unwrap_or(name);
+        let name = name.trim_prefix("refs/remotes/");
         let (remote_name, branch_name) = name.split_once('/')?;
         if remote_name.is_empty() || branch_name.is_empty() {
             return None;

@@ -473,7 +473,7 @@ fn model_from_entry(entry: &ModelEntry, props: Option<&Props>) -> llama_cpp::Mod
 /// Friendly display name from a model id, which is often a `.gguf` file path.
 fn display_name_for(id: &str) -> String {
     let base = id.rsplit(['/', '\\']).next().unwrap_or(id);
-    base.strip_suffix(".gguf").unwrap_or(base).to_string()
+    base.trim_suffix(".gguf").to_string()
 }
 
 fn telemetry_id_for(id: &str) -> String {

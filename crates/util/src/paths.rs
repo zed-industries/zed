@@ -102,8 +102,8 @@ impl<T: AsRef<Path>> PathExt for T {
     fn extension_or_hidden_file_name(&self) -> Option<&str> {
         let path = self.as_ref();
         let file_name = path.file_name()?.to_str()?;
-        if file_name.starts_with('.') {
-            return file_name.strip_prefix('.');
+        if let Some(hidden_file_name) = file_name.strip_prefix('.') {
+            return Some(hidden_file_name);
         }
 
         path.extension()

@@ -1832,7 +1832,7 @@ pub fn parse_zeta2_model_output(
     prompt_inputs: &Zeta2PromptInput,
 ) -> Result<ParsedOutput> {
     let output = match output_end_marker_for_format(format) {
-        Some(marker) => output.strip_suffix(marker).unwrap_or(output),
+        Some(marker) => output.trim_suffix(marker),
         None => output,
     };
 
@@ -1928,7 +1928,7 @@ pub fn parse_zeta3_model_output_as_patch(
     }
 
     let output = match output_end_marker_for_format(format) {
-        Some(marker) => output.strip_suffix(marker).unwrap_or(output),
+        Some(marker) => output.trim_suffix(marker),
         None => output,
     };
     let (current_excerpt, cursor_offset_in_excerpt) = zeta3_current_file_excerpt(input)
@@ -3125,7 +3125,7 @@ pub mod hashline {
                 }
                 last_old_line_before_hunk = Some(old_line_index);
                 old_line_index += 1;
-                let content = raw_line.strip_prefix(' ').unwrap_or(raw_line);
+                let content = raw_line.trim_prefix(' ');
                 new_text_byte_offset += content.len();
             }
         }
@@ -4397,7 +4397,7 @@ pub mod v0304_variable_edit {
             .unwrap_or((rest, ""));
 
         let suffix_context = if prefix_context.is_empty() && !suffix_context.is_empty() {
-            suffix_context.strip_prefix('\n').unwrap_or(suffix_context)
+            suffix_context.trim_prefix('\n')
         } else {
             suffix_context
         };
@@ -4646,7 +4646,7 @@ pub mod v0304_variable_edit {
                         text: String::new(),
                     });
                 } else {
-                    let ctx = line.strip_prefix(' ').unwrap_or(line);
+                    let ctx = line.trim_prefix(' ');
                     writeln!(&mut hunk.old_context, "{ctx}").ok();
                 }
             }

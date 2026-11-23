@@ -398,8 +398,7 @@ fn parse_cat_numbered_code(code: &str) -> Option<ParsedCatNumberedCode> {
 }
 
 fn strip_line_ending(line: &str) -> &str {
-    let without_lf = line.strip_suffix('\n').unwrap_or(line);
-    without_lf.strip_suffix('\r').unwrap_or(without_lf)
+    line.trim_suffix('\n').trim_suffix('\r')
 }
 
 fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
