@@ -1,5 +1,6 @@
 use std::ffi::{CStr, CString, c_int};
 use std::marker::PhantomData;
+use std::mem::DropGuard;
 use std::{ptr, slice, str};
 
 use anyhow::{Context as _, Result, bail};
@@ -290,30 +291,21 @@ impl<'a> Statement<'a> {
     }
 
     pub fn exec(&mut self) -> Result<()> {
-        fn logic(this: &mut Statement) -> Result<()> {
-            while this.step()? == StepResult::Row {}
-            Ok(())
-        }
-        let result = logic(self);
-        self.reset();
-        result
+        let mut this = DropGuard::new(self, |this| this.reset());
+        while this.step()? == StepResult::Row {}
+        Ok(())
     }
 
-    pub fn map<R>(&mut self, callback: impl FnMut(&mut Statement) -> Result<R>) -> Result<Vec<R>> {
-        fn logic<R>(
-            this: &mut Statement,
-            mut callback: impl FnMut(&mut Statement) -> Result<R>,
-        ) -> Result<Vec<R>> {
-            let mut mapped_rows = Vec::new();
-            while this.step()? == StepResult::Row {
-                mapped_rows.push(callback(this)?);
-            }
-            Ok(mapped_rows)
+    pub fn map<R>(
+        &mut self,
+        mut callback: impl FnMut(&mut Statement) -> Result<R>,
+    ) -> Result<Vec<R>> {
+        let mut this = DropGuard::new(self, |this| this.reset());
+        let mut mapped_rows = Vec::new();
+        while this.step()? == StepResult::Row {
+            mapped_rows.push(callback(&mut this)?);
         }
-
-        let result = logic(self, callback);
-        self.reset();
-        result
+        Ok(mapped_rows)
     }
 
     pub fn rows<R: Column>(&mut self) -> Result<Vec<R>> {
@@ -321,26 +313,19 @@ impl<'a> Statement<'a> {
     }
 
     pub fn single<R>(&mut self, callback: impl FnOnce(&mut Statement) -> Result<R>) -> Result<R> {
-        fn logic<R>(
-            this: &mut Statement,
-            callback: impl FnOnce(&mut Statement) -> Result<R>,
-        ) -> Result<R> {
-            anyhow::ensure!(
-                this.step()? == StepResult::Row,
-                "single called with query that returns no rows."
-            );
-            let result = callback(this)?;
+        let mut this = DropGuard::new(self, |this| this.reset());
+        anyhow::ensure!(
+            this.step()? == StepResult::Row,
+            "single called with query that returns no rows."
+        );
+        let result = callback(&mut this)?;
 
-            anyhow::ensure!(
-                this.step()? == StepResult::Done,
-                "single called with a query that returns more than one row."
-            );
+        anyhow::ensure!(
+            this.step()? == StepResult::Done,
+            "single called with a query that returns more than one row."
+        );
 
-            Ok(result)
-        }
-        let result = logic(self, callback);
-        self.reset();
-        result
+        Ok(result)
     }
 
     pub fn row<R: Column>(&mut self) -> Result<R> {
@@ -351,28 +336,21 @@ impl<'a> Statement<'a> {
         &mut self,
         callback: impl FnOnce(&mut Statement) -> Result<R>,
     ) -> Result<Option<R>> {
-        fn logic<R>(
-            this: &mut Statement,
-            callback: impl FnOnce(&mut Statement) -> Result<R>,
-        ) -> Result<Option<R>> {
-            if this.step().context("Failed on step call")? != StepResult::Row {
-                return Ok(None);
-            }
-
-            let result = callback(this)
-                .map(|r| Some(r))
-                .context("Failed to parse row result")?;
-
-            anyhow::ensure!(
-                this.step().context("Second step call")? == StepResult::Done,
-                "maybe called with a query that returns more than one row."
-            );
-
-            Ok(result)
+        let mut this = DropGuard::new(self, |this| this.reset());
+        if this.step().context("Failed on step call")? != StepResult::Row {
+            return Ok(None);
         }
-        let result = logic(self, callback);
-        self.reset();
-        result
+
+        let result = callback(&mut this)
+            .map(|r| Some(r))
+            .context("Failed to parse row result")?;
+
+        anyhow::ensure!(
+            this.step().context("Second step call")? == StepResult::Done,
+            "maybe called with a query that returns more than one row."
+        );
+
+        Ok(result)
     }
 
     pub fn maybe_row<R: Column>(&mut self) -> Result<Option<R>> {
