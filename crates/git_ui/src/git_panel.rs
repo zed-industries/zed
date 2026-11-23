@@ -7287,6 +7287,7 @@ impl GitPanel {
                 .w_full()
                 .pl_1()
                 .pr_2()
+                .py(DynamicSpacing::Base04.rems(cx))
                 .flex_none()
                 .flex_wrap()
                 .gap_1()
