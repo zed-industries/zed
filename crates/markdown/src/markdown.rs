@@ -4059,16 +4059,11 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
-        // The text around an image is a single flex item, so the image can only sit beside the
-        // whole text box, never inside its last wrapped row. Once the text is long enough to
-        // wrap, the image drops to the next line, unlike a browser, which flows it into the last row.
         let text_align = self.text_style().text_align;
         let table_cell_alignment = self
             .table
             .in_cell
             .then(|| self.table.current_cell_alignment());
-        // Must be set before `modify_current_div`, which flushes pending text: `flush_text`
-        // needs to see the flex-wrap mode to give that text a `min_w_0` wrapper.
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
         self.modify_current_div(|el| {
             let el = el.flex().flex_row().flex_wrap();
@@ -4434,10 +4429,7 @@ impl MarkdownElementBuilder {
             line: rendered_line,
         }
         .into_any_element();
-        // In a flex-wrap container the text is a flex item, and its automatic minimum size is
-        // its min-content width, which gpui reports as the full unwrapped width. Without an
-        // explicit `min-width: 0` taffy clamps the item back up to that width, so it never
-        // receives a definite width to wrap against.
+        // For flex-wrapped containers, flushed text should wrap onto the next line
         if self.uses_flex_line_breaks() {
             self.append_child(div().min_w_0().child(child).into_any_element());
         } else {
