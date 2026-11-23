@@ -32,13 +32,18 @@ const WEBGL_SHADERS: &str = concat!(
     include_str!("shaders_webgl.wgsl"),
 );
 
-/// Subpixel text rendering requires dual-source blending, which WebGL2 lacks, so
-/// this variant only ever runs with the storage-buffer transport. The `enable`
-/// directive must precede all declarations.
-const SUBPIXEL_SHADERS: &str = concat!(
+/// Subpixel text rendering requires dual-source blending, so it gets its own variants.
+const SUBPIXEL_STORAGE_BUFFER_SHADERS: &str = concat!(
     "enable dual_source_blending;\n",
     include_str!("shaders.wgsl"),
     include_str!("shaders_storage.wgsl"),
+    include_str!("shaders_subpixel.wgsl"),
+);
+
+const SUBPIXEL_WEBGL_SHADERS: &str = concat!(
+    "enable dual_source_blending;\n",
+    include_str!("shaders.wgsl"),
+    include_str!("shaders_webgl.wgsl"),
     include_str!("shaders_subpixel.wgsl"),
 );
 
@@ -746,13 +751,12 @@ impl WgpuRendererCore {
                 device.features(),
             );
         }
-        let dual_source_blending =
-            dual_source_blending && device_has_feature && !uses_texture_instance_data;
+        let dual_source_blending = dual_source_blending && device_has_feature;
 
-        let shader_source = if uses_texture_instance_data {
-            WEBGL_SHADERS
+        let (shader_source, subpixel_shader_source) = if uses_texture_instance_data {
+            (WEBGL_SHADERS, SUBPIXEL_WEBGL_SHADERS)
         } else {
-            STORAGE_BUFFER_SHADERS
+            (STORAGE_BUFFER_SHADERS, SUBPIXEL_STORAGE_BUFFER_SHADERS)
         };
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gpui_shaders"),
@@ -762,7 +766,7 @@ impl WgpuRendererCore {
         let subpixel_shader_module = if dual_source_blending {
             Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("gpui_subpixel_shaders"),
-                source: wgpu::ShaderSource::Wgsl(SUBPIXEL_SHADERS.into()),
+                source: wgpu::ShaderSource::Wgsl(subpixel_shader_source.into()),
             }))
         } else {
             None
@@ -934,7 +938,7 @@ impl WgpuRendererCore {
 
             Some(create_pipeline(
                 "subpixel_sprites",
-                "vs_subpixel_sprite",
+                "vs_mono_sprite",
                 "fs_subpixel_sprite",
                 &layouts.globals,
                 &layouts.instances,
@@ -1176,8 +1180,7 @@ impl WgpuRendererCore {
         let queue = Arc::clone(&context.queue);
         let rendering_params = RenderingParameters::new();
         let uses_texture_instance_data = context.uses_texture_instance_data();
-        let dual_source_blending =
-            context.supports_dual_source_blending() && !uses_texture_instance_data;
+        let dual_source_blending = context.supports_dual_source_blending();
         let bind_group_layouts =
             Self::create_bind_group_layouts(&device, uses_texture_instance_data);
         let pipelines = Self::create_pipelines(
@@ -2741,9 +2744,18 @@ mod tests {
     }
 
     #[test]
-    fn subpixel_shader_is_valid_wgsl() {
+    fn subpixel_storage_buffer_shader_is_valid_wgsl() {
         validate_wgsl(
-            SUBPIXEL_SHADERS,
+            SUBPIXEL_STORAGE_BUFFER_SHADERS,
+            naga::valid::Capabilities::DUAL_SOURCE_BLENDING,
+        );
+    }
+
+    #[test]
+    fn subpixel_webgl_shader_is_valid_wgsl_without_storage_buffers() {
+        assert!(!SUBPIXEL_WEBGL_SHADERS.contains("var<storage"));
+        validate_wgsl(
+            SUBPIXEL_WEBGL_SHADERS,
             naga::valid::Capabilities::DUAL_SOURCE_BLENDING,
         );
     }
