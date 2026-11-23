@@ -1687,6 +1687,7 @@ impl ConversationView {
             .map(|native_connection| native_available_skills(&native_connection, &session_id, cx))
             .unwrap_or_default();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+            connection.description_format(),
             thread.read(cx).prompt_capabilities().clone(),
             thread.read(cx).available_commands().to_vec(),
             available_skills,
@@ -2961,7 +2962,10 @@ impl ConversationView {
                             }
                         })
                         .when_some(method.description(), |this, description| {
-                            this.tooltip(Tooltip::text(description.to_string()))
+                            this.tooltip(crate::ui::description_tooltip(
+                                description.into(),
+                                connection.description_format(),
+                            ))
                         })
                         .on_click({
                             cx.listener(move |this, _, window, cx| {
@@ -4170,11 +4174,18 @@ impl Render for ConversationView {
             .bg(cx.theme().colors().panel_background)
             .child(v_flex().flex_1().min_h_0().child(content))
             .when(self.has_saved_input(), |this| {
+                let unconfirmed = self.saved_submissions.iter()
+                    .chain(self.recovery.iter().flat_map(|recovery| &recovery.submissions))
+                    .any(|submission| matches!(submission.state, acp_thread::SubmissionState::Disconnected { receipt: None }));
                 this.child(
                     h_flex()
                         .p_2()
                         .gap_2()
                         .flex_wrap()
+                        .when(unconfirmed, |this| this.child(
+                            div().debug_selector(|| "saved-input-outcome-unknown".into())
+                                .child(Label::new("Some messages were not confirmed. The agent may already have acted on them. Zed has not sent them again.").size(LabelSize::Small))
+                        ))
                         .child(self.copy_saved_input_button(cx))
                         .when(
                             !self.saved_submissions.is_empty()
@@ -7882,7 +7893,7 @@ pub(crate) mod tests {
             assert_eq!(completions.len(), 1);
             let completion = completions.first().expect("replacement command completion");
             assert_eq!(completion.name.as_ref(), "deploy");
-            assert_eq!(completion.description.as_ref(), "Updated command");
+            assert_eq!(completion.documentation.text(), "Updated command");
             assert!(!completion.requires_argument);
         });
 
@@ -8262,6 +8273,7 @@ pub(crate) mod tests {
             assert!(view.recovery.is_some());
         });
         assert!(cx.debug_bounds("copy-saved-agent-input").is_some());
+        assert!(cx.debug_bounds("saved-input-outcome-unknown").is_some());
         conversation_view.update_in(cx, |view, window, cx| view.reset(window, cx));
         cx.run_until_parked();
         let current_view = active_thread(&conversation_view, cx);
@@ -11002,7 +11014,7 @@ pub(crate) mod tests {
                         "_future_login",
                         Self::OTHER_AUTH_METHOD_ID,
                         "Future Login",
-                        std::collections::BTreeMap::from([
+                        agent_client_protocol::schema::IndexMap::from([
                             ("args".into(), json!(["must-not-run"])),
                             ("details".into(), json!({"nested": [1, {"preserve": true}]})),
                             ("description".into(), json!("Not supported by this client")),
@@ -12028,7 +12040,7 @@ pub(crate) mod tests {
         });
         let elicitation_id = elicitation_id.expect("elicitation entry should exist");
 
-        let other_answer = std::collections::BTreeMap::from([(
+        let other_answer = agent_client_protocol::schema::IndexMap::from([(
             "other".to_string(),
             acp_v2::ElicitationContentValue::from("delve into src"),
         )]);
@@ -14137,13 +14149,15 @@ pub(crate) mod tests {
 
         for (update, query, expected_source) in [
             (
-                acp_v2::CompactionUpdate::new("failed", acp_v2::CompactionStatus::Failed)
+                acp_v2::CompactionUpdate::new("failed")
+                    .status(acp_v2::CompactionStatus::Failed)
                     .error("model *still* unavailable <details>"),
                 "model *still* unavailable <details>",
                 Vec::new(),
             ),
             (
-                acp_v2::CompactionUpdate::new("completed", acp_v2::CompactionStatus::Completed)
+                acp_v2::CompactionUpdate::new("completed")
+                    .status(acp_v2::CompactionStatus::Completed)
                     .summary(source.clone()),
                 "retained resource details",
                 source,
@@ -14212,7 +14226,8 @@ pub(crate) mod tests {
                     replacement_query,
                 ))]
             };
-            let replacement = acp_v2::CompactionUpdate::new(compaction_id.clone(), status.clone());
+            let replacement =
+                acp_v2::CompactionUpdate::new(compaction_id.clone()).status(status.clone());
             let replacement = if is_error {
                 replacement.error(replacement_query)
             } else {
@@ -14285,7 +14300,8 @@ pub(crate) mod tests {
             );
             thread.update(cx, |thread, cx| {
                 thread.upsert_context_compaction_update(
-                    acp_v2::CompactionUpdate::new(compaction_id, status)
+                    acp_v2::CompactionUpdate::new(compaction_id)
+                        .status(status)
                         .summary(None::<Vec<acp_v2::ContentBlock>>)
                         .error(None::<String>),
                     cx,
@@ -19419,6 +19435,36 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn v2_permission_description_click_does_not_answer_request(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation.clone(), true, cx);
+        let thread = active_thread(&conversation, cx).read_with(cx, |view, _| view.thread.clone());
+        let source = "**[Read details](https://example.org)**";
+        let request = generic_permission_prompt(&thread, None, cx).description(source);
+        let (id, mut response) = request_test_generic_permission(&thread, request, cx);
+        cx.run_until_parked();
+        let text = cx
+            .debug_bounds("generic-permission-description-**[Read details](https://example.org)**")
+            .expect("permission description");
+        cx.simulate_click(
+            gpui::point(text.left() + px(5.), text.center().y),
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert!(cx.opened_url().is_none());
+        assert!((&mut response).now_or_never().is_none());
+        click_generic_permission(id, Some("reject"), cx);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "reject"
+            ))
+        );
+    }
+
+    #[gpui::test]
     async fn test_generic_permissions_render_without_transcript_anchors(cx: &mut TestAppContext) {
         init_test(cx);
         let (conversation_view, cx) =
@@ -21115,7 +21161,8 @@ pub(crate) mod tests {
     #[gpui::test]
     async fn test_first_message_to_an_acp_subagent_shows_its_card(cx: &mut TestAppContext) {
         init_test(cx);
-        let connection = StubAgentConnection::new();
+        let connection = StubAgentConnection::new()
+            .with_description_format(acp_thread::AgentDescriptionFormat::Markdown);
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
         add_to_workspace_with_size(conversation_view.clone(), true, cx);
@@ -21178,6 +21225,20 @@ pub(crate) mod tests {
         assert!(
             cx.debug_bounds("stop-subagent-0").is_none(),
             "a subagent that does not advertise cancel cannot be stopped"
+        );
+
+        child.update(cx, |child, cx| {
+            child
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").description("Checks the **build**."),
+                    cx,
+                )
+                .expect("child description")
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("subagent-description-0").is_none(),
+            "descriptions do not replace the card title"
         );
 
         let thread_view = active_thread(&conversation_view, cx);
@@ -21269,6 +21330,18 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
         assert!(cx.debug_bounds("subagent-card-0").is_some());
+        assert!(cx.debug_bounds("subagent-description-0").is_some());
+        child.update(cx, |child, cx| {
+            child
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child")
+                        .description(agent_client_protocol::schema::MaybeUndefined::Null),
+                    cx,
+                )
+                .expect("clear child description")
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("subagent-description-0").is_none());
     }
 
     #[gpui::test]

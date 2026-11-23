@@ -195,12 +195,15 @@ pub enum Thinking {
     Reasoning {
         effort: BedrockAdaptiveThinkingEffort,
     },
-    /// Explicitly turns thinking off. Required by Claude Opus 5, where
-    /// adaptive thinking runs by default when the `thinking` field is
+    /// Explicitly turns thinking off. Required by Claude Opus 5 and Haiku 5.5,
+    /// where adaptive thinking runs by default when the `thinking` field is
     /// omitted; only accepted at effort `high` or below.
     ///
     /// <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
     Disabled,
+    /// The lowest thinking setting, for models that think by default but
+    /// reject [`Thinking::Disabled`] (Claude Sonnet 5.5).
+    BetweenTools,
 }
 
 /// Converts the request's thinking configuration into the
@@ -275,6 +278,15 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
                 Document::from(HashMap::from([(
                     "type".to_string(),
                     Document::String("disabled".to_string()),
+                )])),
+            );
+        }
+        Thinking::BetweenTools => {
+            fields.insert(
+                "thinking".to_string(),
+                Document::from(HashMap::from([(
+                    "type".to_string(),
+                    Document::String("between_tools".to_string()),
                 )])),
             );
         }
@@ -353,6 +365,15 @@ mod tests {
         assert_eq!(string_field(thinking, "type"), Some("disabled"));
         // `disabled` combined with an effort of `xhigh`/`max` is a 400, so no
         // output_config may accompany the opt-out.
+        assert!(!fields.contains_key("output_config"));
+    }
+
+    #[test]
+    fn test_between_tools_thinking_serializes_type() {
+        let fields = thinking_request_fields(&Thinking::BetweenTools);
+
+        let thinking = fields.get("thinking").expect("thinking field");
+        assert_eq!(string_field(thinking, "type"), Some("between_tools"));
         assert!(!fields.contains_key("output_config"));
     }
 

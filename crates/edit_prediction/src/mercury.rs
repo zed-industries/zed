@@ -215,8 +215,7 @@ impl Mercury {
                     .ok();
             }
 
-            let response_str = response_str.strip_prefix("```\n").unwrap_or(&response_str);
-            let response_str = response_str.strip_suffix("\n```").unwrap_or(&response_str);
+            let response_str = response_str.trim_prefix("```\n").trim_suffix("\n```");
 
             let mut edits = Vec::new();
             const NO_PREDICTION_OUTPUT: &str = "None";

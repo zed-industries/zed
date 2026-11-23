@@ -32,6 +32,7 @@ use std::{
     ffi::c_void,
     ptr::{self, NonNull},
     rc::{Rc, Weak},
+    sync::OnceLock,
 };
 
 type HitTestCallback = Box<dyn FnMut(Point<Pixels>) -> Option<NativeViewId>>;
@@ -44,9 +45,16 @@ pub(super) struct NativeViews {
     /// The view a mouse-down event is being delivered to, which may take
     /// first responder even though GPUI has not focused it yet.
     clicked: Option<NativeViewId>,
-    /// Whether GPUI was told of a mouse press that went to a native view, and
-    /// is owed the release.
-    pressed_in_view: bool,
+    /// The view that was asked to take keyboard input and didn't. It isn't
+    /// asked again until it takes keyboard input itself or GPUI's focus moves,
+    /// and the GPUI view has keyboard input in its place.
+    declined: Option<NativeViewId>,
+    /// Set while first responder is being matched to GPUI's focus, so that
+    /// the requests this makes don't each start matching it again.
+    reconciling: bool,
+    /// The mouse buttons, by number, whose presses went to a native view. GPUI
+    /// was told of each press, and is owed its release.
+    buttons_pressed_in_view: Vec<isize>,
     /// The keys, by key code, whose presses GPUI took ahead of a native view.
     /// Their releases are GPUI's too, and not the view's, which never saw them
     /// pressed.
@@ -139,6 +147,7 @@ impl NativeViews {
         self.focused.map(|id| FocusedNativeView {
             id,
             shown: self.shown(id).is_some(),
+            declined: self.declined == Some(id),
         })
     }
 
@@ -146,6 +155,20 @@ impl NativeViews {
         self.views
             .iter()
             .any(|attached| attached.placement.is_some())
+    }
+
+    fn note_button_pressed_in_view(&mut self, button: isize) {
+        if !self.buttons_pressed_in_view.contains(&button) {
+            self.buttons_pressed_in_view.push(button);
+        }
+    }
+
+    /// Returns whether GPUI is owed the release of `button`, which settles it.
+    fn take_button_pressed_in_view(&mut self, button: isize) -> bool {
+        let count = self.buttons_pressed_in_view.len();
+        self.buttons_pressed_in_view
+            .retain(|pressed| *pressed != button);
+        self.buttons_pressed_in_view.len() != count
     }
 
     /// What `responder` is to the window whose own view is `gpui_view`.
@@ -244,7 +267,7 @@ pub(super) unsafe fn attach(
     // runs on the main thread. The window state is unlocked because AppKit calls
     // back into the window as its view hierarchy changes.
     let container = unsafe {
-        let container: Retained<NSView> = msg_send![class!(NSView), new];
+        let container: Retained<NSView> = msg_send![container_class(), new];
         let _: () = msg_send![&*container, setClipsToBounds: true];
         container.setHidden(true);
         container.addSubview(&view);
@@ -267,6 +290,33 @@ pub(super) unsafe fn attach(
         window_state: Rc::downgrade(window_state),
         id,
     }))
+}
+
+/// The class of the view each native view is put inside.
+fn container_class() -> &'static AnyClass {
+    static CONTAINER_CLASS: OnceLock<&'static AnyClass> = OnceLock::new();
+    CONTAINER_CLASS.get_or_init(|| {
+        let name = c"GPUINativeViewContainer";
+        let Some(mut decl) = ClassBuilder::new(name, class!(NSView)) else {
+            // Another copy of GPUI in this process has registered the class.
+            return AnyClass::get(name).unwrap_or(class!(NSView));
+        };
+        // SAFETY: The function signature matches the selector's Objective-C signature.
+        unsafe {
+            decl.add_method(
+                sel!(performKeyEquivalent:),
+                container_perform_key_equivalent as extern "C" fn(_, Sel, *mut AnyObject) -> Bool,
+            );
+        }
+        decl.register()
+    })
+}
+
+/// Keeps a key equivalent from the native view inside, which AppKit would
+/// otherwise offer it whether or not the view has keyboard input. The window
+/// offers key equivalents to the view that has keyboard input itself.
+extern "C" fn container_perform_key_equivalent(_: &AnyObject, _: Sel, _: *mut AnyObject) -> Bool {
+    Bool::NO
 }
 
 /// Shows the scene's native view background behind the window's content.
@@ -531,6 +581,8 @@ struct FocusedNativeView {
     /// Whether it is on screen. A view can be focused before it is shown, and
     /// stays focused when it is hidden.
     shown: bool,
+    /// Whether it was asked to take keyboard input and didn't.
+    declined: bool,
 }
 
 /// A view keyboard input is moved to so that it matches GPUI's focus.
@@ -547,13 +599,14 @@ fn input_target_for_focus(
     current: InputHolder,
 ) -> Option<InputTarget> {
     let (target, holder) = match focused {
-        Some(FocusedNativeView { id, shown: true }) => {
-            (InputTarget::NativeView(id), InputHolder::NativeView(id))
-        }
-        // A hidden view can't take keyboard input until it is shown.
-        Some(FocusedNativeView { shown: false, .. }) | None => {
-            (InputTarget::GpuiView, InputHolder::GpuiView)
-        }
+        Some(FocusedNativeView {
+            id,
+            shown: true,
+            declined: false,
+        }) => (InputTarget::NativeView(id), InputHolder::NativeView(id)),
+        // A hidden view can't take keyboard input until it is shown, and a view
+        // that declined it would only decline again.
+        Some(_) | None => (InputTarget::GpuiView, InputHolder::GpuiView),
     };
     (current != InputHolder::Other && current != holder).then_some(target)
 }
@@ -580,7 +633,7 @@ fn may_take_input(
         // first, and is accepted.
         InputHolder::GpuiView => !matches!(
             focused,
-            Some(FocusedNativeView { id, shown: true }) if current == InputHolder::NativeView(id)
+            Some(FocusedNativeView { id, shown: true, .. }) if current == InputHolder::NativeView(id)
         ),
         // Web views ask for keyboard input on their own, such as when a page
         // script focuses its window. Only GPUI's focus, a click, or VoiceOver's
@@ -596,7 +649,14 @@ fn may_take_input(
 
 /// Records the view GPUI has focused and gives it keyboard input.
 pub(super) fn set_focused(window_state: &Rc<Mutex<MacWindowState>>, id: Option<NativeViewId>) {
-    window_state.lock().native_views.focused = id;
+    {
+        let mut lock = window_state.lock();
+        let views = &mut lock.native_views;
+        if views.focused != id {
+            views.declined = None;
+        }
+        views.focused = id;
+    }
     reconcile_first_responder(window_state);
 }
 
@@ -606,6 +666,25 @@ pub(super) fn set_focused(window_state: &Rc<Mutex<MacWindowState>>, id: Option<N
 /// attached view is left with keyboard input, such as a control the app or
 /// AppKit put in the titlebar. GPUI's focus says nothing about those.
 pub(super) fn reconcile_first_responder(window_state: &Rc<Mutex<MacWindowState>>) {
+    // The window is asked to move first responder, and reconciles again as it
+    // does. This call sees to whatever those requests leave.
+    if std::mem::replace(&mut window_state.lock().native_views.reconciling, true) {
+        return;
+    }
+    // One request gives keyboard input to the view GPUI has focused, and a
+    // second returns it to the GPUI view if that view declined. Nothing takes
+    // a third, so a responder that never settles can't keep this going.
+    for _ in 0..2 {
+        if !request_first_responder_for_focus(window_state) {
+            break;
+        }
+    }
+    window_state.lock().native_views.reconciling = false;
+}
+
+/// Asks the window to make the view GPUI has focused first responder, and
+/// returns whether there was anything to ask for.
+fn request_first_responder_for_focus(window_state: &Rc<Mutex<MacWindowState>>) -> bool {
     // SAFETY: The window and views are live, and this runs on the main thread. The
     // window state is unlocked for `makeFirstResponder:` because AppKit calls back
     // into it synchronously, and the target is retained in case that detaches it.
@@ -620,10 +699,10 @@ pub(super) fn reconcile_first_responder(window_state: &Rc<Mutex<MacWindowState>>
             let target = match input_target_for_focus(views.focused(), current) {
                 Some(InputTarget::NativeView(id)) => match views.shown(id) {
                     Some(attached) => Some(attached.view.clone()),
-                    None => return,
+                    None => return false,
                 },
                 Some(InputTarget::GpuiView) => None,
-                None => return,
+                None => return false,
             };
             (native_window, target.ok_or(gpui_view))
         };
@@ -631,6 +710,7 @@ pub(super) fn reconcile_first_responder(window_state: &Rc<Mutex<MacWindowState>>
             Ok(view) => msg_send![native_window, makeFirstResponder: &**view],
             Err(gpui_view) => msg_send![native_window, makeFirstResponder: *gpui_view],
         };
+        true
     }
 }
 
@@ -807,7 +887,10 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
             NSEventType::LeftMouseDown | NSEventType::RightMouseDown | NSEventType::OtherMouseDown
         ) {
             let position: NSPoint = msg_send![event, locationInWindow];
+            // GPUI knows where its own content leaves a native view uncovered,
+            // but not what else AppKit has in front of the view there.
             hit_test_native_view(&window_state, position)
+                .and_then(|_| native_view_under_press(&window_state, this, position))
         } else {
             None
         };
@@ -820,8 +903,10 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
             // it would go on treating the button as held.
             let release = is_release
                 .then(|| {
+                    let button: isize = msg_send![event, buttonNumber];
                     let mut lock = window_state.try_lock()?;
-                    std::mem::take(&mut lock.native_views.pressed_in_view)
+                    lock.native_views
+                        .take_button_pressed_in_view(button)
                         .then(|| lock.content_size().height)
                 })
                 .flatten()
@@ -832,10 +917,11 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
             }
             return;
         }
+        let button: isize = msg_send![event, buttonNumber];
         let window_height = {
             let mut lock = window_state.lock();
             lock.native_views.clicked = clicked;
-            lock.native_views.pressed_in_view = true;
+            lock.native_views.note_button_pressed_in_view(button);
             lock.content_size().height
         };
         // GPUI goes first, so that focus it moves in response, such as a dismissed
@@ -846,6 +932,38 @@ extern "C" fn send_event(this: &AnyObject, _: Sel, event: *mut AnyObject) {
         let _: () = msg_send![super(this, superclass), sendEvent: event];
         window_state.lock().native_views.clicked = None;
     }
+}
+
+/// The native view that AppKit delivers a mouse press at this position to, if
+/// it delivers it to one.
+///
+/// # Safety
+///
+/// `window` must be a live GPUI window, and the window state must be unlocked,
+/// because hit-testing calls back into the GPUI view.
+unsafe fn native_view_under_press(
+    window_state: &Rc<Mutex<MacWindowState>>,
+    window: &AnyObject,
+    position_in_window: NSPoint,
+) -> Option<NativeViewId> {
+    // SAFETY: The caller guarantees that `window` is live, and its views are live
+    // while they are in it.
+    let recipient: *mut AnyObject = unsafe {
+        let content_view: *mut AnyObject = msg_send![window, contentView];
+        if content_view.is_null() {
+            return None;
+        }
+        // The view around the content view holds the titlebar's controls too.
+        // It has no superview, so it is asked in the window's coordinates.
+        let frame_view: *mut AnyObject = msg_send![content_view, superview];
+        let root_view = if frame_view.is_null() {
+            content_view
+        } else {
+            frame_view
+        };
+        msg_send![root_view, hitTest: position_in_window]
+    };
+    window_state.try_lock()?.native_views.containing(recipient)
 }
 
 /// Notes whether the pointer is over a native view, and has AppKit rebuild the
@@ -947,13 +1065,27 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
             return accepted;
         }
 
-        if let InputHolder::NativeView(requested) = requested
-            && focused.is_none_or(|focused| focused.id != requested)
-        {
-            let callback = window_state.lock().native_views.focused_callback.take();
-            if let Some(mut callback) = callback {
-                callback(requested);
-                window_state.lock().native_views.focused_callback = Some(callback);
+        if let InputHolder::NativeView(requested) = requested {
+            // AppKit reports success even when the view declines to become first
+            // responder, which leaves the window itself with keyboard input.
+            let took_input = {
+                let mut lock = window_state.lock();
+                let current: *mut AnyObject = msg_send![this, firstResponder];
+                let views = &mut lock.native_views;
+                let took_input = views.containing(current) == Some(requested);
+                if !took_input {
+                    views.declined = Some(requested);
+                } else if views.declined == Some(requested) {
+                    views.declined = None;
+                }
+                took_input
+            };
+            if took_input && focused.is_none_or(|focused| focused.id != requested) {
+                let callback = window_state.lock().native_views.focused_callback.take();
+                if let Some(mut callback) = callback {
+                    callback(requested);
+                    window_state.lock().native_views.focused_callback = Some(callback);
+                }
             }
         }
         // GPUI records a view that took keyboard input as focused when it follows.
@@ -961,7 +1093,8 @@ extern "C" fn make_first_responder(this: &AnyObject, _: Sel, responder: *mut Any
         // first responder back so the two never disagree. Anything else that moved
         // first responder away from the view GPUI has focused is undone too, such as
         // AppKit handing it to the window itself, or a full screen transition
-        // restoring it to the GPUI view.
+        // restoring it to the GPUI view. A view that declined keyboard input isn't
+        // asked again, and the GPUI view takes it.
         reconcile_first_responder(&window_state);
         accepted
     }
@@ -1099,7 +1232,8 @@ fn pass_input_to_gpui(window_state: &Rc<Mutex<MacWindowState>>, input: PlatformI
 /// Lets the native view with keyboard input perform a key equivalent before GPUI.
 ///
 /// AppKit otherwise asks the views in an order that doesn't depend on which
-/// one has keyboard input.
+/// one has keyboard input, so that view is asked here, and the containers of
+/// the native views keep AppKit's own search out of them.
 extern "C" fn window_perform_key_equivalent(
     this: &AnyObject,
     _: Sel,
@@ -1123,8 +1257,16 @@ extern "C" fn window_perform_key_equivalent(
             return Bool::YES;
         }
 
+        let view = native_view_with_keyboard_input(&window_state, this);
         window_state.lock().native_views.routing_key_equivalent = true;
-        let performed: Bool = msg_send![super(this, superclass), performKeyEquivalent: event];
+        let mut performed = match &view {
+            Some(view) => msg_send![&**view, performKeyEquivalent: event],
+            None => Bool::NO,
+        };
+        if !performed.as_bool() {
+            // The rest of the window is asked next, such as a control in the titlebar.
+            performed = msg_send![super(this, superclass), performKeyEquivalent: event];
+        }
         window_state.lock().native_views.routing_key_equivalent = false;
         if performed.as_bool() || delivering_key_down {
             return performed;
@@ -1136,6 +1278,23 @@ extern "C" fn window_perform_key_equivalent(
         window_state.lock().native_views.passed_up_key_equivalent = Retained::retain(event);
         Bool::new(pass_key_down_to_gpui(&window_state, key_down))
     }
+}
+
+/// The attached view that first responder is, or is inside.
+///
+/// # Safety
+///
+/// `window` must be a live GPUI window.
+unsafe fn native_view_with_keyboard_input(
+    window_state: &Rc<Mutex<MacWindowState>>,
+    window: &AnyObject,
+) -> Option<Retained<NSView>> {
+    let lock = window_state.try_lock()?;
+    // SAFETY: The caller guarantees that `window` is live.
+    let first_responder: *mut AnyObject = unsafe { msg_send![window, firstResponder] };
+    let id = lock.native_views.containing(first_responder)?;
+    let attached = lock.native_views.views.iter().find(|view| view.id == id)?;
+    Some(attached.view.clone())
 }
 
 /// Gives GPUI a key press that came back up the responder chain unused.
@@ -1378,6 +1537,44 @@ mod tests {
     }
 
     #[test]
+    fn a_view_that_declines_keyboard_input_leaves_it_with_the_gpui_view() {
+        use InputHolder::{GpuiView, NativeView, Window};
+        let declined = Some(FocusedNativeView {
+            id: id(1),
+            shown: true,
+            declined: true,
+        });
+        // AppKit leaves the window itself with keyboard input when a view
+        // declines it. Asking the view again would never end.
+        assert_eq!(
+            input_target_for_focus(declined, Window),
+            Some(InputTarget::GpuiView)
+        );
+        assert_eq!(input_target_for_focus(declined, GpuiView), None);
+        // The view can still take keyboard input itself, such as on a click.
+        assert!(may_take_input(
+            NativeView(id(1)),
+            GpuiView,
+            declined,
+            Some(id(1)),
+            false
+        ));
+    }
+
+    #[test]
+    fn gpui_is_owed_the_release_of_each_button_pressed_in_a_native_view() {
+        let mut views = NativeViews::default();
+        views.note_button_pressed_in_view(0);
+        views.note_button_pressed_in_view(1);
+        // Releasing one button leaves the other held.
+        assert!(views.take_button_pressed_in_view(0));
+        assert!(!views.take_button_pressed_in_view(0));
+        assert!(views.take_button_pressed_in_view(1));
+        // A button pressed elsewhere reaches GPUI the usual way.
+        assert!(!views.take_button_pressed_in_view(2));
+    }
+
+    #[test]
     fn stacking_puts_shown_views_between_the_gpui_view_and_everything_else() {
         // The views are only compared by address.
         let views = [0u8; 6];
@@ -1415,6 +1612,7 @@ mod tests {
         Some(FocusedNativeView {
             id: id(view),
             shown,
+            declined: false,
         })
     }
 

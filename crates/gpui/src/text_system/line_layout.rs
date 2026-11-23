@@ -1071,4 +1071,21 @@ mod tests {
         let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0.5, 0.5]);
     }
+
+    #[test]
+    fn test_wrap_ignores_the_sign_of_a_zero_wrap_width_in_the_cache() {
+        let runs = [FontRun {
+            len: 2,
+            font_id: FontId(1),
+        }];
+
+        let cold_cache = LineLayoutCache::new(Arc::new(NoopTextSystem::new()), Arc::default());
+        let cold = cold_cache.layout_wrapped_line("ab", px(0.), &runs, Some(px(0.)), None);
+
+        let warm_cache = LineLayoutCache::new(Arc::new(NoopTextSystem::new()), Arc::default());
+        warm_cache.layout_wrapped_line("ab", px(0.), &runs, Some(-px(0.)), None);
+        let warm = warm_cache.layout_wrapped_line("ab", px(0.), &runs, Some(px(0.)), None);
+
+        assert_eq!(warm.wrap_boundaries, cold.wrap_boundaries);
+    }
 }

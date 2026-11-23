@@ -1933,11 +1933,11 @@ impl SshConnectionOptions {
                 username = Some(l.to_string());
                 continue;
             }
-            if arg == "-L" || arg.starts_with("-L") {
-                let forward_spec = if arg == "-L" {
+            if let Some(spec) = arg.strip_prefix("-L") {
+                let forward_spec = if spec.is_empty() {
                     tokens.next()
                 } else {
-                    Some(arg.strip_prefix("-L").unwrap().to_string())
+                    Some(spec.to_string())
                 };
 
                 if let Some(spec) = forward_spec {
@@ -1973,11 +1973,10 @@ impl SshConnectionOptions {
             // IPv6 addresses can be: 2001:db8::1 or [2001:db8::1]:22
             if input.starts_with('[') {
                 if let Some((rest, p)) = input.rsplit_once("]:") {
-                    input = rest.strip_prefix('[').unwrap_or(rest);
+                    input = rest.trim_prefix('[');
                     port = p.parse().ok();
                 } else if input.ends_with(']') {
-                    input = input.strip_prefix('[').unwrap_or(input);
-                    input = input.strip_suffix(']').unwrap_or(input);
+                    input = input.trim_prefix('[').trim_suffix(']');
                 }
             } else if let Some((rest, p)) = input.rsplit_once(':')
                 && !rest.contains(":")

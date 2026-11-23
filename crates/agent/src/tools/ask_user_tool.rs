@@ -1,8 +1,7 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::v2::schema as acp_v2;
+use agent_client_protocol::{schema::IndexMap, v2::schema as acp_v2};
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
@@ -196,7 +195,7 @@ fn build_schema(options: &[String], allow_free_text: bool) -> acp_v2::Elicitatio
 
 /// Extracts a non-empty string value for `key` from an elicitation response.
 fn string_field(
-    content: &BTreeMap<String, acp_v2::ElicitationContentValue>,
+    content: &IndexMap<String, acp_v2::ElicitationContentValue>,
     key: &str,
 ) -> Option<String> {
     match content.get(key) {
@@ -215,7 +214,7 @@ mod tests {
     fn accept_with(
         entries: impl IntoIterator<Item = (&'static str, &'static str)>,
     ) -> acp_v2::CreateElicitationResponse {
-        let content: BTreeMap<String, acp_v2::ElicitationContentValue> = entries
+        let content: IndexMap<String, acp_v2::ElicitationContentValue> = entries
             .into_iter()
             .map(|(key, value)| {
                 (

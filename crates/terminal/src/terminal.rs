@@ -1978,18 +1978,15 @@ impl Terminal {
     }
 
     /// Normalizes line endings so text captured outside a PTY starts each line at column zero.
+    ///
+    /// Safe for chunked streams: a CRLF split across calls gains a second CR, which has no effect.
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         let mut previous_byte_was_cr = false;
         let converted = convert_lf_to_crlf(bytes, &mut previous_byte_was_cr);
-        self.write_raw_output(&converted, cx);
-    }
-
-    /// Terminal byte streams already contain their control sequences and must not be normalized.
-    pub fn write_raw_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         let mut term = self.term.lock();
         self.output_processor
             .get_or_insert_with(OutputParser::new)
-            .advance(&mut term, bytes);
+            .advance(&mut term, &converted);
         drop(term);
         self.detect_init_command_startup_marker();
         cx.emit(Event::Wakeup);
@@ -2040,7 +2037,7 @@ impl Terminal {
         self.mouse_down_hyperlink = None;
         self.cwd_history.clear();
         self.pending_cwd_boundary = None;
-        self.write_raw_output(bytes, cx);
+        self.write_output(bytes, cx);
         cx.emit(Event::BlinkChanged(cursor_blinking(&self.term.lock())));
         cx.emit(Event::BreadcrumbsChanged);
         cx.emit(Event::NewNavigationTarget(None));
@@ -3546,7 +3543,7 @@ fn normalize_script_command_name(argument: &str) -> Option<String> {
         .and_then(|parent| parent.parent())
         .and_then(|package_path| package_path.file_name())
         .and_then(|package_name| package_name.to_str())
-        .and_then(|package_name| package_name.strip_suffix("-cli").or(Some(package_name)))
+        .map(|package_name| package_name.trim_suffix("-cli"))
         .and_then(normalize_path_command_name)
 }
 
@@ -4955,10 +4952,10 @@ mod tests {
         })
     }
 
-    fn raw_content(chunks: &[&[u8]], cx: &mut TestAppContext) -> Content {
+    fn written_content(chunks: &[&[u8]], cx: &mut TestAppContext) -> Content {
         let terminal = display_only_terminal(cx);
         for chunk in chunks {
-            terminal.update(cx, |terminal, cx| terminal.write_raw_output(chunk, cx));
+            terminal.update(cx, |terminal, cx| terminal.write_output(chunk, cx));
         }
         terminal.read_with(cx, |terminal, _| {
             let term = terminal.term.lock_unfair();
@@ -4989,7 +4986,7 @@ mod tests {
         });
         let entity_id = terminal.entity_id();
         terminal.update(cx, |terminal, cx| {
-            terminal.write_raw_output(b"old history\r\n\x1b[?1049h\x1b[Hold alternate", cx);
+            terminal.write_output(b"old history\r\n\x1b[?1049h\x1b[Hold alternate", cx);
             {
                 let mut term = terminal.term.lock();
                 alacritty::set_selection(
@@ -5012,7 +5009,7 @@ mod tests {
             terminal
                 .replace_display_output(b"new", cx)
                 .expect("replace");
-            terminal.write_raw_output(b" content", cx);
+            terminal.write_output(b" content", cx);
         });
         terminal.read_with(cx, |terminal, _| {
             assert_eq!(terminal.get_content().trim(), "new content");
@@ -5065,11 +5062,11 @@ mod tests {
     async fn test_replace_display_output_resets_parser_and_queued_title(cx: &mut TestAppContext) {
         let terminal = display_only_terminal(cx);
         terminal.update(cx, |terminal, cx| {
-            terminal.write_raw_output(b"\x1b]0;stale\x07\x1b[", cx);
+            terminal.write_output(b"\x1b]0;stale\x07\x1b[", cx);
             terminal
                 .replace_display_output(b"fresh", cx)
                 .expect("replace");
-            terminal.write_raw_output(b"!", cx);
+            terminal.write_output(b"!", cx);
         });
         cx.run_until_parked();
         terminal.read_with(cx, |terminal, _| {
@@ -5077,9 +5074,9 @@ mod tests {
             assert!(terminal.breadcrumb_text.is_empty());
         });
         terminal.update(cx, |terminal, cx| {
-            terminal.write_raw_output(b"\xc3", cx);
+            terminal.write_output(b"\xc3", cx);
             terminal.replace_display_output(b"", cx).expect("clear");
-            terminal.write_raw_output(b"\x1b]0;current\x07ok", cx);
+            terminal.write_output(b"\x1b]0;current\x07ok", cx);
         });
         cx.run_until_parked();
         terminal.read_with(cx, |terminal, _| {
@@ -5089,43 +5086,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_write_raw_output_preserves_line_control_semantics(cx: &mut TestAppContext) {
-        let bytes = b"a\nb\rc\r\nd";
-        let raw = raw_content(&[bytes], cx);
-
-        let normalized_terminal = display_only_terminal(cx);
-        normalized_terminal.update(cx, |terminal, cx| terminal.write_output(bytes, cx));
-        let normalized = normalized_terminal.read_with(cx, |terminal, _| {
-            let term = terminal.term.lock_unfair();
-            make_content(&term, &terminal.last_content)
-        });
-
-        let raw_cells = raw
-            .cells
-            .iter()
-            .map(|cell| (cell.point.line, cell.point.column, cell.character()))
-            .collect::<Vec<_>>();
-        let normalized_cells = normalized
-            .cells
-            .iter()
-            .map(|cell| (cell.point.line, cell.point.column, cell.character()))
-            .collect::<Vec<_>>();
-
-        assert!(raw_cells.contains(&(0, 0, 'a')));
-        assert!(raw_cells.contains(&(1, 0, 'c')));
-        assert!(raw_cells.contains(&(1, 1, 'b')));
-        assert!(raw_cells.contains(&(2, 0, 'd')));
-        assert!(!normalized_cells.contains(&(1, 1, 'b')));
-        assert!(normalized_cells.contains(&(1, 0, 'c')));
-        assert!(normalized_cells.contains(&(2, 0, 'd')));
-        assert_eq!(raw.cursor.point, Point::new(2, 1));
-        assert_eq!(normalized.cursor.point, Point::new(2, 1));
-    }
-
-    #[gpui::test]
-    async fn test_write_raw_output_is_independent_of_chunk_boundaries(cx: &mut TestAppContext) {
+    async fn test_write_output_is_independent_of_chunk_boundaries(cx: &mut TestAppContext) {
         let bytes = b"A\nB\rC\r\n\x1b[31mR\xc3\xa9\x1b[0m\x1b[2;6HX";
-        let whole = raw_content(&[bytes], cx);
+        let whole = written_content(&[bytes], cx);
         let cells = |content: &Content| {
             content
                 .cells
@@ -5140,14 +5103,14 @@ mod tests {
             .cells
             .iter()
             .find(|cell| cell.character() == 'R')
-            .expect("raw output should contain the styled R");
+            .expect("output should contain the styled R");
         assert_eq!(red_r.point, Point::new(2, 0));
         assert_eq!(red_r.foreground(), Color::Named(NamedColor::Red));
         let accented = whole
             .cells
             .iter()
             .find(|cell| cell.character() == 'é')
-            .expect("raw output should contain the complete UTF-8 character");
+            .expect("output should contain the complete UTF-8 character");
         assert_eq!(accented.point, Point::new(2, 1));
         assert_eq!(accented.foreground(), Color::Named(NamedColor::Red));
         let positioned = whole
@@ -5168,7 +5131,7 @@ mod tests {
 
         for split in 0..=bytes.len() {
             let (first, second) = bytes.split_at(split);
-            let split_content = raw_content(&[b"", first, b"", second, b""], cx);
+            let split_content = written_content(&[b"", first, b"", second, b""], cx);
             assert_eq!(
                 cells(&split_content),
                 whole_cells,
@@ -5185,7 +5148,7 @@ mod tests {
             .map(std::slice::from_ref)
             .chain(std::iter::once(&[][..]))
             .collect::<Vec<_>>();
-        let bytewise = raw_content(&byte_chunks, cx);
+        let bytewise = written_content(&byte_chunks, cx);
         assert_eq!(cells(&bytewise), whole_cells);
         assert_eq!(bytewise.cursor.point, whole_cursor);
     }
@@ -5210,16 +5173,13 @@ mod tests {
             .subscribe(cx)
         });
 
-        for write_output in [Terminal::write_output, Terminal::write_raw_output] {
-            terminal.update(cx, |terminal, cx| {
-                write_output(terminal, b"\x1b]52;c;b3ZlcndyaXR0ZW4=\x07", cx);
-            });
-            cx.run_until_parked();
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"\x1b]52;c;b3ZlcndyaXR0ZW4=\x07", cx);
+        });
+        cx.run_until_parked();
 
-            let clipboard_text =
-                cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
-            assert_eq!(clipboard_text.as_deref(), Some("original"));
-        }
+        let clipboard_text = cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
+        assert_eq!(clipboard_text.as_deref(), Some("original"));
     }
 
     mod hyperlinks {
@@ -6171,7 +6131,7 @@ mod tests {
 
         terminal.update(cx, |terminal, cx| {
             terminal.write_output(b"injected_before_release\n", cx);
-            terminal.write_raw_output(b"\x1b[", cx);
+            terminal.write_output(b"\x1b[", cx);
         });
         assert!(
             terminal.read_with(cx, |terminal, _| terminal.output_processor.is_some()),

@@ -429,7 +429,7 @@ impl AcpV2Connection {
             .block_task()
             .await
         {
-            Ok(InitializeOutcome::Initialized(response)) => response,
+            Ok(InitializeOutcome::Initialized(response)) => *response,
             Ok(InitializeOutcome::LowerVersion(mismatch)) => {
                 return Err(anyhow!(mismatch).context(UnsupportedVersion));
             }
@@ -1100,7 +1100,7 @@ impl AcpV2Connection {
             };
         thread.update(cx, |thread, cx| thread.mark_activity_unconfirmed(cx));
         let replay = if replay_history {
-            let replay = Rc::new(RefCell::new(super::V2Replay::default()));
+            let replay = Rc::new(RefCell::new(super::SessionReplay::default()));
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
                 session.replay = Some(replay.clone());
             }
@@ -1367,6 +1367,10 @@ impl AgentConnection for AcpV2Connection {
     fn agent_version(&self) -> Option<SharedString> {
         let version = &self.initialize_response.info.version;
         (!version.is_empty()).then(|| version.clone().into())
+    }
+
+    fn description_format(&self) -> acp_thread::AgentDescriptionFormat {
+        acp_thread::AgentDescriptionFormat::Markdown
     }
 
     fn new_session(
@@ -1828,6 +1832,7 @@ impl AgentConnection for AcpV2Connection {
             let sessions = self.sessions.borrow();
             return Some(Rc::new(ReadOnlyConfigOptions(
                 sessions.get(session_id)?.config_options.clone()?,
+                self.description_format(),
             )));
         }
         let sessions = self.sessions.borrow();
@@ -1984,6 +1989,10 @@ impl V2SessionConfigOptions {
 }
 
 impl AgentSessionConfigOptions for V2SessionConfigOptions {
+    fn description_format(&self) -> acp_thread::AgentDescriptionFormat {
+        acp_thread::AgentDescriptionFormat::Markdown
+    }
+
     fn config_options(&self) -> Vec<acp::SessionConfigOption> {
         self.options.config_options.borrow().clone()
     }
@@ -2647,6 +2656,10 @@ mod tests {
             .read(|cx| harness.client.session_config_options(&"child".into(), cx))
             .expect("the provider exists before the first config update");
         assert!(options.is_read_only());
+        assert_eq!(
+            options.description_format(),
+            harness.client.description_format()
+        );
         assert!(options.config_options().is_empty(), "no inherited values");
         let mut updates = cx
             .update(|cx| options.watch(cx))
@@ -2697,6 +2710,10 @@ mod tests {
                 .session_config_options(parent.session_id(), cx)
                 .expect("parent config");
             assert!(!options.is_read_only());
+            assert_eq!(
+                options.description_format(),
+                harness.client.description_format()
+            );
         });
     }
 
@@ -3826,7 +3843,7 @@ mod tests {
             .expect_err("new observers must not wait on a disconnected session");
         assert_eq!(
             thread.read_with(cx, |thread, _| thread.foreground_activity()),
-            ForegroundActivity::Running
+            ForegroundActivity::Unconfirmed
         );
     }
 
@@ -5787,7 +5804,7 @@ done
         );
         assert_eq!(
             thread.read_with(cx, |thread, _| thread.foreground_activity()),
-            ForegroundActivity::Running
+            ForegroundActivity::Unconfirmed
         );
         assert!(
             bounded(thread.update(cx, |thread, cx| thread.cancel(cx)), cx)
@@ -6244,7 +6261,6 @@ done
     #[cfg(unix)]
     #[gpui::test]
     async fn v2_new_stdio_preserves_pre_response_updates_before_eof(cx: &mut TestAppContext) {
-        use acp_thread::ForegroundActivity;
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
@@ -6299,7 +6315,11 @@ done
             .expect("new response precedes EOF");
         bounded(client.connection.incoming_closed(), cx).await;
         thread.read_with(cx, |thread, cx| {
-            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert_eq!(
+                thread.activity_generation(),
+                1,
+                "the early running update was applied"
+            );
             assert!(thread.to_markdown(cx).contains("Early stdio message"));
         });
         assert_eq!(client.pending_session_updates.borrow().counts(), (0, 0, 0));
@@ -7838,9 +7858,12 @@ done
             store.respond_to_elicitation(
                 &entry_id,
                 acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new().content(std::collections::BTreeMap::from(
-                        [("name".to_owned(), acp::ElicitationContentValue::from("Ada"))],
-                    )),
+                    acp::ElicitationAcceptAction::new().content(
+                        agent_client_protocol::schema::IndexMap::from([(
+                            "name".to_owned(),
+                            acp::ElicitationContentValue::from("Ada"),
+                        )]),
+                    ),
                 ))
                 .meta(meta("elicitation-response")),
                 cx,

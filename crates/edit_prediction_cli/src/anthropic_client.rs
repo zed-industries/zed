@@ -352,11 +352,7 @@ impl BatchingLlmClient {
             let mut error_count = 0;
 
             for result in results {
-                let request_hash = result
-                    .custom_id
-                    .strip_prefix("req_hash_")
-                    .unwrap_or(&result.custom_id)
-                    .to_string();
+                let request_hash = result.custom_id.trim_prefix("req_hash_").to_string();
 
                 match result.result {
                     anthropic::batches::BatchResult::Succeeded { message } => {
@@ -458,11 +454,7 @@ impl BatchingLlmClient {
                 let mut updates: Vec<(String, String)> = Vec::new();
                 let mut success_count = 0;
                 for result in results {
-                    let request_hash = result
-                        .custom_id
-                        .strip_prefix("req_hash_")
-                        .unwrap_or(&result.custom_id)
-                        .to_string();
+                    let request_hash = result.custom_id.trim_prefix("req_hash_").to_string();
 
                     match result.result {
                         anthropic::batches::BatchResult::Succeeded { message } => {
@@ -575,6 +567,7 @@ impl BatchingLlmClient {
                             "system" => Role::System,
                             _ => Role::User,
                         },
+                        output_config: None,
                         content: vec![RequestContent::Text {
                             text: msg.content,
                             cache_control: None,

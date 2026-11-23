@@ -88,7 +88,10 @@ impl RenderOnce for LoadingLabel {
             "loading_label",
             vec![
                 Animation::new(Duration::from_secs(1)),
-                Animation::new(Duration::from_secs(1)).repeat(),
+                // After the reveal, only the trailing dots change, four times a second.
+                Animation::new(Duration::from_secs(1))
+                    .repeat()
+                    .with_steps(4),
             ],
             move |mut label, animation_ix, delta| {
                 match animation_ix {

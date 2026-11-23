@@ -11050,12 +11050,8 @@ pub fn delta_checkout_short_name(
         .and_then(|clone_parent| path_style.file_name(clone_parent))
         .and_then(|namespace| namespace.to_str());
     let clone_directory_name = path_style.file_name(&clone.path)?.to_str()?;
-    let clone_name = Some(
-        clone_directory_name
-            .strip_suffix(git::DOT_GIT)
-            .unwrap_or(clone_directory_name),
-    )
-    .filter(|clone_name| !clone_name.is_empty());
+    let clone_name = Some(clone_directory_name.trim_suffix(git::DOT_GIT))
+        .filter(|clone_name| !clone_name.is_empty());
     let is_primary_checkout = !clone.is_linked_worktree && clone.checkout_path.is_some();
     let linked_name = if !is_primary_checkout {
         let folder_name = path_style.file_name(folder_path)?.to_str()?;
