@@ -570,7 +570,7 @@ fn language_model(model: &ollama::Model) -> LanguageModel {
     LanguageModel {
         supports_tools: model.supports_tools.unwrap_or(false),
         supports_images: model.supports_vision.unwrap_or(false),
-        supports_thinking: model.supports_thinking.unwrap_or(false),
+        supports_thinking: ollama_supports_thinking(model),
         supports_disabling_thinking: ollama_supports_disabling_thinking(model),
         default_thinking_enabled: Some(ollama_default_thinking_enabled(model)),
         supported_effort_levels: ollama_effort_levels(model).into(),
@@ -1162,8 +1162,20 @@ fn ollama_supports_disabling_thinking(model: &ollama::Model) -> bool {
         .is_none_or(|thinking| thinking.values.contains(&ThinkingValue::Boolean(false)))
 }
 
-fn ollama_default_thinking_enabled(model: &ollama::Model) -> bool {
+// Models whose advertised values can't turn thinking on (e.g. only `"none"`)
+// are treated as non-thinking
+fn ollama_supports_thinking(model: &ollama::Model) -> bool {
     model.supports_thinking.unwrap_or(false)
+        && model.thinking.as_ref().is_none_or(|thinking| {
+            thinking.values.iter().any(|value| match value {
+                ThinkingValue::Boolean(enabled) => *enabled,
+                ThinkingValue::Level(level) => is_selectable_ollama_effort(level),
+            })
+        })
+}
+
+fn ollama_default_thinking_enabled(model: &ollama::Model) -> bool {
+    ollama_supports_thinking(model)
         && !matches!(
             model.thinking.as_ref().map(|thinking| &thinking.default),
             Some(ThinkingValue::Boolean(false))
@@ -1171,7 +1183,7 @@ fn ollama_default_thinking_enabled(model: &ollama::Model) -> bool {
 }
 
 fn ollama_effort_levels(model: &ollama::Model) -> Vec<LanguageModelEffortLevel> {
-    if !model.supports_thinking.unwrap_or(false) {
+    if !ollama_supports_thinking(model) {
         return Vec::new();
     }
 
@@ -1186,7 +1198,11 @@ fn ollama_effort_levels(model: &ollama::Model) -> Vec<LanguageModelEffortLevel> 
             let ThinkingValue::Level(value) = value else {
                 return None;
             };
+            if !is_selectable_ollama_effort(value) {
+                return None;
+            }
             let name = match value.as_str() {
+                "minimal" => "Minimal".into(),
                 "low" => "Low".into(),
                 "medium" => "Medium".into(),
                 "high" => "High".into(),
@@ -1207,12 +1223,18 @@ fn ollama_effort_levels(model: &ollama::Model) -> Vec<LanguageModelEffortLevel> 
         .collect()
 }
 
+// A "none" level disables thinking, so the picker shouldn't offer it while thinking is on.
+// Ollama still accepts it, so requests pass it through unchanged.
+fn is_selectable_ollama_effort(value: &str) -> bool {
+    value != "none"
+}
+
 fn ollama_thinking_value(
     model: &ollama::Model,
     request: &LanguageModelRequest,
 ) -> Option<ThinkingValue> {
-    model.supports_thinking.map(|supports_thinking| {
-        if !supports_thinking || !request.thinking_allowed {
+    model.supports_thinking.map(|_| {
+        if !ollama_supports_thinking(model) || !request.thinking_allowed {
             return ThinkingValue::Boolean(false);
         }
 
@@ -1535,6 +1557,70 @@ mod tests {
         assert_eq!(
             ollama_thinking_value(&model_without_thinking_info, &stale_effort_request),
             Some(ThinkingValue::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn test_ollama_none_level_is_not_a_selectable_effort() {
+        let model = thinking_model(
+            vec![
+                ThinkingValue::Level("none".to_string()),
+                ThinkingValue::Level("minimal".to_string()),
+                ThinkingValue::Level("high".to_string()),
+            ],
+            ThinkingValue::Level("none".to_string()),
+        );
+
+        let levels = ollama_effort_levels(&model);
+        assert_eq!(
+            levels
+                .iter()
+                .map(|level| (level.name.as_ref(), level.value.as_ref()))
+                .collect::<Vec<_>>(),
+            [("Minimal", "minimal"), ("High", "high")]
+        );
+        assert!(levels.iter().all(|level| !level.is_default));
+
+        let none_effort_request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("none".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &none_effort_request),
+            Some(ThinkingValue::Level("none".to_string()))
+        );
+
+        let minimal_effort_request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("minimal".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &minimal_effort_request),
+            Some(ThinkingValue::Level("minimal".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_ollama_models_supporting_only_none_do_not_support_thinking() {
+        let model = thinking_model(
+            vec![ThinkingValue::Level("none".to_string())],
+            ThinkingValue::Level("none".to_string()),
+        );
+
+        assert!(!ollama_supports_thinking(&model));
+        assert!(!ollama_default_thinking_enabled(&model));
+        assert!(ollama_effort_levels(&model).is_empty());
+
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("none".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &request),
+            Some(ThinkingValue::Boolean(false))
         );
     }
 }
