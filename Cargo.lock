@@ -10498,7 +10498,6 @@ name = "managed_resources"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-lock",
  "futures 0.3.34",
  "gpui",
  "serde",

@@ -10,7 +10,6 @@
 //! In order to interact with a resource, you ought to implement [ManagedResourceCommand].
 //! One example of a resource is a language server binary. Zed may need to install it on user's behalf. The user may also want us to use the binary available on their system.
 //! But then, whenever we want to invoke said binary, we should let the user know as well, as running arbitrary processes on their PC might affect their machine state.
-use async_lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use futures::{
     FutureExt,
     future::{LocalBoxFuture, Shared},
@@ -96,8 +95,7 @@ pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
     /// Describe the specific operation for approval without performing it.
     fn permission_description(&self, resource: &Resource) -> String;
 
-    /// Await resource-using background work: the store releases its read guard
-    /// when this future completes or is dropped.
+    /// Await background work so completion, errors, and cancellation follow this command.
     fn run(
         self,
         resource: &Resource,
@@ -293,21 +291,14 @@ impl ManagedResourceStore {
         cx.notify();
     }
 
-    /// Resource approval and acquisition are shared; commands may run concurrently.
-    /// Commands without a configured permission require separate approval, which is not persisted.
-    /// Dropping the returned task cancels that command, not shared acquisition.
-    /// Management permission only gates deferred actions, never existing resources.
-    /// Revocation cannot cancel commands or management attempts already running.
-    pub fn execute_command<Resource: ManagedResource, Output: 'static>(
+    fn acquire_resource<Resource: ManagedResource>(
         &mut self,
-        key: Resource::Key,
+        key: Rc<Resource::Key>,
         context: Rc<Resource::Context>,
         bill: ResourceExecutionBill,
-        command: impl ManagedResourceCommand<Resource, Output = Output>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Output, ResourceAccessError>> {
+    ) -> ResourceTask {
         let id = Resource::id(&key);
-        let key = Rc::new(key);
         let entry = self
             .resources
             .entry(id.clone())
@@ -318,10 +309,10 @@ impl ManagedResourceStore {
                 permission_revision: 0,
             });
         if entry.resource_type != TypeId::of::<Resource>() {
-            return Task::ready(Err(ResourceAccessError::ConflictingResourceType));
+            return Task::ready(Err(ResourceAccessError::ConflictingResourceType)).shared();
         }
 
-        let resource = if let Some(pending) = &entry.pending {
+        if let Some(pending) = &entry.pending {
             pending.clone()
         } else {
             let value = entry.value.clone();
@@ -334,7 +325,12 @@ impl ManagedResourceStore {
                     async move |this, cx| {
                         let result = async {
                             if let Some(value) = value {
-                                return Ok(value);
+                                let resource = value
+                                    .downcast::<Resource>()
+                                    .map_err(|_| ResourceAccessError::ConflictingResourceType)?;
+                                if resource.is_current(&context) {
+                                    return Ok(resource as Arc<dyn Any + Send + Sync>);
+                                }
                             }
                             let acquisition = Resource::obtain(&key, &context)
                                 .await
@@ -349,7 +345,7 @@ impl ManagedResourceStore {
                                     })?
                                 }
                             };
-                            Ok(Arc::new(RwLock::new(resource)) as Arc<dyn Any + Send + Sync>)
+                            Ok(Arc::new(resource) as Arc<dyn Any + Send + Sync>)
                         }
                         .await;
                         this.update(cx, |this, _| {
@@ -367,39 +363,53 @@ impl ManagedResourceStore {
                 .shared();
             entry.pending = Some(pending.clone());
             pending
-        };
+        }
+    }
+
+    /// Resource approval and acquisition are shared; commands may run concurrently.
+    /// Dropping the returned task cancels that command, not shared acquisition.
+    /// Management permission only gates deferred actions, never existing resources.
+    /// Revocation cannot cancel commands or management attempts already running.
+    /// Resource implementations are responsible for coordinating mutations with use.
+    pub fn execute_command<Resource: ManagedResource, Output: 'static>(
+        &mut self,
+        key: Resource::Key,
+        context: Rc<Resource::Context>,
+        bill: ResourceExecutionBill,
+        command: impl ManagedResourceCommand<Resource, Output = Output>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Output, ResourceAccessError>> {
+        let id = Resource::id(&key);
+        let key = Rc::new(key);
+        let mut acquisition =
+            self.acquire_resource::<Resource>(key.clone(), context.clone(), bill.clone(), cx);
 
         cx.spawn(async move |this, cx| {
-            let resource = resource.await?;
+            let resource = loop {
+                let resource = acquisition
+                    .await?
+                    .downcast::<Resource>()
+                    .map_err(|_| ResourceAccessError::ConflictingResourceType)?;
+                if resource.is_current(&context) {
+                    break resource;
+                }
+                // A shared acquisition may have used another caller's configuration.
+                acquisition = this
+                    .update(cx, |this, cx| {
+                        this.acquire_resource::<Resource>(
+                            key.clone(),
+                            context.clone(),
+                            bill.clone(),
+                            cx,
+                        )
+                    })
+                    .map_err(|_| ResourceAccessError::StoreDropped)?;
+            };
             let payload = serde_json::to_value(command.command_kind())
                 .map_err(|error| ResourceAccessError::CommandPayload(Arc::new(error)))?;
             let request_approval = this
                 .read_with(cx, |this, _| this.request_approval.clone())
                 .map_err(|_| ResourceAccessError::StoreDropped)?;
-            let resource = resource
-                .downcast::<RwLock<Resource>>()
-                .map_err(|_| ResourceAccessError::ConflictingResourceType)?;
-            // Keep the resource unchanged between describing the operation and completing it.
-            let resource = resource.upgradable_read().await;
-            let resource = if resource.is_current(&context) {
-                RwLockUpgradableReadGuard::downgrade(resource)
-            } else {
-                let mut resource = RwLockUpgradableReadGuard::upgrade(resource).await;
-                let acquisition = Resource::obtain(&key, &context)
-                    .await
-                    .map_err(|error| ResourceAccessError::Obtain(Arc::new(error)))?;
-                let replacement = match acquisition {
-                    ResourceAcquisition::Ready { resource, .. } => resource,
-                    ResourceAcquisition::RequiresAction(action) => {
-                        Self::ensure_permission(&this, &id, &bill, cx).await?;
-                        action()
-                            .await
-                            .map_err(|error| ResourceAccessError::Obtain(Arc::new(error)))?
-                    }
-                };
-                *resource = replacement;
-                RwLockWriteGuard::downgrade(resource)
-            };
             let request = ResourcePermissionRequest::ExecuteCommand {
                 resource: id.clone(),
                 description: command.permission_description(&resource),
@@ -707,7 +717,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn configuration_changes_wait_for_commands_and_preserve_resource_on_failure(
+    async fn configuration_changes_do_not_wait_for_commands_and_preserve_resource_on_failure(
         cx: &mut TestAppContext,
     ) {
         let allow_management = Rc::new(Cell::new(true));
@@ -750,14 +760,12 @@ mod tests {
             update_value: Some(21),
             ..Default::default()
         });
-        let mut refreshing = execute::<0>(&store, "first", &replacement, TestCommand::Read, cx);
+        let refreshing = execute::<0>(&store, "first", &replacement, TestCommand::Read, cx);
         cx.run_until_parked();
-        assert!(poll!(&mut refreshing).is_pending());
-        assert_eq!(replacement.obtain_count.get(), 0);
-        finish.send(()).expect("command still running");
-        assert_eq!(running.await.expect("permission"), Ok(9));
         assert_eq!(refreshing.await.expect("permission"), Ok(21));
         assert_eq!(replacement.obtain_count.get(), 1);
+        finish.send(()).expect("command still running");
+        assert_eq!(running.await.expect("permission"), Ok(9));
 
         let broken = Rc::new(TestContext {
             configuration: 2,
@@ -1562,64 +1570,43 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn resource_writes_exclude_commands(cx: &mut TestAppContext) {
-        for cancel_command in [false, true] {
-            let store = new_store(cx);
-            let context = Rc::new(TestContext::default());
-            let id = TestResource::id(&"first");
-            store.update(cx, |store, cx| {
-                store.set_permission(id.clone(), ResourcePermission::Allowed, cx);
-            });
-            let (ready, wait) = oneshot::channel();
-            let started = Rc::new(Cell::new(false));
-            let command = execute::<0>(
-                &store,
-                "first",
-                &context,
-                TestCommand::Wait {
-                    started: started.clone(),
-                    ready: wait,
-                    value: 7,
-                },
-                cx,
-            );
-            cx.run_until_parked();
-            assert!(started.get());
-            let resource = store.read_with(cx, |store, _| {
-                store
-                    .resources
-                    .get(&id)
-                    .expect("resource cached")
-                    .value
-                    .clone()
-                    .expect("resource acquired")
-                    .downcast::<RwLock<TestResource>>()
-                    .expect("resource type")
-            });
-            let mut modification = Box::pin(resource.write());
-            assert!(poll!(&mut modification).is_pending());
-            if cancel_command {
-                drop(command);
-                cx.run_until_parked();
-            } else {
-                ready.send(()).expect("command waiting");
-                assert_eq!(command.await.expect("command completed"), Ok(12));
-            }
-            let mut writer = modification.await;
-            assert_eq!(
-                writer.value.load(SeqCst),
-                if cancel_command { 5 } else { 12 }
-            );
-            let mut read = execute::<0>(&store, "first", &context, TestCommand::Read, cx);
-            cx.run_until_parked();
-            assert!(poll!(&mut read).is_pending());
-            *writer = Counter {
-                value: AtomicUsize::new(23),
-                configuration: context.configuration,
-            };
-            drop(writer);
-            assert_eq!(read.await.expect("read after modification"), Ok(23));
-        }
+    async fn concurrent_refreshes_share_acquisition_and_respect_configuration(
+        cx: &mut TestAppContext,
+    ) {
+        let store = new_store(cx);
+        store.update(cx, |store, cx| {
+            store.set_permission(TestResource::id(&"first"), ResourcePermission::Allowed, cx);
+        });
+        let original = Rc::new(TestContext::default());
+        assert_eq!(
+            execute::<0>(&store, "first", &original, TestCommand::Read, cx)
+                .await
+                .expect("original"),
+            Ok(5)
+        );
+        let (ready, wait) = oneshot::channel();
+        let replacement = Rc::new(TestContext {
+            configuration: 1,
+            update_value: Some(23),
+            obtain_ready: Rc::new(Cell::new(Some(wait))),
+            ..Default::default()
+        });
+        let first = execute::<0>(&store, "first", &replacement, TestCommand::Read, cx);
+        let second = execute::<0>(&store, "first", &replacement, TestCommand::Read, cx);
+        cx.run_until_parked();
+        assert_eq!(replacement.obtain_count.get(), 1);
+        let different = Rc::new(TestContext {
+            configuration: 2,
+            update_value: Some(41),
+            ..Default::default()
+        });
+        let third = execute::<0>(&store, "first", &different, TestCommand::Read, cx);
+        ready.send(()).expect("refresh waiting");
+        assert_eq!(first.await.expect("first refresh"), Ok(23));
+        assert_eq!(second.await.expect("shared refresh"), Ok(23));
+        assert_eq!(third.await.expect("different configuration"), Ok(41));
+        assert_eq!(replacement.obtain_count.get(), 1);
+        assert_eq!(different.obtain_count.get(), 1);
     }
 
     #[gpui::test]

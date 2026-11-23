@@ -14,7 +14,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-async-lock.workspace = true
 futures.workspace = true
 gpui.workspace = true
 serde = { workspace = true, features = ["derive"] }
