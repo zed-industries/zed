@@ -524,6 +524,7 @@ async fn analyze_commit(
     let prompt = build_prompt(repo_url, commit);
     let messages = vec![Message {
         role: Role::User,
+        output_config: None,
         content: vec![RequestContent::Text {
             text: prompt,
             cache_control: None,

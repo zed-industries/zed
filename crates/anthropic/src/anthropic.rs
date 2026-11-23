@@ -29,6 +29,9 @@ pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-contro
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
 
+/// <https://platform.claude.com/docs/en/build-with-claude/effort-per-message>
+pub const PER_MESSAGE_EFFORT_BETA_HEADER: &str = "mid-conversation-output-config-2026-07-01";
+
 /// The smallest input-token trigger Anthropic accepts for compaction.
 pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
 
@@ -56,6 +59,14 @@ fn thinking_opt_out_fallback(model_id: &str) -> Option<Thinking> {
         "claude-opus-5" | "claude-sonnet-5" | "claude-haiku-5-5" => Some(Thinking::Disabled),
         _ => None,
     }
+}
+
+/// Whether the model's default opt-out still produces thinking between tools.
+pub fn defaults_to_between_tools_on_opt_out(model_id: &str) -> bool {
+    matches!(
+        thinking_opt_out_fallback(model_id),
+        Some(Thinking::BetweenTools)
+    )
 }
 
 fn requires_adaptive_thinking(model_id: &str) -> bool {
@@ -137,6 +148,21 @@ fn parse_claude_model_version(model_id: &str) -> Option<(&str, u8, u8)> {
     let (major, minor) = version.split_once('-').unwrap_or((version, "0"));
     // Only infer from plain versions, not dated snapshots or custom aliases.
     Some((family, major.parse().ok()?, minor.parse().ok()?))
+}
+
+/// Whether the Claude API accepts per-message effort for this model.
+///
+/// Infer support for newer versions of known families from the earliest model
+/// listed in Anthropic's [per-message effort availability table].
+///
+/// [per-message effort availability table]: https://platform.claude.com/docs/en/build-with-claude/effort-per-message#availability
+pub fn supports_per_message_effort(model_id: &str) -> bool {
+    model_version_at_least(model_id, |family| match family {
+        "opus" => Some((5, 0)),
+        "sonnet" | "haiku" => Some((5, 5)),
+        "fable" | "mythos" => Some((5, 1)),
+        _ => None,
+    })
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -306,6 +332,9 @@ impl Model {
         }
         if binds_thinking_blocks_to_prefix(&entry.id) {
             extra_beta_headers.push(THINKING_BINDING_CONTROLS_BETA_HEADER.to_string());
+        }
+        if supports_per_message_effort(&entry.id) {
+            extra_beta_headers.push(PER_MESSAGE_EFFORT_BETA_HEADER.to_string());
         }
 
         Self {
@@ -840,6 +869,8 @@ pub struct CacheControl {
 pub struct Message {
     pub role: Role,
     pub content: Vec<RequestContent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_config: Option<OutputConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -1155,6 +1186,7 @@ impl Request {
         {
             self.messages.push(Message {
                 role: Role::User,
+                output_config: None,
                 content: vec![RequestContent::Text {
                     text: "Compact the conversation so far.".to_string(),
                     cache_control: None,
@@ -1972,6 +2004,34 @@ mod tests {
     }
 
     #[test]
+    fn per_message_effort_uses_family_specific_version_cutoffs() {
+        for (model_id, expected) in [
+            ("claude-opus-4-8", false),
+            ("claude-opus-5", true),
+            ("claude-opus-6", true),
+            ("claude-sonnet-5-4", false),
+            ("claude-sonnet-5-5", true),
+            ("claude-sonnet-5-10", true),
+            ("claude-haiku-5-4", false),
+            ("claude-haiku-5-5", true),
+            ("claude-fable-5", false),
+            ("claude-fable-5-1", true),
+            ("claude-mythos-preview", false),
+            ("claude-mythos-5", false),
+            ("claude-mythos-5-1", true),
+            ("claude-opus-5-5-20260921", false),
+            ("claude-opus-latest", false),
+            ("claude-unknown-6", false),
+        ] {
+            assert_eq!(
+                supports_per_message_effort(model_id),
+                expected,
+                "{model_id}"
+            );
+        }
+    }
+
+    #[test]
     fn system_message_support_uses_family_specific_version_cutoffs() {
         for (model_id, expected) in [
             ("claude-opus-4-7", false),
@@ -2015,6 +2075,13 @@ mod tests {
                 .expect("model should have beta headers");
             assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
             assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+            assert_eq!(
+                beta_headers
+                    .split(',')
+                    .any(|header| header == PER_MESSAGE_EFFORT_BETA_HEADER),
+                model_id != "claude-opus-4-8",
+                "{model_id}",
+            );
         }
     }
 

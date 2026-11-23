@@ -406,6 +406,7 @@ impl LanguageModelClient for AnthropicCompatibleLanguageModelProvider {
             config.max_output_tokens,
             config.mode.clone(),
             None,
+            false,
             cache_mode,
             &self.id,
         ) {

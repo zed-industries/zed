@@ -802,7 +802,7 @@ fn build_llama_cpp_request(
                     }
                 }
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Compaction(_) => {}
+                MessageContent::Compaction(_) | MessageContent::ReasoningEffort { .. } => {}
                 MessageContent::Image(image) => {
                     if supports_images {
                         add_message_content_part(

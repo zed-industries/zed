@@ -501,7 +501,7 @@ pub fn into_open_router(
                 }
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Compaction(_) => {}
+                MessageContent::Compaction(_) | MessageContent::ReasoningEffort { .. } => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         open_router::MessagePart::Image {

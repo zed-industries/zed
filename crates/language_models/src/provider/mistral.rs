@@ -384,7 +384,7 @@ pub fn into_mistral(
                             }
                         }
                         MessageContent::RedactedThinking(_) => {}
-                        MessageContent::Compaction(_) => {}
+                        MessageContent::Compaction(_) | MessageContent::ReasoningEffort { .. } => {}
                         MessageContent::ToolUse(_) => {
                             // Tool use is not supported in User messages for Mistral
                         }
@@ -444,7 +444,7 @@ pub fn into_mistral(
                         }
                         MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_) => {}
-                        MessageContent::Compaction(_) => {}
+                        MessageContent::Compaction(_) | MessageContent::ReasoningEffort { .. } => {}
                         MessageContent::ToolUse(tool_use) => {
                             let input = tool_use.input.as_json().ok_or_else(|| {
                                 anyhow!("Mistral does not support custom tool calls")
@@ -500,7 +500,7 @@ pub fn into_mistral(
                             }
                         }
                         MessageContent::RedactedThinking(_) => {}
-                        MessageContent::Compaction(_) => {}
+                        MessageContent::Compaction(_) | MessageContent::ReasoningEffort { .. } => {}
                         MessageContent::Image(_)
                         | MessageContent::ToolUse(_)
                         | MessageContent::ToolResult(_) => {
