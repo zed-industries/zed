@@ -962,9 +962,13 @@ impl ConverseModel {
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // US Government region inference profiles
-            (Self::ClaudeOpus5_5 | Self::ClaudeSonnet4_5, "us-gov") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
+            (
+                Self::ClaudeOpus5_5
+                | Self::ClaudeSonnet5_5
+                | Self::ClaudeSonnet4_5
+                | Self::ClaudeHaiku5_5,
+                "us-gov",
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // US region inference profiles
             (
@@ -1713,6 +1717,14 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeOpus5_5.cross_region_inference_id("us-gov-west-1", true)?,
             "us-gov.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("us-gov-west-1", true)?,
+            "us-gov.anthropic.claude-sonnet-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeHaiku5_5.cross_region_inference_id("us-gov-east-1", false)?,
+            "us-gov.anthropic.claude-haiku-5-5"
         );
         Ok(())
     }
