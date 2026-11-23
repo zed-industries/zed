@@ -266,6 +266,7 @@ dependencies = [
  "context_server",
  "ctor",
  "db",
+ "dunce",
  "editor",
  "env_logger 0.11.8",
  "eval_utils",

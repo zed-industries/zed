@@ -30,6 +30,8 @@ mod windows_psec;
 
 mod util;
 
+#[cfg(target_os = "windows")]
+use util::CanonicalPathBuf;
 #[cfg(target_os = "macos")]
 use util::canonicalize_allowing_missing_leaf;
 #[cfg(target_os = "linux")]
@@ -2174,12 +2176,13 @@ mod tests {
 /// *that* as the grant, so approval is always against the real, symlink-resolved
 /// target.
 ///
-/// - **Linux**: bubblewrap can only bind an existing inode, so the missing
-///   directory (and any missing parents) is created **eagerly**, per component,
-///   and the leaf's inode is pinned to read back its canonical path. If the
-///   grant is denied, [`Self::discard`] removes exactly the directories that were
-///   created, deepest-first, following no symlinks (`rmdir` only removes empty
-///   dirs and never traverses a swapped-in symlink).
+/// - **Linux and Windows**: bubblewrap can only bind an existing inode, and a
+///   Process Security Environment can only grant an existing directory, so the
+///   missing directory (and any missing parents) is created **eagerly**, per
+///   component, and its canonical path is read back. If the grant is denied,
+///   [`Self::discard`] removes exactly the directories that were created,
+///   deepest-first, following no symlinks (`rmdir` only removes empty dirs and
+///   never traverses a swapped-in symlink).
 /// - **macOS**: Seatbelt resolves paths at syscall time and can grant a missing
 ///   path, so nothing is created here; the directory is materialized only after
 ///   approval via [`Self::finalize`].
@@ -2200,7 +2203,7 @@ impl GrantableWriteDir {
     /// Prepare `path` for use as a sandbox write grant. `path` must be absolute.
     pub fn prepare(path: &Path) -> std::io::Result<Self> {
         let untrusted_raw_path = path.to_path_buf();
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             let mut eagerly_created = Vec::new();
             if let Err(error) = create_missing_dirs(path, &mut eagerly_created) {
@@ -2225,7 +2228,7 @@ impl GrantableWriteDir {
                 eagerly_created: Vec::new(),
             })
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
             let _ = untrusted_raw_path;
             Err(std::io::Error::new(
@@ -2271,11 +2274,14 @@ impl GrantableWriteDir {
 /// `create_dir_all`), recording exactly the directories created so they can be
 /// removed again if the grant is denied. Components that already exist are left
 /// alone.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn create_missing_dirs(path: &Path, created: &mut Vec<PathBuf>) -> std::io::Result<()> {
     let mut cur = PathBuf::new();
     for component in path.components() {
         cur.push(component);
+        if !matches!(component, std::path::Component::Normal(_)) {
+            continue;
+        }
         match std::fs::create_dir(&cur) {
             Ok(()) => created.push(cur.clone()),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -2285,15 +2291,15 @@ fn create_missing_dirs(path: &Path, created: &mut Vec<PathBuf>) -> std::io::Resu
     Ok(())
 }
 
-/// Open an `O_PATH` handle to `path` and read back the canonical path of the
-/// inode it pins, so the value shown to the user reflects the real target even
-/// when a component is a symlink.
-#[cfg(target_os = "linux")]
+/// Read back the canonical path of `path` (on Linux, through an `O_PATH` handle
+/// to the inode), so the value shown to the user reflects the real target even
+/// when a component is a symlink or junction.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn pinned_canonical_path(path: &Path) -> std::io::Result<PathBuf> {
     Ok(CanonicalPathBuf::resolve(path)?.into_path())
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod grantable_write_dir_tests {
     use super::GrantableWriteDir;
     use std::fs;
@@ -2307,7 +2313,12 @@ mod grantable_write_dir_tests {
 
         let prepared = GrantableWriteDir::prepare(&target).unwrap();
         assert!(target.is_dir());
-        assert_eq!(prepared.canonical_path(), target.canonicalize().unwrap());
+        // Windows grant paths never carry the `\\?\` prefix `canonicalize` adds.
+        #[cfg(target_os = "windows")]
+        let expected = dunce::canonicalize(&target).unwrap();
+        #[cfg(not(target_os = "windows"))]
+        let expected = target.canonicalize().unwrap();
+        assert_eq!(prepared.canonical_path(), expected);
 
         prepared.discard();
         // Everything we created is gone...
@@ -2330,6 +2341,7 @@ mod grantable_write_dir_tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn canonical_path_resolves_a_symlinked_parent() {
         let root = tempfile::tempdir().unwrap();
         let real = root.path().join("real");
