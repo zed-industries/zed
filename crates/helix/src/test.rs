@@ -769,3 +769,25 @@ async fn test_turning_off_in_insert_mode(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("y");
     cx.assert_editor_state("xyˇabc def");
 }
+
+// The `vim` crate configures the editor itself when it takes over, but it
+// does not know about the settings only Helix mode uses.
+#[gpui::test]
+async fn test_switching_to_vim_mode(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("#[f|]#oo foo");
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.helix_mode = Some(false);
+                settings.vim_mode = Some(true);
+            });
+        });
+    });
+    cx.run_until_parked();
+    cx.set_selections_state("«fˇ»oo foo");
+    cx.executor()
+        .advance_clock(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+    cx.assert_editor_background_highlights(HighlightKey::SelectedTextHighlight, "foo «f»oo");
+}

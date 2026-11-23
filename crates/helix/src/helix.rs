@@ -262,6 +262,7 @@ impl Helix {
     fn deactivate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         editor.unregister_addon::<HelixAddon>();
         editor.clear_background_highlights(HighlightKey::HelixInsertSelections, cx);
+        editor.set_single_grapheme_selections_are_cursors(false, window, cx);
         // When the `vim` crate takes over it configures the editor itself, and
         // its settings observer runs before ours.
         if VimModeSetting::is_enabled(cx) || HelixModeSetting::is_enabled(cx) {
@@ -276,7 +277,6 @@ impl Helix {
         editor.set_input_enabled(true);
         editor.set_expects_character_input(true);
         editor.set_cursor_offset_on_selection(false);
-        editor.set_single_grapheme_selections_are_cursors(false, window, cx);
         editor.set_edit_predictions_hidden_for_vim_mode(false, window, cx);
     }
 
