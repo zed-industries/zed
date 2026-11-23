@@ -92,7 +92,8 @@ mod tests {
     use std::{cell::Cell, rc::Rc};
 
     use crate::{
-        Context, Entity, StyleRefinement, TestAppContext, Window, anchored, deferred, div, point,
+        AvailableSpace, Bounds, ContentMask, Context, Entity, Modifiers, MouseButton,
+        StyleRefinement, TestAppContext, Window, anchored, canvas, deferred, div, point,
         prelude::*, px, size,
     };
 
@@ -307,5 +308,47 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    struct MaskedOverlayView(Rc<Cell<usize>>);
+
+    impl Render for MaskedOverlayView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let clicks = self.0.clone();
+            let on_click = move |_: &_, _: &mut _, _: &mut _| clicks.set(clicks.get() + 1);
+            let overlay = |bounds: Bounds<_>, window: &mut Window, cx: &mut _| {
+                let mut overlay = div().size(px(200.)).occlude().into_any_element();
+                overlay.layout_as_root(AvailableSpace::min_size(), window, cx);
+                let mask = ContentMask {
+                    bounds: Bounds::new(bounds.origin, size(px(100.), px(200.))),
+                };
+                window.defer_draw(overlay, bounds.origin, 1, Some(mask));
+            };
+            div()
+                .size_full()
+                .child(
+                    div()
+                        .absolute()
+                        .size(px(200.))
+                        .on_mouse_down(MouseButton::Left, on_click),
+                )
+                .child(canvas(overlay, |_, _, _, _| {}).size_full())
+        }
+    }
+
+    #[gpui::test]
+    fn test_deferred_content_mask_clips_hitboxes(cx: &mut TestAppContext) {
+        let clicks = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view({
+            let clicks = clicks.clone();
+            |_, _| MaskedOverlayView(clicks)
+        });
+        cx.run_until_parked();
+
+        cx.simulate_click(point(px(50.), px(50.)), Modifiers::none());
+        assert_eq!(clicks.get(), 0, "the visible overlay should block clicks");
+
+        cx.simulate_click(point(px(150.), px(50.)), Modifiers::none());
+        assert_eq!(clicks.get(), 1, "the clipped area should not block clicks");
     }
 }
