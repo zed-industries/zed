@@ -258,8 +258,8 @@ pub fn no_proxy_matches(no_proxy: &str, host: &str) -> bool {
                 }
                 _ => entry,
             };
-            let entry = entry.strip_prefix("*.").unwrap_or(entry);
-            let entry = entry.strip_prefix('.').unwrap_or(entry);
+            let entry = entry.trim_prefix("*.");
+            let entry = entry.trim_prefix('.');
             host.eq_ignore_ascii_case(entry)
                 || (host.len() > entry.len()
                     && host.as_bytes()[host.len() - entry.len() - 1] == b'.'

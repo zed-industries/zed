@@ -324,8 +324,9 @@ impl HeadlessExtensionStore {
         let current = self.loaded_extensions.get(&extension_id).cloned();
 
         let mut removal_tasks = Vec::new();
+        let mut languages_to_remove = Vec::new();
+        let mut registrations = Vec::new();
         if let Some(previous) = previous {
-            let mut languages_to_remove = Vec::new();
             for (language, _) in &previous.languages {
                 if current.as_ref().is_some_and(|current| {
                     current.languages.iter().any(|(name, _)| name == language)
@@ -333,11 +334,10 @@ impl HeadlessExtensionStore {
                     continue;
                 }
                 match self.surviving_language_config(language) {
-                    Some(config) => register_language_from_config(&self.proxy, config),
+                    Some(config) => registrations.push(language_registration_from_config(config)),
                     None => languages_to_remove.push(language.clone()),
                 }
             }
-            self.proxy.remove_languages(&languages_to_remove, &[]);
 
             for (server_name, language) in &previous.language_servers {
                 removal_tasks.push(self.proxy.remove_language_server(language, server_name, cx));
@@ -403,7 +403,7 @@ impl HeadlessExtensionStore {
 
         if let Some(current) = &current {
             for (_, config) in &current.languages {
-                register_language_from_config(&self.proxy, config.clone());
+                registrations.push(language_registration_from_config(config.clone()));
             }
             if let Some(wasm_extension) = &current.wasm_extension {
                 for (server_name, language) in &current.language_servers {
@@ -430,6 +430,8 @@ impl HeadlessExtensionStore {
             }
         }
 
+        self.proxy
+            .update_languages(&languages_to_remove, &[], registrations);
         removal_tasks
     }
 
@@ -784,13 +786,13 @@ fn notify_extensions_changed(cx: &mut App) {
     }
 }
 
-fn register_language_from_config(proxy: &ExtensionHostProxy, config: LanguageConfig) {
-    proxy.register_language(
-        config.name.clone(),
-        None,
-        config.matcher.clone(),
-        config.hidden,
-        Arc::new(move || {
+fn language_registration_from_config(config: LanguageConfig) -> language::LanguageRegistration {
+    language::LanguageRegistration {
+        name: config.name.clone(),
+        grammar_name: None,
+        matcher: config.matcher.clone(),
+        hidden: config.hidden,
+        load: Arc::new(move || {
             let config = config.clone();
             async move {
                 Ok(LoadedLanguage {
@@ -803,5 +805,5 @@ fn register_language_from_config(proxy: &ExtensionHostProxy, config: LanguageCon
             }
             .boxed()
         }),
-    );
+    }
 }

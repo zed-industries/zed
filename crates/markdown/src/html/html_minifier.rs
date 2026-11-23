@@ -317,7 +317,6 @@ where
         })
     }
 
-    #[allow(clippy::needless_pass_by_value)]
     fn minify_children(&mut self, ctx: &Option<Context>, node: &Node) -> io::Result<()> {
         let children = node.children.borrow();
         let l = children.len();

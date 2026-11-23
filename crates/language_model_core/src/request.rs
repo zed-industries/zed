@@ -260,6 +260,16 @@ impl From<LanguageModelImage> for LanguageModelToolResultContent {
     }
 }
 
+/// The upstream vendor, independent of the route used to reach it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum LanguageModelVendor {
+    Anthropic,
+    OpenAi,
+    Google,
+    XAi,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum MessageContent {
     Text(String),
@@ -272,6 +282,11 @@ pub enum MessageContent {
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
     Compaction(CompactedContext),
+    /// Captured reasoning selection at this system-message boundary.
+    ReasoningEffort {
+        model_vendor: LanguageModelVendor,
+        effort: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -329,8 +344,11 @@ impl MessageContent {
     pub fn is_empty(&self) -> bool {
         match self {
             MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
-            MessageContent::Thinking { text, .. } => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::Thinking { text, signature } => {
+                signature.is_none() && text.chars().all(|c| c.is_whitespace())
+            }
             MessageContent::ToolResult(tool_result) => tool_result.is_content_empty(),
+            MessageContent::ReasoningEffort { .. } => true,
             MessageContent::RedactedThinking(_)
             | MessageContent::ToolUse(_)
             | MessageContent::Image(_)
@@ -353,6 +371,10 @@ impl From<&str> for MessageContent {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Hash)]
 pub struct LanguageModelRequestMessage {
+    /// Leading system messages form the initial prompt; later ones update the conversation.
+    ///
+    /// Supporting providers preserve later system messages at their position.
+    /// Other providers may flatten them into the initial instructions.
     pub role: Role,
     pub content: Vec<MessageContent>,
     pub cache: bool,
@@ -381,6 +403,7 @@ impl LanguageModelRequestMessage {
                 MessageContent::RedactedThinking(_)
                 | MessageContent::ToolUse(_)
                 | MessageContent::Image(_)
+                | MessageContent::ReasoningEffort { .. }
                 | MessageContent::Compaction(_) => {}
             }
         }
@@ -469,6 +492,11 @@ pub enum CompletionIntent {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
     pub thread_id: Option<String>,
+    /// Provider cache affinity, independent of conversation and transport session identity.
+    ///
+    /// Supporting providers fall back to `thread_id` when absent for legacy callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
     pub prompt_id: Option<String>,
     pub intent: Option<CompletionIntent>,
     pub messages: Vec<LanguageModelRequestMessage>,
@@ -524,26 +552,48 @@ pub enum Speed {
     #[default]
     Standard,
     Fast,
+    Ultrafast,
 }
 
 impl Speed {
     pub fn toggle(self) -> Self {
         match self {
             Speed::Standard => Speed::Fast,
-            Speed::Fast => Speed::Standard,
+            Speed::Fast | Speed::Ultrafast => Speed::Standard,
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct LanguageModelResponseMessage {
-    pub role: Option<Role>,
-    pub content: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_prompt_cache_key_serialization() -> serde_json::Result<()> {
+        let request = LanguageModelRequest {
+            thread_id: Some("thread".into()),
+            ..Default::default()
+        };
+        let mut serialized = serde_json::to_value(&request)?;
+        assert!(serialized.get("prompt_cache_key").is_none());
+        assert_eq!(
+            serde_json::from_value::<LanguageModelRequest>(serialized.clone())?,
+            request
+        );
+
+        serialized["prompt_cache_key"] = serde_json::json!("cache-affinity");
+        let explicit: LanguageModelRequest = serde_json::from_value(serialized.clone())?;
+        assert_eq!(explicit.prompt_cache_key.as_deref(), Some("cache-affinity"));
+        assert_eq!(explicit.thread_id, request.thread_id);
+        assert_eq!(serde_json::to_value(explicit)?, serialized);
+
+        serialized["prompt_cache_key"] = serde_json::Value::Null;
+        assert_eq!(
+            serde_json::from_value::<LanguageModelRequest>(serialized)?,
+            request
+        );
+        Ok(())
+    }
 
     #[test]
     fn request_output_limit_serialization() -> serde_json::Result<()> {

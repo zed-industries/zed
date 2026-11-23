@@ -1,0 +1,13 @@
+#:schema ../../schema.json
+
+description = "Measures the size of the Zed binary shipped in the Linux bundle"
+
+[step.exec.bundle-linux]
+cmd = "./script/bundle-linux --skip-sentry"
+
+[step.exec.extract-bundled-binary]
+cmd = "editor_path=$(tar -tzf target/release/zed-linux-$(uname -m).tar.gz | grep '/libexec/zed-editor$') && tar -xOzf target/release/zed-linux-$(uname -m).tar.gz \"$editor_path\" > target/release/zed-bundled"
+
+[step.filesize.measure-bundled]
+glob = "target/release/zed-bundled"
+summary.bundled-binary-size = { outcome = "target/release/zed-bundled" }

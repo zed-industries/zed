@@ -42,6 +42,12 @@ Jump to where a symbol is defined with {#kb editor::GoToDefinition} (or `Cmd+Cli
 - **Current file:** {#kb outline::Toggle} opens an outline of symbols in the active file
 - **Entire project:** {#kb project_symbols::Toggle} searches symbols across all files
 
+## Project Bookmarks {#project-bookmarks}
+
+Run {#action project_bookmarks::Toggle} from the [command palette](./command-palette.md) to browse bookmarks across your project. Type to search bookmark labels; bookmarks without a label use the bookmarked line's text. Each result shows the file path and line number. Click the Preview button to toggle the code preview, then confirm a result to jump to its location.
+
+This command has no default keybinding. You can assign one in your [keymap](./key-bindings.md).
+
 ## Call Hierarchy
 
 With the cursor on a function, {#action call_hierarchy::ShowIncomingCalls} ({#kb call_hierarchy::ShowIncomingCalls}) lists the functions that call it, and {#action call_hierarchy::ShowOutgoingCalls} lists the functions it calls.

@@ -95,8 +95,12 @@ pub fn get_powershell() -> Option<String> {
     }
 
     fn find_pwsh_in_scoop() -> Option<PathBuf> {
-        let pwsh_exe =
-            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
+        // Scoop can be installed to a custom location; $SCOOP points at the
+        // scoop root in that case and defaults to %USERPROFILE%\scoop otherwise.
+        let scoop_dir = std::env::var_os("SCOOP").map(PathBuf::from).or_else(|| {
+            std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("scoop"))
+        })?;
+        let pwsh_exe = scoop_dir.join("shims").join("pwsh.exe");
         pwsh_exe.is_file().then_some(pwsh_exe)
     }
 
@@ -150,10 +154,28 @@ pub fn get_windows_system_shell() -> String {
     get_powershell().unwrap_or_else(|| (*CMD).clone())
 }
 
+#[inline]
+pub const fn is_utf8_char_boundary(u8: u8) -> bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    (u8 as i8) >= -0x40
+}
+
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
     *value += T::from(1);
     prev
+}
+
+/// The bits of `value` with the sign of zero normalised away.
+///
+/// `PartialEq` for `f32` treats `0.0` and `-0.0` as equal, so a hash built on
+/// `to_bits` has to collapse them as well or equal keys land in different buckets.
+pub fn canonical_float_bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0.0f32.to_bits()
+    } else {
+        value.to_bits()
+    }
 }
 
 pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {

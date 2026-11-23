@@ -2,11 +2,10 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
-use super::tool_permissions::resolve_creatable_global_skill_path;
-use crate::{Thread, ToolCallEventStream};
+use crate::{GlobalSkillFiles, Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
-use agent_client_protocol::schema::v1::{self as acp, ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::v2::schema as acp;
 use anyhow::Result;
 use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
@@ -248,13 +247,12 @@ impl EditSessionContext {
                 new_text,
                 ..
             } => {
-                event_stream.update_diff(cx.new(|cx| {
+                event_stream.update_diff(cx.new(|_| {
                     Diff::finalized(
                         input_path.to_string_lossy().into_owned(),
                         Some(old_text.to_string()),
                         new_text,
                         self.language_registry.clone(),
-                        cx,
                     )
                 }));
                 Ok(())
@@ -301,9 +299,7 @@ pub(crate) async fn run_session(
                 .await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
             if diff.is_empty() {
-                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                    acp::ToolCallContent::Content(acp::Content::new(error.clone())),
-                ]));
+                event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             }
             Err(EditSessionOutput::Error {
                 error,
@@ -315,9 +311,7 @@ pub(crate) async fn run_session(
             error,
             session: None,
         } => {
-            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                acp::ToolCallContent::Content(acp::Content::new(error.clone())),
-            ]));
+            event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             Err(EditSessionOutput::Error {
                 error,
                 input_path: None,
@@ -448,11 +442,18 @@ impl WritePipeline {
 
 impl EditPipeline {
     fn ensure_resolving_old_text(&mut self, buffer: &Entity<Buffer>, cx: &mut AsyncApp) {
-        if self.current_edit.is_none() {
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
-            self.current_edit = Some(EditPipelineEntry::ResolvingOldText {
-                matcher: StreamingFuzzyMatcher::new(snapshot),
-            });
+        match &mut self.current_edit {
+            None => {
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
+                self.current_edit = Some(EditPipelineEntry::ResolvingOldText {
+                    matcher: StreamingFuzzyMatcher::new(snapshot),
+                });
+            }
+            Some(EditPipelineEntry::ResolvingOldText { matcher }) => {
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
+                matcher.refresh(snapshot);
+            }
+            Some(EditPipelineEntry::StreamingNewText { .. }) => {}
         }
     }
 
@@ -525,10 +526,12 @@ impl EditPipeline {
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                 let line = snapshot.offset_to_point(range.start).row;
-                event_stream.update_fields(
-                    ToolCallUpdateFields::new()
-                        .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
-                );
+                // ACP numbers lines from 1.
+                event_stream.update_fields(|update| {
+                    update.locations(vec![
+                        acp::ToolCallLocation::new(abs_path).line(Some(line + 1)),
+                    ])
+                });
 
                 let buffer_indent = snapshot.line_indent_for_row(line);
                 let query_lines = matcher.query_lines();
@@ -642,7 +645,7 @@ impl EditPipeline {
                 };
 
                 let chunk = if strip_trailing_newline {
-                    chunk.strip_suffix('\n').unwrap_or(chunk)
+                    chunk.trim_suffix('\n')
                 } else {
                     chunk
                 };
@@ -714,9 +717,9 @@ impl EditSession {
             project_path,
         } = target;
 
-        event_stream.update_fields(
-            ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
-        );
+        event_stream.update_fields(|update| {
+            update.locations(vec![acp::ToolCallLocation::new(abs_path.clone())])
+        });
 
         cx.update(|cx| context.authorize(tool_name, &path, event_stream, cx))
             .await
@@ -1147,9 +1150,7 @@ async fn resolve_dirty_buffer(
              was cancelled. Ask the user how they'd like to proceed before \
              retrying."
                 .to_string();
-            event_stream.update_fields(
-                acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
-            );
+            event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             return Err(error);
         }
     }
@@ -1174,45 +1175,46 @@ async fn resolve_global_skill_path_for_edit_session(
     context: &EditSessionContext,
     cx: &mut AsyncApp,
 ) -> Result<Option<PathBuf>, String> {
-    let fs = context
-        .project
-        .read_with(cx, |project, _cx| project.fs().clone());
-    let Some(abs_path) = resolve_creatable_global_skill_path(path, fs.as_ref()).await else {
+    let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&context.project, cx));
+    let Some(abs_path) = global_skill_files.resolve_creatable(path, cx).await else {
         return Ok(None);
     };
 
     match mode {
         EditSessionMode::Edit => {
-            let metadata = fs
-                .metadata(&abs_path)
+            let is_dir = global_skill_files
+                .is_dir(&abs_path, cx)
                 .await
                 .map_err(|e| format!("Can't edit file: {e}"))?
                 .ok_or_else(|| "Can't edit file: path not found".to_string())?;
-            if metadata.is_dir {
+            if is_dir {
                 return Err("Can't edit file: path is a directory".to_string());
             }
         }
         EditSessionMode::Write => {
-            if let Some(metadata) = fs
-                .metadata(&abs_path)
+            if let Some(is_dir) = global_skill_files
+                .is_dir(&abs_path, cx)
                 .await
                 .map_err(|e| format!("Can't write to file: {e}"))?
             {
-                if metadata.is_dir {
+                if is_dir {
                     return Err("Can't write to file: path is a directory".to_string());
                 }
             } else {
-                let parent_path = abs_path
-                    .parent()
+                // The skills are on a machine whose path style may differ
+                // from this one's, so the parent isn't `Path::parent`.
+                let path_style = cx.update(|cx| global_skill_files.path_style(cx));
+                let parent_path = path_style
+                    .parent(&abs_path)
                     .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
-                let parent_metadata = fs
-                    .metadata(parent_path)
+                let parent_is_dir = global_skill_files
+                    .is_dir(parent_path, cx)
                     .await
                     .map_err(|e| format!("Can't create file: {e}"))?
                     .ok_or_else(|| {
                         "Can't create file: parent directory doesn't exist".to_string()
                     })?;
-                if !parent_metadata.is_dir {
+                if !parent_is_dir {
                     return Err("Can't create file: parent is not a directory".to_string());
                 }
             }

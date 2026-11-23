@@ -135,7 +135,6 @@ where
     on_select: OnSelect,
     trigger: T,
     tooltip: TT,
-    info_text: Option<SharedString>,
     worktree_id: WorktreeId,
 }
 
@@ -158,18 +157,12 @@ where
             handle: None,
             trigger,
             tooltip,
-            info_text: None,
             worktree_id,
         }
     }
 
     pub fn with_handle(mut self, handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>) -> Self {
         self.handle = Some(handle);
-        self
-    }
-
-    pub fn with_info_text(mut self, text: impl Into<SharedString>) -> Self {
-        self.info_text = Some(text.into());
         self
     }
 }

@@ -124,20 +124,22 @@ You can also create keybindings for specific agents with {#action agent::NewExte
 
 External Agents run as separate processes that communicate with Zed over ACP. This creates a boundary between Zed configuration and agent-native configuration.
 
-| Capability                       | Behavior in External Agent threads                                                         |
-| -------------------------------- | ------------------------------------------------------------------------------------------ |
-| Model/provider config            | Usually owned by the External Agent                                                        |
-| Auth/API keys/subscriptions      | Usually owned by the External Agent                                                        |
-| Zed Agent profiles               | Do not apply unless the integration says otherwise                                         |
-| Zed Skills                       | Do not apply as Zed Skills                                                                 |
-| Native agent skills/instructions | Depends on the agent                                                                       |
-| Zed MCP servers                  | May be forwarded over ACP                                                                  |
-| Native MCP config                | May also be read by the agent                                                              |
-| Tool permissions                 | Zed ACP/tool forwarding permissions may apply; native tool permissions depend on the agent |
+| Capability                                | Behavior in External Agent threads                                                         |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Model/provider config                     | Usually owned by the External Agent                                                        |
+| Auth/API keys/subscriptions               | Usually owned by the External Agent                                                        |
+| [Zed Agent profiles](./agent-profiles.md) | Do not apply unless the integration says otherwise                                         |
+| Zed Skills                                | Do not apply as Zed Skills                                                                 |
+| Native agent skills/instructions          | Depends on the agent                                                                       |
+| Zed MCP servers                           | May be forwarded over ACP                                                                  |
+| Native MCP config                         | May also be read by the agent                                                              |
+| Tool permissions                          | Zed ACP/tool forwarding permissions may apply; native tool permissions depend on the agent |
 
 For Zed's native agent configuration, see [Zed Agent](./zed-agent.md).
 
 ## Agent-Specific Auth and Config {#agent-auth-config}
+
+When an agent offers model selection, mode, thinking effort, or a Fast Mode toggle, those controls appear in the message composer. Open **Agent Options** for the agent's other settings.
 
 External Agents may have their own sign-in flow, API key setup, subscription behavior, environment variables, and config files.
 

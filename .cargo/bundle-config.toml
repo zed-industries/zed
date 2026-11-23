@@ -1,8 +1,28 @@
-[env]
-RUSTC_BOOTSTRAP = "1"
+[profile.release]
+opt-level = "z"
 
-[target.'cfg(all())']
-rustflags = ["-Z", "share-generics=y"]
+[profile.release.package]
+"*" = { opt-level = 3 }
+cli = { opt-level = 3 }
+editor = { opt-level = 3 }
+gpui = { opt-level = 3 }
+gpui_apple = { opt-level = 3 }
+gpui_linux = { opt-level = 3 }
+gpui_macos = { opt-level = 3 }
+gpui_platform = { opt-level = 3 }
+gpui_shared_string = { opt-level = 3 }
+gpui_util = { opt-level = 3 }
+gpui_wgpu = { opt-level = 3 }
+gpui_windows = { opt-level = 3 }
+language = { opt-level = 3 }
+multi_buffer = { opt-level = 3 }
+project = { opt-level = 3 }
+remote_server = { opt-level = 3 }
+rope = { opt-level = 3 }
+scheduler = { opt-level = 3 }
+sum_tree = { opt-level = 3 }
+text = { opt-level = 3 }
+zed = { codegen-units = 1 }
 
 [target.'cfg(target_os = "linux")']
 rustflags = ["-C", "link-args=-Wl,--disable-new-dtags,-rpath,$ORIGIN/../lib"]

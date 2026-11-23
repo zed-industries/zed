@@ -4,8 +4,8 @@ use gpui::{
     Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, GestureTuning,
     Image, ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchEvent, TouchId, TouchPhase,
-    point, px,
+    Pixels, PlatformInput, Point, ScrollDelta, ScrollEvent, ScrollSource, TouchEvent, TouchId,
+    TouchPhase, point, px,
 };
 use wasm_bindgen::prelude::*;
 
@@ -257,7 +257,7 @@ impl WebWindowInner {
                 // still-focused mirror before the browser handles that
                 // gesture; only an editable tap may enable its keyboard again.
                 if this.keyboard_likely_dismissed() {
-                    this.ime_mirror.set_virtual_keyboard_enabled(false);
+                    this.set_virtual_keyboard_enabled(false);
                 }
                 let Some(touch_id) = this.touch_ids.borrow_mut().start(event.pointer_id()) else {
                     log::error!("exhausted touch identifiers");
@@ -400,41 +400,45 @@ impl WebWindowInner {
             .map_or(0.0, |viewport| viewport.height() * viewport.scale())
     }
 
-    /// Infers dismissal only when the visual viewport fills the layout viewport.
+    /// Infers that a keyboard the mirror asked for is no longer on screen.
     ///
-    /// This fallback requires `interactive-widget=resizes-visual` (the modern
-    /// browser default). It deliberately makes no inference while zoomed, or
-    /// when the host opts into another resize policy. Floating keyboards can
-    /// still overlay both viewports; this is not authoritative keyboard state.
+    /// Not authoritative: floating keyboards take no height from the page,
+    /// so they always read as dismissed. Makes no inference while zoomed, or
+    /// when the host lets the keyboard overlay the page without resizing it.
     fn keyboard_likely_dismissed(&self) -> bool {
         if !self.touch_input {
             return false;
         }
-        let Some(viewport) = self.browser_window.visual_viewport() else {
-            return false;
-        };
-        let Some(document) = self.browser_window.document() else {
-            return false;
-        };
-        if let Ok(Some(meta)) = document.query_selector("meta[name=viewport]")
+        if let Some(document) = self.browser_window.document()
+            && let Ok(Some(meta)) = document.query_selector("meta[name=viewport]")
             && let Some(content) = meta.get_attribute("content")
             && content.split(',').any(|directive| {
                 directive.split_once('=').is_some_and(|(key, value)| {
                     key.trim().eq_ignore_ascii_case("interactive-widget")
-                        && !value.trim().eq_ignore_ascii_case("resizes-visual")
+                        && value.trim().eq_ignore_ascii_case("overlays-content")
                 })
             })
         {
             return false;
         }
-        let Some(root) = document.document_element() else {
-            return false;
-        };
-        (viewport.scale() - 1.).abs() < 0.001
-            && viewport.offset_top().abs() < 1.
-            && viewport.offset_left().abs() < 1.
-            && (viewport.height() - root.client_height() as f64).abs() < 1.
-            && (viewport.width() - root.client_width() as f64).abs() < 1.
+        self.viewport
+            .borrow()
+            .keyboard_height(&self.browser_window)
+            .is_some_and(|height| height < 1.)
+    }
+
+    /// Arms or disarms the software keyboard for the focused mirror.
+    ///
+    /// The canvas holds its height while armed, so that a keyboard covers it
+    /// rather than resizing it on browsers that shrink the page.
+    pub(crate) fn set_virtual_keyboard_enabled(&self, enabled: bool) {
+        self.ime_mirror.set_virtual_keyboard_enabled(enabled);
+        let mut viewport = self.viewport.borrow_mut();
+        if enabled {
+            viewport.hold_canvas_height(&self.browser_window, &self.canvas);
+        } else {
+            viewport.release_canvas_height();
+        }
     }
 
     /// The browser or OS took over the pointer (native scrolling, a system
@@ -468,10 +472,13 @@ impl WebWindowInner {
 
     /// Cancels touch default handling separately because iOS does not consistently
     /// transfer pointer-event cancellation to the corresponding touch event.
+    /// During native scrolling, touchend may be non-cancelable.
     fn register_touch_end(self: &Rc<Self>) -> EventListenerHandle {
         self.listen_non_passive("touchend", move |event: JsValue| {
             let event: web_sys::Event = event.unchecked_into();
-            event.prevent_default();
+            if event.cancelable() {
+                event.prevent_default();
+            }
         })
     }
 
@@ -496,18 +503,14 @@ impl WebWindowInner {
             return;
         }
         let was_enabled = self.ime_mirror.virtual_keyboard_enabled();
-        self.ime_mirror.set_virtual_keyboard_enabled(true);
+        self.set_virtual_keyboard_enabled(true);
         // Trigger a focus event only when the keyboard actually needs
         // summoning. Cycling focus on every tap would restart the IME
         // connection right as the keyboard reads the tapped caret's context,
-        // racing its word segmentation. But `focus()` on an already-focused
-        // element is a no-op, so a dismissed keyboard would otherwise never
-        // return for taps that stay within editable content: detect that
-        // through the visual viewport and force a fresh focus event.
+        // racing its word segmentation. But a dismissed keyboard would
+        // otherwise never return for taps that stay within editable content:
+        // detect that through the visual viewport and restart input.
         if !was_enabled || !self.ime_mirror.is_focused() || self.keyboard_likely_dismissed() {
-            // A same-task blur/focus cycle may be coalesced by iOS, but
-            // this branch only runs when the keyboard is already gone,
-            // so a coalesced cycle loses nothing.
             self.focus_ime_mirror();
         }
     }
@@ -515,7 +518,16 @@ impl WebWindowInner {
     /// Restarts DOM input without synchronously re-entering GPUI activation.
     pub(crate) fn focus_ime_mirror(self: &Rc<Self>) {
         self.suppress_focus_status_events.set(true);
-        if self.ime_mirror.is_focused() {
+        // Elsewhere `focus()` on the focused element is a no-op, so only a
+        // blur/focus cycle restarts input. WebKit on iOS is the reverse: a
+        // same-task cycle was observed to change nothing there, but `focus()`
+        // on the focused element is a refocus that starts an input session
+        // when none is showing.
+        // That is the only way back to a keyboard dismissed by a browser
+        // that leaves the element focused, as Chrome on iOS does.
+        let refocus_restarts_input =
+            platform_info(&self.browser_window).os == gpui::OperatingSystem::Ios;
+        if self.ime_mirror.is_focused() && !refocus_restarts_input {
             self.ime_mirror.blur();
         }
         self.ime_mirror.focus();
@@ -524,11 +536,7 @@ impl WebWindowInner {
         let callback = wasm_bindgen::closure::Closure::once_into_js({
             let this = Rc::clone(self);
             move || {
-                this.state.borrow_mut().is_active = true;
-                this.with_callback(
-                    |callbacks| &mut callbacks.active_status_change,
-                    |callback| callback(true),
-                );
+                this.refresh_active_status();
             }
         });
         if let Err(error) = self
@@ -664,11 +672,12 @@ impl WebWindowInner {
                 current_state.modifiers = modifiers;
             }
 
-            this.dispatch_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
+            this.dispatch_input(PlatformInput::Scroll(ScrollEvent {
                 position,
                 delta,
                 modifiers,
                 touch_phase: TouchPhase::Moved,
+                source: ScrollSource::Pointer,
             }));
         })
     }
@@ -724,8 +733,22 @@ impl WebWindowInner {
             let is_held = event.repeat();
             let key_char = compute_key_char(&event, &key, &modifiers);
 
+            // The software keyboard must edit the mirror itself: cancelling
+            // keydown prevents iOS from updating its autocorrect context and
+            // from delivering the corresponding beforeinput/input events.
+            if this.touch_input
+                && this.ime_mirror.virtual_keyboard_enabled()
+                && this.state.borrow().input_handler.is_some()
+                && !modifiers.platform
+                && !modifiers.control
+                && !modifiers.alt
+                && (key_char.is_some() || matches!(key.as_str(), "backspace" | "delete" | "enter"))
+            {
+                return;
+            }
+
             let keystroke = Keystroke {
-                modifiers,
+                modifiers: keystroke_modifiers(&key, modifiers),
                 key,
                 key_char: key_char.clone(),
             };
@@ -789,7 +812,7 @@ impl WebWindowInner {
             let key_char = compute_key_char(&event, &key, &modifiers);
 
             let keystroke = Keystroke {
-                modifiers,
+                modifiers: keystroke_modifiers(&key, modifiers),
                 key,
                 key_char,
             };
@@ -1161,36 +1184,30 @@ impl WebWindowInner {
 
     fn register_focus(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
-        self.listen_input("focus", move |_event: JsValue| {
-            if this.suppress_focus_status_events.get() {
-                return;
-            }
-            {
-                let mut state = this.state.borrow_mut();
-                state.is_active = true;
-            }
-            this.with_callback(
-                |callbacks| &mut callbacks.active_status_change,
-                |callback| callback(true),
-            );
-        })
+        EventListenerHandle::add(
+            self.browser_window.as_ref(),
+            "focus",
+            move |_event: JsValue| {
+                if this.suppress_focus_status_events.get() {
+                    return;
+                }
+                this.refresh_active_status();
+            },
+        )
     }
 
     fn register_blur(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
-        self.listen_input("blur", move |_event: JsValue| {
-            if this.suppress_focus_status_events.get() {
-                return;
-            }
-            {
-                let mut state = this.state.borrow_mut();
-                state.is_active = false;
-            }
-            this.with_callback(
-                |callbacks| &mut callbacks.active_status_change,
-                |callback| callback(false),
-            );
-        })
+        EventListenerHandle::add(
+            self.browser_window.as_ref(),
+            "blur",
+            move |_event: JsValue| {
+                if this.suppress_focus_status_events.get() {
+                    return;
+                }
+                this.refresh_active_status();
+            },
+        )
     }
 
     fn register_pointer_enter(self: &Rc<Self>) -> EventListenerHandle {
@@ -1293,21 +1310,58 @@ fn capslock_from_keyboard_event(event: &web_sys::KeyboardEvent) -> Capslock {
 }
 
 pub(crate) fn is_mac_platform(browser_window: &web_sys::Window) -> bool {
-    let navigator = browser_window.navigator();
+    // iOS hardware keyboards also use Option for text composition.
+    matches!(
+        platform_info(browser_window).os,
+        gpui::OperatingSystem::Mac | gpui::OperatingSystem::Ios
+    )
+}
 
+pub(crate) fn platform_info(browser_window: &web_sys::Window) -> gpui::PlatformInfo {
+    let navigator = browser_window.navigator();
+    let user_agent = navigator.user_agent().unwrap_or_default();
     #[allow(deprecated)]
     // navigator.platform() is deprecated but navigator.userAgentData is not widely available yet
-    if let Ok(platform) = navigator.platform() {
-        if platform.contains("Mac") {
-            return true;
-        }
+    let platform = navigator.platform().unwrap_or_default();
+    let os = if user_agent.contains("Android") {
+        gpui::OperatingSystem::Android
+    } else if user_agent.contains("iPhone")
+        || user_agent.contains("iPad")
+        || user_agent.contains("iPod")
+        || (platform.contains("Mac") && navigator.max_touch_points() > 1)
+    {
+        // iPadOS can advertise a desktop Mac user agent.
+        gpui::OperatingSystem::Ios
+    } else if platform.contains("Mac") || user_agent.contains("Mac") {
+        gpui::OperatingSystem::Mac
+    } else if platform.contains("Win") || user_agent.contains("Windows") {
+        gpui::OperatingSystem::Windows
+    } else if platform.contains("FreeBSD") || user_agent.contains("FreeBSD") {
+        gpui::OperatingSystem::FreeBsd
+    } else if platform.contains("Linux")
+        || user_agent.contains("Linux")
+        || user_agent.contains("CrOS")
+    {
+        gpui::OperatingSystem::Linux
+    } else {
+        gpui::OperatingSystem::Unknown
+    };
+    gpui::PlatformInfo {
+        os,
+        target: gpui::PlatformTarget::Web,
     }
+}
 
-    if let Ok(user_agent) = navigator.user_agent() {
-        return user_agent.contains("Mac");
+/// Drops Shift from symbol keystrokes, as GPUI's Linux platform does.
+fn keystroke_modifiers(key: &str, mut modifiers: Modifiers) -> Modifiers {
+    // Browsers report the shifted character as the key (Shift+1 arrives as `!`),
+    // so keeping Shift would produce `shift-!`, which never matches a `!`
+    // binding. Shift stays on letters, where it distinguishes case, and on named
+    // keys such as `tab` and `enter`.
+    if modifiers.shift && key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
+        modifiers.shift = false;
     }
-
-    false
+    modifiers
 }
 
 fn is_modifier_only_key(key: &str) -> bool {
@@ -1444,5 +1498,19 @@ mod tests {
         let reused = touch_ids.start(7).expect("reused pointer touch id");
         assert_ne!(reused, first);
         assert_ne!(reused, concurrent);
+    }
+
+    #[test]
+    fn shift_is_dropped_only_from_symbol_keys() {
+        let shift = Modifiers::shift();
+        assert_eq!(keystroke_modifiers("!", shift), Modifiers::none());
+        assert_eq!(keystroke_modifiers("?", shift), Modifiers::none());
+        assert_eq!(keystroke_modifiers("a", shift), shift);
+        assert_eq!(keystroke_modifiers("tab", shift), shift);
+        let control_shift = Modifiers::control_shift();
+        assert_eq!(
+            keystroke_modifiers("!", control_shift),
+            Modifiers::control()
+        );
     }
 }

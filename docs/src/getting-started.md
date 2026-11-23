@@ -40,11 +40,11 @@ By default, new projects open in your current window's threads sidebar. To open 
 | Toggle terminal | `` Ctrl+` ``  | `` Ctrl+` ``   |
 | Open settings   | `Cmd+,`       | `Ctrl+,`       |
 
-The command palette (`Cmd+Shift+P`) is your gateway to every action in Zed. If you forget a shortcut, search for it there.
+The [command palette](./command-palette.md) (`Cmd+Shift+P`) is your gateway to every action in Zed. If you forget a shortcut, search for it there.
 
 ### Panel Layout
 
-Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) when you want the Agent Panel and Threads Sidebar next to each other on the left. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout.
+Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) when you want the [Agent Panel](./ai/agent-panel.md) and Threads Sidebar next to each other on the left. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout.
 
 ### 3. Configure Your Editor
 
@@ -53,7 +53,7 @@ Open the Settings Editor with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows). Searc
 Common first changes:
 
 - **Theme**: Press `Cmd+K Cmd+T` (macOS) or `Ctrl+K Ctrl+T` (Linux/Windows) to open the theme selector
-- **Font**: Search for `buffer_font_family` in Settings
+- **Font**: Search for [`buffer_font_family`](./reference/all-settings.md#buffer-font-family) in Settings
 - **Format on save**: Search for `format_on_save` and set to `on`
 
 ### 4. Set Up Your Language

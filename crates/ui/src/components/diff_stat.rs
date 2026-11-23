@@ -1,6 +1,6 @@
 use crate::Tooltip;
 use crate::prelude::*;
-use num_format::{Locale, ToFormattedString};
+use crate::utils::format_number_with_commas;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct DiffStat {
@@ -36,8 +36,8 @@ impl DiffStat {
 impl RenderOnce for DiffStat {
     fn render(self, _: &mut Window, _cx: &mut App) -> impl IntoElement {
         let tooltip = self.tooltip;
-        let added = self.added.to_formatted_string(&Locale::en);
-        let removed = self.removed.to_formatted_string(&Locale::en);
+        let added = format_number_with_commas(self.added as u128);
+        let removed = format_number_with_commas(self.removed as u128);
 
         h_flex()
             .id(self.id)
@@ -86,8 +86,6 @@ impl Component for DiffStat {
                 .into_any_element(),
         )];
 
-        example_group(diff_stat_example)
-            .vertical()
-            .into_any_element()
+        example_group(diff_stat_example).into_any_element()
     }
 }

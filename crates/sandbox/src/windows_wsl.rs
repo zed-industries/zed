@@ -1452,10 +1452,7 @@ fn map_path_to_wsl(path: &Path) -> Result<PathMapping> {
         return Ok(PathMapping::Wsl(path));
     }
     let fallback = parse_native_drive_path(&path_string)?;
-    let windows_path = path_string
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&path_string)
-        .replace('\\', "/");
+    let windows_path = path_string.trim_prefix(r"\\?\").replace('\\', "/");
     Ok(PathMapping::NativeDrive {
         windows_path,
         fallback,
@@ -1501,10 +1498,7 @@ fn parse_wsl_unc_path(path: &str) -> Result<WslPath> {
 }
 
 fn parse_native_drive_path(path: &str) -> Result<WslPath> {
-    let path = path
-        .strip_prefix("\\\\?\\")
-        .unwrap_or(path)
-        .replace('\\', "/");
+    let path = path.trim_prefix("\\\\?\\").replace('\\', "/");
     let mut chars = path.chars();
     let Some(drive) = chars.next().filter(|drive| drive.is_ascii_alphabetic()) else {
         bail!("path is not a drive-letter Windows path: {path}");

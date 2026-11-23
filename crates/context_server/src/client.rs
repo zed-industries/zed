@@ -54,7 +54,6 @@ pub(crate) struct Client {
     name: Arc<str>,
     subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-    #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
@@ -110,7 +109,6 @@ struct AnyResponse<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-#[allow(dead_code)]
 pub(crate) struct Response<T> {
     pub jsonrpc: &'static str,
     pub id: RequestId,
@@ -123,7 +121,6 @@ pub(crate) struct Response<T> {
 pub(crate) enum CspResult<T> {
     #[serde(rename = "result")]
     Ok(Option<T>),
-    #[allow(dead_code)]
     Error(Option<Error>),
 }
 
@@ -160,6 +157,17 @@ pub struct ModelContextServerBinary {
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
     pub timeout: Option<u64>,
+    #[serde(skip)]
+    pub stdin_prefix: Option<StdinPrefix>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct StdinPrefix(pub Vec<u8>);
+
+impl std::fmt::Debug for StdinPrefix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StdinPrefix([REDACTED {} bytes])", self.0.len())
+    }
 }
 
 impl Client {

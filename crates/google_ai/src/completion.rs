@@ -1,14 +1,12 @@
 use anyhow::Result;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt, stream::BoxStream};
 use language_model_core::{
     GOOGLE_PROVIDER_NAME, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRequest, LanguageModelRequestToolInput, LanguageModelToolChoice,
     LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
     StopReason, TokenUsage,
 };
-use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{self, AtomicU64};
 
 use crate::{
     Content, FunctionCallingConfig, FunctionCallingMode, FunctionDeclaration,
@@ -22,7 +20,8 @@ pub fn into_google(
     model_id: String,
     mode: GoogleModelMode,
 ) -> Result<crate::GenerateContentRequest> {
-    fn map_content(content: Vec<MessageContent>) -> Result<Vec<Part>> {
+    let nest_function_response_media = !crate::uses_sibling_function_response_media(&model_id);
+    let map_content = |content: Vec<MessageContent>| -> Result<Vec<Part>> {
         let mut mapped_parts = Vec::new();
         for content in content {
             match content {
@@ -48,7 +47,9 @@ pub fn into_google(
                     }
                 }
                 MessageContent::Thinking { .. } => {}
-                MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => {}
+                MessageContent::RedactedThinking(_)
+                | MessageContent::Compaction(_)
+                | MessageContent::ReasoningEffort { .. } => {}
                 MessageContent::Image(image) => {
                     mapped_parts.push(Part::InlineDataPart(InlineDataPart {
                         inline_data: GenerativeContentBlob {
@@ -95,6 +96,11 @@ pub fn into_google(
                     } else {
                         text_output
                     };
+                    let (nested_images, sibling_images) = if nest_function_response_media {
+                        (images, Vec::new())
+                    } else {
+                        (Vec::new(), images)
+                    };
                     mapped_parts.push(Part::FunctionResponsePart(crate::FunctionResponsePart {
                         function_response: crate::FunctionResponse {
                             name: tool_result.tool_name.to_string(),
@@ -103,14 +109,15 @@ pub fn into_google(
                                 "output": output
                             }),
                             id: Some(tool_result.tool_use_id.to_string()),
+                            parts: nested_images,
                         },
                     }));
-                    mapped_parts.extend(images.into_iter().map(Part::InlineDataPart));
+                    mapped_parts.extend(sibling_images.into_iter().map(Part::InlineDataPart));
                 }
             }
         }
         Ok(mapped_parts)
-    }
+    };
 
     let thinking_config = thinking_config_for_request(&request, &model_id, mode);
     let max_output_tokens = request
@@ -201,6 +208,7 @@ pub fn into_google(
                 allowed_function_names: None,
             },
         }),
+        continuation_token: None,
     })
 }
 
@@ -209,9 +217,7 @@ fn thinking_config_for_request(
     model_id: &str,
     mode: GoogleModelMode,
 ) -> Option<ThinkingConfig> {
-    let supports_thinking =
-        matches!(mode, GoogleModelMode::Thinking { .. }) || is_google_thinking_model(model_id);
-    if !supports_thinking {
+    if !matches!(mode, GoogleModelMode::Thinking { .. }) {
         return None;
     }
 
@@ -231,9 +237,9 @@ fn thinking_config_for_request(
         {
             config.thinking_budget = Some(budget_tokens);
         }
-    } else if let Some(thinking_level) = disabled_thinking_level(model_id) {
+    } else if let Some(thinking_level) = crate::lowest_thinking_level(model_id) {
         config.thinking_level = Some(thinking_level);
-    } else if supports_thinking_budget_disable(model_id) {
+    } else if crate::supports_disabling_thinking(model_id) {
         config.thinking_budget = Some(0);
     }
 
@@ -248,40 +254,9 @@ impl ThinkingConfig {
     }
 }
 
-fn is_google_thinking_model(model_id: &str) -> bool {
-    model_id.starts_with("gemini-2.5-") || model_id.starts_with("gemini-3")
-}
-
-fn disabled_thinking_level(model_id: &str) -> Option<ThinkingLevel> {
-    match model_id {
-        // Gemini 3.7 and 3.8 Flash reject `MINIMAL` with a validation error, so
-        // `LOW` is the lowest level available to them.
-        model_id
-            if model_id.starts_with("gemini-3.7-flash")
-                || model_id.starts_with("gemini-3.8-flash")
-                || (model_id.starts_with("gemini-3") && model_id.contains("-pro")) =>
-        {
-            Some(ThinkingLevel::Low)
-        }
-        model_id if model_id.starts_with("gemini-3") => Some(ThinkingLevel::Minimal),
-        _ => None,
-    }
-}
-
-fn supports_thinking_budget_disable(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "gemini-2.5-flash"
-            | "gemini-2.5-flash-lite"
-            | "gemini-2.5-flash-preview-latest"
-            | "gemini-2.5-flash-preview-04-17"
-            | "gemini-2.5-flash-preview-05-20"
-            | "gemini-2.5-flash-lite-preview-06-17"
-    )
-}
-
 pub struct GoogleEventMapper {
     usage: UsageMetadata,
+    previous_hops_usage: Option<UsageMetadata>,
     stop_emitted: bool,
 }
 
@@ -289,19 +264,20 @@ impl GoogleEventMapper {
     pub fn new() -> Self {
         Self {
             usage: UsageMetadata::default(),
+            previous_hops_usage: None,
             stop_emitted: false,
         }
     }
 
     pub fn map_stream(
         self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
+        events: BoxStream<'static, Result<GenerateContentResponse, LanguageModelCompletionError>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         futures::stream::try_unfold((self, events), |(mut mapper, mut events)| async move {
             match events.next().await {
                 Some(event) => {
-                    let event = event.map_err(LanguageModelCompletionError::from)?;
+                    let event = event?;
                     Ok(Some((
                         futures::stream::iter(mapper.map_event(event)),
                         (mapper, events),
@@ -320,33 +296,41 @@ impl GoogleEventMapper {
         &mut self,
         event: GenerateContentResponse,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
         let mut events: Vec<_> = Vec::new();
         let mut wants_to_use_tool = false;
         let mut stop_reason = None;
-        if let Some(usage_metadata) = event.usage_metadata {
+        if let Some(mut usage_metadata) = event.usage_metadata {
+            if let Some(previous_hops_usage) = &self.previous_hops_usage {
+                add_previous_hops_usage(&mut usage_metadata, previous_hops_usage);
+            }
             update_usage(&mut self.usage, &usage_metadata);
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
-                convert_usage(&self.usage),
-            )))
+            // Streamed chunks carry an empty `usageMetadata` until the final one.
+            // Reporting usage before the prompt count is known would show zero context.
+            if self.usage.prompt_token_count.is_some() {
+                events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
+                    convert_usage(&self.usage),
+                )))
+            }
         }
 
         if let Some(prompt_feedback) = event.prompt_feedback
             && let Some(block_reason) = prompt_feedback.block_reason.as_deref()
         {
-            let stop_reason = match block_reason {
-                "SAFETY" | "OTHER" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "IMAGE_SAFETY" => {
-                    StopReason::Refusal
-                }
-                _ => {
-                    log::error!("Unexpected Google block_reason: {block_reason}");
-                    StopReason::Refusal
-                }
-            };
+            if !matches!(
+                block_reason,
+                "SAFETY" | "OTHER" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "IMAGE_SAFETY"
+            ) {
+                log::error!("Unexpected Google block_reason: {block_reason}");
+            }
             if !self.stop_emitted {
                 self.stop_emitted = true;
-                events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal(
+                    Some(refusal_details(
+                        block_reason,
+                        prompt_feedback.safety_ratings.as_deref(),
+                        language_model_core::RefusalStage::Input,
+                    )),
+                ))));
             }
 
             return events;
@@ -354,7 +338,10 @@ impl GoogleEventMapper {
 
         if let Some(candidates) = event.candidates {
             for candidate in candidates {
-                if let Some(finish_reason) = candidate.finish_reason.as_deref() {
+                if candidate.finish_reason.as_deref() == Some("CONTINUATION") {
+                    // A long decode continues in another request, whose counts start over.
+                    self.previous_hops_usage = Some(self.usage.clone());
+                } else if let Some(finish_reason) = candidate.finish_reason.as_deref() {
                     stop_reason = Some(match finish_reason {
                         "STOP" => StopReason::EndTurn,
                         "MAX_TOKENS" => StopReason::MaxTokens,
@@ -374,7 +361,11 @@ impl GoogleEventMapper {
                         | "UNEXPECTED_TOOL_CALL"
                         | "TOO_MANY_TOOL_CALLS"
                         | "MISSING_THOUGHT_SIGNATURE"
-                        | "MALFORMED_RESPONSE" => StopReason::Refusal,
+                        | "MALFORMED_RESPONSE" => StopReason::Refusal(Some(refusal_details(
+                            finish_reason,
+                            candidate.safety_ratings.as_deref(),
+                            language_model_core::RefusalStage::Output,
+                        ))),
                         _ => {
                             log::error!("Unexpected google finish_reason: {finish_reason}");
                             StopReason::EndTurn
@@ -418,9 +409,7 @@ impl GoogleEventMapper {
                                 if let Some(ref call_id) = function_call_part.function_call.id {
                                     call_id.clone().into()
                                 } else {
-                                    let next_tool_id =
-                                        TOOL_CALL_COUNTER.fetch_add(1, atomic::Ordering::SeqCst);
-                                    format!("{}-{}", name, next_tool_id).into()
+                                    format!("{}-{}", name, uuid::Uuid::new_v4().simple()).into()
                                 };
 
                             // Normalize empty string signatures to None
@@ -461,6 +450,36 @@ impl GoogleEventMapper {
     }
 }
 
+fn refusal_details(
+    reason: &str,
+    ratings: Option<&[crate::SafetyRating]>,
+    stage: language_model_core::RefusalStage,
+) -> language_model_core::RefusalDetails {
+    language_model_core::RefusalDetails {
+        reason: reason.into(),
+        categories: ratings
+            .unwrap_or_default()
+            .iter()
+            .filter(|rating| rating.blocked == Some(true))
+            .map(|rating| rating.category.clone())
+            .collect(),
+        stage: Some(stage),
+    }
+}
+
+/// Later long decode hops count everything generated so far as input again. That's already in
+/// the output counts, so the first hop's input counts are kept to avoid overstating the context.
+fn add_previous_hops_usage(usage: &mut UsageMetadata, previous_hops_usage: &UsageMetadata) {
+    usage.prompt_token_count = previous_hops_usage.prompt_token_count;
+    usage.cached_content_token_count = previous_hops_usage.cached_content_token_count;
+    if let Some(candidates_token_count) = &mut usage.candidates_token_count {
+        *candidates_token_count += previous_hops_usage.candidates_token_count.unwrap_or(0);
+    }
+    if let Some(thoughts_token_count) = &mut usage.thoughts_token_count {
+        *thoughts_token_count += previous_hops_usage.thoughts_token_count.unwrap_or(0);
+    }
+}
+
 fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
     if let Some(prompt_token_count) = new.prompt_token_count {
         usage.prompt_token_count = Some(prompt_token_count);
@@ -486,7 +505,8 @@ fn convert_usage(usage: &UsageMetadata) -> TokenUsage {
     let prompt_tokens = usage.prompt_token_count.unwrap_or(0);
     let cached_tokens = usage.cached_content_token_count.unwrap_or(0);
     let input_tokens = prompt_tokens - cached_tokens;
-    let output_tokens = usage.candidates_token_count.unwrap_or(0);
+    let output_tokens =
+        usage.candidates_token_count.unwrap_or(0) + usage.thoughts_token_count.unwrap_or(0);
 
     TokenUsage {
         input_tokens,
@@ -503,7 +523,10 @@ mod tests {
         Content, FunctionCall, FunctionCallPart, GenerateContentCandidate, GenerateContentResponse,
         Part, Role as GoogleRole,
     };
-    use language_model_core::{LanguageModelRequestMessage, LanguageModelRequestTool};
+    use language_model_core::{
+        LanguageModelImage, LanguageModelRequestMessage, LanguageModelRequestTool,
+        LanguageModelToolResult, LanguageModelToolResultContent,
+    };
     use serde_json::json;
 
     #[test]
@@ -527,7 +550,11 @@ mod tests {
             ),
             (
                 json!({"promptFeedback": {"blockReason": "SAFETY"}}),
-                StopReason::Refusal,
+                StopReason::Refusal(Some(language_model_core::RefusalDetails {
+                    reason: "SAFETY".into(),
+                    categories: Vec::new(),
+                    stage: Some(language_model_core::RefusalStage::Input),
+                })),
             ),
         ] {
             let responses = vec![
@@ -582,31 +609,6 @@ mod tests {
                 assert!(stream.next().await.is_none());
             });
         }
-    }
-
-    #[test]
-    fn stream_read_error_is_not_followed_by_completion() {
-        let responses = vec![
-            Ok(serde_json::from_value(json!({"candidates": [{
-                "content": {"role": "model", "parts": [{"text": "Partial answer"}]}
-            }]}))
-            .unwrap()),
-            Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "read failed").into()),
-        ];
-        let events = futures::executor::block_on(
-            GoogleEventMapper::new()
-                .map_stream(Box::pin(futures::stream::iter(responses)))
-                .collect::<Vec<_>>(),
-        );
-        assert!(matches!(
-            events.as_slice(),
-            [
-                Ok(LanguageModelCompletionEvent::Text(text)),
-                Err(LanguageModelCompletionError::Other(error)),
-            ] if text == "Partial answer"
-                && error.downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset)
-        ));
     }
 
     fn text_request() -> LanguageModelRequest {
@@ -687,6 +689,47 @@ mod tests {
 
         assert_eq!(declaration["parametersJsonSchema"], input_schema);
         assert_eq!(declaration.get("parameters"), None);
+    }
+
+    #[test]
+    fn into_google_nests_tool_result_images_in_function_response() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                    tool_use_id: "call-1".into(),
+                    tool_name: "read_file".into(),
+                    is_error: false,
+                    content: vec![
+                        LanguageModelToolResultContent::Text("Read image file shot.png".into()),
+                        LanguageModelToolResultContent::Image(LanguageModelImage {
+                            source: "aW1hZ2U=".into(),
+                        }),
+                    ],
+                    output: None,
+                })],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let request = into_google(
+            request,
+            "gemini-4-argon".to_string(),
+            GoogleModelMode::Default,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        assert_eq!(
+            serialized["contents"][0]["parts"],
+            json!([{"functionResponse": {
+                "name": "read_file",
+                "response": {"output": "Read image file shot.png"},
+                "id": "call-1",
+                "parts": [{"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}}]
+            }}])
+        );
     }
 
     #[test]
@@ -785,6 +828,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -798,6 +842,49 @@ mod tests {
                 if text == "checking the constraints"
                     && signature.as_deref() == Some("thought-signature")
         ));
+    }
+
+    #[test]
+    fn usage_is_reported_only_once_prompt_tokens_are_known() {
+        let mut mapper = GoogleEventMapper::new();
+        let chunks = [
+            json!({
+                "candidates": [{"content": {"parts": [{"text": "Let's check"}], "role": "model"}}],
+                "usageMetadata": {}
+            }),
+            json!({
+                "candidates": [{
+                    "content": {"parts": [{"text": ""}], "role": "model"},
+                    "finishReason": "STOP"
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 33732,
+                    "cachedContentTokenCount": 30436,
+                    "candidatesTokenCount": 107,
+                    "thoughtsTokenCount": 250,
+                    "totalTokenCount": 34089
+                }
+            }),
+        ];
+
+        let usage_updates: Vec<TokenUsage> = chunks
+            .into_iter()
+            .flat_map(|chunk| mapper.map_event(serde_json::from_value(chunk).unwrap()))
+            .filter_map(|event| match event {
+                Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => Some(usage),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            usage_updates,
+            vec![TokenUsage {
+                input_tokens: 3296,
+                output_tokens: 357,
+                cache_read_input_tokens: 30436,
+                cache_creation_input_tokens: 0,
+            }]
+        );
     }
 
     #[test]
@@ -839,6 +926,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -860,47 +948,40 @@ mod tests {
     #[test]
     fn safety_finish_reason_is_refusal() {
         let mut mapper = GoogleEventMapper::new();
-        let response = GenerateContentResponse {
-            candidates: Some(vec![GenerateContentCandidate {
-                index: Some(0),
-                content: Content {
-                    parts: Vec::new(),
-                    role: GoogleRole::Model,
-                },
-                finish_reason: Some("SAFETY".to_string()),
-                finish_message: None,
-                safety_ratings: None,
-                citation_metadata: None,
-            }]),
-            prompt_feedback: None,
-            usage_metadata: None,
-        };
+        let response = serde_json::from_value(serde_json::json!({
+            "candidates": [{"index":0, "finishReason":"SAFETY"}]
+        }))
+        .unwrap();
 
         assert!(matches!(
             mapper.map_event(response).as_slice(),
-            [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal))]
+            [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details))))]
+                if details.reason == "SAFETY" && details.categories.is_empty()
+                    && details.stage == Some(language_model_core::RefusalStage::Output)
         ));
     }
 
     #[test]
-    fn test_disabled_thinking_level_per_model() {
-        assert_eq!(
-            disabled_thinking_level("gemini-3.8-flash"),
-            Some(ThinkingLevel::Low)
-        );
-        assert_eq!(
-            disabled_thinking_level("gemini-3.7-flash"),
-            Some(ThinkingLevel::Low)
-        );
-        assert_eq!(
-            disabled_thinking_level("gemini-3.1-pro-preview"),
-            Some(ThinkingLevel::Low)
-        );
-        assert_eq!(
-            disabled_thinking_level("gemini-3.6-flash"),
-            Some(ThinkingLevel::Minimal)
-        );
-        assert_eq!(disabled_thinking_level("gemini-2.5-flash"), None);
+    fn prompt_refusal_reports_only_explicitly_blocking_categories() {
+        let response = serde_json::from_value(serde_json::json!({
+            "promptFeedback": {
+                "blockReason": "SAFETY",
+                "blockReasonMessage": "private user content",
+                "safetyRatings": [
+                    {"category":"HARM_CATEGORY_HARASSMENT","probability":"HIGH","blocked":true},
+                    {"category":"HARM_CATEGORY_HATE_SPEECH","probability":"HIGH","blocked":false},
+                    {"category":"HARM_CATEGORY_DANGEROUS_CONTENT","probability":"HIGH"},
+                    {"category":"FUTURE_CATEGORY","probability":"HIGH","blocked":true}
+                ]
+            }
+        }))
+        .unwrap();
+        let events = GoogleEventMapper::new().map_event(response);
+        assert!(matches!(events.as_slice(),
+            [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details))))]
+                if details.reason == "SAFETY"
+                    && details.categories == ["HARM_CATEGORY_HARASSMENT", "FUTURE_CATEGORY"]
+                    && details.stage == Some(language_model_core::RefusalStage::Input)));
     }
 
     #[test]
@@ -925,6 +1006,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -966,6 +1048,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -1003,6 +1086,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -1014,5 +1098,55 @@ mod tests {
         } else {
             panic!("Expected ToolUse event");
         }
+    }
+
+    #[test]
+    fn long_decode_usage_counts_each_generated_token_once() {
+        // Each hop counts output from zero but re-counts earlier output as prompt input.
+        let hops = [
+            (10, 0, 4, 20, "CONTINUATION"),
+            (34, 30, 6, 14, "CONTINUATION"),
+            (54, 50, 5, 1, "STOP"),
+        ];
+        let mut mapper = GoogleEventMapper::new();
+        let events = hops
+            .into_iter()
+            .flat_map(|(prompt, cached, candidates, thoughts, finish_reason)| {
+                mapper.map_event(
+                    serde_json::from_value(json!({
+                        "candidates": [{
+                            "content": {"role": "model", "parts": []},
+                            "finishReason": finish_reason
+                        }],
+                        "usageMetadata": {
+                            "promptTokenCount": prompt,
+                            "cachedContentTokenCount": cached,
+                            "candidatesTokenCount": candidates,
+                            "thoughtsTokenCount": thoughts
+                        }
+                    }))
+                    .unwrap(),
+                )
+            })
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+
+        let usage = |output_tokens| {
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 10,
+                output_tokens,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+        };
+        assert_eq!(
+            events,
+            [
+                usage(24),
+                usage(44),
+                usage(50),
+                LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+            ]
+        );
     }
 }

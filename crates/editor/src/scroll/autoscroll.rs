@@ -64,12 +64,6 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Top, None)
     }
 
-    /// Scrolls so that the newest cursor is the given offset (in display rows)
-    /// from the bottom of the viewport.
-    pub fn bottom_relative(offset: ScrollOffset) -> Self {
-        Self::Strategy(AutoscrollStrategy::BottomRelative(offset), None)
-    }
-
     /// Scrolls so that the newest cursor is at the bottom.
     pub fn bottom() -> Self {
         Self::Strategy(AutoscrollStrategy::Bottom, None)
@@ -106,7 +100,6 @@ pub enum AutoscrollStrategy {
     Top,
     Bottom,
     TopRelative(ScrollOffset),
-    BottomRelative(ScrollOffset),
 }
 
 impl Eq for AutoscrollStrategy {}
@@ -235,9 +228,14 @@ impl Editor {
 
         let was_autoscrolled = match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
-                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
-                let target_top = (target_top - margin - visible_sticky_headers as f64).max(0.0);
-                let target_bottom = target_bottom + margin;
+                let (margin_top, margin_bottom) = self.fit_autoscroll_margins(
+                    visible_lines,
+                    target_bottom - target_top,
+                    visible_sticky_headers,
+                );
+                let target_top = (target_top - margin_top - visible_sticky_headers as f64).max(0.0);
+                let target_bottom = target_bottom + margin_bottom;
+
                 let start_row = scroll_position.y;
                 let end_row = start_row + visible_lines;
 
@@ -277,10 +275,6 @@ impl Editor {
                 scroll_position.y = target_top - lines as ScrollOffset;
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
-            AutoscrollStrategy::BottomRelative(lines) => {
-                scroll_position.y = target_bottom + lines as ScrollOffset;
-                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
-            }
         };
 
         self.scroll_manager.last_autoscroll = Some((
@@ -292,6 +286,28 @@ impl Editor {
 
         let was_scrolled = WasScrolled(editor_was_scrolled.0 || was_autoscrolled.0);
         (NeedsHorizontalAutoscroll(true), was_scrolled)
+    }
+
+    fn fit_autoscroll_margins(
+        &self,
+        visible_lines: ScrollOffset,
+        target_height: ScrollOffset,
+        visible_sticky_headers: usize,
+    ) -> (ScrollOffset, ScrollOffset) {
+        if matches!(self.mode, EditorMode::AutoHeight { .. }) {
+            return (0., 0.);
+        }
+
+        let available_margin_space =
+            (visible_lines - target_height - visible_sticky_headers as f64).max(0.);
+        let top_space = (available_margin_space / 2.).floor();
+
+        // Keep the rounding remainder below the target so large margins leave no
+        // slack for the cursor to move without scrolling.
+        (
+            top_space.min(self.scroll_manager.vertical_scroll_margin),
+            (available_margin_space - top_space).min(self.scroll_manager.vertical_scroll_margin),
+        )
     }
 
     pub(crate) fn visible_sticky_header_count_for_point(

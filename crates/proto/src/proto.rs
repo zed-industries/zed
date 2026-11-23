@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 pub mod error;
 mod macros;
 mod typed_envelope;
@@ -143,6 +141,17 @@ messages!(
     (GetReferencesResponse, Background),
     (GetSignatureHelp, Background),
     (GetSignatureHelpResponse, Background),
+    (GetTerminalShell, Background),
+    (GetTerminalShellResponse, Background),
+    (GetGlobalSkills, Background),
+    (GetGlobalSkillsResponse, Background),
+    (GlobalSkillsChanged, Background),
+    (CreateGlobalSkill, Background),
+    (CreateGlobalSkillResponse, Background),
+    (TrashGlobalSkill, Background),
+    (ResolveGlobalSkillPath, Background),
+    (ResolveGlobalSkillPathResponse, Background),
+    (ApplyGlobalSkillFileOperation, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -344,16 +353,9 @@ messages!(
     (GitAddPathToGitInfoExclude, Background),
     (GitShow, Background),
     (GitCommitDetails, Background),
-    (GitCreateCheckpoint, Background),
-    (GitCreateCheckpointResponse, Background),
     (GitCreateArchiveCheckpoint, Background),
     (GitCreateArchiveCheckpointResponse, Background),
-    (GitRestoreCheckpoint, Background),
     (GitRestoreArchiveCheckpoint, Background),
-    (GitCompareCheckpoints, Background),
-    (GitCompareCheckpointsResponse, Background),
-    (GitDiffCheckpoints, Background),
-    (GitDiffCheckpointsResponse, Background),
     (SetIndexText, Background),
     (Push, Background),
     (Fetch, Background),
@@ -395,7 +397,8 @@ messages!(
     (LoadCommitTemplateResponse, Background),
     (GitClone, Background),
     (GitCloneResponse, Background),
-    (ToggleLspLogs, Background),
+    // Reconnect reconciliation must stay ordered with subsequent user toggles.
+    (ToggleLspLogs, Foreground),
     (GetDirectoryEnvironment, Background),
     (DirectoryEnvironment, Background),
     (GetAgentServerCommand, Background),
@@ -609,15 +612,11 @@ request_messages!(
     (InstallExtension, Ack),
     (RegisterBufferWithLanguageServers, Ack),
     (GitShow, GitCommitDetails),
-    (GitCreateCheckpoint, GitCreateCheckpointResponse),
     (
         GitCreateArchiveCheckpoint,
         GitCreateArchiveCheckpointResponse
     ),
-    (GitRestoreCheckpoint, Ack),
     (GitRestoreArchiveCheckpoint, Ack),
-    (GitCompareCheckpoints, GitCompareCheckpointsResponse),
-    (GitDiffCheckpoints, GitDiffCheckpointsResponse),
     (GitReset, Ack),
     (GitDeleteBranch, Ack),
     (GitCheckoutFiles, Ack),
@@ -648,8 +647,13 @@ request_messages!(
     (LoadCommitTemplate, LoadCommitTemplateResponse),
     (GetTreeDiff, GetTreeDiffResponse),
     (GitClone, GitCloneResponse),
-    (ToggleLspLogs, Ack),
     (GetDirectoryEnvironment, DirectoryEnvironment),
+    (GetTerminalShell, GetTerminalShellResponse),
+    (GetGlobalSkills, GetGlobalSkillsResponse),
+    (CreateGlobalSkill, CreateGlobalSkillResponse),
+    (TrashGlobalSkill, Ack),
+    (ResolveGlobalSkillPath, ResolveGlobalSkillPathResponse),
+    (ApplyGlobalSkillFileOperation, Ack),
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (GetContextServerCommand, ContextServerCommand),
@@ -841,10 +845,6 @@ entity_messages!(
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
     GitShow,
-    GitCreateCheckpoint,
-    GitRestoreCheckpoint,
-    GitCompareCheckpoints,
-    GitDiffCheckpoints,
     GitReset,
     GitDeleteBranch,
     GitCheckoutFiles,
@@ -853,6 +853,13 @@ entity_messages!(
     SetIndexText,
     ToggleLspLogs,
     GetDirectoryEnvironment,
+    GetTerminalShell,
+    GetGlobalSkills,
+    GlobalSkillsChanged,
+    CreateGlobalSkill,
+    TrashGlobalSkill,
+    ResolveGlobalSkillPath,
+    ApplyGlobalSkillFileOperation,
 
     Push,
     Fetch,
@@ -961,29 +968,22 @@ pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 256;
 
 pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item = UpdateWorktree> {
     let mut done = false;
+    let mut updated_entries_iter = mem::take(&mut message.updated_entries).into_iter();
+    let mut removed_entries_iter = mem::take(&mut message.removed_entries).into_iter();
 
     iter::from_fn(move || {
         if done {
             return None;
         }
 
-        let updated_entries_chunk_size = cmp::min(
-            message.updated_entries.len(),
-            MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE,
-        );
-        let updated_entries: Vec<_> = message
-            .updated_entries
-            .drain(..updated_entries_chunk_size)
-            .collect();
-
-        let removed_entries_chunk_size = cmp::min(
-            message.removed_entries.len(),
-            MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE,
-        );
-        let removed_entries = message
-            .removed_entries
-            .drain(..removed_entries_chunk_size)
-            .collect();
+        let updated_entries = updated_entries_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
+        let removed_entries = removed_entries_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
 
         let mut updated_repositories = Vec::new();
         let mut limit = MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE;
@@ -1013,8 +1013,8 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             }
         }
 
-        done = message.updated_entries.is_empty()
-            && message.removed_entries.is_empty()
+        done = updated_entries_iter.as_slice().is_empty()
+            && removed_entries_iter.as_slice().is_empty()
             && message.updated_repositories.is_empty();
 
         let removed_repositories = if done {

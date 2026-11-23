@@ -29,7 +29,11 @@ use util::split_str_with_ranges;
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
 /// matches the name used in the generated schemas.
-const ZED_INSPECTOR_STYLE_JSON: &str = util_macros::path!("/zed-inspector-style.json");
+const ZED_INSPECTOR_STYLE_JSON: &str = if cfg!(target_os = "windows") {
+    r"C:\zed-inspector-style.json"
+} else {
+    "/zed-inspector-style.json"
+};
 
 pub(crate) struct DivInspector {
     state: State,
@@ -281,9 +285,7 @@ impl DivInspector {
             ..
         } = &self.state
         {
-            if let Err(err) =
-                self.reset_style_editors(&rust_style_buffer.clone(), &json_style_buffer.clone(), cx)
-            {
+            if let Err(err) = self.reset_style_editors(rust_style_buffer, json_style_buffer, cx) {
                 self.json_style_error = Some(format!("{err}").into());
             } else {
                 self.json_style_error = None;

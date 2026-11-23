@@ -3,6 +3,10 @@ mod workspace;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use tracing_subscriber::{
+    filter::{LevelFilter, Targets},
+    prelude::*,
+};
 
 #[derive(Parser)]
 #[command(name = "cargo xtask")]
@@ -19,9 +23,10 @@ enum CliCommand {
     Licenses(tasks::licenses::LicensesArgs),
     /// Checks that packages conform to a set of standards.
     PackageConformity(tasks::package_conformity::PackageConformityArgs),
-    /// Prints the GPUI crate graph in dependency-first order.
-    Gpui,
-    /// Runs the Linux Bubblewrap sandboxing NixOS VM tests.
+    /// Inspect the GPUI publish plan and its dependencies.
+    #[command(subcommand)]
+    Gpui(tasks::gpui::GpuiCommand),
+    /// Runs the sandbox_linux NixOS VM tests.
     SandboxTests(tasks::sandbox_tests::SandboxTestsArgs),
     /// Runs the Windows WSL Bubblewrap sandbox behavior tests.
     WslSandboxTests(tasks::wsl_sandbox_tests::WslSandboxTestsArgs),
@@ -35,6 +40,18 @@ enum CliCommand {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(
+                    Targets::new()
+                        .with_default(LevelFilter::WARN)
+                        .with_target("crates_io_client", LevelFilter::TRACE),
+                ),
+        )
+        .try_init()
+        .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
 
     match args.command {
         CliCommand::Clippy(args) => tasks::clippy::run_clippy(args),
@@ -43,7 +60,7 @@ fn main() -> Result<()> {
         CliCommand::PackageConformity(args) => {
             tasks::package_conformity::run_package_conformity(args)
         }
-        CliCommand::Gpui => tasks::gpui::run_gpui(),
+        CliCommand::Gpui(args) => tasks::gpui::run_gpui(args),
         CliCommand::SandboxTests(args) => tasks::sandbox_tests::run_sandbox_tests(args),
         CliCommand::WslSandboxTests(args) => tasks::wsl_sandbox_tests::run_wsl_sandbox_tests(args),
         CliCommand::SetupWebrtc(args) => tasks::setup_webrtc::run_setup_webrtc(args),

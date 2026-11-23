@@ -4,7 +4,7 @@ use super::edit_session::{
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v2::schema as acp;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
 use language::LanguageRegistry;
@@ -274,7 +274,7 @@ mod tests {
     use futures::StreamExt as _;
     use gpui::{AppContext as _, Entity, TestAppContext, UpdateGlobal};
     use language::language_settings::FormatOnSave;
-    use language_model::fake_provider::FakeLanguageModel;
+    use language_model::LanguageModelRegistry;
     use project::{Project, ProjectPath};
     use prompt_store::ProjectContext;
     use serde_json::json;
@@ -368,7 +368,11 @@ mod tests {
 
         event_rx.expect_update_fields().await;
         let auth = event_rx.expect_authorization().await;
-        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        let title = auth
+            .tool_call
+            .title
+            .value()
+            .expect("expected authorization title");
         assert!(
             title.contains("agent skills"),
             "Authorization title should mention agent skills, got: {title}",
@@ -394,6 +398,71 @@ mod tests {
         assert_eq!(
             fs.load(&skill_file).await.unwrap().replace("\r\n", "\n"),
             "# My Skill\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_write_always_confirm_in_project(cx: &mut TestAppContext) {
+        let (write_tool, _project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"secrets": {"key.pem": "old"}})).await;
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                WriteFileTool::NAME.into(),
+                agent_settings::ToolRules {
+                    always_confirm: vec![
+                        agent_settings::CompiledRegex::new("^root/secrets/", false).unwrap(),
+                    ],
+                    ..Default::default()
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "root/secrets/key.pem".into(),
+                    content: "new".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        event_rx.expect_update_fields().await;
+        let auth = event_rx.expect_authorization().await;
+        assert_eq!(
+            auth.tool_call.title.value().map(String::as_str),
+            Some("Edit `root/secrets/key.pem`")
+        );
+
+        cx.run_until_parked();
+        assert_eq!(
+            fs.load(path!("/root/secrets/key.pem").as_ref())
+                .await
+                .unwrap(),
+            "old",
+            "the file must not be written before the prompt is answered"
+        );
+
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let EditSessionOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new");
+        assert_eq!(
+            fs.load(path!("/root/secrets/key.pem").as_ref())
+                .await
+                .unwrap(),
+            "new"
         );
     }
 
@@ -538,7 +607,7 @@ mod tests {
             language::LanguageConfig {
                 name: "Rust".into(),
                 matcher: (language::LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -1199,7 +1268,11 @@ mod tests {
         let auth = stream_rx.expect_authorization().await;
 
         // Verify the prompt is the overwrite-mode prompt.
-        let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
+        let content = auth
+            .tool_call
+            .content
+            .value()
+            .expect("expected authorization content");
         let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
         else {
             panic!("expected text body, got: {:?}", content.first());
@@ -1382,7 +1455,7 @@ mod tests {
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = cx.update(|cx| LanguageModelRegistry::test(cx).model("fake"));
         let thread = cx.new(|cx| {
             crate::Thread::new(
                 project.clone(),

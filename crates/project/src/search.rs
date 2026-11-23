@@ -1,7 +1,7 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::{Ok, Result};
 use client::proto;
-use fancy_regex::{Captures, Regex, RegexBuilder};
+use fancy_regex::{Captures, Expander, Regex, RegexBuilder};
 use gpui::Entity;
 use itertools::Itertools as _;
 use language::{Buffer, BufferSnapshot, CharKind};
@@ -9,7 +9,7 @@ use smol::future::yield_now;
 use std::{
     borrow::Cow,
     collections::BTreeSet,
-    io::{BufRead, BufReader, Read},
+    io::{self, Read},
     ops::Range,
     sync::{Arc, LazyLock},
 };
@@ -46,7 +46,7 @@ pub struct SearchInputs {
     buffers: Option<Vec<Entity<Buffer>>>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MatchPositionHint {
     Line(u32),
     ByteOffset(usize),
@@ -85,6 +85,9 @@ pub enum SearchQuery {
     Regex {
         regex: Regex,
         replacement: Option<String>,
+        /// `replacement` with escape sequences resolved and capture references delimited, ready
+        /// for `Captures::expand`. Only set for queries that are not `escaped`.
+        replacement_template: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
@@ -262,6 +265,7 @@ impl SearchQuery {
         Ok(Self::Regex {
             regex,
             replacement: None,
+            replacement_template: None,
             whole_word,
             case_sensitive,
             include_ignored,
@@ -362,19 +366,22 @@ impl SearchQuery {
     }
 
     pub fn with_replacement(mut self, new_replacement: String) -> Self {
-        match self {
-            Self::Text {
-                ref mut replacement,
-                ..
-            }
-            | Self::Regex {
-                ref mut replacement,
+        match &mut self {
+            Self::Text { replacement, .. } => *replacement = Some(new_replacement),
+            Self::Regex {
+                regex,
+                replacement,
+                replacement_template,
+                escaped,
                 ..
             } => {
+                // Prepared here rather than in `replacement_for`, which runs for every hit.
+                *replacement_template =
+                    (!*escaped).then(|| prepare_replacement_template(regex, &new_replacement));
                 *replacement = Some(new_replacement);
-                self
             }
         }
+        self
     }
 
     pub fn to_proto(&self) -> proto::SearchQuery {
@@ -397,49 +404,28 @@ impl SearchQuery {
 
     pub async fn detect(
         &self,
-        mut reader: BufReader<Box<dyn Read + Send + Sync>>,
+        reader: &mut (dyn Read + Send),
     ) -> Result<Option<MatchPositionHint>> {
         let query_str = self.as_str();
         if query_str.is_empty() {
             return Ok(None);
         }
 
-        // Yield from this function every 20KB scanned.
-        const YIELD_THRESHOLD: usize = 20 * 1024;
-
         match self {
+            Self::Text { search, .. } if !query_str.contains('\n') => {
+                detect_single_line(search, reader).await
+            }
             Self::Text { search, .. } => {
-                let mut text = String::new();
-                if query_str.contains('\n') {
-                    reader.read_to_string(&mut text)?;
-                    text::LineEnding::normalize(&mut text);
-                    if search.is_match(&text) {
-                        Ok(Some(MatchPositionHint::default()))
-                    } else {
-                        Ok(None)
-                    }
+                let mut text = read_to_string(reader).await?;
+                text::LineEnding::normalize(&mut text);
+                if search.is_match(&text) {
+                    Ok(Some(MatchPositionHint::default()))
                 } else {
-                    let mut bytes_read = 0;
-                    let mut line_number = u32::default();
-                    while reader.read_line(&mut text)? > 0 {
-                        if search.is_match(&text) {
-                            return Ok(Some(MatchPositionHint::Line(line_number)));
-                        }
-                        bytes_read += text.len();
-                        if bytes_read >= YIELD_THRESHOLD {
-                            bytes_read = 0;
-                            smol::future::yield_now().await;
-                        }
-                        text.clear();
-                        line_number += 1;
-                    }
                     Ok(None)
                 }
             }
             Self::Regex { regex, .. } => {
-                let mut text = String::new();
-
-                reader.read_to_string(&mut text)?;
+                let mut text = read_to_string(reader).await?;
                 text::LineEnding::normalize(&mut text);
                 if let Some(m) = regex.find(&text)? {
                     Ok(Some(MatchPositionHint::ByteOffset(m.start())))
@@ -469,21 +455,10 @@ impl SearchQuery {
 
             SearchQuery::Regex {
                 regex,
-                replacement: Some(replacement),
+                replacement_template: Some(replacement),
                 escaped: false,
                 ..
             } => {
-                static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
-                let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(
-                    replacement,
-                    |c: &Captures<str>| match c.get(0).unwrap().as_str() {
-                        r"\\" => "\\",
-                        r"\n" => "\n",
-                        r"\t" => "\t",
-                        x => unreachable!("Unexpected escape sequence: {}", x),
-                    },
-                );
                 let captures = regex
                     .captures_from_pos(line, hit.start)
                     .ok()
@@ -496,12 +471,13 @@ impl SearchQuery {
                     return Some(regex.replace(line.get(hit)?, replacement));
                 };
                 let mut replaced = String::new();
-                captures.expand(&replacement, &mut replaced);
+                captures.expand(replacement, &mut replaced);
                 Some(Cow::Owned(replaced))
             }
 
             SearchQuery::Regex {
-                replacement: None, ..
+                replacement_template: None,
+                ..
             } => None,
         }
     }
@@ -574,8 +550,12 @@ impl SearchQuery {
 
                     if let std::result::Result::Ok(mat) = mat {
                         let should_push = if *one_match_per_line {
-                            // ensure that only one match per line is returned.
-                            let pos = buffer.offset_to_point(mat.start());
+                            // Ensure that only one match per line is returned.
+                            // Match offsets are relative to `text`, so convert
+                            // them to buffer offsets before looking up the row,
+                            // otherwise we could end up marking rows before
+                            // `subrange` as seen.
+                            let pos = buffer.offset_to_point(range_offset + mat.start());
                             seen_lines.insert(pos.row)
                         } else {
                             true
@@ -711,5 +691,305 @@ impl SearchQuery {
             }
         }
         matches
+    }
+}
+
+/// Resolves the escape sequences supported in replacements and delimits capture references, so
+/// that `Captures::expand` can use the result for every hit as is.
+fn prepare_replacement_template(regex: &Regex, replacement: &str) -> String {
+    static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
+    let replacement =
+        TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(replacement, |c: &Captures<str>| {
+            match c.get(0).unwrap().as_str() {
+                r"\\" => "\\",
+                r"\n" => "\n",
+                r"\t" => "\t",
+                x => unreachable!("Unexpected escape sequence: {}", x),
+            }
+        });
+    delimit_capture_references(regex, &replacement).into_owned()
+}
+
+/// `fancy_regex` reads an unbraced capture reference up to the first character that is neither a
+/// Unicode alphanumeric nor `_`, so `$1ème` refers to a group named `1ème` and expands to nothing.
+/// Unless such a group exists, end the reference before its first non-ASCII character by rewriting
+/// it as `${1}ème`. Every other reference is left for `fancy_regex` to interpret.
+fn delimit_capture_references<'a>(regex: &Regex, replacement: &'a str) -> Cow<'a, str> {
+    let mut delimited = String::new();
+    let mut copied_len = 0;
+    let mut search_start = 0;
+    while let Some(offset) = replacement[search_start..].find('$') {
+        let name_start = search_start + offset + 1;
+        let rest = &replacement[name_start..];
+        if rest.starts_with('$') {
+            search_start = name_start + 1;
+            continue;
+        }
+        let name_len = rest
+            .find(|character: char| !(character.is_alphanumeric() || character == '_'))
+            .unwrap_or(rest.len());
+        let name_end = name_start + name_len;
+        search_start = name_end;
+        let name = &rest[..name_len];
+        let ascii_len = name
+            .find(|character: char| !character.is_ascii())
+            .unwrap_or(name_len);
+        if ascii_len == 0 || ascii_len == name_len {
+            continue;
+        }
+        // `Expander::check` looks up a single name, whereas `Regex::capture_names` lists every
+        // group. It allocates an error when the name is missing, so this must not run per hit.
+        let reference = &replacement[name_start - 1..name_end];
+        if Expander::default().check(reference, regex).is_ok() {
+            continue;
+        }
+        let ascii_end = name_start + ascii_len;
+        delimited.push_str(&replacement[copied_len..name_start]);
+        delimited.push('{');
+        delimited.push_str(&replacement[name_start..ascii_end]);
+        delimited.push('}');
+        copied_len = ascii_end;
+    }
+    if delimited.is_empty() {
+        Cow::Borrowed(replacement)
+    } else {
+        delimited.push_str(&replacement[copied_len..]);
+        Cow::Owned(delimited)
+    }
+}
+
+async fn detect_single_line(
+    search: &AhoCorasick,
+    reader: &mut (dyn Read + Send),
+) -> Result<Option<MatchPositionHint>> {
+    const BLOCK_BYTES: usize = 64 * 1024;
+    let batch_size = search.max_pattern_len().max(BLOCK_BYTES);
+    let carry_len = search.max_pattern_len().saturating_sub(1).max(3);
+    let mut block = vec![0; BLOCK_BYTES];
+    let mut window = TextSearchWindow::default();
+    loop {
+        let batch_end = window.batch_start
+            + if window.first_match.is_some() {
+                BLOCK_BYTES
+            } else {
+                batch_size
+            };
+        let limit = (batch_end - window.bytes.len()).min(BLOCK_BYTES);
+        let read_result = match reader.read(&mut block[..limit]) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result,
+        };
+        if let std::result::Result::Ok(read) = read_result {
+            window.extend(&block[..read], batch_size + carry_len)?;
+            if read > 0 && window.bytes.len() < batch_end {
+                yield_now().await;
+                continue;
+            }
+        }
+        let line_end = window.find_matching_line_end(search);
+        window.validate_prefix(line_end, read_result.is_err())?;
+        if line_end.is_some() {
+            return Ok(window.first_match);
+        }
+        if read_result? == 0 {
+            if window.validated_len < window.bytes.len() {
+                return Err(invalid_data());
+            }
+            return Ok(window.first_match);
+        }
+        window.retain_suffix(if window.first_match.is_some() {
+            3
+        } else {
+            carry_len
+        });
+        yield_now().await;
+    }
+}
+
+#[derive(Default)]
+struct TextSearchWindow {
+    bytes: Vec<u8>,
+    batch_start: usize,
+    validated_len: usize,
+    lines_before_window: usize,
+    first_match: Option<MatchPositionHint>,
+}
+
+impl TextSearchWindow {
+    fn extend(&mut self, bytes: &[u8], max_capacity: usize) -> Result<()> {
+        if self.bytes.len() + bytes.len() > self.bytes.capacity() {
+            let capacity = self
+                .bytes
+                .capacity()
+                .saturating_mul(2)
+                .max(self.bytes.len() + bytes.len())
+                .min(max_capacity);
+            self.bytes.try_reserve_exact(capacity - self.bytes.len())?;
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn find_matching_line_end(&mut self, search: &AhoCorasick) -> Option<usize> {
+        let start = if self.first_match.is_some() {
+            self.batch_start
+        } else {
+            let found = search.find(&self.bytes)?;
+            let line = self.lines_before_window + count_newlines(&self.bytes[..found.start()]);
+            self.first_match = Some(MatchPositionHint::Line(
+                u32::try_from(line).unwrap_or(u32::MAX),
+            ));
+            found.end()
+        };
+        self.bytes[start..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .map(|offset| start + offset + 1)
+    }
+
+    fn validate_prefix(&mut self, line_end: Option<usize>, read_failed: bool) -> Result<()> {
+        let validation_end = line_end.unwrap_or_else(|| {
+            if read_failed {
+                self.bytes
+                    .iter()
+                    .rposition(|&byte| byte == b'\n')
+                    .map_or(self.validated_len, |offset| {
+                        (offset + 1).max(self.validated_len)
+                    })
+            } else {
+                self.bytes.len()
+            }
+        });
+        self.validated_len +=
+            match std::str::from_utf8(&self.bytes[self.validated_len..validation_end]) {
+                Err(error) if error.error_len().is_some() => return Err(invalid_data()),
+                Err(error) => error.valid_up_to(),
+                _ => validation_end - self.validated_len,
+            };
+        Ok(())
+    }
+
+    fn retain_suffix(&mut self, length: usize) {
+        let consumed = self.bytes.len().saturating_sub(length);
+        self.lines_before_window += count_newlines(&self.bytes[..consumed]);
+        self.bytes.drain(..consumed);
+        self.batch_start = self.bytes.len();
+        self.validated_len -= consumed;
+    }
+}
+
+async fn read_to_string(reader: &mut (dyn Read + Send)) -> Result<String> {
+    const BLOCK_BYTES: usize = 64 * 1024;
+    let mut bytes = Vec::new();
+    loop {
+        let bytes_read = (&mut *reader)
+            .take(BLOCK_BYTES as u64)
+            .read_to_end(&mut bytes)?;
+        if bytes_read < BLOCK_BYTES {
+            return String::from_utf8(bytes).map_err(|_| invalid_data());
+        }
+        yield_now().await;
+    }
+}
+
+fn count_newlines(bytes: &[u8]) -> usize {
+    bytes.iter().filter(|&&byte| byte == b'\n').count()
+}
+
+fn invalid_data() -> anyhow::Error {
+    anyhow::Error::from(io::Error::from(io::ErrorKind::InvalidData))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchQuery;
+    use util::paths::PathMatcher;
+
+    fn regex_query(pattern: &str, replacement: &str) -> SearchQuery {
+        SearchQuery::regex(
+            pattern,
+            false,
+            true,
+            false,
+            false,
+            PathMatcher::default(),
+            PathMatcher::default(),
+            false,
+            None,
+        )
+        .unwrap()
+        .with_replacement(replacement.to_string())
+    }
+
+    fn replace_first_hit(pattern: &str, replacement: &str, line: &str) -> Option<String> {
+        let query = regex_query(pattern, replacement);
+        let hit = query.search_str(line).into_iter().next()?;
+        query
+            .replacement_for(line, hit)
+            .map(|replacement| replacement.into_owned())
+    }
+
+    #[test]
+    fn test_replacement_for_capture_reference_followed_by_non_ascii_text() {
+        assert_eq!(
+            replace_first_hit(r"(\d+)e", "$1ème", "2e étage").as_deref(),
+            Some("2ème")
+        );
+        assert_eq!(
+            replace_first_hit(r"(\d+)e", "${1}ème", "2e étage").as_deref(),
+            Some("2ème")
+        );
+        assert_eq!(
+            replace_first_hit(r"(?<number>\d+)e", "$numberème", "2e étage").as_deref(),
+            Some("2ème")
+        );
+    }
+
+    #[test]
+    fn test_replacement_for_capture_reference_when_hit_does_not_match_in_line() {
+        // The lookbehind keeps the pattern from matching at the hit within the line, which
+        // exercises the fallback that matches the hit on its own.
+        let query = regex_query(r"(?<!x)(\d+)e", "$1ème");
+        let line = "x2e";
+        let hit = 1..line.len();
+        assert_eq!(query.replacement_for(line, hit).as_deref(), Some("2ème"));
+    }
+
+    #[test]
+    fn test_with_replacement_prepares_the_replacement_again() {
+        let query = regex_query(r"(\d+)e", "$1ème");
+        assert_eq!(query.replacement(), Some("$1ème"));
+        assert_eq!(query.replacement_for("2e", 0..2).as_deref(), Some("2ème"));
+
+        let query = query.with_replacement(r"$1è\t".to_string());
+        assert_eq!(query.replacement(), Some(r"$1è\t"));
+        assert_eq!(query.replacement_for("2e", 0..2).as_deref(), Some("2è\t"));
+    }
+
+    #[test]
+    fn test_replacement_for_keeps_other_capture_reference_syntax() {
+        for (pattern, replacement, line, expected) in [
+            // Braced references look up a group by name before trying it as an index.
+            (r"(?<2>a)b", "${2}", "ab", "a"),
+            (r"(?<02>a)(b)", "${02}", "ab", "a"),
+            // Braces around anything but a name are literal text.
+            (r"(a)", "${x:-default}", "a", "${x:-default}"),
+            (r"(a)", "${${${", "a", "${${${"),
+            (r"(a)", "$$1ème", "a", "$1ème"),
+            // An unbraced reference that names an existing group is used whole.
+            (r"(?<1ème>a)(b)", "$1ème", "ab", "a"),
+            (r"(?<aé>x)?(y)", "[$aé]", "y", "[]"),
+            (r"(?<数>\d+)", "$数", "12", "12"),
+            // ASCII word characters still extend an unbraced reference.
+            (r"old_(\w+)", "$1_old", "old_name", ""),
+            (r"old_(\w+)", "${1}_old", "old_name", "name_old"),
+        ] {
+            assert_eq!(
+                replace_first_hit(pattern, replacement, line).as_deref(),
+                Some(expected),
+                "replacing {pattern:?} with {replacement:?} in {line:?}"
+            );
+        }
     }
 }

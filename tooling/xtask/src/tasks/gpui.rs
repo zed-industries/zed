@@ -1,16 +1,43 @@
 #![allow(clippy::disallowed_methods, reason = "tooling is exempt")]
 
 pub mod crate_graph;
+pub mod publish_plan;
+pub mod registry;
+pub mod validation;
 
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{Context as _, Result, bail};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use guppy::graph::DependencyDirection;
+
+use crate::tasks::workflows::GitSha;
+
+#[derive(Subcommand)]
+pub enum GpuiCommand {
+    /// Print the publish plan in dependency-first order
+    Plan(GpuiArgs),
+    /// Show the dependency paths that put a crate in the publish list
+    Why {
+        /// Original Cargo package name
+        crate_name: String,
+    },
+}
 
 #[derive(Parser)]
 pub struct GpuiArgs {
+    /// Full commit SHA to use when checking out workspace crates
+    #[arg(long)]
+    sha: GitSha,
+    /// Whether this is a dry-run
+    #[arg(short, long, default_value_t = true)]
+    dry_run: std::primitive::bool,
+}
+
+#[derive(Parser)]
+#[allow(unused)]
+struct PublishGpuiArgs {
     /// Perform a dry-run and wait for user confirmation before each publish
     #[arg(long)]
     dry_run: bool,
@@ -20,18 +47,67 @@ pub struct GpuiArgs {
     skip_to: Option<String>,
 }
 
-pub fn run_gpui() -> Result<()> {
-    let graph = crate_graph::load_workspace_graph()?;
-    let crates = crate_graph::gpui_crates(&graph)?;
-
-    println!("GPUI crate graph ({} crates):", crates.len());
-    for package in crates.packages(DependencyDirection::Reverse) {
-        println!("{} ({})", package.name(), package.source());
-        for link in package.direct_links().filter(|link| !link.dev_only()) {
-            match crates.contains(link.to().id()) {
-                Ok(true) => println!("  -> {}", link.to().name()),
-                Ok(false) => {}
-                Err(e) => eprintln!("  error checking dependency {}: {}", link.to().name(), e),
+pub fn run_gpui(command: GpuiCommand) -> Result<()> {
+    match command {
+        GpuiCommand::Plan(args) => {
+            let token = std::env::var("CARGO_REGISTRY_TOKEN").context(
+                "CARGO_REGISTRY_TOKEN is required to inspect crates.io trusted publishing",
+            )?;
+            let client = crates_io_client::RealCratesIoClient::new(
+                std::sync::Arc::new(reqwest_client::ReqwestClient::user_agent(
+                    "Zed GPUI releases",
+                )?),
+                crates_io_client::ApiToken::new(token),
+            );
+            let runtime =
+                tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
+            let graph = crate_graph::load_workspace_graph()?;
+            let plan = publish_plan::build_publish_plan(&graph)?;
+            validation::validate(&plan)?;
+            let checked = runtime.block_on(async {
+                let checked = registry::check_plan(&client, &plan).await?;
+                if !args.dry_run {
+                    registry::update_crates(&client, &checked).await?;
+                    registry::check_plan(&client, &plan).await
+                } else {
+                    Ok(checked)
+                }
+            })?;
+            println!(
+                "GPUI publish plan ({} crates, dependencies first):",
+                plan.len()
+            );
+            for (entry, checked) in plan.iter().zip(&checked) {
+                let package = entry.repository.publish_info(entry.package.name());
+                println!(
+                    "{} -> {} ({}) [{:?}]",
+                    package.original_name,
+                    match &checked.state {
+                        registry::PublishState::NotPublished { target_crate_name } =>
+                            target_crate_name,
+                        _ => &checked.name,
+                    },
+                    package.repository.display(&args),
+                    checked.state
+                );
+            }
+        }
+        GpuiCommand::Why { crate_name } => {
+            let graph = crate_graph::load_workspace_graph()?;
+            let explanation = crate_graph::explain_crate(&graph, &crate_name)?;
+            println!(
+                "Why `{crate_name}` is in the GPUI publish list (A -> B means A depends on B):"
+            );
+            for package in explanation.packages(DependencyDirection::Forward) {
+                if crate_graph::is_gpui_root(package) {
+                    println!("  {} is a GPUI workspace root", package.name());
+                }
+            }
+            for link in explanation
+                .links(DependencyDirection::Forward)
+                .filter(|link| !link.dev_only())
+            {
+                println!("  {} -> {}", link.from().name(), link.to().name());
             }
         }
     }
@@ -39,7 +115,7 @@ pub fn run_gpui() -> Result<()> {
 }
 
 #[allow(unused, reason = "retained while GPUI releases are reworked")]
-fn run_publish_gpui(args: GpuiArgs) -> Result<()> {
+fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
     println!(
         "Starting GPUI publish process{}...",
         if args.dry_run { " (with dry-run)" } else { "" }
@@ -362,6 +438,29 @@ mod tests {
     use indoc::indoc;
 
     use super::*;
+
+    #[test]
+    fn gpui_plan_accepts_an_explicit_workspace_sha() -> Result<()> {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let args = crate::Args::try_parse_from(["xtask", "gpui", "plan", "--sha", sha])?;
+        let crate::CliCommand::Gpui(GpuiCommand::Plan(args)) = args.command else {
+            bail!("expected the GPUI plan command");
+        };
+        assert_eq!(args.sha.as_ref(), sha);
+        Ok(())
+    }
+
+    #[test]
+    fn gpui_plan_requires_a_full_workspace_sha() {
+        assert!(crate::Args::try_parse_from(["xtask", "gpui"]).is_err());
+        assert!(crate::Args::try_parse_from(["xtask", "gpui", "plan"]).is_err());
+        for sha in ["HEAD", "abc", "g123456789abcdef0123456789abcdef01234567"] {
+            assert!(
+                crate::Args::try_parse_from(["xtask", "gpui", "plan", "--sha", sha]).is_err(),
+                "{sha}"
+            );
+        }
+    }
 
     #[test]
     fn test_update_dependency_version_in_toml() {

@@ -8,7 +8,7 @@ pub mod util;
 
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::CompletionRequestStatus;
-use http_client::{StatusCode, http};
+use http::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Sub};
@@ -30,6 +30,12 @@ pub use crate::util::{
     parse_tool_arguments,
 };
 pub use gpui_shared_string::SharedString;
+
+/// The events of a streaming completion, as produced by a provider.
+pub type LanguageModelCompletionStream = futures::stream::BoxStream<
+    'static,
+    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+>;
 
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -60,6 +66,36 @@ pub enum LanguageModelCompletionEvent {
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
     Compaction(CompactionUpdate),
+    /// Transformations the provider applied or flagged while processing the request.
+    InputTransformations(Vec<InputTransformation>),
+}
+
+/// Provider-reported refusal metadata, not an inferred content classification.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct RefusalDetails {
+    pub reason: String,
+    /// Only categories explicitly identified as blocking; empty means unavailable.
+    pub categories: Vec<String>,
+    pub stage: Option<RefusalStage>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalStage {
+    Input,
+    Output,
+}
+
+/// A provider-reported transformation or mismatch affecting request content.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct InputTransformation {
+    /// Provider-specific transformation type, including unrecognized future types.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Provider-specific location, such as `messages.1.content.0`.
+    pub path: String,
+    /// Provider-specific reason, such as `prefix_binding_mismatch`.
+    pub reason: String,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -86,7 +122,9 @@ impl LanguageModelCompletionEvent {
                 Ok(Some(LanguageModelCompletionEvent::Queued { position }))
             }
             CompletionRequestStatus::Started => Ok(Some(LanguageModelCompletionEvent::Started)),
-            CompletionRequestStatus::Unknown | CompletionRequestStatus::StreamEnded => Ok(None),
+            CompletionRequestStatus::KeepAlive
+            | CompletionRequestStatus::Unknown
+            | CompletionRequestStatus::StreamEnded => Ok(None),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -243,6 +281,13 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    /// The provider no longer offers a model with this id, for example after
+    /// its settings or fetched model list changed.
+    #[error("{provider} no longer offers the model {}", model.0)]
+    ModelUnavailable {
+        provider: LanguageModelProviderName,
+        model: LanguageModelId,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -397,6 +442,7 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            | Self::ModelUnavailable { .. }
             | Self::Other(_) => false,
         }
     }
@@ -426,6 +472,7 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            | Self::ModelUnavailable { .. }
             | Self::Other(_) => None,
         }
     }
@@ -498,13 +545,19 @@ fn is_invalid_encrypted_content_message(message: &str) -> bool {
         == Some("invalid_encrypted_content")
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
-    Refusal,
+    Refusal(Option<RefusalDetails>),
+}
+
+impl StopReason {
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, Self::Refusal(_))
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
@@ -674,11 +727,12 @@ impl LanguageModelToolUseInput {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageModelEffortLevel {
     pub name: SharedString,
     pub value: SharedString,
     pub is_default: bool,
+    pub supports_disabling_thinking: Option<bool>,
 }
 
 /// An error that occurred when trying to authenticate the language model provider.

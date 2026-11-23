@@ -128,33 +128,68 @@ pub struct WorktreeSettingsContent {
     #[serde(default)]
     pub prevent_sharing_in_public_channels: bool,
 
-    /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
-    /// `file_scan_inclusions`.
+    /// Exclude files matching these glob patterns from file scans, file searches,
+    /// and the project file tree. Takes precedence over `file_scan_inclusions`.
     ///
-    /// A `"..."` entry expands to the value being overridden, so
-    /// `["**/node_modules", "..."]` adds to the inherited globs instead of
-    /// replacing them. Leave `"..."` out to replace them.
+    /// Default:
     ///
-    /// Default: [
-    ///   "**/.git",
-    ///   "**/.svn",
-    ///   "**/.hg",
-    ///   "**/.jj",
-    ///   "**/CVS",
-    ///   "**/.DS_Store",
-    ///   "**/Thumbs.db",
-    ///   "**/.classpath",
-    ///   "**/.settings"
-    /// ]
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": [
+    ///     "**/.git",
+    ///     "**/.svn",
+    ///     "**/.hg",
+    ///     "**/.jj",
+    ///     "**/.sl",
+    ///     "**/.repo",
+    ///     "**/CVS",
+    ///     "**/.DS_Store",
+    ///     "**/Thumbs.db",
+    ///     "**/.classpath",
+    ///     "**/.settings"
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": ["**/node_modules", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub file_scan_exclusions: Option<SplicingVec>,
 
-    /// Always include files that match these globs when scanning for files, even if they're
-    /// ignored by git. This setting is overridden by `file_scan_exclusions`.
-    /// Default: [
-    ///  ".env*",
-    ///  "docker-compose.*.yml",
-    /// ]
-    pub file_scan_inclusions: Option<Vec<String>>,
+    /// Include files matching these glob patterns when scanning, even if ignored
+    /// by Git. Note that broad patterns can slow file scanning.
+    /// `file_scan_exclusions` takes precedence.
+    ///
+    /// Default:
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_inclusions": [".env*"]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_inclusions": ["**/build/**", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    pub file_scan_inclusions: Option<SplicingVec>,
 
     /// When to scan content of linked directories.
     ///
@@ -176,18 +211,60 @@ pub struct WorktreeSettingsContent {
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
     pub private_files: Option<ExtendingVec<String>>,
 
-    /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
-    /// Default: ["**/.*"]
-    pub hidden_files: Option<Vec<String>>,
+    /// Treat files and folders matching these glob patterns as hidden, including
+    /// files inside matching folders. To hide these entries, run
+    /// `project panel: toggle hide hidden` from the command palette or set
+    /// `project_panel.hide_hidden` to `true`.
+    ///
+    /// Default:
+    ///
+    /// ```json
+    /// {
+    ///   "hidden_files": ["**/.*"]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "hidden_files": ["**/*.log", "..."],
+    ///   "project_panel": {
+    ///     "hide_hidden": true
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    pub hidden_files: Option<SplicingVec>,
 
-    /// Treat the files matching these globs as read-only. These files can be opened and viewed,
-    /// but cannot be edited. This is useful for generated files, build outputs, or files from
-    /// external dependencies that should not be modified directly.
+    /// Treat files matching these glob patterns as read-only when opened. You can
+    /// view but not edit them, which is useful for build outputs, external
+    /// dependencies, or generated files.
     ///
-    /// A "..." entry expands to the value being overridden. Leave "..." out
-    /// to replace the inherited globs, or use an empty list to clear them.
+    /// Default:
     ///
-    /// Default: []
+    /// ```json
+    /// {
+    ///   "read_only_files": []
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "read_only_files": ["**/build/**", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub read_only_files: Option<SplicingVec>,
 }
 
@@ -554,6 +631,12 @@ impl std::fmt::Debug for ContextServerCommand {
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
+    /// Format for absolute Git dates: "locale", "iso", or a strftime format
+    /// such as "%Y-%m-%d %H:%M" or "%b %d, %Y". Invalid formats fall back to "locale".
+    ///
+    /// Default: locale
+    #[schemars(extend("examples" = ["locale", "iso", "%Y-%m-%d %H:%M", "%b %d, %Y"]))]
+    pub date_format: Option<String>,
     /// Whether or not to enable git integration.
     ///
     /// Default: true
@@ -578,6 +661,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: Option<BranchPickerSettingsContent>,
+    /// Stash picker settings.
+    pub stash_picker: Option<StashPickerSettings>,
+    /// Commit view settings.
+    pub commit_view: Option<CommitViewSettingsContent>,
     /// File diff settings.
     pub file_diff: Option<FileDiffSettingsContent>,
     /// How hunks are displayed visually in the editor.
@@ -617,6 +704,23 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,
+    /// Settings for automatically fetching the default branch's remote and the current branch's upstream remote.
+    pub auto_fetch: Option<AutoFetchSettingsContent>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct AutoFetchSettingsContent {
+    /// Whether to automatically fetch in the background.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// How long to wait between automatic fetches, in seconds.
+    /// Only used when `enabled` is true. (min: 15)
+    ///
+    /// Default: 60
+    pub interval_secs: Option<u64>,
 }
 
 #[with_fallible_options]
@@ -686,6 +790,10 @@ pub enum InlineBlameLocation {
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
+    /// Whether to show relative or absolute dates.
+    ///
+    /// Default: relative
+    pub date_style: Option<GitDateStyle>,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
@@ -719,6 +827,10 @@ pub struct InlineBlameSettings {
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct BlameSettings {
+    /// Whether to show relative or absolute dates in the blame gutter.
+    ///
+    /// Default: relative
+    pub date_style: Option<GitDateStyle>,
     /// Whether to show the avatar of the author of the commit.
     ///
     /// Default: true
@@ -729,10 +841,58 @@ pub struct BlameSettings {
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct BranchPickerSettingsContent {
+    /// Whether to show relative or absolute dates.
+    ///
+    /// Default: relative
+    pub date_style: Option<GitDateStyle>,
     /// Whether to show author name as part of the commit information.
     ///
-    /// Default: false
+    /// Default: true
     pub show_author_name: Option<bool>,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitDateStyle {
+    #[default]
+    Relative,
+    Absolute,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct StashPickerSettings {
+    /// Whether to show relative or absolute dates.
+    ///
+    /// Default: relative
+    pub date_style: Option<GitDateStyle>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct CommitViewSettingsContent {
+    /// Whether newly opened commit views show the full commit description.
+    ///
+    /// Default: false
+    pub expand_description: Option<bool>,
+    /// Whether newly opened commit views expand every changed file.
+    ///
+    /// Default: true
+    pub expand_files: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -934,7 +1094,7 @@ pub enum DiagnosticSeverityContent {
 pub struct GitHostingProviderConfig {
     /// The type of the provider.
     ///
-    /// Must be one of `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, `sourcehut`, or `tangled`.
+    /// Must be one of `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, `gerrit`, `sourcehut`, `tangled`, or `gitiles`.
     pub provider: GitHostingProviderKind,
 
     /// The base URL for the provider (e.g., "https://code.corp.big.com").
@@ -952,8 +1112,10 @@ pub enum GitHostingProviderKind {
     Bitbucket,
     Gitea,
     Forgejo,
+    Gerrit,
     SourceHut,
     Tangled,
+    Gitiles,
 }
 
 #[cfg(test)]
@@ -1042,6 +1204,165 @@ mod tests {
             settings.file_scan_exclusions.unwrap().0,
             vec![SplicingVec::REST, "**/target"]
         );
+    }
+
+    fn inclusions(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            file_scan_inclusions: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_each_layer() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.user"]));
+        assert_eq!(settings, inclusions(&[".env*", "**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project", SplicingVec::REST]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.project", ".env*", "**/*.user"])
+        );
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_replace_and_clear() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&["**/*.user"]));
+        assert_eq!(settings, inclusions(&["**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project"]));
+
+        settings.merge_from(&inclusions(&[]));
+        assert_eq!(settings, inclusions(&[]));
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.next"]));
+        assert_eq!(settings, inclusions(&["**/*.next"]));
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_preserves_first_occurrence() {
+        let inherited = inclusions(&[".env*", "**/*.user"]);
+        let mut settings = inherited.clone();
+        settings.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[
+            "**/*.user",
+            SplicingVec::REST,
+            ".env*",
+            "**/*.project",
+            SplicingVec::REST,
+            "**/*.project",
+        ]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.user", ".env*", "**/*.project"])
+        );
+
+        settings.merge_from(&inclusions(&["**/*.project", "**/*.user", "**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project", "**/*.user"]));
+    }
+
+    fn hidden_files(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            hidden_files: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_hidden_files_splice_each_layer() {
+        let mut settings = hidden_files(&["**/.*"]);
+        settings.merge_from(&hidden_files(&[SplicingVec::REST, "**/*.user"]));
+        assert_eq!(settings, hidden_files(&["**/.*", "**/*.user"]));
+
+        settings.merge_from(&hidden_files(&["**/*.project", SplicingVec::REST]));
+        assert_eq!(
+            settings,
+            hidden_files(&["**/*.project", "**/.*", "**/*.user"])
+        );
+
+        settings.merge_from(&hidden_files(&[
+            "**/*.before",
+            SplicingVec::REST,
+            "**/*.after",
+        ]));
+        assert_eq!(
+            settings,
+            hidden_files(&[
+                "**/*.before",
+                "**/*.project",
+                "**/.*",
+                "**/*.user",
+                "**/*.after",
+            ])
+        );
+    }
+
+    #[test]
+    fn test_hidden_files_replace_and_clear() {
+        let mut settings = hidden_files(&["**/.*"]);
+        settings.merge_from(&hidden_files(&["**/*.user"]));
+        assert_eq!(settings, hidden_files(&["**/*.user"]));
+
+        settings.merge_from(&hidden_files(&["**/*.project"]));
+        assert_eq!(settings, hidden_files(&["**/*.project"]));
+
+        settings.merge_from(&hidden_files(&[]));
+        assert_eq!(settings, hidden_files(&[]));
+
+        settings.merge_from(&hidden_files(&[SplicingVec::REST, "**/*.next"]));
+        assert_eq!(settings, hidden_files(&["**/*.next"]));
+    }
+
+    #[test]
+    fn test_hidden_files_splice_preserves_first_occurrence() {
+        let inherited = hidden_files(&["**/.*", "**/*.user"]);
+        let mut settings = inherited.clone();
+        settings.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&hidden_files(&[SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&hidden_files(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&hidden_files(&[
+            "**/*.user",
+            SplicingVec::REST,
+            "**/.*",
+            "**/*.project",
+            SplicingVec::REST,
+            "**/*.project",
+        ]));
+        assert_eq!(
+            settings,
+            hidden_files(&["**/*.user", "**/.*", "**/*.project"])
+        );
+
+        settings.merge_from(&hidden_files(&[
+            "**/*.project",
+            "**/*.user",
+            "**/*.project",
+        ]));
+        assert_eq!(settings, hidden_files(&["**/*.project", "**/*.user"]));
     }
 
     fn read_only_files(globs: &[&str]) -> WorktreeSettingsContent {

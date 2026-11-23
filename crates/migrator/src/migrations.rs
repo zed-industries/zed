@@ -136,7 +136,7 @@ pub(crate) mod m_2025_01_29 {
     mod settings;
 
     pub(crate) use keymap::KEYMAP_PATTERNS;
-    pub(crate) use settings::{SETTINGS_PATTERNS, replace_edit_prediction_provider_setting};
+    pub(crate) use settings::SETTINGS_PATTERNS;
 }
 
 pub(crate) mod m_2025_01_30 {
@@ -375,4 +375,16 @@ pub(crate) mod m_2026_08_30 {
     mod settings;
 
     pub(crate) use settings::nest_markdown_preview_settings;
+}
+
+pub(crate) mod m_2026_09_16 {
+    mod settings;
+
+    pub(crate) use settings::nest_agent_threads_sidebar_settings;
+}
+
+pub(crate) mod m_2026_09_29 {
+    mod settings;
+
+    pub(crate) use settings::move_copilot_enterprise_uri;
 }

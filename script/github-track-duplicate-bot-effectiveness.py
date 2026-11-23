@@ -92,6 +92,16 @@ def is_staff_member(username):
         raise
 
 
+def issue_exists(issue_number):
+    try:
+        github_rest_api("GET", f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}")
+    except requests.HTTPError as error:
+        if error.response.status_code in (404, 410):
+            return False
+        raise
+    return True
+
+
 def fetch_issue(issue_number):
     data = github_rest_api(
         "GET", f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}"
@@ -511,6 +521,13 @@ if __name__ == "__main__":
         PROJECT_NUMBER = DEFAULT_PROJECT_NUMBER
 
     if args.command == "classify-closed":
-        classify_closed(args.issue_number, args.closer_login, args.state_reason)
+        # The issue can be deleted or transferred mid-run, which surfaces as a
+        # different error depending on which REST or GraphQL call hits it first.
+        try:
+            classify_closed(args.issue_number, args.closer_login, args.state_reason)
+        except Exception:
+            if issue_exists(args.issue_number):
+                raise
+            print(f"Skipping: issue #{args.issue_number} no longer exists (deleted or transferred)")
     elif args.command == "classify-open":
         classify_open()

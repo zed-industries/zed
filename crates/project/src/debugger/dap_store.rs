@@ -16,7 +16,7 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, DapRegistry, DebugRequest, EvaluateArgumentsContext, StackFrameId,
+    DapRegistry, DebugRequest, EvaluateArgumentsContext, StackFrameId,
     adapters::{
         DapDelegate, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
@@ -552,17 +552,6 @@ impl DapStore {
         self.sessions.values()
     }
 
-    pub fn capabilities_by_id(
-        &self,
-        session_id: impl Borrow<SessionId>,
-        cx: &App,
-    ) -> Option<Capabilities> {
-        let session_id = session_id.borrow();
-        self.sessions
-            .get(session_id)
-            .map(|client| client.read(cx).capabilities.clone())
-    }
-
     pub fn breakpoint_store(&self) -> &Entity<BreakpointStore> {
         &self.breakpoint_store
     }
@@ -691,6 +680,7 @@ impl DapStore {
                             padding_left: false,
                             padding_right: false,
                             tooltip: None,
+                            text_edits: None,
                             resolve_state: ResolveState::Resolved,
                         });
                     }
@@ -712,6 +702,7 @@ impl DapStore {
                                 padding_left: false,
                                 padding_right: false,
                                 tooltip: None,
+                                text_edits: None,
                                 resolve_state: ResolveState::Resolved,
                             });
                         };
@@ -928,10 +919,6 @@ impl DapStore {
 
     pub fn adapter_options(&self, name: &str) -> Option<Arc<PersistedAdapterOptions>> {
         self.adapter_options.get(name).cloned()
-    }
-
-    pub fn all_adapter_options(&self) -> &BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>> {
-        &self.adapter_options
     }
 }
 
