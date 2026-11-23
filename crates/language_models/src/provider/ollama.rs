@@ -1216,12 +1216,14 @@ fn ollama_thinking_value(
             return ThinkingValue::Boolean(false);
         }
 
+        let thinking = model.thinking.as_ref();
         request
             .thinking_effort
             .clone()
             .map(ThinkingValue::Level)
+            .filter(|effort| thinking.is_some_and(|thinking| thinking.values.contains(effort)))
             .or_else(|| {
-                model.thinking.as_ref().and_then(|thinking| {
+                thinking.and_then(|thinking| {
                     if let ThinkingValue::Level(default) = &thinking.default {
                         Some(ThinkingValue::Level(default.clone()))
                     } else {
@@ -1494,6 +1496,45 @@ mod tests {
         assert_eq!(
             ollama_thinking_value(&model, &request),
             Some(ThinkingValue::Boolean(false))
+        );
+    }
+
+    #[test]
+    fn test_ollama_thinking_request_value_ignores_unsupported_effort() {
+        let stale_effort_request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("xhigh".to_string()),
+            ..Default::default()
+        };
+
+        let model = thinking_model(
+            vec![
+                ThinkingValue::Level("low".to_string()),
+                ThinkingValue::Level("high".to_string()),
+            ],
+            ThinkingValue::Level("high".to_string()),
+        );
+        assert_eq!(
+            ollama_thinking_value(&model, &stale_effort_request),
+            Some(ThinkingValue::Level("high".to_string()))
+        );
+
+        let model = thinking_model(
+            vec![ThinkingValue::Boolean(false), ThinkingValue::Boolean(true)],
+            ThinkingValue::Boolean(true),
+        );
+        assert_eq!(
+            ollama_thinking_value(&model, &stale_effort_request),
+            Some(ThinkingValue::Boolean(true))
+        );
+
+        let model_without_thinking_info = ollama::Model {
+            thinking: None,
+            ..thinking_model(Vec::new(), ThinkingValue::Boolean(true))
+        };
+        assert_eq!(
+            ollama_thinking_value(&model_without_thinking_info, &stale_effort_request),
+            Some(ThinkingValue::Boolean(true))
         );
     }
 }
