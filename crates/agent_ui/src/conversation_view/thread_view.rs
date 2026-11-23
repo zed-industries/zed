@@ -9446,17 +9446,30 @@ impl ThreadView {
     ) -> Div {
         let (heading, sender) = match source {
             agent::BackgroundResultSource::Command(terminal_id) => {
+                let heading = Self::background_command_heading(message);
                 if let Some(terminal_id) = terminal_id
                     && let Some(terminal) =
-                        self.render_finished_background_command(terminal_id, window, cx)
+                        self.render_finished_background_command(terminal_id, heading, window, cx)
                 {
                     return terminal;
                 }
-                ("Background command finished", None)
+                (heading, None)
             }
             agent::BackgroundResultSource::Agent(sender) => ("Result from", Some(sender)),
         };
         self.render_message_from_session(entry_ix, heading, sender, message, window, cx)
+    }
+
+    /// A background command the user stopped did not finish on its own; say so.
+    fn background_command_heading(message: &acp_thread::UserMessage) -> &'static str {
+        let status = match message.content.source_blocks().first() {
+            Some(acp_v2::ContentBlock::Text(text)) => agent::background_result_status(&text.text),
+            _ => None,
+        };
+        match status {
+            Some("stopped") => "Background command stopped",
+            _ => "Background command finished",
+        }
     }
 
     /// The model receives a background command's output as text. The user is better
@@ -9465,6 +9478,7 @@ impl ThreadView {
     fn render_finished_background_command(
         &self,
         terminal_id: &acp_v2::TerminalId,
+        heading: &'static str,
         window: &Window,
         cx: &Context<Self>,
     ) -> Option<Div> {
@@ -9497,7 +9511,7 @@ impl ThreadView {
                                 .color(Color::Muted),
                         )
                         .child(
-                            Label::new("Background command finished")
+                            Label::new(heading)
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         ),

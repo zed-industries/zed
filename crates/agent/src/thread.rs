@@ -4828,9 +4828,12 @@ impl Thread {
 
     /// Whether subagents or commands started in the background are still
     /// working for this thread, which can be the case while the thread itself
-    /// is idle.
+    /// is idle. A command that was asked to stop no longer counts, even before
+    /// its process has exited.
     pub fn has_background_work(&self) -> bool {
-        !self.background_commands.is_empty()
+        self.background_commands
+            .iter()
+            .any(|command| !command.stopped_by_agent)
             || self
                 .background_subagents
                 .iter()
@@ -4913,6 +4916,10 @@ impl Thread {
             notices.push(crate::stopped_background_agent_message(&session_id, &title));
             stopping.push(subagent.update(cx, |thread, cx| thread.stop_for_parent(cx)));
         }
+        // A stopped subagent can take a while to wind down its turn. It is no
+        // longer working for this thread, though: it reports nothing back, and
+        // it already has a notice, so it is not saved as interrupted either.
+        self.background_subagents.clear();
 
         let mut terminals = Vec::new();
         for command in &mut self.background_commands {
@@ -4954,10 +4961,11 @@ impl Thread {
     }
 
     /// The commands this thread left running in the background, as terminal
-    /// id and command line.
+    /// id and command line. A command that was asked to stop is left out.
     pub fn background_commands(&self) -> Vec<(acp_v2::TerminalId, SharedString)> {
         self.background_commands
             .iter()
+            .filter(|command| !command.stopped_by_agent)
             .map(|command| (command.id.clone(), command.command.clone()))
             .collect()
     }

@@ -6342,6 +6342,42 @@ fn test_background_agent_result_names_its_sender() {
     assert_eq!(background_result_source("a message from the user"), None);
 }
 
+#[test]
+fn test_background_result_status() {
+    let terminal_id = acp_v2::TerminalId::new("term");
+    assert_eq!(
+        background_result_status(&crate::stopped_background_command_message(
+            &terminal_id,
+            "make"
+        )),
+        Some("stopped")
+    );
+    assert_eq!(
+        background_result_status(&crate::interrupted_background_command_message(
+            &terminal_id,
+            "make"
+        )),
+        Some("interrupted")
+    );
+    assert_eq!(
+        background_result_status(
+            "<background_agent_result session_id=\"abc\" status=\"completed\">\ndone"
+        ),
+        Some("completed")
+    );
+    // A finished command's message has no status, and a status in its output
+    // is not the message's.
+    assert_eq!(
+        background_result_status(&background_command_result_message(
+            &terminal_id,
+            "make",
+            "status=\"stopped\""
+        )),
+        None
+    );
+    assert_eq!(background_result_status("status=\"stopped\">"), None);
+}
+
 #[gpui::test]
 async fn test_stop_background_command_kills_it_and_returns_its_output(cx: &mut TestAppContext) {
     use crate::ThreadEnvironment as _;
@@ -7058,9 +7094,16 @@ async fn test_stopping_background_work_stops_a_subagent_and_a_command_on_the_idl
     });
     let entries_before = acp_thread.read_with(cx, |thread, _| thread.entries().len());
 
-    thread
-        .update(cx, |thread, cx| thread.stop_background_work(cx))
-        .await;
+    let stopped = thread.update(cx, |thread, cx| thread.stop_background_work(cx));
+    // The thread stops counting the work as running at once, before the
+    // subagent has wound down its turn and the command's process has exited,
+    // so that the sidebar shows it as done when the user clicks Stop.
+    thread.read_with(cx, |thread, cx| {
+        assert!(!thread.has_background_work());
+        assert!(thread.active_subagents(cx).is_empty());
+        assert!(thread.background_commands().is_empty());
+    });
+    stopped.await;
     cx.run_until_parked();
     assert!(terminal.was_killed());
 

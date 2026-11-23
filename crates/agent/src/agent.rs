@@ -4151,6 +4151,16 @@ pub fn background_result_source(text: &str) -> Option<BackgroundResultSource> {
     }
 }
 
+/// The `status` that `text` reports, when `text` is one of the messages that
+/// deliver the result of background work and its opening tag has one.
+pub fn background_result_status(text: &str) -> Option<&str> {
+    background_result_source(text)?;
+    let (opening_tag, _) = text.split_once('>')?;
+    let (_, rest) = opening_tag.split_once(" status=\"")?;
+    let (status, _) = rest.split_once('"')?;
+    Some(status)
+}
+
 // These results reach the model as a user message, the only role a new turn
 // can start from, so they have to say that the user didn't write them.
 
