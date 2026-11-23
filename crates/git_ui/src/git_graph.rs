@@ -3652,7 +3652,8 @@ impl GitGraph {
             .context_menu
             .as_ref()
             .and_then(|menu| menu.target_entry_index);
-        let is_focused = self.focus_handle.is_focused(window);
+        let is_focused =
+            self.focus_handle.is_focused(window) || table_state.focus_handle.is_focused(window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
         let paint_ref_connectors = self.is_refs_column_visible();
 
@@ -3960,7 +3961,8 @@ impl GitGraph {
             .context_menu
             .as_ref()
             .and_then(|menu| menu.target_entry_index);
-        let is_focused = self.focus_handle.is_focused(window);
+        let is_focused =
+            self.focus_handle.is_focused(window) || table_state.focus_handle.is_focused(window);
         let hover_bg = theme.colors().element_hover.opacity(0.6);
         let selected_bg = if is_focused {
             theme.colors().element_selected
@@ -7736,6 +7738,61 @@ mod tests {
                 "focusing the git graph item should focus the search editor"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_selected_row_color_matches_across_columns(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ ".git": {} })).await;
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+        let repository = project
+            .read_with(cx, |project, cx| project.active_repository(cx))
+            .expect("should have a repository");
+
+        let (git_graph, cx) = cx.add_window_view(|window, cx| {
+            let repository_id = repository.read(cx).id;
+            let git_store = project.read(cx).git_store().clone();
+            let workspace = WeakEntity::new_invalid();
+            GitGraph::new(repository_id, git_store, workspace, None, window, cx)
+        });
+        cx.run_until_parked();
+
+        let (table_handle, graph_handle, search_handle) = git_graph.update(cx, |graph, cx| {
+            graph.select_entry(1, ScrollStrategy::Nearest, cx);
+            (
+                graph.table_interaction_state.read(cx).focus_handle.clone(),
+                graph.focus_handle.clone(),
+                graph.focus_handle(cx),
+            )
+        });
+        let colors = cx.update(|_, cx| cx.theme().colors().clone());
+        let (focused, unfocused) = (colors.element_selected, colors.element_hover);
+
+        for (handle, expected, other) in [
+            (table_handle, focused, unfocused),
+            (graph_handle, focused, unfocused),
+            (search_handle, unfocused, focused),
+        ] {
+            cx.update(|window, cx| {
+                window.focus(&handle, cx);
+                window.draw(cx).clear(cx);
+                let quads = window.painted_quads();
+                let count = |color| {
+                    quads
+                        .iter()
+                        .filter(|quad| quad.background.as_solid() == Some(color))
+                        .count()
+                };
+                assert_eq!(count(expected), 3, "refs, graph, and table should match");
+                assert_eq!(count(other), 0);
+            });
+        }
     }
 
     #[gpui::test]
