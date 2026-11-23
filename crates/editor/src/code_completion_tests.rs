@@ -459,9 +459,9 @@ async fn test_sort_keeps_order_of_equal_keys(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_member_completion_order_with_dot_prefixed_filter_text(cx: &mut TestAppContext) {
     // Regression test for #64472: without the alignment `Completion::match_candidate_text`
-    // performs, every candidate's fuzzy score collapses to the same value and sorting
-    // falls back to the language server's unfiltered `sort_text` order -- reproduced by
-    // the sort_text values below, which are deliberately assigned in that same wrong order.
+    // performs, the leading "." costs "abc"/"abcd" their start-of-string bonus, so they
+    // score lower than "xAbc"/"xyAbc" and the order is inverted. The sort_text values
+    // below are deliberately assigned in that same wrong order, so ties can't mask it.
     //
     // "abc"/"abcd" match right at their start; "xAbc"/"xyAbc" only match inside a
     // later camelCase sub-word ("Abc"), same as e.g. "getUniform" matching "u".
