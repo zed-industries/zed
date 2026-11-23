@@ -260,7 +260,7 @@ const MAX_LINE_DISTANCE: f32 = 0.6;
 
 /// Word-level diff of a single pair of lines.
 struct LineDiff {
-    /// Fraction of bytes, across both lines, that changed.
+    /// Fraction of non-whitespace bytes, across both lines, that changed.
     distance: f32,
     old_ranges: Vec<Range<usize>>,
     new_ranges: Vec<Range<usize>>,
@@ -285,18 +285,17 @@ impl LineDiff {
         let mut changed_len = 0;
         for hunk in diff.hunks() {
             if !hunk.before.is_empty() {
-                let range = old_line.byte_range(hunk.before);
-                changed_len += range.len();
-                old_ranges.push(range);
+                changed_len += old_line.content_len(hunk.before.clone());
+                old_ranges.push(old_line.byte_range(hunk.before));
             }
             if !hunk.after.is_empty() {
-                let range = new_line.byte_range(hunk.after);
-                changed_len += range.len();
-                new_ranges.push(range);
+                changed_len += new_line.content_len(hunk.after.clone());
+                new_ranges.push(new_line.byte_range(hunk.after));
             }
         }
 
-        let total_len = old_line.byte_len + new_line.byte_len;
+        let total_len = old_line.content_len(0..old_line.tokens.len() as u32)
+            + new_line.content_len(0..new_line.tokens.len() as u32);
         let distance = changed_len as f32 / total_len.max(1) as f32;
         (distance <= MAX_LINE_DISTANCE).then_some(Self {
             distance,
@@ -309,12 +308,18 @@ impl LineDiff {
 struct TokenizedLine {
     tokens: Vec<Token>,
     offsets: Vec<usize>,
-    byte_len: usize,
+    /// Non-whitespace byte counts up to each token boundary. Line distance ignores
+    /// whitespace, so shared indentation doesn't make unrelated lines look similar.
+    content_offsets: Vec<usize>,
 }
 
 impl TokenizedLine {
     fn byte_range(&self, tokens: Range<u32>) -> Range<usize> {
         self.offsets[tokens.start as usize]..self.offsets[tokens.end as usize]
+    }
+
+    fn content_len(&self, tokens: Range<u32>) -> usize {
+        self.content_offsets[tokens.end as usize] - self.content_offsets[tokens.start as usize]
     }
 }
 
@@ -329,16 +334,22 @@ fn tokenize_lines<'a>(
             let text = line.trim_end_matches('\n');
             let mut tokens = Vec::new();
             let mut offsets = vec![offset];
+            let mut content_offsets = vec![0];
+            let mut content_offset = 0;
             for token in tokenize(text, language_scope.clone()).flat_map(split_whitespace) {
                 tokens.push(interner.intern(token));
                 offset += token.len();
                 offsets.push(offset);
+                if !token.starts_with(char::is_whitespace) {
+                    content_offset += token.len();
+                }
+                content_offsets.push(content_offset);
             }
             offset += line.len() - text.len();
             TokenizedLine {
                 tokens,
                 offsets,
-                byte_len: text.len(),
+                content_offsets,
             }
         })
         .collect()
@@ -694,7 +705,7 @@ mod tests {
 
         // At cost 2, pairing by position ties with leaving a gap on each side.
         assert_eq!(
-            word_diffs("x aa\nx bb\nx cc\nx dd\n", "x bb\nx cc\nx dd\nx ee\n"),
+            word_diffs("xx aa\nxx bb\nxx cc\nxx dd\n", "xx bb\nxx cc\nxx dd\nxx ee\n"),
             (vec![], vec![])
         );
 
@@ -785,7 +796,7 @@ mod tests {
 
         // Of these two edits, only the shorter pair meets the similarity threshold.
         assert_eq!(
-            word_diffs("x cat\nx cats\n", "x dog\nx dogs\n"),
+            word_diffs("xx cat\nxx cats\n", "xx dog\nxx dogs\n"),
             (vec!["cat"], vec!["dog"])
         );
 
@@ -793,6 +804,57 @@ mod tests {
         assert_eq!(
             word_diffs("    from_str::<Config>(text)\n", "        from_str(text)\n"),
             (vec!["::<Config>"], vec!["    "])
+        );
+
+        // Each line pairs with its most similar counterpart, and the unrelated middle
+        // lines stay unpaired.
+        assert_eq!(
+            word_diffs(
+                "aaaa a aaa\nbbbb b bbb\ncccc c ccc\n",
+                "bbbb ! bbb\ndddd d ddd\ncccc ! ccc\n"
+            ),
+            (vec!["b", "c"], vec!["!", "!"])
+        );
+
+        // Moving a space across a word highlights only the word.
+        assert_eq!(word_diffs("'b '\n", "' b'\n"), (vec!["b"], vec!["b"]));
+
+        // Replacing the start of a line keeps the shared rest unhighlighted.
+        assert_eq!(
+            word_diffs(
+                "printf \"%s\\n\" s y y | git add -p &&\n",
+                "test_write_lines s y y | git add -p &&\n"
+            ),
+            (vec!["printf \"%s\\n\""], vec!["test_write_lines"])
+        );
+
+        // Shared indentation doesn't make rewritten lines similar enough to pair. Only
+        // the line containing the new one pairs with it.
+        let indent = |lines: &[&str]| {
+            lines
+                .iter()
+                .map(|line| format!("            {line}\n"))
+                .collect::<String>()
+        };
+        let old_text = indent(&[
+            "let mut i = 0;",
+            "for ((_, c0), (_, c1)) in s0.zip(s1) {",
+            "    if c0 != c1 {",
+            "        break;",
+            "    } else {",
+            "        i += c0.len();",
+            "    }",
+            "}",
+            "i",
+        ]);
+        let new_text = indent(&[
+            "s0.zip(s1)",
+            "    .take_while(|((_, c0), (_, c1))| c0 == c1)",
+            "    .fold(0, |offset, ((_, c0), (_, _))| offset + c0.len())",
+        ]);
+        assert_eq!(
+            word_diffs(&old_text, &new_text),
+            (vec!["for ((_, c0), (_, c1)) in ", " {"], vec![])
         );
     }
 
