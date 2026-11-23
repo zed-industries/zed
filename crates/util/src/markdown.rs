@@ -58,7 +58,7 @@ pub fn split_local_url_fragment(url: &str) -> (&str, Option<&str>) {
 }
 
 pub fn source_position_from_fragment(fragment: &str) -> Option<(u32, u32)> {
-    let fragment = fragment.strip_prefix('L').unwrap_or(fragment);
+    let fragment = fragment.trim_prefix('L');
     let fragment = fragment
         .split_once('-')
         .map_or(fragment, |(start, _)| start);

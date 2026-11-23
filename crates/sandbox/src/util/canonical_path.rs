@@ -251,7 +251,7 @@ fn require_absolute(path: &Path) -> io::Result<()> {
 #[cfg(target_os = "windows")]
 fn require_windows_grant_shape(path: &Path) -> io::Result<()> {
     let text = path.to_string_lossy();
-    let drive = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    let drive = text.trim_prefix(r"\\?\");
     let drive = drive.as_bytes();
     let is_windows_drive = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
     if is_windows_drive {

@@ -215,8 +215,7 @@ impl Mercury {
                     .ok();
             }
 
-            let response_str = response_str.strip_prefix("```\n").unwrap_or(&response_str);
-            let response_str = response_str.strip_suffix("\n```").unwrap_or(&response_str);
+            let response_str = response_str.trim_prefix("```\n").trim_suffix("\n```");
 
             let mut edits = Vec::new();
             const NO_PREDICTION_OUTPUT: &str = "None";
@@ -357,7 +356,6 @@ fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(
 
 pub const MERCURY_CREDENTIALS_URL: SharedString =
     SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
-pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]

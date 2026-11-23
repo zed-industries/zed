@@ -5,6 +5,7 @@
 use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
+use gpui_util::canonical_float_bits;
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -2980,13 +2981,15 @@ impl PartialOrd for Pixels {
 
 impl Ord for Pixels {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.total_cmp(&other.0)
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or_else(|| self.0.total_cmp(&other.0))
     }
 }
 
 impl std::hash::Hash for Pixels {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
+        canonical_float_bits(self.0).hash(state);
     }
 }
 
@@ -3816,7 +3819,7 @@ pub const fn relative(fraction: f32) -> DefiniteLength {
 
 /// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
 pub const fn phi() -> DefiniteLength {
-    relative(1.618_034)
+    relative(std::f32::consts::GOLDEN_RATIO)
 }
 
 /// Constructs a `Rems` value representing a length in rems.

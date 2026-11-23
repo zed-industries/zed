@@ -114,14 +114,6 @@ impl<T: Copy + Ord> Selection<T> {
         }
         self.goal = new_goal;
     }
-
-    pub fn swap_head_tail(&mut self) {
-        if self.reversed {
-            self.reversed = false;
-        } else {
-            std::mem::swap(&mut self.start, &mut self.end);
-        }
-    }
 }
 
 impl<T: Copy> Selection<T> {

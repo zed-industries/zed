@@ -64,15 +64,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn disable_indent_guides_for_buffer(
-        &mut self,
-        buffer_id: BufferId,
-        cx: &mut Context<Self>,
-    ) {
-        self.buffers_with_disabled_indent_guides.insert(buffer_id);
-        cx.notify();
-    }
-
     pub fn toggle_line_numbers(
         &mut self,
         _: &ToggleLineNumbers,
@@ -115,11 +106,6 @@ impl Editor {
 
     pub fn set_show_vertical_scrollbar(&mut self, show: bool, cx: &mut Context<Self>) {
         self.show_scrollbars.vertical = show;
-        cx.notify();
-    }
-
-    pub fn set_show_horizontal_scrollbar(&mut self, show: bool, cx: &mut Context<Self>) {
-        self.show_scrollbars.horizontal = show;
         cx.notify();
     }
 
@@ -353,11 +339,6 @@ impl Editor {
 
     pub(super) fn should_show_indent_guides(&self) -> Option<bool> {
         self.show_indent_guides
-    }
-
-    pub(super) fn has_indent_guides_disabled_for_buffer(&self, buffer_id: BufferId) -> bool {
-        self.buffers_with_disabled_indent_guides
-            .contains(&buffer_id)
     }
 
     pub(super) fn toggle_relative_line_numbers(

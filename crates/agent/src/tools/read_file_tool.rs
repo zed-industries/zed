@@ -1,3 +1,4 @@
+use super::deserialize_maybe_stringified;
 use action_log::ActionLog;
 use agent_client_protocol::v2::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -147,16 +148,14 @@ fn write_lines_numbered<'a>(
 /// Skill resources are expected to be plain text (Markdown, scripts, configs).
 /// Image rendering, the action log, and the buffer-backed outline path are
 /// intentionally not exercised here — those are project concerns.
-async fn read_global_skill_file(
+fn read_global_skill_file(
     canonical_path: &Path,
-    fs: &dyn fs::Fs,
+    content: String,
     start_line: Option<u32>,
     end_line: Option<u32>,
     requested_path: &str,
     event_stream: &ToolCallEventStream,
 ) -> Result<LanguageModelToolResultContent, LanguageModelToolResultContent> {
-    let content = fs.load(canonical_path).await.map_err(tool_content_err)?;
-
     event_stream.update_fields(|update| {
         update.locations(vec![
             acp::ToolCallLocation::new(canonical_path.to_path_buf())
@@ -191,9 +190,9 @@ async fn read_global_skill_file(
 
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_global_skill_path, resolve_project_path,
+    resolve_project_path,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
+use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, outline};
 
 /// Reads the content of the given file in the project.
 ///
@@ -228,10 +227,10 @@ pub struct ReadFileToolInput {
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
     pub start_line: Option<u32>,
     /// Optional line number to end reading on (1-based index, inclusive)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
     pub end_line: Option<u32>,
 }
 
@@ -308,21 +307,26 @@ impl AgentTool for ReadFileTool {
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
 
             // Fast path: if the model passes a path that resolves under the
-            // global skills directory, read it directly via the
-            // filesystem. Global skills live outside any worktree, so the
-            // standard project-path machinery would refuse them.
-            if let Some(skill_path) =
-                resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
+            // global skills directory, read it directly. Global skills live
+            // outside any worktree, so the standard project-path machinery
+            // would refuse them.
+            let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
+            if let Some(skill_path) = global_skill_files
+                .resolve(Path::new(&input.path), cx)
+                .await
             {
+                let content = global_skill_files
+                    .load(&skill_path, cx)
+                    .await
+                    .map_err(tool_content_err)?;
                 return read_global_skill_file(
                     &skill_path,
-                    fs.as_ref(),
+                    content,
                     input.start_line,
                     input.end_line,
                     &input.path,
                     &event_stream,
-                )
-                .await;
+                );
             }
 
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
@@ -979,6 +983,73 @@ mod test {
             result.unwrap(),
             "     2\tLine 2\n     3\tLine 3\n     4\tLine 4\n".into()
         );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_line_range_input_formats(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "multiline.txt": "Line 1\nLine 2\nLine 3"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let run = |input: serde_json::Value, cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                tool.clone()
+                    .run(ToolInput::ready(input), ToolCallEventStream::test().0, cx)
+            })
+        };
+
+        // Numeric bounds read the requested range.
+        let line_range = "     2\tLine 2\n     3\tLine 3";
+        let result = run(
+            json!({ "path": "root/multiline.txt", "start_line": 2, "end_line": 3 }),
+            cx,
+        )
+        .await;
+        assert_eq!(result.unwrap(), line_range.into());
+
+        // Quoted numeric bounds read the same range.
+        let result = run(
+            json!({ "path": "root/multiline.txt", "start_line": "2", "end_line": "3" }),
+            cx,
+        )
+        .await;
+        assert_eq!(result.unwrap(), line_range.into());
+
+        // Omitted bounds read the whole file.
+        let whole_file = "     1\tLine 1\n     2\tLine 2\n     3\tLine 3";
+        let result = run(json!({ "path": "root/multiline.txt" }), cx).await;
+        assert_eq!(result.unwrap(), whole_file.into());
+
+        // Null bounds read the whole file, same as omitted.
+        let result = run(
+            json!({ "path": "root/multiline.txt", "start_line": null, "end_line": null }),
+            cx,
+        )
+        .await;
+        assert_eq!(result.unwrap(), whole_file.into());
+
+        // Strings that are not valid line numbers are rejected.
+        for invalid_line in ["abc", "-1", "1.5", ""] {
+            let result = run(
+                json!({ "path": "root/multiline.txt", "start_line": invalid_line }),
+                cx,
+            )
+            .await;
+            assert!(
+                result.is_err(),
+                "start_line {invalid_line:?} should be rejected"
+            );
+        }
     }
 
     #[gpui::test]

@@ -166,7 +166,7 @@ fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
             && let Lit::Str(lit_str) = &expr_lit.lit
         {
             let line = lit_str.value();
-            let line = line.strip_prefix(' ').unwrap_or(&line);
+            let line = line.trim_prefix(' ');
             doc_lines.push(line.to_string());
         }
     }

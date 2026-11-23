@@ -12,7 +12,7 @@
  * The project to which this file belongs is licensed under either of
  * the Apache 2.0 or the MIT license at the licensee's choice. The terms
  * and conditions of the chosen license apply to this file.
-*/
+ */
 
 // More info about using the clipboard on X11:
 // https://tronche.com/gui/x/icccm/sec-2.html#s-2.6
@@ -1203,7 +1203,6 @@ pub(crate) enum WaitConfig {
     Until(Instant),
 
     /// Waits forever until a new event is reached.
-    #[allow(unused)]
     #[allow(
         unused,
         reason = "Right now we don't wait for clipboard contents to sync on app close, but we may in the future"

@@ -29,9 +29,6 @@ impl Global for ZedCredentialsProvider {}
 
 /// Returns the global [`CredentialsProvider`].
 pub fn init_global(cx: &mut App) {
-    // The `CredentialsProvider` trait has `Send + Sync` bounds on it, so it
-    // seems like this is a false positive from Clippy.
-    #[allow(clippy::arc_with_non_send_sync)]
     let provider = new(cx);
     cx.set_global(ZedCredentialsProvider(provider));
 }

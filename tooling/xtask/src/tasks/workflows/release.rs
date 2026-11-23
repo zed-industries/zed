@@ -1,5 +1,5 @@
 use gh_workflow::{
-    Event, Expression, Level, Permissions, Push, Run, Step, Use, Workflow, ctx::Context,
+    Event, Expression, Job, Level, Permissions, Push, Run, Step, Use, Workflow, ctx::Context,
 };
 use indoc::formatdoc;
 
@@ -182,6 +182,33 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
     .add_env(("SENTRY_PROJECT", "zed"))
     .add_env(("SENTRY_AUTH_TOKEN", vars::SENTRY_AUTH_TOKEN))
     .add_with(("environment", "production"))
+}
+
+pub(crate) fn publish_snap(
+    arch: Arch,
+    deps: &[&NamedJob],
+    fetch_tarball: impl FnOnce(Job) -> Job,
+) -> NamedJob {
+    fn setup_snapcraft() -> Step<Use> {
+        // Temporary: Use latest/edge until the next stable snapcraft release
+        // ships a fix for snapcraft#6410
+        named::uses(
+            "canonical",
+            "craft-actions/snapcraft/setup",
+            "d2add174925f9bca7b0a826010c8e1ce2a4bbc3d", // v1.0.0
+        )
+        .add_with(("channel", "latest/edge"))
+    }
+
+    NamedJob {
+        name: format!("publish_snap_{arch}"),
+        job: fetch_tarball(release_job(deps).runs_on(arch.linux_snap_builder()))
+            .add_step(setup_snapcraft())
+            .add_step(steps::script("./script/snap-build --publish").add_env((
+                "SNAPCRAFT_STORE_CREDENTIALS",
+                vars::SNAPCRAFT_STORE_CREDENTIALS,
+            ))),
+    }
 }
 
 pub(crate) const COMPLIANCE_REPORT_PATH: &str = "compliance-report-${GITHUB_REF_NAME}.md";

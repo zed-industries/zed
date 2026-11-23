@@ -324,7 +324,7 @@ impl TeacherPrompt {
         }
 
         let region = &text[start..end];
-        Ok(region.strip_suffix('\n').unwrap_or(region).to_string())
+        Ok(region.trim_suffix('\n').to_string())
     }
 
     fn format_diagnostics(example: &Example) -> String {
@@ -345,9 +345,7 @@ impl TeacherPrompt {
             2_000,
         );
 
-        let diagnostics = diagnostics
-            .strip_prefix("<filename>diagnostics\n")
-            .unwrap_or(&diagnostics);
+        let diagnostics = diagnostics.trim_prefix("<filename>diagnostics\n");
 
         if diagnostics.is_empty() {
             "No Diagnostics".to_string()

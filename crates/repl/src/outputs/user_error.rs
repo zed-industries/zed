@@ -24,7 +24,7 @@ impl ErrorView {
                     h_flex()
                         .font_buffer(cx)
                         .child(
-                            Label::new(format!("{}: ", self.ename.clone()))
+                            Label::new(format!("{}: ", self.ename))
                                 .color(Color::Error)
                                 .weight(FontWeight::BOLD),
                         )

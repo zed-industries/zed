@@ -89,8 +89,7 @@ impl LspStdoutHandler {
 
             let message_len = headers
                 .split('\n')
-                .find(|line| line.starts_with(CONTENT_LEN_HEADER))
-                .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
+                .find_map(|line| line.strip_prefix(CONTENT_LEN_HEADER))
                 .with_context(|| format!("invalid LSP message header {headers:?}"))?
                 .trim_end()
                 .parse()?;

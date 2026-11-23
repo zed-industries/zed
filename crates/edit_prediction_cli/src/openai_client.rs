@@ -271,11 +271,7 @@ impl BatchingOpenAiClient {
             let mut error_count = 0;
 
             for result in results {
-                let request_hash = result
-                    .custom_id
-                    .strip_prefix("req_hash_")
-                    .unwrap_or(&result.custom_id)
-                    .to_string();
+                let request_hash = result.custom_id.trim_prefix("req_hash_").to_string();
 
                 if let Some(response_body) = result.response {
                     if response_body.status_code == 200 {
@@ -390,11 +386,7 @@ impl BatchingOpenAiClient {
                 let mut success_count = 0;
 
                 for result in results {
-                    let request_hash = result
-                        .custom_id
-                        .strip_prefix("req_hash_")
-                        .unwrap_or(&result.custom_id)
-                        .to_string();
+                    let request_hash = result.custom_id.trim_prefix("req_hash_").to_string();
 
                     if let Some(response_body) = result.response {
                         if response_body.status_code == 200 {

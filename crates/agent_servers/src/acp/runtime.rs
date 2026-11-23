@@ -204,6 +204,7 @@ mod tests {
         let store = cx.new(|_| ElicitationStore::default());
         let weak_store = store.downgrade();
         let context = ClientContext {
+            auth_status: Default::default(),
             sessions: Rc::new(RefCell::new(HashMap::default())),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: store.clone(),

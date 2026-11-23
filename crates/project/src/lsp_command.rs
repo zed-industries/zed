@@ -3365,6 +3365,11 @@ impl LspCommand for GetCompletions {
             position: Some(language::proto::serialize_anchor(&anchor)),
             version: serialize_version(&buffer.version()),
             server_id: self.server_id.map(|id| id.to_proto()),
+            trigger_character: self
+                .context
+                .trigger_character
+                .clone()
+                .filter(|_| self.context.trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER),
         }
     }
 
@@ -3390,8 +3395,11 @@ impl LspCommand for GetCompletions {
         Ok(Self {
             position,
             context: CompletionContext {
-                trigger_kind: CompletionTriggerKind::INVOKED,
-                trigger_character: None,
+                trigger_kind: match &message.trigger_character {
+                    Some(_) => CompletionTriggerKind::TRIGGER_CHARACTER,
+                    None => CompletionTriggerKind::INVOKED,
+                },
+                trigger_character: message.trigger_character,
             },
             server_id: message
                 .server_id

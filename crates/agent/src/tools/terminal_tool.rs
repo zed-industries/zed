@@ -620,7 +620,6 @@ async fn run_terminal_tool(
                 protected_paths,
                 network: network_request_to_sandbox_network_access(&effective.network),
                 allow_fs_write: effective.allow_fs_write_all,
-                is_local: is_local_project,
             };
 
             // The viability check runs a brief probe subprocess, so do it off
@@ -805,11 +804,9 @@ async fn run_terminal_tool(
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
     let result = process_content(output, &input.command, timed_out, user_stopped, selection);
-    let notes = sandbox_note.into_iter().collect::<Vec<_>>();
-    Ok(if notes.is_empty() {
-        result
-    } else {
-        format!("{}\n\n{result}", notes.join("\n\n"))
+    Ok(match sandbox_note {
+        Some(note) => format!("{note}\n\n{result}"),
+        None => result,
     })
 }
 

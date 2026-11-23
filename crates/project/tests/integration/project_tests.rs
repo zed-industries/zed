@@ -25,8 +25,7 @@ use buffer_diff::{
     BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
 };
 use collections::{BTreeSet, HashMap, HashSet};
-use encoding_rs;
-use fs::{FakeFs, PathEventKind, RealFs};
+use fs::{FakeFs, PathEventKind, RealFs, RenameOptions};
 use futures::{FutureExt as _, StreamExt, channel::oneshot, future};
 use git::{
     GitHostingProviderRegistry,
@@ -1719,9 +1718,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         "Python",
         FakeLspAdapter {
             name: "ty",
-            capabilities: lsp::ServerCapabilities {
-                ..Default::default()
-            },
+            capabilities: Default::default(),
             ..Default::default()
         },
     );
@@ -1815,7 +1812,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .await;
 
     assert!(currently_active_toolchain.is_none());
-    let _ = project
+    project
         .update(cx, |this, cx| {
             let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
             this.activate_toolchain(
@@ -4415,6 +4412,119 @@ async fn test_updating_lsp_settings_sends_one_did_change_configuration(
         1,
         "expected exactly one workspace/didChangeConfiguration after a settings change"
     );
+}
+
+#[gpui::test]
+async fn test_removing_worktree_notifies_settings_only_for_local_settings(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "" })).await;
+    fs.insert_tree(path!("/outside"), json!({ "b.rs": "" }))
+        .await;
+    fs.insert_tree(
+        path!("/with_settings"),
+        json!({ ".zed": { "settings.json": r#"{ "tab_size": 8 }"# } }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    let did_change_count = Arc::new(atomic::AtomicUsize::new(0));
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-lsp",
+            initializer: Some(Box::new({
+                let did_change_count = did_change_count.clone();
+                move |fake_server| {
+                    fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+                        |_, _| async move {
+                            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                                lsp::Location::new(
+                                    lsp::Uri::from_file_path(path!("/outside/b.rs")).unwrap(),
+                                    lsp::Range::default(),
+                                ),
+                            )))
+                        },
+                    );
+                    fake_server
+                        .handle_notification::<lsp::notification::DidChangeConfiguration, _>({
+                            let did_change_count = did_change_count.clone();
+                            move |_, _| {
+                                did_change_count.fetch_add(1, atomic::Ordering::Release);
+                            }
+                        });
+                }
+            })),
+            ..Default::default()
+        },
+    );
+    language_registry.add(rust_lang());
+
+    let (rs_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let _fake_rust_server = fake_rust_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+    did_change_count.store(0, atomic::Ordering::Release);
+
+    let definitions = project
+        .update(cx, |project, cx| project.definitions(&rs_buffer, 0, cx))
+        .await
+        .unwrap()
+        .unwrap();
+    cx.executor().run_until_parked();
+    let invisible_worktree_id = cx.update(|cx| {
+        assert_eq!(definitions.len(), 1);
+        let target_worktree_id = definitions[0]
+            .target
+            .buffer
+            .read(cx)
+            .file()
+            .unwrap()
+            .worktree_id(cx);
+        assert!(
+            project
+                .read(cx)
+                .worktree_for_id(target_worktree_id, cx)
+                .is_some_and(|worktree| !worktree.read(cx).is_visible())
+        );
+        target_worktree_id
+    });
+
+    cx.update(|_| drop(definitions));
+    cx.executor().run_until_parked();
+
+    assert!(project.read_with(cx, |project, cx| {
+        project.worktree_for_id(invisible_worktree_id, cx).is_none()
+    }));
+    assert_eq!(did_change_count.load(atomic::Ordering::Acquire), 0);
+
+    let (worktree_with_settings, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/with_settings"), true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_with_settings_id =
+        worktree_with_settings.read_with(cx, |worktree, _| worktree.id());
+    drop(worktree_with_settings);
+    cx.executor().run_until_parked();
+    did_change_count.store(0, atomic::Ordering::Release);
+
+    project.update(cx, |project, cx| {
+        project.remove_worktree(worktree_with_settings_id, cx)
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(did_change_count.load(atomic::Ordering::Acquire), 1);
 }
 
 #[gpui::test(iterations = 3)]
@@ -7487,6 +7597,265 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_context_uses_target_server_triggers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    for dynamic in [false, true] {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.ts": "a" })).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(typescript_lang());
+        let mut servers = Vec::new();
+        for (name, triggers) in [
+            (
+                "typescript",
+                if dynamic {
+                    None
+                } else {
+                    Some(vec![".".into()])
+                },
+            ),
+            ("emmet", Some(vec!["a".into()])),
+            ("no-triggers", None),
+        ] {
+            servers.push(language_registry.register_fake_lsp(
+                "TypeScript",
+                FakeLspAdapter {
+                    name,
+                    capabilities: lsp::ServerCapabilities {
+                        completion_provider: if dynamic && name == "typescript" {
+                            None
+                        } else {
+                            Some(lsp::CompletionOptions {
+                                trigger_characters: triggers,
+                                ..Default::default()
+                            })
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ));
+        }
+
+        let (buffer, _handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+            })
+            .await
+            .unwrap();
+        let mut fake_servers = Vec::new();
+        for server in &mut servers {
+            fake_servers.push(server.next().await.unwrap());
+        }
+        cx.run_until_parked();
+
+        if dynamic {
+            fake_servers[0]
+                .request::<lsp::request::RegisterCapability>(
+                    lsp::RegistrationParams {
+                        registrations: vec![lsp::Registration {
+                            id: "completion".into(),
+                            method: "textDocument/completion".into(),
+                            register_options: Some(json!({
+                                "documentSelector": [{ "language": "typescript", "scheme": "file" }],
+                                "triggerCharacters": ["."]
+                            })),
+                        }],
+                    },
+                    DEFAULT_LSP_REQUEST_TIMEOUT,
+                )
+                .await
+                .into_response()
+                .unwrap();
+            cx.run_until_parked();
+        }
+
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone()),
+            BTreeSet::from([".".into(), "a".into()])
+        );
+        let contexts = Arc::new(Mutex::new(HashMap::default()));
+        let _handlers = fake_servers
+            .iter()
+            .enumerate()
+            .map(|(index, server)| {
+                let contexts = contexts.clone();
+                server.set_request_handler::<lsp::request::Completion, _, _>(move |params, _| {
+                    contexts.lock().insert(index, params.context.unwrap());
+                    async move {
+                        Ok(Some(lsp::CompletionResponse::Array(vec![
+                            lsp::CompletionItem {
+                                label: "available".into(),
+                                ..Default::default()
+                            },
+                        ])))
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for (kind, trigger) in [
+            (lsp::CompletionTriggerKind::TRIGGER_CHARACTER, Some("a")),
+            (lsp::CompletionTriggerKind::TRIGGER_CHARACTER, Some(".")),
+            (lsp::CompletionTriggerKind::TRIGGER_CHARACTER, Some("!")),
+            (lsp::CompletionTriggerKind::INVOKED, None),
+            (
+                lsp::CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
+                None,
+            ),
+        ] {
+            contexts.lock().clear();
+            let context = lsp::CompletionContext {
+                trigger_kind: kind,
+                trigger_character: trigger.map(str::to_string),
+            };
+            let responses = project
+                .update(cx, |project, cx| {
+                    project.completions(&buffer, 1, context.clone(), cx)
+                })
+                .await
+                .unwrap();
+            assert_eq!(responses.len(), 3);
+            assert!(
+                responses
+                    .iter()
+                    .all(|response| response.completions.len() == 1)
+            );
+
+            let contexts = contexts.lock();
+            assert_eq!(contexts.len(), 3);
+            for (index, own_trigger) in [Some("."), Some("a"), None].into_iter().enumerate() {
+                let expected = if kind == lsp::CompletionTriggerKind::TRIGGER_CHARACTER
+                    && trigger != own_trigger
+                {
+                    DEFAULT_COMPLETION_CONTEXT
+                } else {
+                    context.clone()
+                };
+                assert_eq!(contexts[&index], expected);
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_completion_context_survives_stale_trigger_replay(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.ts": "a." })).await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let [mut primary_servers, mut secondary_servers] =
+        [("typescript", ":"), ("emmet", ".")].map(|(name, trigger)| {
+            language_registry.register_fake_lsp(
+                "TypeScript",
+                FakeLspAdapter {
+                    name,
+                    capabilities: lsp::ServerCapabilities {
+                        completion_provider: Some(lsp::CompletionOptions {
+                            trigger_characters: Some(vec![trigger.to_string()]),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+        });
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .expect("open buffer with both language servers");
+    let primary_server = primary_servers.next().await.expect("start primary server");
+    let secondary_server = secondary_servers
+        .next()
+        .await
+        .expect("start secondary server");
+    cx.run_until_parked();
+
+    let old_version = buffer.read_with(cx, |buffer, _| buffer.version());
+    let stale_operations = buffer
+        .read_with(cx, |buffer, cx| buffer.serialize_ops(Some(old_version), cx))
+        .await
+        .into_iter()
+        .map(language::proto::deserialize_operation)
+        .collect::<Result<Vec<_>>>()
+        .expect("deserialize the collaborator's old buffer state");
+
+    primary_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "additional-completion-trigger".into(),
+                    method: "textDocument/completion".into(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "typescript", "scheme": "file" }],
+                        "triggerCharacters": ["."]
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("register an additional trigger on the primary server");
+    cx.run_until_parked();
+
+    let contexts = Arc::new(Mutex::new(HashMap::default()));
+    let primary_server_id = primary_server.server.server_id();
+    let secondary_server_id = secondary_server.server.server_id();
+    let _handlers = [primary_server, secondary_server].map(|server| {
+        let contexts = contexts.clone();
+        let server_id = server.server.server_id();
+        server.set_request_handler::<lsp::request::Completion, _, _>(move |params, _| {
+            contexts.lock().insert(server_id, params.context);
+            async move { Ok(Some(lsp::CompletionResponse::Array(Vec::new()))) }
+        })
+    });
+    let context = lsp::CompletionContext {
+        trigger_kind: lsp::CompletionTriggerKind::TRIGGER_CHARACTER,
+        trigger_character: Some(".".to_string()),
+    };
+
+    for replay_stale_state in [false, true] {
+        if replay_stale_state {
+            buffer.update(cx, |buffer, cx| {
+                buffer.apply_ops(stale_operations.clone(), cx);
+            });
+        }
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone()),
+            BTreeSet::from([":".to_string(), ".".to_string()]),
+        );
+
+        contexts.lock().clear();
+        project
+            .update(cx, |project, cx| {
+                project.completions(&buffer, 2, context.clone(), cx)
+            })
+            .await
+            .expect("request completions from both servers");
+        let contexts = contexts.lock();
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(
+            contexts.get(&secondary_server_id),
+            Some(&Some(context.clone()))
+        );
+        assert_eq!(
+            contexts.get(&primary_server_id),
+            Some(&Some(context.clone())),
+            "the primary server registered '.', even after stale trigger replay: {replay_stale_state}",
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -7641,11 +8010,11 @@ async fn test_dynamic_completion_registration_honors_document_selector(
 
     assert!(buffer.read_with(cx, |buffer, _| buffer.completion_triggers().is_empty()));
 
-    let completion_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let completion_contexts = Arc::new(Mutex::new(Vec::new()));
     let _completion_requests = fake_server.set_request_handler::<lsp::request::Completion, _, _>({
-        let completion_request_count = completion_request_count.clone();
-        move |_, _| {
-            completion_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+        let completion_contexts = completion_contexts.clone();
+        move |params, _| {
+            completion_contexts.lock().push(params.context.unwrap());
             async move {
                 Ok(Some(lsp::CompletionResponse::Array(vec![
                     lsp::CompletionItem {
@@ -7664,7 +8033,7 @@ async fn test_dynamic_completion_registration_honors_document_selector(
         .await
         .unwrap();
     assert!(completions.is_empty());
-    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 0);
+    assert!(completion_contexts.lock().is_empty());
 
     fake_server
         .request::<lsp::request::RegisterCapability>(
@@ -7700,19 +8069,37 @@ async fn test_dynamic_completion_registration_honors_document_selector(
         BTreeSet::from([":".to_string()])
     );
 
-    let completions = project
-        .update(cx, |project, cx| {
-            project.completions(&buffer, 15, DEFAULT_COMPLETION_CONTEXT, cx)
-        })
-        .await
-        .unwrap()
-        .into_iter()
-        .flat_map(|response| response.completions)
-        .collect::<Vec<_>>();
+    let colon_context = lsp::CompletionContext {
+        trigger_kind: lsp::CompletionTriggerKind::TRIGGER_CHARACTER,
+        trigger_character: Some(":".to_string()),
+    };
+    for (trigger_character, expected_context) in [
+        (":", colon_context.clone()),
+        (".", DEFAULT_COMPLETION_CONTEXT),
+    ] {
+        let completions = project
+            .update(cx, |project, cx| {
+                project.completions(
+                    &buffer,
+                    15,
+                    lsp::CompletionContext {
+                        trigger_kind: lsp::CompletionTriggerKind::TRIGGER_CHARACTER,
+                        trigger_character: Some(trigger_character.to_string()),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>();
 
-    assert_eq!(completions.len(), 1);
-    assert_eq!(completions[0].new_text, "matched");
-    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 1);
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].new_text, "matched");
+        assert_eq!(completion_contexts.lock().last(), Some(&expected_context));
+    }
+    assert_eq!(completion_contexts.lock().len(), 2);
 
     fake_server
         .request::<lsp::request::RegisterCapability>(
@@ -7769,12 +8156,22 @@ async fn test_dynamic_completion_registration_honors_document_selector(
     );
     let completions = project
         .update(cx, |project, cx| {
-            project.completions(&buffer, 15, DEFAULT_COMPLETION_CONTEXT, cx)
+            project.completions(&buffer, 15, colon_context, cx)
         })
         .await
         .unwrap();
     assert_eq!(completions.len(), 1);
-    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        completion_contexts.lock().as_slice(),
+        &[
+            lsp::CompletionContext {
+                trigger_kind: lsp::CompletionTriggerKind::TRIGGER_CHARACTER,
+                trigger_character: Some(":".to_string()),
+            },
+            DEFAULT_COMPLETION_CONTEXT,
+            DEFAULT_COMPLETION_CONTEXT,
+        ]
+    );
 
     fake_server
         .request::<lsp::request::UnregisterCapability>(
@@ -7799,7 +8196,7 @@ async fn test_dynamic_completion_registration_honors_document_selector(
         .await
         .unwrap();
     assert!(completions.is_empty());
-    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 2);
+    assert_eq!(completion_contexts.lock().len(), 3);
 }
 
 #[gpui::test]
@@ -15687,6 +16084,93 @@ async fn test_staged_diff_without_unstaged_diff(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_diffs_opened_together(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "same.txt": "same working\n",
+            "staged.txt": "staged working\n",
+            "untracked.txt": "untracked working\n",
+            "unstaged.txt": "unstaged working\n",
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[
+            ("same.txt", "same head\n".into()),
+            ("staged.txt", "staged head\n".into()),
+            ("unstaged.txt", "unstaged head\n".into()),
+        ],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[
+            ("same.txt", "same head\n".into()),
+            ("staged.txt", "staged index\n".into()),
+            ("unstaged.txt", "unstaged index\n".into()),
+        ],
+    );
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let mut buffers = Vec::new();
+    for name in ["same.txt", "staged.txt", "untracked.txt", "unstaged.txt"] {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(Path::new(path!("/dir")).join(name), cx)
+            })
+            .await
+            .unwrap();
+        buffers.push(buffer);
+    }
+
+    // Requested in one update, so all four loads share one job.
+    let (uncommitted_diffs, unstaged_diff) = project.update(cx, |project, cx| {
+        (
+            buffers[..3]
+                .iter()
+                .map(|buffer| project.open_uncommitted_diff(buffer.clone(), cx))
+                .collect::<Vec<_>>(),
+            project.open_unstaged_diff(buffers[3].clone(), cx),
+        )
+    });
+    let uncommitted_diffs = future::try_join_all(uncommitted_diffs).await.unwrap();
+    let unstaged_diff = unstaged_diff.await.unwrap();
+    cx.run_until_parked();
+
+    let base_texts = uncommitted_diffs
+        .iter()
+        .map(|diff| {
+            diff.read_with(cx, |diff, cx| {
+                let index_text = diff
+                    .secondary_diff()
+                    .and_then(|unstaged_diff| unstaged_diff.read(cx).base_text_string(cx));
+                (diff.base_text_string(cx), index_text)
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        base_texts,
+        [
+            (Some("same head\n".into()), Some("same head\n".into())),
+            (Some("staged head\n".into()), Some("staged index\n".into())),
+            (None, None),
+        ]
+    );
+    unstaged_diff.read_with(cx, |diff, cx| {
+        assert_eq!(
+            diff.base_text_string(cx).as_deref(),
+            Some("unstaged index\n")
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -16923,7 +17407,6 @@ async fn test_staging_random_hunks_with_edits(
         )
     }
 
-    #[allow(clippy::type_complexity)]
     fn capture_diff_state(
         diff: &Entity<BufferDiff>,
         cx: &mut gpui::TestAppContext,
@@ -18783,6 +19266,516 @@ async fn test_project_group_keys_match_for_bare_repo_linked_worktrees(
 }
 
 #[gpui::test]
+async fn test_project_group_keys_for_delta_checkouts(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    let source_objects = format!("{}\n", path!("/root/my-repo/.git/objects"));
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "objects": {},
+                },
+                ".delta": {
+                    "clones": {
+                        "aliased": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/aliased\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/alias/.git/objects")),
+                            },
+                        },
+                        "submodule-source": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/submodule\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/super/.git/modules/sub/objects")),
+                            },
+                        },
+                        "managed": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/managed\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/managed/zed.git/objects")),
+                            },
+                        },
+                        "nested": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/nested\n",
+                                "config": "[core]\n\tbare = false\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!(
+                                    "/root/my-repo/.delta/clones/abc/my-repo.git/objects"
+                                )),
+                            },
+                        },
+                        "orphan": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/orphan\n",
+                                "config": "[core]\n\tbare = false\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/my-repo/.git/objects")),
+                            },
+                        },
+                        "relinked": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/feature\n",
+                                "config": "[core]\n\tbare = false\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": alternates(path!("/root/my-repo/.git/objects")),
+                            },
+                        },
+                        "abc": {
+                            "my-repo.git": {
+                                "HEAD": "ref: refs/heads/feature\n",
+                                "config": "[core]\n\tbare = false\n",
+                                "worktrees": {
+                                    "linked": {
+                                        "HEAD": "ref: refs/heads/linked\n",
+                                        "commondir": "../..",
+                                        "gitdir": path!("/root/my-repo-linked/my-repo/.git"),
+                                    },
+                                },
+                                "delta": { "copy-baseline": "" },
+                                "objects": { "info": { "alternates": source_objects.clone() } },
+                            },
+                        },
+                    },
+                    "worktrees": {
+                        "aliased": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/aliased/my-repo.git")
+                                ),
+                            },
+                        },
+                        "submodule-source": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/submodule-source/my-repo.git")
+                                ),
+                            },
+                        },
+                        "nested": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/nested/my-repo.git")
+                                ),
+                            },
+                        },
+                        "managed": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/managed/my-repo.git")
+                                ),
+                                "file.txt": "managed",
+                            },
+                        },
+                        "relinked": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/relinked/my-repo.git")
+                                ),
+                                "file.txt": "relinked",
+                            },
+                        },
+                        "abc": {
+                            "my-repo": {
+                                ".git": format!(
+                                    "gitdir: {}\n",
+                                    path!("/root/my-repo/.delta/clones/abc/my-repo.git")
+                                ),
+                                "file.txt": "checkout",
+                                "src": { "main.rs": "" },
+                            },
+                        },
+                    },
+                },
+                "file.txt": "main",
+            },
+            "my-repo-linked": {
+                "my-repo": {
+                    ".git": format!(
+                        "gitdir: {}\n",
+                        path!("/root/my-repo/.delta/clones/abc/my-repo.git/worktrees/linked")
+                    ),
+                    "file.txt": "linked",
+                },
+            },
+            "managed": {
+                "zed.git": { "HEAD": "ref: refs/heads/main\n" },
+            },
+            "other": {
+                ".git": { "HEAD": "ref: refs/heads/main\n" },
+            },
+            "super": {
+                ".git": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "modules": { "sub": { "HEAD": "ref: refs/heads/main\n" } },
+                },
+            },
+            "independent-project.git": {
+                "HEAD": "ref: refs/heads/main\n",
+                "config": "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://example.com/independent-project.git\n",
+                "objects": { "info": { "alternates": source_objects } },
+            },
+            "independent-project": {
+                ".git": format!("gitdir: {}\n", path!("/root/independent-project.git")),
+                "file.txt": "independent",
+            },
+            "symlinked": {
+                ".git": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "objects": {},
+                },
+            },
+            "storage": {
+                "clones": {
+                    "abc": {
+                        "symlinked.git": {
+                            "HEAD": "ref: refs/heads/feature\n",
+                            "delta": { "copy-baseline": "" },
+                            "objects": alternates(path!("/root/symlinked/.git/objects")),
+                        },
+                    },
+                },
+                "worktrees": {
+                    "abc": {
+                        "symlinked": {
+                            ".git": format!(
+                                "gitdir: {}\n",
+                                path!("/root/symlinked/.delta/clones/abc/symlinked.git")
+                            ),
+                            "file.txt": "symlinked",
+                        },
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/root/symlinked/.delta"),
+        PathBuf::from(path!("/root/storage")),
+    )
+    .await;
+    fs.insert_symlink(path!("/root/alias"), PathBuf::from(path!("/root/my-repo")))
+        .await;
+
+    let project_main = Project::test(fs.clone(), [path!("/root/my-repo").as_ref()], cx).await;
+    let project_checkout = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/abc/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let subfolder_path = Path::new(path!("/root/my-repo/.delta/worktrees/abc/my-repo/src"));
+    let project_subfolder = Project::test(fs.clone(), [subfolder_path], cx).await;
+    let project_linked = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo-linked/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_aliased = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/aliased/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_submodule_source = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/submodule-source/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_nested = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/nested/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_managed = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/managed/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_relinked = Project::test(
+        fs.clone(),
+        [path!("/root/my-repo/.delta/worktrees/relinked/my-repo").as_ref()],
+        cx,
+    )
+    .await;
+    let project_independent = Project::test(
+        fs.clone(),
+        [path!("/root/independent-project").as_ref()],
+        cx,
+    )
+    .await;
+    let project_symlinked = Project::test(
+        fs.clone(),
+        [path!("/root/storage/worktrees/abc/symlinked").as_ref()],
+        cx,
+    )
+    .await;
+
+    let projects = [
+        &project_main,
+        &project_checkout,
+        &project_subfolder,
+        &project_aliased,
+        &project_submodule_source,
+        &project_nested,
+        &project_linked,
+        &project_managed,
+        &project_relinked,
+        &project_independent,
+        &project_symlinked,
+    ];
+    for project in projects {
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+    }
+    cx.run_until_parked();
+
+    let mut discovered_group_paths = Vec::new();
+    let mut live_group_paths = Vec::new();
+    for project in projects {
+        let (folder_paths, main_paths) = project_worktree_paths(project, cx);
+        for (folder_path, main_path) in folder_paths.into_iter().zip(main_paths) {
+            let has_dot_git = fs
+                .metadata(&folder_path.join(".git"))
+                .await
+                .unwrap()
+                .is_some();
+            discovered_group_paths.push(
+                project::git_store::discover_root_repository_group_path(&folder_path, fs.as_ref())
+                    .await,
+            );
+            live_group_paths.push(has_dot_git.then_some(main_path));
+        }
+    }
+    assert_eq!(discovered_group_paths, live_group_paths);
+
+    assert_eq!(
+        project_worktree_paths(&project_main, cx),
+        (
+            vec![PathBuf::from(path!("/root/my-repo"))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_checkout, cx),
+        (
+            vec![PathBuf::from(path!(
+                "/root/my-repo/.delta/worktrees/abc/my-repo"
+            ))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_subfolder, cx),
+        (
+            vec![subfolder_path.to_path_buf()],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_linked, cx),
+        (
+            vec![PathBuf::from(path!("/root/my-repo-linked/my-repo"))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_managed, cx).1,
+        vec![PathBuf::from(path!("/root/managed/zed.git"))]
+    );
+    assert_eq!(
+        project_worktree_paths(&project_relinked, cx),
+        (
+            vec![PathBuf::from(path!(
+                "/root/my-repo/.delta/worktrees/relinked/my-repo"
+            ))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_independent, cx),
+        (
+            vec![PathBuf::from(path!("/root/independent-project"))],
+            vec![PathBuf::from(path!("/root/independent-project.git"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_symlinked, cx).1,
+        vec![PathBuf::from(path!("/root/symlinked"))]
+    );
+
+    assert_eq!(
+        (
+            project_worktree_paths(&project_aliased, cx).1,
+            project_worktree_paths(&project_submodule_source, cx).1,
+            project_worktree_paths(&project_nested, cx).1,
+        ),
+        (
+            vec![PathBuf::from(path!("/root/my-repo"))],
+            vec![PathBuf::from(path!(
+                "/root/my-repo/.delta/clones/submodule-source/my-repo.git"
+            ))],
+            vec![PathBuf::from(path!(
+                "/root/my-repo/.delta/clones/nested/my-repo.git"
+            ))],
+        )
+    );
+
+    fs.insert_file(
+        path!("/root/my-repo/.delta/clones/orphan/my-repo.git/objects/info/alternates"),
+        format!("{}\n", path!("/root/my-repo/.git/objects")).into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    let mut main_project_repository_paths = project_main.read_with(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repository| repository.read(cx).work_directory_abs_path.to_path_buf())
+            .collect::<Vec<_>>()
+    });
+    main_project_repository_paths.sort();
+    assert_eq!(
+        main_project_repository_paths,
+        [
+            path!("/root/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/abc/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/aliased/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/managed/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/nested/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/relinked/my-repo"),
+            path!("/root/my-repo/.delta/worktrees/submodule-source/my-repo"),
+        ]
+        .map(PathBuf::from)
+    );
+
+    let clone_path = Path::new(path!("/root/my-repo/.delta/clones/abc/my-repo.git"));
+    let mut main_paths_without_input = Vec::new();
+    for (input_path, contents) in [
+        (
+            "objects/info/alternates",
+            format!("{}\n", path!("/root/my-repo/.git/objects")),
+        ),
+        ("delta/copy-baseline", String::new()),
+    ] {
+        let input_path = clone_path.join(input_path);
+        fs.remove_file(&input_path, RemoveOptions::default())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        main_paths_without_input.push(project_worktree_paths(&project_checkout, cx).1);
+        fs.insert_file(&input_path, contents.into_bytes()).await;
+        cx.run_until_parked();
+    }
+    let objects_path = clone_path.join("objects");
+    let info_path = objects_path.join("info");
+    let old_info_path = objects_path.join("info.old");
+    let next_info_path = objects_path.join("info.next");
+    fs.insert_tree(
+        &next_info_path,
+        json!({ "alternates": format!("{}\n", path!("/root/other/.git/objects")) }),
+    )
+    .await;
+    cx.run_until_parked();
+    fs.pause_events();
+    fs.rename(&info_path, &old_info_path, RenameOptions::default())
+        .await
+        .unwrap();
+    fs.rename(&next_info_path, &info_path, RenameOptions::default())
+        .await
+        .unwrap();
+    fs.clear_buffered_events();
+    fs.emit_fs_event(info_path.clone(), Some(PathEventKind::Changed));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+    let main_paths_after_rename = project_worktree_paths(&project_checkout, cx).1;
+    fs.remove_dir(
+        &info_path,
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    fs.rename(&old_info_path, &info_path, RenameOptions::default())
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        (
+            main_paths_after_rename,
+            project_worktree_paths(&project_checkout, cx).1
+        ),
+        (
+            vec![PathBuf::from(path!("/root/other"))],
+            vec![PathBuf::from(path!("/root/my-repo"))]
+        )
+    );
+    assert_eq!(
+        main_paths_without_input,
+        vec![vec![clone_path.to_path_buf()]; 2]
+    );
+
+    fs.insert_tree(
+        path!("/root/independent-project.git/delta"),
+        json!({ "copy-baseline": "" }),
+    )
+    .await;
+    cx.run_until_parked();
+    assert_eq!(
+        project_worktree_paths(&project_independent, cx).1,
+        vec![PathBuf::from(path!("/root/my-repo"))]
+    );
+
+    let relinked_clone_path = Path::new(path!("/root/my-repo/.delta/clones/relinked/my-repo.git"));
+    fs.remove_file(
+        &relinked_clone_path.join("delta/copy-baseline"),
+        RemoveOptions::default(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    let main_paths_without_marker = project_worktree_paths(&project_relinked, cx).1;
+    fs.emit_fs_event(
+        path!("/root/my-repo/.delta/worktrees/relinked/my-repo"),
+        Some(PathEventKind::Rescan),
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        (
+            main_paths_without_marker,
+            project_worktree_paths(&project_relinked, cx).1
+        ),
+        (
+            vec![relinked_clone_path.to_path_buf()],
+            vec![relinked_clone_path.to_path_buf()]
+        )
+    );
+}
+
+#[gpui::test]
 async fn test_project_group_key_groups_nested_linked_worktree_under_main_repo(
     executor: gpui::BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
@@ -20606,9 +21599,6 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         fn meta(&self) -> ToolchainMetadata {
             ToolchainMetadata {
                 term: SharedString::new_static("Virtual Environment"),
-                new_toolchain_placeholder: SharedString::new_static(
-                    "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
-                ),
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }
@@ -20726,7 +21716,6 @@ fn assert_entry_git_state(
 #[cfg(any())]
 const GIT_STATUS_CONFLICTED: &str = "UU";
 
-#[allow(clippy::disallowed_methods)]
 fn git_cmd(work_dir: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(work_dir)
@@ -22094,4 +23083,8 @@ async fn code_action_project(
     cx.executor().run_until_parked();
 
     (project, buffer, handle, fake_servers)
+}
+
+fn alternates(object_dir: &str) -> serde_json::Value {
+    json!({ "info": { "alternates": format!("{object_dir}\n") } })
 }

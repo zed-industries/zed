@@ -83,10 +83,9 @@ struct GlobalParams {
     path_curve_base: u32,
     depth_scale: f32,
     quad_count: u32,
-    pad: vec2<u32>,
+    premultiplied_alpha: u32,
+    pad: u32,
 }
-
-override PREMULTIPLIED_ALPHA: bool = false;
 
 struct GammaParams {
     gamma_ratios: vec4<f32>,
@@ -331,8 +330,8 @@ fn oklab_to_linear_srgb(color: vec4<f32>) -> vec4<f32> {
 
 fn over(below: vec4<f32>, above: vec4<f32>) -> vec4<f32> {
     let alpha = above.a + below.a * (1.0 - above.a);
-    let color = (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
-    return vec4<f32>(color, alpha);
+    let premultiplied = above.rgb * above.a + below.rgb * below.a * (1.0 - above.a);
+    return vec4<f32>(premultiplied / select(alpha, 1.0, alpha == 0.0), alpha);
 }
 
 // Selects corner radius based on quadrant.
@@ -388,7 +387,7 @@ fn quad_sdf_impl(corner_center_to_point: vec2<f32>, corner_radius: f32) -> f32 {
 // target alpha compositing mode.
 fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     let alpha = color.a * alpha_factor;
-    let multiplier = select(1.0, alpha, PREMULTIPLIED_ALPHA);
+    let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
     return vec4<f32>(color.rgb * multiplier, alpha);
 }
 
@@ -902,11 +901,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             }
         }
 
-        // Blend the border on top of the background and then linearly interpolate
-        // between the two as we slide inside the background.
-        let blended_border = over(background, border_color);
-        color = mix(background, blended_border,
-                    saturate(antialias_threshold - inner_sdf));
+        border_color.a *= saturate(antialias_threshold - inner_sdf);
+        color = over(background, border_color);
     }
 
     return blend_color(color, saturate(antialias_threshold - outer_sdf));

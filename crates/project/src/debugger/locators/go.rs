@@ -22,11 +22,7 @@ pub struct DelveLaunchRequest {
 }
 
 fn is_debug_flag(arg: &str) -> Option<bool> {
-    let mut part = if let Some(suffix) = arg.strip_prefix("test.") {
-        suffix
-    } else {
-        arg
-    };
+    let mut part = arg.trim_prefix("test.");
     let mut might_have_arg = true;
     if let Some(idx) = part.find('=') {
         might_have_arg = false;
