@@ -1,5 +1,5 @@
 use scheduler::Instant;
-use std::{cell::Cell, num::NonZeroUsize, rc::Rc, time::Duration};
+use std::{num::NonZeroUsize, rc::Rc, time::Duration};
 
 use crate::{
     AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
@@ -75,10 +75,11 @@ impl Animation {
         self
     }
 
-    /// Advance in `steps` equal steps instead of continuously, like CSS `steps()`.
-    /// The animator receives `0`, then `1 / steps`, and so on. The animation
-    /// re-renders only when it steps, so [`Self::with_max_fps`] has no effect.
-    /// A `steps` of zero is ignored.
+    /// Advance time in `steps` equal steps instead of continuously, like CSS
+    /// `steps()`. Normalized time is `0`, then `1 / steps`, and so on, and the
+    /// animator receives the eased value of each step. The animation re-renders
+    /// only when it steps, so [`Self::with_max_fps`] has no effect. A `steps` of
+    /// zero is ignored.
     pub fn with_steps(mut self, steps: usize) -> Self {
         self.steps = NonZeroUsize::new(steps);
         self
@@ -231,19 +232,16 @@ impl<E> AnimationElement<E> {
 struct AnimationState {
     start: Instant,
     animation_ix: usize,
-    /// Whether a throttled re-render (see [`Animation::with_max_fps`]) is
-    /// already scheduled, so overlapping renders don't stack extra timers.
-    delayed_frame_pending: Rc<Cell<bool>>,
     /// The re-render scheduled for the next step (see [`Animation::with_steps`])
-    /// and when it is due.
-    step_wake: Option<(Instant, Task<()>)>,
+    /// or capped frame (see [`Animation::with_max_fps`]), and when it is due.
+    wake: Option<(Instant, Task<()>)>,
 }
 
 impl AnimationState {
     /// Re-renders the current view at `instant`, unless a re-render is already due by then.
     fn render_at(&mut self, instant: Instant, window: &Window, cx: &App) {
         let now = cx.background_executor().now();
-        if let Some((due, _)) = &self.step_wake
+        if let Some((due, _)) = &self.wake
             && now < *due
             && *due <= instant
         {
@@ -262,7 +260,7 @@ impl AnimationState {
             cx.update(move |_, cx| cx.notify(view)).ok();
         });
         // Replacing a wake that was due later drops it, which cancels its timer.
-        self.step_wake = Some((instant, wake));
+        self.wake = Some((instant, wake));
     }
 }
 
@@ -430,8 +428,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let mut state = state.unwrap_or_else(|| AnimationState {
                 start: now,
                 animation_ix: 0,
-                delayed_frame_pending: Rc::new(Cell::new(false)),
-                step_wake: None,
+                wake: None,
             });
             let (animation_ix, delta, done, next_step) = if cx.reduce_motion() {
                 let animation_ix = self.animations.len() - 1;
@@ -480,6 +477,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                         } else {
                             state.start = now;
                             state.animation_ix += 1;
+                            state.wake = None;
                         }
                         delta = 1.0;
                     } else {
@@ -498,23 +496,13 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             if let Some(next_step) = next_step {
                 state.render_at(next_step, window, cx);
             } else if !done {
-                // A stepped animation has no cap, including when it hands off to the next one.
+                // A hand-off requests the next frame, so the next animation's cap counts from its
+                // first render, as it does after mounting. A stepped animation has no cap.
                 let animation = &self.animations[animation_ix];
+                let handed_off = state.animation_ix != animation_ix;
                 match animation.max_fps.filter(|_| animation.steps.is_none()) {
-                    Some(max_fps) if max_fps.is_finite() && max_fps > 0.0 => {
-                        if !state.delayed_frame_pending.get() {
-                            state.delayed_frame_pending.set(true);
-                            let delayed_frame_pending = state.delayed_frame_pending.clone();
-                            let view = window.current_view();
-                            let interval = Duration::from_secs_f32(1.0 / max_fps);
-                            window
-                                .spawn(cx, async move |cx| {
-                                    cx.background_executor().timer(interval).await;
-                                    delayed_frame_pending.set(false);
-                                    cx.update(move |_, cx| cx.notify(view)).ok();
-                                })
-                                .detach();
-                        }
+                    Some(max_fps) if max_fps.is_finite() && max_fps > 0.0 && !handed_off => {
+                        state.render_at(now + Duration::from_secs_f32(1.0 / max_fps), window, cx)
                     }
                     _ => window.request_animation_frame(),
                 }
@@ -1021,6 +1009,40 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_capped_animation_hands_off_without_its_cap(cx: &mut TestAppContext) {
+        // One render every two seconds, then two a second.
+        let chain = [0.5, 2.0].map(|max_fps| one_second().with_max_fps(max_fps));
+        let (deltas, window) = open_test_window_with_animations(cx, chain.to_vec());
+        // The first animation finishes on a render that its cap didn't schedule.
+        cx.executor().advance_clock(Duration::from_millis(1750));
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        // The second starts on the next frame, and its cap counts from there.
+        assert_eq!(simulate_next_frame(&window, cx), 1);
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        assert_eq!(*deltas.borrow(), [0.0, 1.0, 0.0, 0.5]);
+    }
+
+    #[gpui::test]
+    fn test_sooner_cap_replaces_the_pending_one(cx: &mut TestAppContext) {
+        let capped = |max_fps| vec![one_second().with_max_fps(max_fps)];
+        let (deltas, window) = open_test_window_with_animations(cx, capped(0.1));
+
+        // Four renders a second from 250 ms on must not wait for the ten-second one.
+        cx.executor().advance_clock(Duration::from_millis(250));
+        window
+            .update(cx, |view, _, _| view.animations = capped(4.0))
+            .unwrap();
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.executor().advance_clock(Duration::from_millis(125));
+        // Rendering again before the next capped render neither moves it nor adds another.
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+        assert_eq!(*deltas.borrow(), [0.0, 0.25, 0.375, 0.5]);
+    }
+
+    #[gpui::test]
     fn test_synced_steps_render_once_each(cx: &mut TestAppContext) {
         // Mount 30 ms into a step, after months on the shared clock. A seventh of a
         // second isn't a whole number of nanoseconds, and floats misplace its steps.
@@ -1041,8 +1063,9 @@ mod tests {
     #[gpui::test]
     fn test_steps_finish_and_repeat_on_time(cx: &mut TestAppContext) {
         let quarters = one_second().with_steps(4);
-        // A cap has no effect on a stepped animation, or on the one that follows it.
-        let chain = vec![quarters.clone().with_max_fps(0.1), one_second()];
+        // A cap has no effect on a stepped animation, or on when the next one starts.
+        let capped = one_second().with_max_fps(0.1);
+        let chain = vec![quarters.clone().with_max_fps(0.1), capped];
         let (chained, window) = open_test_window_with_animations(cx, chain);
         let (repeating, _window) = open_test_window_with_animations(cx, vec![quarters.repeat()]);
 
