@@ -370,6 +370,7 @@ impl HighlightsTreeView {
                 for token in tokens.iter() {
                     let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
                         token.server_id,
+                        buffer_id,
                         language_name.as_ref(),
                         cx,
                     ) else {
