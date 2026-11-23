@@ -2984,9 +2984,21 @@ impl Ord for Pixels {
     }
 }
 
+/// The bits of `value` with the sign of zero normalised away.
+///
+/// `PartialEq` for `f32` treats `0.0` and `-0.0` as equal, so a hash built on
+/// `to_bits` has to collapse them as well or equal keys land in different buckets.
+pub(crate) fn canonical_float_bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0.0f32.to_bits()
+    } else {
+        value.to_bits()
+    }
+}
+
 impl std::hash::Hash for Pixels {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
+        canonical_float_bits(self.0).hash(state);
     }
 }
 

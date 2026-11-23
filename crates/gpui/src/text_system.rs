@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
+    StrikethroughStyle, TextRenderingMode, UnderlineStyle, canonical_float_bits, px,
 };
 use anyhow::Context as _;
 use collections::{FxHashMap, FxHashSet};
@@ -1124,9 +1124,9 @@ impl Hash for RenderGlyphParams {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.font_id.0.hash(state);
         self.glyph_id.0.hash(state);
-        self.font_size.0.to_bits().hash(state);
+        self.font_size.hash(state);
         self.subpixel_variant.hash(state);
-        self.scale_factor.to_bits().hash(state);
+        canonical_float_bits(self.scale_factor).hash(state);
         self.is_emoji.hash(state);
         self.subpixel_rendering.hash(state);
         self.dilation.hash(state);
