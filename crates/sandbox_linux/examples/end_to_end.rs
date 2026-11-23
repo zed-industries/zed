@@ -1107,6 +1107,20 @@ mod imp {
         t.expected_prompts(1);
         t.after(vec![HostCheck::Absent(PathBuf::from("ask/panic.txt"))]);
 
+        // `mkdir -p` calls `mkdir` on every directory above the new one,
+        // expecting `EEXIST`, which mustn't be asked about.
+        t.push(
+            "creating a directory beneath existing ones asks only for the new one",
+            vec![directory("ask/existing")],
+            allow.clone(),
+            Action::CreateDirectory {
+                path: PathBuf::from("ask/existing/new"),
+            },
+            Expected::Allowed,
+            ask_write,
+        );
+        t.expected_prompts(1);
+
         // -- Unix sockets --
 
         t.push(

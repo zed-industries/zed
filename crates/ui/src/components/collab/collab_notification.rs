@@ -180,8 +180,11 @@ impl Component for CollabNotification {
 
         v_flex()
             .gap_6()
-            .child(example_group_with_title("Calls & Projects", call_examples).vertical())
-            .child(example_group_with_title("Contact & Channel Toasts", toast_examples).vertical())
+            .child(example_group_with_title("Calls & Projects", call_examples))
+            .child(example_group_with_title(
+                "Contact & Channel Toasts",
+                toast_examples,
+            ))
             .into_any_element()
     }
 }

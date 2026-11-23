@@ -7189,6 +7189,7 @@ dependencies = [
  "ui_input",
  "unicode-width 0.2.2",
  "unindent",
+ "url",
  "util",
  "watch",
  "workspace",
@@ -7420,6 +7421,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -12352,6 +12354,7 @@ dependencies = [
 name = "open_path_prompt"
 version = "0.1.0"
 dependencies = [
+ "clock",
  "editor",
  "file_icons",
  "futures 0.3.34",
@@ -12360,6 +12363,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "rpc",
  "serde",
  "serde_json",
  "settings",
@@ -22512,12 +22516,14 @@ dependencies = [
  "cargo_toml",
  "clap",
  "compliance",
+ "crates_io_client",
  "gh-workflow",
  "guppy",
  "indexmap 2.14.2",
  "indoc",
  "itertools 0.14.0",
  "regex",
+ "reqwest_client",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -22527,6 +22533,7 @@ dependencies = [
  "tokio",
  "toml 0.9.8",
  "toml_edit 0.22.27",
+ "tracing-subscriber",
  "url",
 ]
 

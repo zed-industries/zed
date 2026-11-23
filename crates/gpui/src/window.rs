@@ -68,9 +68,12 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+mod native_view;
 mod prompts;
 
 pub use a11y::A11ySubtreeBuilder;
+use native_view::NativeViewState;
+pub use native_view::{NativeView, NativeViewId};
 
 use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
@@ -832,7 +835,7 @@ impl HitboxId {
         window.mouse_hit_test.ids.contains(&self)
     }
 
-    fn next(self) -> HitboxId {
+    pub(crate) fn next(self) -> HitboxId {
         HitboxId(self.0.wrapping_add(1))
     }
 }
@@ -1264,6 +1267,8 @@ pub struct Window {
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     next_hitbox_id: HitboxId,
+    native_views: Vec<std::rc::Weak<NativeViewState>>,
+    next_native_view_id: u64,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
@@ -2313,6 +2318,40 @@ impl Window {
                     .unwrap_or(None)
             })
         });
+        platform_window.on_hit_test_native_view({
+            let mut cx = cx.to_async();
+            Box::new(move |position| {
+                // The platform can ask while this window is already being
+                // updated, in which case the event stays with GPUI.
+                handle
+                    .update(&mut cx, |_, window, _| {
+                        window.hit_test_native_view(position)
+                    })
+                    .ok()
+                    .flatten()
+            })
+        });
+        platform_window.on_key_down_before_native_view({
+            let mut cx = cx.to_async();
+            Box::new(move |event| {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window.dispatch_key_down_before_native_view(event, cx)
+                    })
+                    .unwrap_or(false)
+            })
+        });
+        platform_window.on_native_view_focused({
+            let mut cx = cx.to_async();
+            Box::new(move |id| {
+                handle
+                    .update(&mut cx, |_, window, cx| window.focus_native_view(id, cx))
+                    .with_context(|| {
+                        format!("focusing a native view in window {:?}", handle.window_id())
+                    })
+                    .log_err();
+            })
+        });
         platform_window.on_move_tab_to_new_window({
             let mut cx = cx.to_async();
             Box::new(move || {
@@ -2420,6 +2459,8 @@ impl Window {
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
+            native_views: Vec::new(),
+            next_native_view_id: 0,
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
@@ -2725,7 +2766,9 @@ impl Window {
             return;
         }
 
+        self.end_composition_before_focusing_native_view(handle.id, cx);
         self.focus = Some(handle.id);
+        self.sync_native_view_focus();
         self.focus_generation = self.focus_generation.wrapping_add(1);
         self.clear_pending_keystrokes(cx);
 
@@ -2744,6 +2787,7 @@ impl Window {
             self.focus_generation = self.focus_generation.wrapping_add(1);
         }
         self.focus = None;
+        self.sync_native_view_focus();
         self.refresh();
     }
 
@@ -6675,35 +6719,39 @@ impl Window {
         let started_at = cx.background_executor().now();
         let task = self.spawn(cx, async move |cx| {
             cx.background_executor.timer(remaining).await;
-            cx.update(move |window, cx| {
-                let Some(currently_pending) = window
-                    .pending_input
-                    .take()
-                    .filter(|pending| pending.focus == window.focus)
-                else {
-                    return;
-                };
-
-                let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
-
-                let to_replay = window
-                    .rendered_frame
-                    .dispatch_tree
-                    .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
-
-                window.pending_input_changed(cx);
-                window.replay_pending_input(to_replay, cx)
-            })
-            .with_context(|| {
-                format!(
-                    "handling pending input timeout for window {:?}",
-                    cx.window_handle().window_id()
-                )
-            })
-            .log_err();
+            cx.update(move |window, cx| window.flush_pending_input(cx))
+                .with_context(|| {
+                    format!(
+                        "handling pending input timeout for window {:?}",
+                        cx.window_handle().window_id()
+                    )
+                })
+                .log_err();
         });
         (started_at, task)
+    }
+
+    /// Ends a pending multi-key binding as its timeout does, dispatching what
+    /// the keys pressed so far are bound to on their own.
+    fn flush_pending_input(&mut self, cx: &mut App) {
+        let Some(currently_pending) = self
+            .pending_input
+            .take()
+            .filter(|pending| pending.focus == self.focus)
+        else {
+            return;
+        };
+
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+
+        let to_replay = self
+            .rendered_frame
+            .dispatch_tree
+            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+
+        self.pending_input_changed(cx);
+        self.replay_pending_input(to_replay, cx)
     }
 
     fn finish_dispatch_key_event(

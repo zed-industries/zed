@@ -2927,6 +2927,10 @@ pub fn into_bedrock(
     };
     let anthropic_model_id = anthropic_model_id(model);
     let thinking = match &model.thinking {
+        // Sonnet 5.5 rejects `disabled`; this is its lowest thinking mode.
+        _ if !thinking_allowed && anthropic_model_id == Some("claude-sonnet-5-5") => {
+            Some(bedrock::Thinking::BetweenTools)
+        }
         Some(ConverseThinking::Reasoning {
             efforts,
             default_effort,
@@ -2967,9 +2971,14 @@ pub fn into_bedrock(
             bedrock::Thinking::Enabled { .. }
                 | bedrock::Thinking::Adaptive { .. }
                 | bedrock::Thinking::Disabled
+                | bedrock::Thinking::BetweenTools
         )
     );
     let temperature = if model.supports_temperature
+        && !matches!(
+            anthropic_model_id,
+            Some("claude-sonnet-5-5" | "claude-haiku-5-5")
+        )
         && !sends_anthropic_thinking
         && !(anthropic_model_id.is_some() && thinking.is_some())
     {
@@ -5194,7 +5203,9 @@ mod tests {
     fn assert_request_thinking(request: &bedrock::Request, expected: Option<&bedrock::Thinking>) {
         use bedrock::Thinking;
         let equal = match (&request.thinking, expected) {
-            (None, None) | (Some(Thinking::Disabled), Some(Thinking::Disabled)) => true,
+            (None, None)
+            | (Some(Thinking::Disabled), Some(Thinking::Disabled))
+            | (Some(Thinking::BetweenTools), Some(Thinking::BetweenTools)) => true,
             (
                 Some(Thinking::Enabled {
                     budget_tokens: actual,
@@ -5766,13 +5777,23 @@ mod tests {
 
     #[test]
     fn test_thinking_disallowed_sends_explicit_opt_out_only_where_required() -> Result<()> {
-        for (base_model_id, output_limit, expected_output, expects_opt_out) in [
-            ("anthropic.claude-opus-5", None, 128_000, true),
-            ("anthropic.claude-opus-5", Some(8192), 8192, true),
-            ("anthropic.claude-opus-4-8", Some(256_000), 128_000, false),
-            ("vendor.chat", Some(8192), 8192, false),
+        use bedrock::Thinking::{BetweenTools, Disabled};
+
+        for (base_model_id, output_limit, expected_output, expected_thinking) in [
+            ("anthropic.claude-opus-5", None, 128_000, Some(Disabled)),
+            ("anthropic.claude-opus-5", Some(8192), 8192, Some(Disabled)),
+            ("anthropic.claude-haiku-5-5", None, 128_000, Some(Disabled)),
+            (
+                "anthropic.claude-sonnet-5-5",
+                None,
+                128_000,
+                Some(BetweenTools),
+            ),
+            ("anthropic.claude-opus-4-8", Some(256_000), 128_000, None),
+            ("vendor.chat", Some(8192), 8192, None),
         ] {
-            let model = converse_model(base_model_id, Some(adaptive_thinking(false)));
+            let always_on = base_model_id == "anthropic.claude-sonnet-5-5";
+            let model = converse_model(base_model_id, Some(adaptive_thinking(always_on)));
             let request = into_bedrock(
                 LanguageModelRequest {
                     messages: vec![user_message("Hi")],
@@ -5786,17 +5807,7 @@ mod tests {
             )?;
 
             assert_eq!(request.max_tokens, Some(expected_output));
-            if expects_opt_out {
-                assert!(
-                    matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
-                    "{base_model_id} should send an explicit thinking opt-out"
-                );
-            } else {
-                assert!(
-                    request.thinking.is_none(),
-                    "{base_model_id} should omit the thinking field entirely"
-                );
-            }
+            assert_request_thinking(&request, expected_thinking.as_ref());
         }
         Ok(())
     }
@@ -5868,6 +5879,10 @@ mod tests {
         assert_eq!(temperature(&always_on, Some(0.3)), None);
         let optional = converse_model("anthropic.claude-example", Some(adaptive_thinking(false)));
         assert_eq!(temperature(&optional, None), Some(1.0));
+        for id in ["anthropic.claude-sonnet-5-5", "anthropic.claude-haiku-5-5"] {
+            let without_catalog_metadata = converse_model(id, None);
+            assert_eq!(temperature(&without_catalog_metadata, Some(0.3)), None);
+        }
     }
 
     #[test]

@@ -1195,6 +1195,27 @@ impl WaylandConnection {
                             client.cursor.set_size(size);
                         }
                     }
+                    XDPEvent::TextScaleFactor(scale) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let common = client.borrow().common.clone();
+                            let callback = {
+                                let mut common = common.borrow_mut();
+                                if common.text_scale_factor == scale {
+                                    None
+                                } else {
+                                    common.text_scale_factor = scale;
+                                    common.callbacks.text_scale_factor_change.take()
+                                }
+                            };
+                            if let Some(mut callback) = callback {
+                                callback();
+                                let mut common = common.borrow_mut();
+                                if common.callbacks.text_scale_factor_change.is_none() {
+                                    common.callbacks.text_scale_factor_change = Some(callback);
+                                }
+                            }
+                        }
+                    }
                 }
             }),
             "failed to register desktop portal source",

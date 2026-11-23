@@ -7,7 +7,6 @@ use language_model_core::{
     StopReason, TokenUsage,
 };
 use std::sync::Arc;
-use std::sync::atomic::{self, AtomicU64};
 
 use crate::{
     Content, FunctionCallingConfig, FunctionCallingMode, FunctionDeclaration,
@@ -207,6 +206,7 @@ pub fn into_google(
                 allowed_function_names: None,
             },
         }),
+        continuation_token: None,
     })
 }
 
@@ -254,6 +254,7 @@ impl ThinkingConfig {
 
 pub struct GoogleEventMapper {
     usage: UsageMetadata,
+    previous_hops_usage: Option<UsageMetadata>,
     stop_emitted: bool,
 }
 
@@ -261,6 +262,7 @@ impl GoogleEventMapper {
     pub fn new() -> Self {
         Self {
             usage: UsageMetadata::default(),
+            previous_hops_usage: None,
             stop_emitted: false,
         }
     }
@@ -292,12 +294,13 @@ impl GoogleEventMapper {
         &mut self,
         event: GenerateContentResponse,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
         let mut events: Vec<_> = Vec::new();
         let mut wants_to_use_tool = false;
         let mut stop_reason = None;
-        if let Some(usage_metadata) = event.usage_metadata {
+        if let Some(mut usage_metadata) = event.usage_metadata {
+            if let Some(previous_hops_usage) = &self.previous_hops_usage {
+                add_previous_hops_usage(&mut usage_metadata, previous_hops_usage);
+            }
             update_usage(&mut self.usage, &usage_metadata);
             // Streamed chunks carry an empty `usageMetadata` until the final one.
             // Reporting usage before the prompt count is known would show zero context.
@@ -333,7 +336,10 @@ impl GoogleEventMapper {
 
         if let Some(candidates) = event.candidates {
             for candidate in candidates {
-                if let Some(finish_reason) = candidate.finish_reason.as_deref() {
+                if candidate.finish_reason.as_deref() == Some("CONTINUATION") {
+                    // A long decode continues in another request, whose counts start over.
+                    self.previous_hops_usage = Some(self.usage.clone());
+                } else if let Some(finish_reason) = candidate.finish_reason.as_deref() {
                     stop_reason = Some(match finish_reason {
                         "STOP" => StopReason::EndTurn,
                         "MAX_TOKENS" => StopReason::MaxTokens,
@@ -401,9 +407,7 @@ impl GoogleEventMapper {
                                 if let Some(ref call_id) = function_call_part.function_call.id {
                                     call_id.clone().into()
                                 } else {
-                                    let next_tool_id =
-                                        TOOL_CALL_COUNTER.fetch_add(1, atomic::Ordering::SeqCst);
-                                    format!("{}-{}", name, next_tool_id).into()
+                                    format!("{}-{}", name, uuid::Uuid::new_v4().simple()).into()
                                 };
 
                             // Normalize empty string signatures to None
@@ -461,6 +465,19 @@ fn refusal_details(
     }
 }
 
+/// Later long decode hops count everything generated so far as input again. That's already in
+/// the output counts, so the first hop's input counts are kept to avoid overstating the context.
+fn add_previous_hops_usage(usage: &mut UsageMetadata, previous_hops_usage: &UsageMetadata) {
+    usage.prompt_token_count = previous_hops_usage.prompt_token_count;
+    usage.cached_content_token_count = previous_hops_usage.cached_content_token_count;
+    if let Some(candidates_token_count) = &mut usage.candidates_token_count {
+        *candidates_token_count += previous_hops_usage.candidates_token_count.unwrap_or(0);
+    }
+    if let Some(thoughts_token_count) = &mut usage.thoughts_token_count {
+        *thoughts_token_count += previous_hops_usage.thoughts_token_count.unwrap_or(0);
+    }
+}
+
 fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
     if let Some(prompt_token_count) = new.prompt_token_count {
         usage.prompt_token_count = Some(prompt_token_count);
@@ -486,7 +503,8 @@ fn convert_usage(usage: &UsageMetadata) -> TokenUsage {
     let prompt_tokens = usage.prompt_token_count.unwrap_or(0);
     let cached_tokens = usage.cached_content_token_count.unwrap_or(0);
     let input_tokens = prompt_tokens - cached_tokens;
-    let output_tokens = usage.candidates_token_count.unwrap_or(0);
+    let output_tokens =
+        usage.candidates_token_count.unwrap_or(0) + usage.thoughts_token_count.unwrap_or(0);
 
     TokenUsage {
         input_tokens,
@@ -808,6 +826,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -840,7 +859,8 @@ mod tests {
                     "promptTokenCount": 33732,
                     "cachedContentTokenCount": 30436,
                     "candidatesTokenCount": 107,
-                    "totalTokenCount": 33839
+                    "thoughtsTokenCount": 250,
+                    "totalTokenCount": 34089
                 }
             }),
         ];
@@ -858,7 +878,7 @@ mod tests {
             usage_updates,
             vec![TokenUsage {
                 input_tokens: 3296,
-                output_tokens: 107,
+                output_tokens: 357,
                 cache_read_input_tokens: 30436,
                 cache_creation_input_tokens: 0,
             }]
@@ -904,6 +924,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -983,6 +1004,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -1024,6 +1046,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -1061,6 +1084,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -1072,5 +1096,55 @@ mod tests {
         } else {
             panic!("Expected ToolUse event");
         }
+    }
+
+    #[test]
+    fn long_decode_usage_counts_each_generated_token_once() {
+        // Each hop counts output from zero but re-counts earlier output as prompt input.
+        let hops = [
+            (10, 0, 4, 20, "CONTINUATION"),
+            (34, 30, 6, 14, "CONTINUATION"),
+            (54, 50, 5, 1, "STOP"),
+        ];
+        let mut mapper = GoogleEventMapper::new();
+        let events = hops
+            .into_iter()
+            .flat_map(|(prompt, cached, candidates, thoughts, finish_reason)| {
+                mapper.map_event(
+                    serde_json::from_value(json!({
+                        "candidates": [{
+                            "content": {"role": "model", "parts": []},
+                            "finishReason": finish_reason
+                        }],
+                        "usageMetadata": {
+                            "promptTokenCount": prompt,
+                            "cachedContentTokenCount": cached,
+                            "candidatesTokenCount": candidates,
+                            "thoughtsTokenCount": thoughts
+                        }
+                    }))
+                    .unwrap(),
+                )
+            })
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+
+        let usage = |output_tokens| {
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 10,
+                output_tokens,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+        };
+        assert_eq!(
+            events,
+            [
+                usage(24),
+                usage(44),
+                usage(50),
+                LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+            ]
+        );
     }
 }
