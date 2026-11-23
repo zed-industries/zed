@@ -14,8 +14,8 @@ use editor::{
     Editor, EditorEvent, EditorSettings, HighlightKey, MultiBufferOffset, SelectionEffects,
 };
 use gpui::{
-    Action, App, AppContext as _, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Subscription, WeakEntity, Window, actions,
+    Action, App, AppContext as _, Context, Entity, EventEmitter, KeyContext, Keystroke,
+    KeystrokeEvent, Subscription, WeakEntity, Window, actions,
 };
 use language::{CursorShape, TransactionId};
 use modal_editor::{ModeIndicatorFocused, ModeIndicatorSource, ModeStatus};
@@ -165,23 +165,27 @@ impl ModeIndicatorSource for Helix {
 impl Helix {
     fn new(window: &mut Window, cx: &mut Context<Editor>) -> Entity<Self> {
         let editor = cx.entity();
-        cx.new(|cx| Helix {
-            mode: HelixSettings::get_global(cx).default_mode,
-            count: None,
-            selected_register: None,
-            pending_input: None,
-            insert_session: None,
-            editor: editor.downgrade(),
-            _subscriptions: vec![
-                cx.observe_keystrokes(Self::observe_keystrokes),
-                cx.subscribe_in(
-                    &editor,
-                    window,
-                    |helix: &mut Helix, _, event, window, cx| {
-                        helix.handle_editor_event(event, window, cx)
-                    },
-                ),
-            ],
+        cx.new(|cx| {
+            let intercept_keystroke = cx.listener(Self::intercept_keystroke);
+            Helix {
+                mode: HelixSettings::get_global(cx).default_mode,
+                count: None,
+                selected_register: None,
+                pending_input: None,
+                insert_session: None,
+                editor: editor.downgrade(),
+                _subscriptions: vec![
+                    cx.observe_keystrokes(Self::observe_keystrokes),
+                    cx.intercept_keystrokes(intercept_keystroke),
+                    cx.subscribe_in(
+                        &editor,
+                        window,
+                        |helix: &mut Helix, _, event, window, cx| {
+                            helix.handle_editor_event(event, window, cx)
+                        },
+                    ),
+                ],
+            }
         })
     }
 
@@ -342,6 +346,33 @@ impl Helix {
         cx.notify();
     }
 
+    /// Like Helix, a key that types no character cancels a pending command
+    /// and does nothing else. Characters reach [`Self::input_ignored`].
+    fn intercept_keystroke(
+        &mut self,
+        keystroke_event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending_input.is_none() {
+            return;
+        }
+        let keystroke = &keystroke_event.keystroke;
+        let focused = self
+            .editor
+            .upgrade()
+            .is_some_and(|editor| editor.read(cx).is_focused(window));
+        if focused && (keystroke.is_ime_in_progress() || types_character(keystroke)) {
+            return;
+        }
+        self.pending_input = None;
+        self.sync_editor_settings_for_state(window, cx);
+        cx.notify();
+        if focused {
+            cx.stop_propagation();
+        }
+    }
+
     /// Like Helix, the count and the selected register only apply to the
     /// command that follows them, whichever command that is.
     fn observe_keystrokes(
@@ -492,6 +523,18 @@ impl Helix {
             });
         });
     }
+}
+
+fn types_character(keystroke: &Keystroke) -> bool {
+    let modifiers = &keystroke.modifiers;
+    if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+        return false;
+    }
+    let Some(text) = keystroke.key_char.as_deref() else {
+        return false;
+    };
+    let mut chars = text.chars();
+    chars.next().is_some_and(|char| !char.is_control()) && chars.next().is_none()
 }
 
 /// The `vim` settings that Helix mode follows too.

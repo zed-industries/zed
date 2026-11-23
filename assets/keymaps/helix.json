@@ -15,12 +15,6 @@
     },
   },
   {
-    "context": "Editor && helix_pending",
-    "bindings": {
-      "escape": "helix::NormalMode",
-    },
-  },
-  {
     // A zero only continues a count, it doesn't start one.
     "context": "Editor && Helix && helix_count && !menu",
     "bindings": {

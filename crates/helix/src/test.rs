@@ -509,6 +509,19 @@ async fn test_select_register(cx: &mut TestAppContext) {
     cx.simulate_keys("\"<esc>");
     assert_eq!(selected_register(&mut cx), None);
     assert_eq!(cx.mode(), Mode::Normal);
+
+    // Like Helix, a key that types no character cancels the register
+    // selection and does nothing else.
+    cx.simulate_keys("\"<up>");
+    assert_eq!(selected_register(&mut cx), None);
+    assert_eq!(cx.cursor_coordinates(), (4, 0));
+    cx.simulate_keys("\"<C-a>a");
+    assert_eq!(selected_register(&mut cx), None);
+    assert_eq!(cx.mode(), Mode::Insert);
+    cx.simulate_keys("<esc>v\"<esc>");
+    assert_eq!(cx.mode(), Mode::Select);
+    cx.simulate_keys("\" ");
+    assert_eq!(selected_register(&mut cx), Some(' '));
 }
 
 fn set_use_system_clipboard(value: UseSystemClipboard, cx: &mut HelixTestContext) {
