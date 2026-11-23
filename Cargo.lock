@@ -3433,6 +3433,7 @@ dependencies = [
  "jsonwebtoken",
  "octocrab",
  "regex",
+ "rustls",
  "semver",
  "serde",
  "serde_json",
