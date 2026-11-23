@@ -994,10 +994,15 @@ impl ConverseModel {
                 "us",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Canada region inference profiles
-            (Self::NovaLite, "ca") => Ok(format!("{}.{}", region_group, model_id)),
+            // Canada region inference profiles. Claude Sonnet 5.5 and Claude
+            // Haiku 5.5 publish a `ca.` geo profile that stays within Canada:
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-5-5.html>
+            (Self::ClaudeSonnet5_5 | Self::ClaudeHaiku5_5 | Self::NovaLite, "ca") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
 
-            // Canada has no Claude-specific `ca.` profiles. AWS instead lists
+            // These Opus models have no `ca.` profiles. AWS instead lists
             // ca-central-1 and ca-west-1 as source regions of the US geo
             // profiles for these models, which keep data within US and Canada
             // regions:
@@ -1005,12 +1010,7 @@ impl ConverseModel {
             // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-8.html>
             // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-7.html>
             (
-                Self::ClaudeOpus5_5
-                | Self::ClaudeOpus5
-                | Self::ClaudeOpus4_8
-                | Self::ClaudeOpus4_7
-                | Self::ClaudeSonnet5_5
-                | Self::ClaudeHaiku5_5,
+                Self::ClaudeOpus5_5 | Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7,
                 "ca",
             ) => Ok(format!("us.{}", model_id)),
 
@@ -1671,8 +1671,16 @@ mod tests {
             ConverseModel::NovaLite.cross_region_inference_id("ca-central-1", false)?,
             "ca.amazon.nova-lite-v1:0"
         );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("ca-central-1", false)?,
+            "ca.anthropic.claude-sonnet-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeHaiku5_5.cross_region_inference_id("ca-west-1", false)?,
+            "ca.anthropic.claude-haiku-5-5"
+        );
         // Canadian regions are source regions of the US geo profile for
-        // recent Opus models; there are no `ca.` Claude profiles.
+        // recent Opus models, which have no `ca.` profiles.
         assert_eq!(
             ConverseModel::ClaudeOpus5.cross_region_inference_id("ca-central-1", false)?,
             "us.anthropic.claude-opus-5"
@@ -1680,14 +1688,6 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ca-central-1", false)?,
             "us.anthropic.claude-opus-5-5"
-        );
-        assert_eq!(
-            ConverseModel::ClaudeSonnet5_5.cross_region_inference_id("ca-central-1", false)?,
-            "us.anthropic.claude-sonnet-5-5"
-        );
-        assert_eq!(
-            ConverseModel::ClaudeHaiku5_5.cross_region_inference_id("ca-central-1", false)?,
-            "us.anthropic.claude-haiku-5-5"
         );
         assert_eq!(
             ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ca-west-1", false)?,
