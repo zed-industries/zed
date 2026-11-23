@@ -575,6 +575,7 @@ impl BatchingLlmClient {
                             "system" => Role::System,
                             _ => Role::User,
                         },
+                        output_config: None,
                         content: vec![RequestContent::Text {
                             text: msg.content,
                             cache_control: None,

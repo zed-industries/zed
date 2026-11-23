@@ -353,6 +353,7 @@ fn anthropic_request(
             AnthropicModelMode::Default
         },
         None,
+        true,
         AnthropicPromptCacheMode::Automatic,
         &ANTHROPIC_PROVIDER_ID,
     )?;
@@ -737,22 +738,10 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let app_version = self.app_version.clone();
-        let mut request = match into_anthropic(
-            request,
-            config.id.to_string(),
-            1.0,
-            config.max_output_tokens as u64,
-            AnthropicModelMode::Default,
-            None,
-            AnthropicPromptCacheMode::Automatic,
-            &ANTHROPIC_PROVIDER_ID,
-        ) {
+        let request = match anthropic_request(config, request) {
             Ok(request) => request.into_compact_request(),
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
-        if !config.supports_fast_mode {
-            request.speed = None;
-        }
 
         let http_client = self.http_client.clone();
         let token_provider = self.token_provider.clone();

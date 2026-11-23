@@ -2182,7 +2182,9 @@ pub fn into_bedrock(
                                 None
                             }
                         }
-                        MessageContent::Compaction(_) => None,
+                        MessageContent::Compaction(_) | MessageContent::ReasoningEffort { .. } => {
+                            None
+                        }
                         MessageContent::Thinking { text, signature } => {
                             if !replay_reasoning {
                                 return None;

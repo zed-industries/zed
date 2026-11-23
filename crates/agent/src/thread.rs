@@ -5075,7 +5075,8 @@ fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
             | MessageContent::ToolUse(_)
-            | MessageContent::Compaction(_) => 0,
+            | MessageContent::Compaction(_)
+            | MessageContent::ReasoningEffort { .. } => 0,
         })
         .sum()
 }
@@ -5112,7 +5113,8 @@ fn truncate_user_message_to_byte_budget(
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
             | MessageContent::ToolUse(_)
-            | MessageContent::Compaction(_) => {}
+            | MessageContent::Compaction(_)
+            | MessageContent::ReasoningEffort { .. } => {}
         }
     }
 
