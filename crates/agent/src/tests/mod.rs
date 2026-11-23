@@ -6921,7 +6921,7 @@ async fn test_background_subagent_result_starts_a_turn_on_the_idle_parent(cx: &m
 }
 
 #[gpui::test]
-async fn test_stopping_background_work_stops_a_subagent_on_the_idle_parent(
+async fn test_stopping_background_work_stops_a_subagent_and_a_command_on_the_idle_parent(
     cx: &mut TestAppContext,
 ) {
     let fake = init_test(cx);
@@ -7026,47 +7026,102 @@ async fn test_stopping_background_work_stops_a_subagent_on_the_idle_parent(
         active[0].session_id.clone()
     });
 
+    // A command is left running in the background too, so that stopping the
+    // thread leaves more than one notice.
+    let terminal = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+    let terminal_id = acp_v2::TerminalId::new("term-1");
+    thread.update(cx, |thread, cx| {
+        thread.register_background_command(
+            terminal_id.clone(),
+            "make test".into(),
+            terminal.clone() as Rc<dyn crate::TerminalHandle>,
+            cx,
+        );
+    });
+
+    // The conversation view takes the last entry to be the one each
+    // `NewEntry` event announces, so each event has to find exactly one more
+    // entry than the previous one did.
+    let entries_at_new_entry = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _new_entries = cx.update(|cx| {
+        let entries_at_new_entry = entries_at_new_entry.clone();
+        cx.subscribe(
+            &acp_thread,
+            move |thread, event: &acp_thread::AcpThreadEvent, cx| {
+                if matches!(event, acp_thread::AcpThreadEvent::NewEntry) {
+                    entries_at_new_entry
+                        .borrow_mut()
+                        .push(thread.read(cx).entries().len());
+                }
+            },
+        )
+    });
+    let entries_before = acp_thread.read_with(cx, |thread, _| thread.entries().len());
+
     thread
         .update(cx, |thread, cx| thread.stop_background_work(cx))
         .await;
     cx.run_until_parked();
+    assert!(terminal.was_killed());
 
-    let notice = thread.read_with(cx, |thread, cx| {
+    // The terminal tool's own task sees the command exit next. It is told not
+    // to deliver the result, which would start a turn.
+    assert!(thread.update(cx, |thread, cx| {
+        thread.background_command_finished(&terminal_id, cx)
+    }));
+    thread.read_with(cx, |thread, cx| {
         assert!(
             thread.active_subagents(cx).is_empty(),
             "the subagent should have been stopped"
         );
         assert!(!thread.has_background_work());
-        last_user_text(thread)
     });
-    assert_eq!(
-        background_result_source(&notice),
-        Some(BackgroundResultSource::Agent(subagent_session_id))
-    );
-    assert!(notice.contains("status=\"stopped\""), "{notice}");
-    assert!(notice.contains("The user stopped this thread"), "{notice}");
     assert!(
         !fake
             .pending_completions_for(&model)
             .iter()
             .any(|request| is_parent_request(request)),
-        "stopping the subagent should not start a turn on the parent"
+        "stopping the background work should not start a turn on the parent"
     );
 
-    // The notice is shown in the thread right away, as it is once the thread
-    // is reopened, rather than only reaching the model.
+    // Both notices are shown in the thread right away, as they are once the
+    // thread is reopened, rather than only reaching the model.
+    assert_eq!(
+        *entries_at_new_entry.borrow(),
+        vec![entries_before + 1, entries_before + 2]
+    );
     let shown = acp_thread.read_with(cx, |thread, _| {
-        let message = thread
-            .entries()
-            .last()
-            .and_then(|entry| entry.user_message())
-            .expect("the notice should be the thread's last entry");
-        match message.content.source_blocks().first() {
-            Some(acp_v2::ContentBlock::Text(text)) => text.text.clone(),
-            _ => panic!("the notice should be shown as text"),
-        }
+        thread.entries()[entries_before..]
+            .iter()
+            .map(|entry| {
+                let message = entry
+                    .user_message()
+                    .expect("each notice should be shown as a user message");
+                match message.content.source_blocks().first() {
+                    Some(acp_v2::ContentBlock::Text(text)) => text.text.clone(),
+                    _ => panic!("the notice should be shown as text"),
+                }
+            })
+            .collect::<Vec<_>>()
     });
-    assert_eq!(shown, notice);
+    assert_eq!(shown.len(), 2, "{shown:?}");
+    assert_eq!(
+        background_result_source(&shown[0]),
+        Some(BackgroundResultSource::Agent(subagent_session_id))
+    );
+    assert_eq!(
+        background_result_source(&shown[1]),
+        Some(BackgroundResultSource::Command(Some(terminal_id)))
+    );
+    for notice in &shown {
+        assert!(notice.contains("status=\"stopped\""), "{notice}");
+        assert!(notice.contains("The user stopped this thread"), "{notice}");
+    }
+    // The model reads the same notices.
+    assert_eq!(
+        thread.read_with(cx, |thread, _| last_user_text(thread)),
+        shown[1]
+    );
 }
 
 #[gpui::test]

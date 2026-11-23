@@ -974,11 +974,13 @@ impl NativeAgent {
             cx.subscribe(&thread_handle, {
                 let acp_thread = acp_thread.downgrade();
                 move |_, _, event: &crate::thread::BackgroundNoticesAdded, cx| {
-                    let Some(acp_thread) = acp_thread.upgrade() else {
-                        return;
-                    };
-                    acp_thread.update(cx, |acp_thread, cx| {
-                        for notice in &event.0 {
+                    let acp_thread = acp_thread.clone();
+                    let notices = event.0.clone();
+                    // The conversation view takes the last entry to be the one each
+                    // `NewEntry` event is about, so add one notice per update, as
+                    // replaying a thread does, for each event to see its own entry.
+                    cx.spawn(async move |_, cx| {
+                        for notice in notices {
                             let content = notice
                                 .content
                                 .iter()
@@ -986,10 +988,14 @@ impl NativeAgent {
                                 .map(acp_v2::ContentBlock::from)
                                 .collect::<Vec<_>>();
                             acp_thread
-                                .upsert_local_user_message(notice.id.clone(), content, cx)
+                                .update(cx, |acp_thread, cx| {
+                                    acp_thread.upsert_local_user_message(notice.id, content, cx)
+                                })
+                                .and_then(|result| result)
                                 .log_err();
                         }
-                    });
+                    })
+                    .detach();
                 }
             }),
             cx.observe(&thread_handle, move |this, thread, cx| {
