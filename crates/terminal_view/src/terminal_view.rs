@@ -1421,11 +1421,14 @@ impl TerminalView {
             self.blink_manager.update(cx, BlinkManager::enable);
         }
 
+        // Painting resets the animation while unfocused, but a hidden tab is not painted.
+        self.cursor_animation.reset();
         window.invalidate_character_coordinates();
         cx.notify();
     }
 
     fn focus_out(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.cursor_animation.reset();
         self.blink_manager.update(cx, BlinkManager::disable);
         self.terminal.update(cx, |terminal, _| {
             if !self.read_only {
@@ -2804,6 +2807,60 @@ mod tests {
             cursor_animation_active(&terminal_view, &mut cx),
             "vertical movement between scrollback rows should animate"
         );
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_snaps_when_output_arrives_during_vi_mode_scrollback(
+        cx: &mut TestAppContext,
+    ) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        let output = (0..200)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        write_and_draw_terminal(&terminal, output.as_bytes(), &mut cx);
+        cx.update(|window, cx| window.dispatch_action(Box::new(ToggleViMode), cx));
+        for _ in 0..500 {
+            if cursor_line(&terminal, &mut cx) < -5 {
+                break;
+            }
+            cx.update(|window, cx| {
+                window.dispatch_action(Box::new(SendKeystroke("k".into())), cx);
+            });
+            draw_terminal(&terminal, &mut cx);
+        }
+        assert!(cursor_line(&terminal, &mut cx) < -5);
+        cx.update(|_, cx| {
+            terminal_view.update(cx, |terminal_view, _| {
+                terminal_view.cursor_animation.reset()
+            });
+        });
+        draw_terminal(&terminal, &mut cx);
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
+
+        write_and_draw_terminal(&terminal, b"new output\n", &mut cx);
+        assert!(
+            !cursor_animation_active(&terminal_view, &mut cx),
+            "output arriving while the cursor stays in scrollback should not move the cursor on screen"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_resets_on_focus_changes(cx: &mut TestAppContext) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        assert!(cursor_animation_active(&terminal_view, &mut cx));
+
+        // A hidden tab is never painted, so only the focus handlers can reset the animation.
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |terminal_view, cx| terminal_view.focus_out(window, cx));
+        });
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
+
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |terminal_view, cx| terminal_view.focus_in(window, cx));
+        });
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
     }
 
     #[gpui::test]

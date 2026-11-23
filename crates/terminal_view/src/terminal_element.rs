@@ -47,6 +47,7 @@ pub struct LayoutState {
     background_color: Hsla,
     dimensions: TerminalBounds,
     display_offset: usize,
+    history_size: usize,
     hyperlink_tooltip: Option<AnyElement>,
     block_below_cursor_element: Option<AnyElement>,
     base_text_style: TextStyle,
@@ -1384,12 +1385,15 @@ impl Element for TerminalElement {
                 let Content {
                     cells,
                     display_offset,
+                    total_lines,
+                    screen_lines,
                     cursor_char,
                     selection,
                     cursor,
                     ..
                 } = &self.terminal.read(cx).last_content;
                 let display_offset = *display_offset;
+                let history_size = total_lines.saturating_sub(*screen_lines);
 
                 // searches, highlights to a single range representations
                 let mut relative_highlighted_ranges = Vec::new();
@@ -1475,13 +1479,14 @@ impl Element for TerminalElement {
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
                 let cursor_point = DisplayCursor::from(cursor.point, display_offset);
-                // Uses the grid position rather than the displayed one, so a cursor that only
-                // moves on screen because the history scrolled is not treated as having moved;
-                // the animation viewport accounts for the scroll instead. The row is only compared
-                // for equality, so a bit-preserving cast keeps scrollback rows (negative in
-                // vi mode) distinct instead of collapsing them to 0.
+                // Rows are counted from the top of the history rather than from the top of the
+                // screen, so a cursor that only moves on screen because the history scrolled or
+                // grew is not treated as having moved; the animation viewport accounts for the
+                // scroll instead. Scrollback lines have negative grid lines, which the history
+                // size shifts back to non-negative rows.
                 let cursor_logical_position = LogicalCursorPosition {
-                    row: cursor.point.line.cast_unsigned(),
+                    row: u32::try_from(i64::from(cursor.point.line) + history_size as i64)
+                        .unwrap_or_default(),
                     column: u32::try_from(cursor.point.column).unwrap_or_default(),
                 };
                 let cursor_text = {
@@ -1586,6 +1591,7 @@ impl Element for TerminalElement {
                     rects,
                     relative_highlighted_ranges,
                     display_offset,
+                    history_size,
                     hyperlink_tooltip,
                     block_below_cursor_element,
                     base_text_style: text_style,
@@ -1658,12 +1664,14 @@ impl Element for TerminalElement {
                                 dimensions.bounds.origin,
                                 dimensions.bounds,
                                 GpuiPoint::default(),
-                                // A larger display offset pushes the content down, the
-                                // opposite direction of `scroll_top`.
+                                // Rows are counted from the top of the history, so the
+                                // first visible row is the history size minus the display
+                                // offset.
                                 point(
                                     0.0,
                                     f64::from(scroll_top)
-                                        - layout.display_offset as f64
+                                        + (layout.history_size as f64
+                                            - layout.display_offset as f64)
                                             * f64::from(dimensions.line_height()),
                                 ),
                                 dimensions.line_height(),
