@@ -11918,6 +11918,7 @@ mod tests {
             thinking_enabled: false,
             thinking_effort: None,
             thread_only: false,
+            profile_downgraded_for_restricted_workspace: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,

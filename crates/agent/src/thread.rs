@@ -1320,6 +1320,7 @@ pub(crate) struct StreamingSaveKey {
     thinking_enabled: bool,
     thinking_effort: Option<String>,
     thread_only: bool,
+    profile_downgraded_for_restricted_workspace: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     sandbox_grants: crate::db::DbSandboxGrants,
 }
@@ -1885,7 +1886,8 @@ impl Thread {
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
-            profile_downgraded_for_restricted_workspace: false,
+            profile_downgraded_for_restricted_workspace: db_thread
+                .profile_downgraded_for_restricted_workspace,
             project_context,
             templates,
             model,
@@ -2002,6 +2004,8 @@ impl Thread {
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
             thread_only: self.thread_only,
+            profile_downgraded_for_restricted_workspace: self
+                .profile_downgraded_for_restricted_workspace,
             draft_prompt: self.draft_prompt.clone(),
             ui_scroll_position: self.ui_scroll_position.map(|lo| {
                 crate::db::SerializedScrollPosition {
@@ -2036,6 +2040,8 @@ impl Thread {
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
             thread_only: self.thread_only,
+            profile_downgraded_for_restricted_workspace: self
+                .profile_downgraded_for_restricted_workspace,
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
         }
@@ -7640,30 +7646,29 @@ mod tests {
         });
 
         let fs = fs::FakeFs::new(cx.background_executor.clone());
-        let templates = Templates::new();
         let project = Project::test(fs.clone(), [], cx).await;
+        let thread = cx.update(|cx| new_thread_for_test(project, cx));
 
-        cx.update(|cx| {
-            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
-            let context_server_store = project.read(cx).context_server_store();
-            let context_server_registry =
-                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+        let (event_tx, _event_rx) = mpsc::unbounded();
+        let event_stream = ThreadEventStream::new(event_tx);
 
-            let thread = cx.new(|cx| {
-                Thread::new(
-                    project,
-                    project_context,
-                    context_server_registry,
-                    templates,
-                    None,
-                    cx,
-                )
-            });
+        (thread, event_stream, fake)
+    }
 
-            let (event_tx, _event_rx) = mpsc::unbounded();
-            let event_stream = ThreadEventStream::new(event_tx);
-
-            (thread, event_stream, fake)
+    fn new_thread_for_test(project: Entity<Project>, cx: &mut App) -> Entity<Thread> {
+        let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+        let context_server_store = project.read(cx).context_server_store();
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+        cx.new(|cx| {
+            Thread::new(
+                project,
+                project_context,
+                context_server_registry,
+                Templates::new(),
+                None,
+                cx,
+            )
         })
     }
 
@@ -10391,6 +10396,61 @@ mod tests {
                 serde_json::from_str(&fs.load(paths::settings_file()).await.unwrap()).unwrap();
             assert_eq!(settings["agent"]["default_profile"], "ask");
         }
+    }
+
+    #[gpui::test]
+    async fn test_reloaded_thread_keeps_automatic_profile_downgrade_out_of_defaults(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            LanguageModelRegistry::test(cx);
+            project::trusted_worktrees::init(HashMap::default(), cx);
+        });
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/a", json!({})).await;
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.write(paths::settings_file(), b"{}").await.unwrap();
+        let project = Project::test_with_worktree_trust(fs.clone(), ["/a".as_ref()], cx).await;
+
+        let thread = cx.update(|cx| new_thread_for_test(project, cx));
+        thread.update(cx, |thread, cx| {
+            assert!(thread.profile_was_downgraded());
+            thread.mark_thread_only(cx);
+        });
+
+        let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let reloaded = cx.update(|cx| {
+            let thread = thread.read(cx);
+            let project = thread.project.clone();
+            let project_context = thread.project_context.clone();
+            let context_server_registry = thread.context_server_registry.clone();
+            let templates = thread.templates.clone();
+            cx.new(|cx| {
+                Thread::from_db(
+                    acp_v2::SessionId::new("reloaded"),
+                    db_thread,
+                    project,
+                    project_context,
+                    context_server_registry,
+                    templates,
+                    cx,
+                )
+            })
+        });
+        reloaded.update(cx, |thread, cx| {
+            assert!(thread.profile_was_downgraded());
+            thread.save_as_defaults(cx);
+            assert!(!thread.is_thread_only());
+        });
+        cx.run_until_parked();
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs.load(paths::settings_file()).await.unwrap()).unwrap();
+        assert_eq!(settings["agent"]["default_model"]["model"], "fake");
+        assert_eq!(settings["agent"]["default_profile"], json!(null));
     }
 
     #[gpui::test]

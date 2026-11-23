@@ -36,9 +36,9 @@ impl ModelSelectorPopover {
         self.selector.read(cx).delegate.active_model()
     }
 
-    pub fn refresh_selected_model(&self, cx: &mut Context<Self>) {
+    pub fn refresh_selected_model(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.selector.update(cx, |selector, cx| {
-            selector.delegate.refresh_selected_model(cx);
+            selector.delegate.refresh_selected_model(window, cx);
         });
     }
 

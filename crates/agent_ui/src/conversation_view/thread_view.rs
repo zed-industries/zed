@@ -1222,15 +1222,16 @@ impl ThreadView {
             // usable model
             if let Some(native_thread) = native_connection.thread(thread.read(cx).session_id(), cx)
             {
-                subscriptions.push(cx.subscribe(
+                subscriptions.push(cx.subscribe_in(
                     &native_thread,
-                    |this: &mut Self, _thread, _event: &agent::ModelChanged, cx| {
+                    window,
+                    |this: &mut Self, _thread, _event: &agent::ModelChanged, window, cx| {
                         if matches!(this.thread_error, Some(ThreadError::NoModelSelected)) {
                             this.clear_thread_error(cx);
                         }
                         if let Some(model_selector) = &this.model_selector {
                             model_selector.update(cx, |model_selector, cx| {
-                                model_selector.refresh_selected_model(cx);
+                                model_selector.refresh_selected_model(window, cx);
                             });
                         }
                     },

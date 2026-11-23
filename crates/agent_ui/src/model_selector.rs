@@ -129,18 +129,19 @@ impl ModelPickerDelegate {
         self.selected_model.as_ref()
     }
 
-    pub fn refresh_selected_model(&mut self, cx: &mut Context<Picker<Self>>) {
+    pub fn refresh_selected_model(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let selected_model = self.selector.selected_model(cx);
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let selected_model = selected_model.await.ok();
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let delegate = &mut this.delegate;
                 let model_changed = delegate.selected_model.as_ref().map(|model| &model.id)
                     != selected_model.as_ref().map(|model| &model.id);
                 delegate.selected_model = selected_model;
-                // The highlighted row is what Enter picks, so it has to follow the model.
+                // The highlighted row is what Enter picks, so it has to follow the
+                // model, and be in view when the picker opens again.
                 if model_changed && let Some(index) = delegate.selected_model_index() {
-                    delegate.selected_index = index;
+                    this.set_selected_index(index, None, true, window, cx);
                 }
                 cx.notify();
             })
@@ -635,7 +636,9 @@ mod tests {
             editor::init(cx);
         });
 
-        let model_selector = Rc::new(TestModelSelector::new());
+        // Enough models that the list has to scroll to show the last one.
+        let model_selector = Rc::new(TestModelSelector::with_extra_models(100));
+        let last_index = model_selector.models.len() - 1;
 
         let window_handle = cx.add_window({
             let model_selector = model_selector.clone();
@@ -649,16 +652,21 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         window_handle
             .update(&mut cx, |picker, window, cx| {
-                picker.delegate.set_selected_index(1, window, cx);
+                picker.set_selected_index(last_index, None, true, window, cx);
                 picker.delegate.confirm(false, window, cx);
             })
             .unwrap();
         cx.run_until_parked();
+        window_handle
+            .update(&mut cx, |picker, _window, _cx| {
+                assert!(picker.logical_scroll_top_index() > 0);
+            })
+            .unwrap();
 
         *model_selector.selected_model.borrow_mut() = model_selector.models[0].clone();
         window_handle
-            .update(&mut cx, |picker, _window, cx| {
-                picker.delegate.refresh_selected_model(cx);
+            .update(&mut cx, |picker, window, cx| {
+                picker.delegate.refresh_selected_model(window, cx);
             })
             .unwrap();
         cx.run_until_parked();
@@ -674,6 +682,7 @@ mod tests {
                     delegate.filtered_entries.get(delegate.selected_index),
                     Some(ModelPickerEntry::Model(model, _)) if model.id == AgentModelId::new("auto")
                 ));
+                assert_eq!(picker.logical_scroll_top_index(), 0);
             })
             .unwrap();
     }
@@ -687,7 +696,11 @@ mod tests {
 
     impl TestModelSelector {
         fn new() -> Self {
-            let models = vec![
+            Self::with_extra_models(0)
+        }
+
+        fn with_extra_models(count: usize) -> Self {
+            let mut models = vec![
                 AgentModelInfo {
                     id: AgentModelId::new("auto"),
                     name: "Auto".into(),
@@ -707,6 +720,15 @@ mod tests {
                     cost: None,
                 },
             ];
+            models.extend((0..count).map(|index| AgentModelInfo {
+                id: AgentModelId::new(format!("extra-{index}")),
+                name: format!("Extra {index}").into(),
+                description: None,
+                icon: None,
+                is_latest: false,
+                disabled: None,
+                cost: None,
+            }));
 
             Self {
                 selected_model: RefCell::new(models[0].clone()),
