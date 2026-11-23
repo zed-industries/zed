@@ -23,7 +23,7 @@ pub(crate) use monitor::HangMonitor;
 pub use monitor::{HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason};
 
 /// Version of the power/visibility-aware measurement rules.
-pub const MEASUREMENT_VERSION: u32 = 4;
+pub const MEASUREMENT_VERSION: u32 = 3;
 
 use super::SerializedLocation;
 use super::journal::{

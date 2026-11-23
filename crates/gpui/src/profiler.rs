@@ -1204,9 +1204,6 @@ pub struct WindowProfiler {
     mid_draw_events_dropped: u64,
     last_present_at: Option<Instant>,
     animating_at_last_present: bool,
-    /// Whether frame pacing deferred this window's pending frame since its
-    /// last present. Input and invalidations waiting on that frame waited on
-    /// purpose, so their latency isn't recorded.
     throttled_since_present: bool,
     pending_frame: Option<FrameTiming>,
     refresh_interval: Option<Duration>,
@@ -1308,7 +1305,7 @@ impl WindowProfiler {
             .any(|activity| matches!(activity, WindowActivity::Draw { .. }));
         if arrived_during_draw {
             self.mid_draw_events_dropped += 1;
-        } else if !self.throttled_since_present {
+        } else {
             self.first_input_at.get_or_insert(started_at);
             self.pending_input_count += 1;
         }
@@ -1342,14 +1339,10 @@ impl WindowProfiler {
         journal::end_foreground_turn();
     }
 
-    /// Records that frame pacing deferred the window's pending frame to limit
-    /// its frame rate (inactive, low-power or thermal limits). The latency of
-    /// input and invalidations waiting on that frame, up to its present, isn't
-    /// recorded, since it measures the limit rather than responsiveness.
+    /// Records that frame pacing deferred the pending frame, so its latency
+    /// measures the frame rate limit and isn't recorded when it presents.
     pub fn record_frame_throttled(&mut self) {
         self.throttled_since_present = true;
-        self.first_input_at = None;
-        self.pending_input_count = 0;
     }
 
     /// Records when the frame signal for the frame the next draw will produce
@@ -1510,6 +1503,7 @@ impl WindowProfiler {
         let throttled = std::mem::take(&mut self.throttled_since_present);
         let mut responded_to_input = false;
         if let Some(first_input_at) = self.first_input_at.take()
+            && !throttled
             && journal::frame_sample_is_valid(self.window_id, first_input_at)
         {
             responded_to_input = true;
