@@ -1475,8 +1475,9 @@ impl Element for TerminalElement {
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
                 let cursor_point = DisplayCursor::from(cursor.point, display_offset);
-                // Uses the grid position rather than the displayed one, so scrolling the
-                // history snaps the cursor instead of animating it. The row is only compared
+                // Uses the grid position rather than the displayed one, so a cursor that only
+                // moves on screen because the history scrolled is not treated as having moved;
+                // the animation viewport accounts for the scroll instead. The row is only compared
                 // for equality, so a bit-preserving cast keeps scrollback rows (negative in
                 // vi mode) distinct instead of collapsing them to 0.
                 let cursor_logical_position = LogicalCursorPosition {
@@ -1657,7 +1658,14 @@ impl Element for TerminalElement {
                                 dimensions.bounds.origin,
                                 dimensions.bounds,
                                 GpuiPoint::default(),
-                                point(0.0, f64::from(scroll_top)),
+                                // A larger display offset pushes the content down, the
+                                // opposite direction of `scroll_top`.
+                                point(
+                                    0.0,
+                                    f64::from(scroll_top)
+                                        - layout.display_offset as f64
+                                            * f64::from(dimensions.line_height()),
+                                ),
                                 dimensions.line_height(),
                                 dimensions.cell_width(),
                             );

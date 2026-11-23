@@ -597,6 +597,16 @@ impl CursorAnimationState {
     pub fn is_active(&self) -> bool {
         self.active
     }
+
+    /// How far the animated top-left corner still has to travel to reach its target.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn top_left_corner_remaining_travel(&self) -> Point<Pixels> {
+        let corner = self.corners[0];
+        point(
+            px(corner.target_position.x - corner.current_position.x),
+            px(corner.target_position.y - corner.current_position.y),
+        )
+    }
 }
 
 fn nearly_equal(left: f32, right: f32) -> bool {

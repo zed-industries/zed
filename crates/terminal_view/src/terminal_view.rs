@@ -2807,6 +2807,69 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_cursor_animation_follows_content_when_vi_mode_scrolls_history(
+        cx: &mut TestAppContext,
+    ) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        let output = (0..200)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        write_and_draw_terminal(&terminal, output.as_bytes(), &mut cx);
+        cx.update(|window, cx| window.dispatch_action(Box::new(ToggleViMode), cx));
+        // Park the vi cursor mid-line, away from the screen edges, so scrolling the history
+        // moves it to a different row and column.
+        for key in ["k", "k", "k", "k", "k", "l", "l", "l"] {
+            cx.update(|window, cx| {
+                window.dispatch_action(Box::new(SendKeystroke(key.into())), cx);
+            });
+        }
+        draw_terminal(&terminal, &mut cx);
+        cx.update(|_, cx| {
+            terminal_view.update(cx, |terminal_view, _| terminal_view.cursor_animation.reset());
+        });
+        draw_terminal(&terminal, &mut cx);
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
+        let point_before_scroll =
+            terminal.read_with(&cx, |terminal, _| terminal.last_content.cursor.point);
+
+        cx.update(|_, cx| terminal.update(cx, |terminal, _| terminal.scroll_line_up()));
+        draw_terminal(&terminal, &mut cx);
+        let (point_after_scroll, display_offset, terminal_bounds) =
+            terminal.read_with(&cx, |terminal, _| {
+                let content = &terminal.last_content;
+                (
+                    content.cursor.point,
+                    content.display_offset,
+                    content.terminal_bounds,
+                )
+            });
+        assert_eq!(display_offset, 1);
+        assert_ne!(
+            point_after_scroll, point_before_scroll,
+            "scrolling in vi mode should move the vi cursor"
+        );
+        assert!(cursor_animation_active(&terminal_view, &mut cx));
+
+        // The animation starts where the old cell now sits in the scrolled content, so the
+        // remaining travel is the cursor's movement within the grid.
+        let expected_travel_x = (point_after_scroll.column as f32
+            - point_before_scroll.column as f32)
+            * f32::from(terminal_bounds.cell_width());
+        let expected_travel_y = (point_after_scroll.line - point_before_scroll.line) as f32
+            * f32::from(terminal_bounds.line_height());
+        let travel = terminal_view.read_with(&cx, |terminal_view, _| {
+            terminal_view
+                .cursor_animation
+                .top_left_corner_remaining_travel()
+        });
+        assert!(
+            (f32::from(travel.x) - expected_travel_x).abs() < 1.0
+                && (f32::from(travel.y) - expected_travel_y).abs() < 1.0,
+            "expected the animation to travel ({expected_travel_x}, {expected_travel_y}), got {travel:?}"
+        );
+    }
+
+    #[gpui::test]
     async fn test_cursor_animation_snaps_after_ime_composition(cx: &mut TestAppContext) {
         let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
         write_and_draw_terminal(&terminal, b"hello", &mut cx);
