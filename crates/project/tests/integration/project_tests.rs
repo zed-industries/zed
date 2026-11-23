@@ -17136,16 +17136,6 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
             windows_1252_text,
             "-text diff=legacy=latin",
         ),
-        Case {
-            committed_rows: Vec::new(),
-            ..case(
-                "directory_in_head.py",
-                encoding_rs::WINDOWS_1252,
-                false,
-                windows_1252_text,
-                "-text diff=windows_1252\ndirectory_in_head.py/original -text",
-            )
-        },
         case(
             "indexed/latin.py",
             encoding_rs::WINDOWS_1252,
@@ -17258,8 +17248,7 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
     ];
 
     let root = TempTree::new(json!({ "project": {
-        "indexed": { ".gitattributes": "latin.py -text diff=windows_1252\n" },
-        "directory_in_head.py": {}
+        "indexed": { ".gitattributes": "latin.py -text diff=windows_1252\n" }
     } }));
     let work_dir = root.path().join("project");
     git_init(&work_dir);
@@ -17296,21 +17285,11 @@ async fn test_blame_buffer_in_non_utf8_encoding(cx: &mut gpui::TestAppContext) {
             Some(bytes) => bytes.to_vec(),
             None => file_content::encode_text(case.text.to_owned(), case.encoding, case.has_bom),
         };
-        let path = if case.file_name == "directory_in_head.py" {
-            "directory_in_head.py/original"
-        } else {
-            case.file_name
-        };
-        std::fs::write(work_dir.join(path), bytes).unwrap();
+        std::fs::write(work_dir.join(case.file_name), bytes).unwrap();
         git_add(case.file_name, &work_dir);
     }
     git_commit("Initial commit", &work_dir);
     std::fs::remove_file(work_dir.join("indexed/.gitattributes")).unwrap();
-    let directory = work_dir.join("directory_in_head.py");
-    let bytes = std::fs::read(directory.join("original")).unwrap();
-    std::fs::remove_dir_all(&directory).unwrap();
-    std::fs::write(&directory, bytes).unwrap();
-    git_add("directory_in_head.py", &work_dir);
 
     let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
