@@ -321,6 +321,10 @@ allowed; see `src/windows_psec.rs`. Reads are allowed everywhere by granting
 each fixed drive root read-only, and the writable grants and the read-only
 `.git` directories nest inside that.
 
+Paths disallowing reads become denied paths, and the paths allowing reads
+inside them become more specific read-only or read-write grants, since the most
+specific path wins.
+
 The PTY can't attach a security environment to the process it starts, so the
 command goes through a launcher mode of the Zed CLI (`bin\zed.exe` in an
 installed build, `cli.exe` in a development build). The launcher has to be a

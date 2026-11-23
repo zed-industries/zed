@@ -111,8 +111,9 @@ pub struct SandboxPolicy {
 /// beneath a path allowing reads, [`Sandbox::new`] rejects such a policy
 /// rather than silently leaving the path readable.
 ///
-/// Only the macOS backend can enforce either list. The Linux and Windows
-/// backends reject any policy with an entry in one.
+/// The macOS and Windows backends enforce both lists; the Linux backend
+/// rejects any policy with an entry in one. Windows also rejects them on builds
+/// whose Process Security Environment can't deny access to paths.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SandboxFsPolicy {
     /// Allow unrestricted filesystem writes except for protected paths and
@@ -391,24 +392,14 @@ pub(crate) fn location_is_within(
     linux_location_is_equal_or_descendant(location, ancestor)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "linux"))]
 pub(crate) fn location_is_within(
     location: &HostFilesystemLocation,
     ancestor: &HostFilesystemLocation,
 ) -> bool {
     location
-        .macos_canonical_path()
-        .starts_with(ancestor.macos_canonical_path())
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub(crate) fn location_is_within(
-    location: &HostFilesystemLocation,
-    ancestor: &HostFilesystemLocation,
-) -> bool {
-    location
-        .untrusted_raw_path()
-        .starts_with(ancestor.untrusted_raw_path())
+        .canonical_or_raw_path()
+        .starts_with(ancestor.canonical_or_raw_path())
 }
 
 #[cfg(target_os = "linux")]
@@ -670,9 +661,9 @@ struct FsSetup {
     /// non-empty list in [`Sandbox::new`].
     #[cfg(target_os = "macos")]
     protected_file_names: Vec<ProtectedFileName>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     paths_disallowing_reads: Vec<HostFilesystemLocation>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     paths_allowing_reads: Vec<HostFilesystemLocation>,
 }
 
@@ -798,8 +789,15 @@ impl Sandbox {
         }
         // Bubblewrap can only hide paths by mounting over them, which neither
         // covers paths created later nor allows reads of paths underneath.
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let paths_disallowing_reads_supported = false;
+        #[cfg(target_os = "windows")]
+        let paths_disallowing_reads_supported =
+            paths_disallowing_reads.is_empty() || windows_psec::supports_fs_deny();
         #[cfg(not(target_os = "macos"))]
-        if !paths_disallowing_reads.is_empty() || !paths_allowing_reads.is_empty() {
+        if !paths_disallowing_reads_supported
+            && (!paths_disallowing_reads.is_empty() || !paths_allowing_reads.is_empty())
+        {
             return Err(SandboxError::UnsupportedPolicy(
                 "paths disallowing reads are not yet supported by this platform's sandbox"
                     .to_string(),
@@ -831,9 +829,9 @@ impl Sandbox {
             protected_paths,
             #[cfg(target_os = "macos")]
             protected_file_names,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             paths_disallowing_reads,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             paths_allowing_reads,
         };
 
@@ -1215,26 +1213,7 @@ impl Sandbox {
                     windows_psec::NetworkAccess::LocalhostPort(port)
                 }),
         };
-        let writable_paths: Vec<&Path> = self
-            .fs
-            .writable_paths
-            .iter()
-            .map(HostFilesystemLocation::windows_canonical_path)
-            .collect();
-        let protected_paths: Vec<&Path> = self
-            .fs
-            .protected_paths
-            .iter()
-            .map(HostFilesystemLocation::windows_requested_path)
-            .collect();
-
-        let spec = windows_psec::build_spec(
-            self.fs.allow_fs_write,
-            &writable_paths,
-            &protected_paths,
-            network,
-        )
-        .map_err(map_anyhow_error)?;
+        let spec = windows_psec::build_spec(&self.fs, network).map_err(map_anyhow_error)?;
 
         let (program, args) =
             windows_psec::wrap_invocation(&spec, command.program.clone(), command.args.clone())

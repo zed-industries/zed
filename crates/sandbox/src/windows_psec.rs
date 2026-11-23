@@ -6,6 +6,8 @@ use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use crate::{FsSetup, HostFilesystemLocation};
+
 use anyhow::{Context as _, Result, anyhow, ensure};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -65,19 +67,35 @@ pub(crate) enum NetworkAccess {
     All,
 }
 
-/// Encode the crate's filesystem/network intent as a PSEC 1.0 FlatBuffer.
-///
-/// The layout follows the PSEC FlatBuffers schema:
-/// <https://github.com/microsoft/mxc/blob/main/external/windows-sdk/ProcessSecurityEnvironment.fbs>.
-pub(crate) fn build_spec(
-    allow_fs_write: bool,
-    writable_paths: &[&Path],
-    protected_paths: &[&Path],
-    network: NetworkAccess,
-) -> Result<Vec<u8>> {
+/// Turn the crate's filesystem/network intent into a PSEC 1.0 policy.
+pub(crate) fn build_spec(fs: &FsSetup, network: NetworkAccess) -> Result<Vec<u8>> {
+    let (read_write, read_only, deny) = policy_paths(fs)?;
+    log::debug!(
+        "[sandbox] PSEC policy: read-write {read_write:?}, read-only {read_only:?}, deny {deny:?}, network {network:?}"
+    );
+    encode_spec(&read_write, &read_only, &deny, network)
+}
+
+/// Resolve the read-write, read-only and denied paths that enforce `fs` where the most specific path wins.
+fn policy_paths(fs: &FsSetup) -> Result<(Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>)> {
+    // Every path as it resolved when it was captured, which is what the user approved.
+    let canonical = |locations: &[HostFilesystemLocation]| -> Vec<PathBuf> {
+        locations
+            .iter()
+            .map(|location| location.canonical_or_raw_path().to_path_buf())
+            .collect()
+    };
+    let writable = canonical(&fs.writable_paths);
+    let protected = canonical(&fs.protected_paths);
+    let denied = canonical(&fs.paths_disallowing_reads);
+    let allowing = canonical(&fs.paths_allowing_reads);
+    let is_within = |path: &Path, ancestors: &[PathBuf]| {
+        ancestors.iter().any(|ancestor| path.starts_with(ancestor))
+    };
+
     let roots = fixed_drive_roots();
     let mut read_write = Vec::new();
-    if allow_fs_write {
+    if fs.allow_fs_write {
         // A read-write grant on a volume root does not apply to anything
         // inside it, so grant each top-level directory instead.
         for root in &roots {
@@ -93,33 +111,55 @@ pub(crate) fn build_spec(
         }
         read_write.sort();
         read_write.dedup();
-    } else {
-        // Already canonical: resolved and verified by `CanonicalPathBuf`.
-        read_write.extend(writable_paths.iter().map(|path| path.to_path_buf()));
     }
+    read_write.extend(writable.iter().cloned());
 
+    // Reads are allowed everywhere.
     let mut read_only = roots;
-    for path in protected_paths {
-        match dunce::canonicalize(path) {
-            Ok(path) => read_only.push(path),
-            // Like Bubblewrap, PSEC can only protect a path that exists when
-            // the environment is created.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("invalid protected path `{}`", path.display()));
-            }
+    for path in &protected {
+        // Like Bubblewrap, PSEC can only protect a path that exists when the
+        // environment is created.
+        if path
+            .try_exists()
+            .with_context(|| format!("invalid protected path `{}`", path.display()))?
+        {
+            read_only.push(path.clone());
         }
     }
-    log::debug!(
-        "[sandbox] PSEC policy: read-write {read_write:?}, read-only {read_only:?}, network {network:?}"
-    );
 
+    // A path allowing reads gets the access the rest of the policy gives it.
+    for path in &allowing {
+        if (fs.allow_fs_write || is_within(path, &writable)) && !is_within(path, &protected) {
+            read_write.push(path.clone());
+        } else {
+            read_only.push(path.clone());
+        }
+    }
+
+    // Any grant inside a denied path would override the deny, so keep only those
+    // that a path allowing reads covers.
+    let is_hidden = |path: &PathBuf| is_within(path, &denied) && !is_within(path, &allowing);
+    read_write.retain(|path| !is_hidden(path));
+    read_only.retain(|path| !is_hidden(path));
+    Ok((read_write, read_only, denied))
+}
+
+/// Encode a PSEC 1.0 policy FlatBuffer.
+///
+/// The layout follows the PSEC FlatBuffers schema:
+/// <https://github.com/microsoft/mxc/blob/main/external/windows-sdk/ProcessSecurityEnvironment.fbs>.
+fn encode_spec(
+    read_write_paths: &[PathBuf],
+    read_only_paths: &[PathBuf],
+    denied_paths: &[PathBuf],
+    network: NetworkAccess,
+) -> Result<Vec<u8>> {
     // Vtable offsets (`4 + 2 * field index`) and enum values from the schema.
     const VERSION: VOffsetT = 4;
     const CAPABILITIES: VOffsetT = 6;
     const UI_RESTRICTIONS: VOffsetT = 10;
     const FS_READ_ONLY: VOffsetT = 14;
+    const FS_DENY: VOffsetT = 16;
     const NETWORK_POLICY: VOffsetT = 18;
     const NETWORK_POLICY_PROXY: VOffsetT = 4;
     const NETWORK_POLICY_EGRESS: VOffsetT = 6;
@@ -140,8 +180,9 @@ pub(crate) fn build_spec(
             builder.create_vector(&paths)
         })
     };
-    let read_write = path_vector(&read_write);
-    let read_only = path_vector(&read_only);
+    let read_write = path_vector(read_write_paths);
+    let read_only = path_vector(read_only_paths);
+    let deny = path_vector(denied_paths);
     let capabilities = match network {
         NetworkAccess::None => None,
         // Reaching a loopback listener in another process needs both of these.
@@ -206,6 +247,9 @@ pub(crate) fn build_spec(
     }
     if let Some(read_only) = read_only {
         builder.push_slot_always(FS_READ_ONLY, read_only);
+    }
+    if let Some(deny) = deny {
+        builder.push_slot_always(FS_DENY, deny);
     }
     builder.push_slot_always(NETWORK_POLICY, network_policy);
     let root = builder.end_table(root);
@@ -567,12 +611,15 @@ type CloseProcessSecurityEnvironmentFn =
     unsafe extern "system" fn(process_security_environment: HANDLE);
 type IsProcessSecurityEnvironmentVersionSupportedFn =
     unsafe extern "system" fn(major: u32, available: *mut u8, minor: *mut u32) -> HRESULT;
+type QueryProcessSecurityEnvironmentSupportFn =
+    unsafe extern "system" fn(support_flags: *mut u64) -> HRESULT;
 
 /// The `processmodel.dll` exports, which only exist on recent Windows builds.
 struct Exports {
     create: CreateProcessSecurityEnvironmentFn,
     close: CloseProcessSecurityEnvironmentFn,
     version_supported: Option<IsProcessSecurityEnvironmentVersionSupportedFn>,
+    query_support: Option<QueryProcessSecurityEnvironmentSupportFn>,
 }
 
 fn exports() -> Result<&'static Exports> {
@@ -597,6 +644,13 @@ fn exports() -> Result<&'static Exports> {
                         )
                     },
                 ),
+                query_support: export(c"QueryProcessSecurityEnvironmentSupport").map(
+                    |function| {
+                        std::mem::transmute::<RawExport, QueryProcessSecurityEnvironmentSupportFn>(
+                            function,
+                        )
+                    },
+                ),
             })
         })
         .as_ref()
@@ -616,6 +670,25 @@ impl Exports {
             .context("IsProcessSecurityEnvironmentVersionSupported failed")?;
         Ok(available != 0 && supported_minor >= minor)
     }
+
+    fn support_flags(&self) -> Result<u64> {
+        let Some(query_support) = self.query_support else {
+            return Ok(0);
+        };
+        let mut flags = 0u64;
+        unsafe { query_support(&mut flags) }
+            .ok()
+            .context("QueryProcessSecurityEnvironmentSupport failed")?;
+        Ok(flags)
+    }
+}
+
+/// Whether this Windows build can deny access to paths (`fs_deny`).
+pub(crate) fn supports_fs_deny() -> bool {
+    const PSE_SUPPORT_FS_DENY: u64 = 0x1;
+    exports()
+        .and_then(Exports::support_flags)
+        .is_ok_and(|flags| flags & PSE_SUPPORT_FS_DENY != 0)
 }
 
 /// An open `HPROCESS_SECURITY_ENVIRONMENT`, closed on drop.
@@ -659,6 +732,28 @@ mod tests {
         Some(run_launcher(&command_line).expect("launcher failed"))
     }
 
+    fn fs_setup(
+        allow_fs_write: bool,
+        writable_paths: &[&Path],
+        protected_paths: &[&Path],
+        paths_disallowing_reads: &[&Path],
+        paths_allowing_reads: &[&Path],
+    ) -> FsSetup {
+        let capture = |paths: &[&Path]| {
+            paths
+                .iter()
+                .map(|path| HostFilesystemLocation::capture(path).unwrap())
+                .collect()
+        };
+        FsSetup {
+            allow_fs_write,
+            writable_paths: capture(writable_paths),
+            protected_paths: capture(protected_paths),
+            paths_disallowing_reads: capture(paths_disallowing_reads),
+            paths_allowing_reads: capture(paths_allowing_reads),
+        }
+    }
+
     struct Layout {
         project: tempfile::TempDir,
         outside: tempfile::TempDir,
@@ -681,13 +776,19 @@ mod tests {
         }
 
         fn spec(&self, allow_fs_write: bool) -> Vec<u8> {
-            build_spec(
+            let writable_paths: &[&Path] = if allow_fs_write {
+                &[]
+            } else {
+                &[self.project.path()]
+            };
+            let fs = fs_setup(
                 allow_fs_write,
-                &[&dunce::canonicalize(self.project.path()).unwrap()],
+                writable_paths,
                 &[&self.protected()],
-                NetworkAccess::None,
-            )
-            .unwrap()
+                &[],
+                &[],
+            );
+            build_spec(&fs, NetworkAccess::None).unwrap()
         }
     }
 
@@ -816,7 +917,8 @@ mod tests {
             .unwrap();
         assert!(status.success());
 
-        let spec = build_spec(false, &[&grant], &[], NetworkAccess::None).unwrap();
+        // Encoded directly: building the policy would resolve the junction first.
+        let spec = encode_spec(&[grant], &[], &[], NetworkAccess::None).unwrap();
         let command_line = format!(
             "zed.exe {LAUNCHER_FLAG} {} cmd.exe /c exit 0",
             URL_SAFE_NO_PAD.encode(spec)
@@ -831,7 +933,11 @@ mod tests {
         let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let proxy_port = proxy.local_addr().unwrap().port();
         let other_port = other.local_addr().unwrap().port();
-        let spec = build_spec(false, &[], &[], NetworkAccess::LocalhostPort(proxy_port)).unwrap();
+        let spec = build_spec(
+            &fs_setup(false, &[], &[], &[], &[]),
+            NetworkAccess::LocalhostPort(proxy_port),
+        )
+        .unwrap();
         let connect = |port: u16| {
             run_sandboxed(
                 &spec,
@@ -856,7 +962,7 @@ mod tests {
     fn unrestricted_network_policy_reaches_loopback() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let spec = build_spec(false, &[], &[], NetworkAccess::All).unwrap();
+        let spec = build_spec(&fs_setup(false, &[], &[], &[], &[]), NetworkAccess::All).unwrap();
         let Some(exit_code) = run_sandboxed(
             &spec,
             &format!(
@@ -866,5 +972,71 @@ mod tests {
             return;
         };
         assert_eq!(exit_code, 0, "the sandbox should reach loopback listeners");
+    }
+
+    #[test]
+    fn hidden_paths_are_unreadable_except_for_exceptions() {
+        let root = tempfile::tempdir().unwrap();
+        let project = dunce::canonicalize(root.path()).unwrap();
+        let hidden = project.join("hidden");
+        let exception = hidden.join("exception");
+        std::fs::create_dir_all(&exception).unwrap();
+        std::fs::write(hidden.join("file.txt"), "hidden").unwrap();
+        std::fs::write(exception.join("file.txt"), "visible").unwrap();
+        let fs = fs_setup(false, &[&project], &[], &[&hidden], &[&exception]);
+        let spec = build_spec(&fs, NetworkAccess::None).unwrap();
+
+        let Some(exit_code) = run_sandboxed(
+            &spec,
+            &format!("type {}", hidden.join("file.txt").display()),
+        ) else {
+            return;
+        };
+        assert_ne!(exit_code, 0, "a hidden file should not be readable");
+        assert_eq!(
+            run_sandboxed(
+                &spec,
+                &format!("type {}", exception.join("file.txt").display())
+            ),
+            Some(0),
+            "an exception should be readable"
+        );
+        assert_eq!(
+            run_sandboxed(&spec, &format!(r"echo x> {}\new.txt", exception.display())),
+            Some(0),
+            "an exception inside the project should be writable"
+        );
+    }
+
+    #[test]
+    fn grants_inside_hidden_paths_are_dropped_unless_an_exception_covers_them() {
+        let root = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(root.path()).unwrap();
+        let directory = |relative: &str| {
+            let path = root.join(relative);
+            std::fs::create_dir_all(&path).unwrap();
+            path
+        };
+        let home = directory("home");
+        let project = directory(r"home\project");
+        let project_git = directory(r"home\project\.git");
+        let other = directory(r"home\other");
+        let other_git = directory(r"home\other\.git");
+        let config = directory(r"home\.config");
+        let fs = fs_setup(
+            false,
+            &[&project, &other],
+            &[&project_git, &other_git],
+            &[&home],
+            &[&project, &config],
+        );
+
+        let (read_write, read_only, deny) = policy_paths(&fs).unwrap();
+        assert!(read_write.contains(&project));
+        assert!(!read_write.contains(&other));
+        assert!(read_only.contains(&project_git));
+        assert!(read_only.contains(&config));
+        assert!(!read_only.contains(&other_git));
+        assert_eq!(deny, [home]);
     }
 }

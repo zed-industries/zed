@@ -168,7 +168,7 @@ impl HostFilesystemLocation {
     ///
     /// Used both for display and as the subtree key in
     /// [`normalize_host_filesystem_locations`].
-    fn canonical_or_raw_path(&self) -> &Path {
+    pub(crate) fn canonical_or_raw_path(&self) -> &Path {
         self.canonical.path()
     }
 
@@ -190,13 +190,6 @@ impl HostFilesystemLocation {
         {
             false
         }
-    }
-
-    /// The requested path, for enforcement branches on platforms with no
-    /// captured identity of their own (the `not(linux/macos)` overlap check).
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    pub(crate) fn untrusted_raw_path(&self) -> &Path {
-        &self.untrusted_raw_path
     }
 
     /// macOS: the canonical path, used verbatim as the Seatbelt rule literal.
@@ -225,18 +218,6 @@ impl HostFilesystemLocation {
     #[cfg(target_os = "linux")]
     pub(crate) fn linux_dup_fd(&self) -> std::io::Result<OwnedFd> {
         self.canonical.dup_fd()
-    }
-
-    /// Windows: the requested path, retained for display.
-    #[cfg(target_os = "windows")]
-    pub(crate) fn windows_requested_path(&self) -> &Path {
-        &self.untrusted_raw_path
-    }
-
-    /// Windows: the canonical path recorded at approval time.
-    #[cfg(target_os = "windows")]
-    pub(crate) fn windows_canonical_path(&self) -> &Path {
-        self.canonical.path()
     }
 }
 
