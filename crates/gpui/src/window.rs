@@ -2004,30 +2004,14 @@ impl Window {
                 if has_frame_demand && frame_pacer.should_defer(now, min_frame_interval) {
                     // Don't lose a pending forced render to throttling.
                     deferred_force_render |= force_render;
-                    #[cfg(feature = "profiler")]
-                    let skip_reason = if animation_frame_interval.is_some()
-                        && animation_frame_interval == min_frame_interval
-                    {
-                        profiler::journal::FrameSkipReason::AnimationFrameRateLimit
-                    } else if inactive_without_high_rate_input
-                        && inactive_frame_interval == min_frame_interval
-                    {
-                        profiler::journal::FrameSkipReason::InactiveFrameRateLimit
-                    } else if power_mode == crate::PowerMode::LowPower
-                        && low_power_frame_interval == min_frame_interval
-                    {
-                        profiler::journal::FrameSkipReason::LowPowerFrameRateLimit
-                    } else {
-                        profiler::journal::FrameSkipReason::ThermalFrameRateLimit
-                    };
                     // Deferred by throttling: ask demand-driven platforms to retry.
                     handle
                         .update(&mut cx, |_, window, _| {
                             // Animation limits only apply without other demand,
                             // so no input or invalidation waits on them.
                             #[cfg(feature = "profiler")]
-                            if skip_reason
-                                != profiler::journal::FrameSkipReason::AnimationFrameRateLimit
+                            if animation_frame_interval.is_none()
+                                || animation_frame_interval != min_frame_interval
                             {
                                 window.window_profiler.record_frame_throttled();
                             }
@@ -2044,7 +2028,25 @@ impl Window {
                     // requesting frames for idle windows need a wakeup to retry.
                     invalidator.wake_platform();
                     #[cfg(feature = "profiler")]
-                    profiler::journal::record_frame_skipped(window_id, Instant::now(), skip_reason);
+                    profiler::journal::record_frame_skipped(
+                        window_id,
+                        Instant::now(),
+                        if animation_frame_interval.is_some()
+                            && animation_frame_interval == min_frame_interval
+                        {
+                            profiler::journal::FrameSkipReason::AnimationFrameRateLimit
+                        } else if inactive_without_high_rate_input
+                            && inactive_frame_interval == min_frame_interval
+                        {
+                            profiler::journal::FrameSkipReason::InactiveFrameRateLimit
+                        } else if power_mode == crate::PowerMode::LowPower
+                            && low_power_frame_interval == min_frame_interval
+                        {
+                            profiler::journal::FrameSkipReason::LowPowerFrameRateLimit
+                        } else {
+                            profiler::journal::FrameSkipReason::ThermalFrameRateLimit
+                        },
+                    );
                     return;
                 }
 
@@ -8742,15 +8744,15 @@ mod tests {
                 modifiers: Default::default(),
             }));
         };
+        // Input latency, dirty-to-present and draw sample counts.
         let samples = |cx: &mut TestAppContext| {
             window
                 .update(cx, |_, window, _| {
+                    let frames = window.frame_duration_snapshot();
                     (
                         window.input_latency_snapshot().latency_histogram.len(),
-                        window
-                            .frame_duration_snapshot()
-                            .draw_duration_histogram
-                            .len(),
+                        frames.dirty_to_present_histogram.len(),
+                        frames.draw_duration_histogram.len(),
                     )
                 })
                 .expect("read window profiler")
@@ -8758,24 +8760,26 @@ mod tests {
 
         platform_window.simulate_active_status_change(false);
         platform_window.simulate_frame_request(unthrottled_frame);
-        let (_, draws_before) = samples(cx);
+        let (_, dirty_before, draws_before) = samples(cx);
 
         move_mouse(&mut platform_window, 10.);
         platform_window.simulate_frame_request(RequestFrameOptions::default());
         assert_eq!(
             samples(cx),
-            (0, draws_before),
+            (0, dirty_before, draws_before),
             "the inactive window's frame should be throttled"
         );
         move_mouse(&mut platform_window, 20.);
         platform_window.simulate_frame_request(unthrottled_frame);
-        assert_eq!(samples(cx), (0, draws_before + 1));
+        assert_eq!(samples(cx), (0, dirty_before, draws_before + 1));
 
         platform_window.simulate_active_status_change(true);
         platform_window.simulate_frame_request(unthrottled_frame);
         move_mouse(&mut platform_window, 30.);
         platform_window.simulate_frame_request(RequestFrameOptions::default());
-        assert_eq!(samples(cx).0, 1);
+        let (input_samples, dirty_samples, _) = samples(cx);
+        assert_eq!(input_samples, 1);
+        assert!(dirty_samples > dirty_before);
     }
 
     /// A stale cache is only visible if the snapshot reports GPUI's cached

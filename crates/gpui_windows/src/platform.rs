@@ -483,12 +483,8 @@ impl WindowsPlatform {
                             if presentable {
                                 hwnd.frame_signal.record(signal_at, signal_source);
                             } else {
-                                // Windows that are hidden, minimized or on
-                                // another virtual desktop may not paint until
-                                // shown again. Dropping their signal keeps it
-                                // from latching until then, while `record`'s
-                                // minimum still counts every refresh a busy
-                                // main thread misses for presentable windows.
+                                // Hidden, minimized or cloaked windows may not
+                                // paint until shown, so don't latch a signal.
                                 hwnd.frame_signal.take();
                             }
                         }

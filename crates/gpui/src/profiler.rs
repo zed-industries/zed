@@ -1550,31 +1550,30 @@ impl WindowProfiler {
         };
         journal::record_present(present_timing, frame);
 
-        if !is_animation_frame {
-            return;
-        }
-        if let Some(frame) = frame {
-            self.frames_for(frame.refresh_interval)
-                .record_presented_frame(&frame, &present_timing, responded_to_input);
-
-            if let Some(dirty_at) = frame.dirty_at
-                && let Err(error) = self
-                    .dirty_to_present_histogram
-                    .record(present_end.duration_since(dirty_at).as_nanos() as u64)
-            {
-                log::error!("failed to record dirty-to-present frame timing: {error}");
+        if is_animation_frame {
+            if let Some(animation_interval) = animation_interval {
+                self.present_interval_histogram
+                    .record(animation_interval.as_nanos() as u64)
+                    .ok();
             }
-            record_frame_event(FrameEvent::Present(present_timing));
+            self.last_present_at = Some(present_end);
+            self.animating_at_last_present = next_frame_scheduled && window_active;
         }
 
-        if let Some(animation_interval) = animation_interval {
-            self.present_interval_histogram
-                .record(animation_interval.as_nanos() as u64)
-                .ok();
-        }
+        let Some(frame) = frame else {
+            return;
+        };
+        self.frames_for(frame.refresh_interval)
+            .record_presented_frame(&frame, &present_timing, responded_to_input);
 
-        self.last_present_at = Some(present_end);
-        self.animating_at_last_present = next_frame_scheduled && window_active;
+        if let Some(dirty_at) = frame.dirty_at
+            && let Err(error) = self
+                .dirty_to_present_histogram
+                .record(present_end.duration_since(dirty_at).as_nanos() as u64)
+        {
+            log::error!("failed to record dirty-to-present frame timing: {error}");
+        }
+        record_frame_event(FrameEvent::Present(present_timing));
     }
 
     fn record_draw_timing(&mut self, timing: FrameTiming) {
@@ -2167,65 +2166,6 @@ mod tests {
         assert_eq!(snapshot.events_per_frame_histogram.len(), 1);
         assert_eq!(snapshot.events_per_frame_histogram.max(), 2);
         assert_eq!(snapshot.mid_draw_events_dropped, 0);
-    }
-
-    #[test]
-    fn throttled_frames_record_no_input_or_dirty_latency() {
-        let mut window_profiler =
-            WindowProfiler::new(WindowId::from(9)).expect("window profiler should initialize");
-        let first_input_at = Instant::now();
-
-        begin_input_at(&mut window_profiler, first_input_at);
-        window_profiler.end_input(true);
-        window_profiler.record_frame_throttled();
-        // Input that arrives while the frame is deferred waits on the limit too.
-        begin_input_at(
-            &mut window_profiler,
-            first_input_at + Duration::from_millis(5),
-        );
-        window_profiler.end_input(true);
-        let presented_at = first_input_at + Duration::from_millis(40);
-        window_profiler.record_draw_timing(FrameTiming {
-            window_id: window_profiler.window_id,
-            dirty_at: Some(first_input_at),
-            invalidations: 2,
-            draw_start: presented_at - Duration::from_millis(2),
-            draw_end: presented_at,
-            refresh_interval: Some(FRAME),
-            signal_at: Some(presented_at - Duration::from_millis(3)),
-            phases: Default::default(),
-        });
-        window_profiler.record_present_at(presented_at, presented_at, false, false, false);
-
-        let input = window_profiler.input_latency_snapshot();
-        assert!(input.latency_histogram.is_empty());
-        assert!(input.events_per_frame_histogram.is_empty());
-        let frames = window_profiler.frame_duration_snapshot();
-        assert!(frames.dirty_to_present_histogram.is_empty());
-        let [frames] = frames.by_refresh_interval.as_slice() else {
-            panic!("expected frames at one refresh interval");
-        };
-        assert_eq!(frames.frames_on_time, 1);
-        assert_eq!(frames.input_frames_on_time + frames.input_frames_late, 0);
-
-        // The next unthrottled frame is measured again.
-        let next_input_at = presented_at + Duration::from_millis(100);
-        begin_input_at(&mut window_profiler, next_input_at);
-        window_profiler.end_input(true);
-        let presented_at = next_input_at + Duration::from_millis(6);
-        record_test_draw(&mut window_profiler, presented_at);
-        window_profiler.record_present_at(presented_at, presented_at, true, false, false);
-
-        let input = window_profiler.input_latency_snapshot();
-        assert_eq!(input.latency_histogram.len(), 1);
-        assert!(input.latency_histogram.max() < Duration::from_millis(7).as_nanos() as u64);
-        assert_eq!(
-            window_profiler
-                .frame_duration_snapshot()
-                .dirty_to_present_histogram
-                .len(),
-            1
-        );
     }
 
     #[test]
