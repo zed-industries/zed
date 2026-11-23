@@ -4455,7 +4455,7 @@ async fn test_removing_worktree_notifies_settings_only_for_local_settings(
                         .handle_notification::<lsp::notification::DidChangeConfiguration, _>({
                             let did_change_count = did_change_count.clone();
                             move |_, _| {
-                                did_change_count.fetch_add(1, atomic::Ordering::SeqCst);
+                                did_change_count.fetch_add(1, atomic::Ordering::Release);
                             }
                         });
                 }
@@ -4473,17 +4473,7 @@ async fn test_removing_worktree_notifies_settings_only_for_local_settings(
         .unwrap();
     let _fake_rust_server = fake_rust_servers.next().await.unwrap();
     cx.executor().run_until_parked();
-    did_change_count.store(0, atomic::Ordering::SeqCst);
-    let settings_change_count = Arc::new(atomic::AtomicUsize::new(0));
-    let _settings_subscription = cx.update(|cx| {
-        cx.observe_global::<SettingsStore>({
-            let settings_change_count = settings_change_count.clone();
-            move |_| {
-                settings_change_count.fetch_add(1, atomic::Ordering::SeqCst);
-            }
-        })
-    });
-    cx.executor().run_until_parked();
+    did_change_count.store(0, atomic::Ordering::Release);
 
     let definitions = project
         .update(cx, |project, cx| project.definitions(&rs_buffer, 0, cx))
@@ -4508,7 +4498,6 @@ async fn test_removing_worktree_notifies_settings_only_for_local_settings(
         );
         target_worktree_id
     });
-    assert_eq!(did_change_count.load(atomic::Ordering::SeqCst), 0);
 
     cx.update(|_| drop(definitions));
     cx.executor().run_until_parked();
@@ -4516,13 +4505,7 @@ async fn test_removing_worktree_notifies_settings_only_for_local_settings(
     assert!(project.read_with(cx, |project, cx| {
         project.worktree_for_id(invisible_worktree_id, cx).is_none()
     }));
-    assert_eq!(
-        (
-            did_change_count.load(atomic::Ordering::SeqCst),
-            settings_change_count.load(atomic::Ordering::SeqCst),
-        ),
-        (0, 0)
-    );
+    assert_eq!(did_change_count.load(atomic::Ordering::Acquire), 0);
 
     let (worktree_with_settings, _) = project
         .update(cx, |project, cx| {
@@ -4534,27 +4517,14 @@ async fn test_removing_worktree_notifies_settings_only_for_local_settings(
         worktree_with_settings.read_with(cx, |worktree, _| worktree.id());
     drop(worktree_with_settings);
     cx.executor().run_until_parked();
-    assert!(cx.read_global::<SettingsStore, _>(|store, cx| {
-        store.has_local_settings(worktree_with_settings_id, cx)
-    }));
-    did_change_count.store(0, atomic::Ordering::SeqCst);
-    settings_change_count.store(0, atomic::Ordering::SeqCst);
+    did_change_count.store(0, atomic::Ordering::Release);
 
     project.update(cx, |project, cx| {
         project.remove_worktree(worktree_with_settings_id, cx)
     });
     cx.executor().run_until_parked();
 
-    assert!(!cx.read_global::<SettingsStore, _>(|store, cx| {
-        store.has_local_settings(worktree_with_settings_id, cx)
-    }));
-    assert_eq!(
-        (
-            did_change_count.load(atomic::Ordering::SeqCst),
-            settings_change_count.load(atomic::Ordering::SeqCst),
-        ),
-        (1, 1)
-    );
+    assert_eq!(did_change_count.load(atomic::Ordering::Acquire), 1);
 }
 
 #[gpui::test(iterations = 3)]

@@ -1696,9 +1696,12 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
     }
 
     fn has_local_values(&self, root_id: WorktreeId) -> bool {
+        let ix = self
+            .local_values
+            .partition_point(|(worktree_id, _, _)| *worktree_id < root_id);
         self.local_values
-            .iter()
-            .any(|(worktree_id, _, _)| *worktree_id == root_id)
+            .get(ix)
+            .is_some_and(|(worktree_id, _, _)| *worktree_id == root_id)
     }
 }
 
