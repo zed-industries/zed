@@ -598,7 +598,7 @@ mod tests {
                 "active_blocking_work_incidents": 0,
                 "contributor_totals": [],
                 "contributor_totals_elided": 0,
-                "measurement_version": 3
+                "measurement_version": 4
             })
         );
     }
@@ -630,7 +630,7 @@ mod tests {
             serde_json::to_value(event.event_properties).unwrap(),
             json!({
                 "incidents": [{
-                    "measurement_version": 3,
+                    "measurement_version": 4,
                     "phase": "steady",
                     "trigger": "threshold",
                     "during_active_use": false,
@@ -673,7 +673,7 @@ mod tests {
                     "total_ms": 250.5
                 }],
                 "contributor_totals_elided": 4,
-                "measurement_version": 3
+                "measurement_version": 4
             })
         );
     }

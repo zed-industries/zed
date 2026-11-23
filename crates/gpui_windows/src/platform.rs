@@ -42,6 +42,9 @@ use gpui::*;
 struct TrackedWindow {
     handle: SafeHwnd,
     frame_signal: Arc<PlatformFrameSignal>,
+    /// Whether the window was presentable at the last vsync. Only the vsync
+    /// thread uses it.
+    presentable: AtomicBool,
 }
 
 impl TrackedWindow {
@@ -464,17 +467,32 @@ impl WindowsPlatform {
                         break;
                     };
                     for hwnd in all_windows.read().iter() {
-                        unsafe {
-                            if let Some(signal_at) = signal_at {
-                                if IsWindowVisible(hwnd.as_raw()).as_bool()
-                                    && !IsIconic(hwnd.as_raw()).as_bool()
-                                {
-                                    hwnd.frame_signal.record(signal_at, signal_source);
-                                } else {
-                                    // Hidden windows may not consume WM_PAINT until shown again.
-                                    hwnd.frame_signal.take();
-                                }
+                        let presentable = is_window_presentable(hwnd.as_raw());
+                        if hwnd.presentable.swap(presentable, Ordering::Relaxed) != presentable {
+                            unsafe {
+                                PostMessageW(
+                                    Some(hwnd.as_raw()),
+                                    WM_GPUI_PRESENTABILITY_CHANGED,
+                                    WPARAM(validation_number),
+                                    LPARAM(0),
+                                )
                             }
+                            .log_err();
+                        }
+                        if let Some(signal_at) = signal_at {
+                            if presentable {
+                                hwnd.frame_signal.record(signal_at, signal_source);
+                            } else {
+                                // Windows that are hidden, minimized or on
+                                // another virtual desktop may not paint until
+                                // shown again. Dropping their signal keeps it
+                                // from latching until then, while `record`'s
+                                // minimum still counts every refresh a busy
+                                // main thread misses for presentable windows.
+                                hwnd.frame_signal.take();
+                            }
+                        }
+                        unsafe {
                             RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
                                 .ok()
                                 .log_err();
@@ -752,6 +770,7 @@ impl Platform for WindowsPlatform {
         self.raw_window_handles.write().push(TrackedWindow {
             handle: handle.into(),
             frame_signal: window.state.frame_signal.clone(),
+            presentable: AtomicBool::new(false),
         });
 
         Ok(Box::new(window))

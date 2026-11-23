@@ -44,8 +44,8 @@ use super::{
     ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
     XimHandler, button_or_scroll_from_event_detail, check_reply,
     clipboard::{self, Clipboard},
-    get_reply, get_valuator_axis_index, handle_connection_error, modifiers_from_state,
-    pressed_button_from_mask, xcb_flush,
+    display_for_bounds, get_reply, get_valuator_axis_index, handle_connection_error,
+    modifiers_from_state, pressed_button_from_mask, xcb_flush,
 };
 
 use crate::linux::{
@@ -112,9 +112,7 @@ impl Deref for WindowRef {
 }
 
 enum RefreshState {
-    Hidden {
-        refresh_rate: Duration,
-    },
+    Hidden,
     PeriodicRefresh {
         refresh_rate: Duration,
         event_loop_token: RegistrationToken,
@@ -205,6 +203,8 @@ pub struct X11ClientState {
     xkb_device_id: i32,
     client_side_decorations_supported: bool,
     pub(crate) x_root_index: usize,
+    /// The monitors of the X screen windows are created on, primary first.
+    displays: Vec<Rc<X11Display>>,
     pub(crate) resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
@@ -487,6 +487,11 @@ impl X11Connection {
 
         let screen = &xcb_connection.setup().roots[x_root_index];
         let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
+        select_display_change_events(&xcb_connection, screen.root).log_err();
+        let displays = X11Display::all(&xcb_connection, scale_factor, x_root_index)?
+            .into_iter()
+            .map(Rc::new)
+            .collect();
 
         let xcb_connection = Rc::new(xcb_connection);
 
@@ -526,6 +531,7 @@ impl X11Connection {
                 xkb_device_id,
                 client_side_decorations_supported,
                 x_root_index,
+                displays,
                 resource_database,
                 atoms,
                 windows: HashMap::default(),
@@ -660,6 +666,8 @@ impl X11Client {
         loop {
             let mut events = Vec::new();
             let mut windows_to_refresh = HashSet::new();
+            // RandR sends several events for one configuration change.
+            let mut displays_changed = false;
 
             let mut last_key_release = None;
 
@@ -673,6 +681,9 @@ impl X11Client {
                         match event {
                             Event::Expose(expose_event) => {
                                 windows_to_refresh.insert(expose_event.window);
+                            }
+                            Event::RandrScreenChangeNotify(_) | Event::RandrNotify(_) => {
+                                displays_changed = true;
                             }
                             Event::KeyRelease(_) => {
                                 if let Some(last_keymap_change_event) =
@@ -744,8 +755,12 @@ impl X11Client {
                 events.push(keymap_change_event);
             }
 
-            if events.is_empty() && windows_to_refresh.is_empty() {
+            if events.is_empty() && windows_to_refresh.is_empty() && !displays_changed {
                 break;
+            }
+
+            if displays_changed {
+                self.handle_displays_changed();
             }
 
             for event in events.into_iter() {
@@ -809,7 +824,7 @@ impl X11Client {
                     window.refresh(RequestFrameOptions {
                         require_presentation: true,
                         force_render: false,
-                        signal_at: None,
+                        signal_at: PlatformFrameSignal::capture(Instant::now),
                         signal_source: FrameRequestSource::NativeCallback,
                     });
                 }
@@ -1053,6 +1068,7 @@ impl X11Client {
                     .set_bounds(bounds)
                     .context("X11: Failed to set window bounds")
                     .log_err();
+                self.update_window_display(event.window);
             }
             Event::PropertyNotify(event) => {
                 let window = self.get_window(event.window)?;
@@ -1649,29 +1665,84 @@ impl X11Client {
     }
 
     pub(crate) fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        let state = self.0.borrow();
-        let setup = state.xcb_connection.setup();
-        setup
-            .roots
+        self.0
+            .borrow()
+            .displays
             .iter()
-            .enumerate()
-            .filter_map(|(root_id, _)| {
-                Some(Rc::new(
-                    X11Display::new(&state.xcb_connection, state.scale_factor, root_id).ok()?,
-                ) as Rc<dyn PlatformDisplay>)
-            })
+            .map(|display| display.clone() as Rc<dyn PlatformDisplay>)
             .collect()
     }
 
     pub(crate) fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        let state = self.0.borrow();
-        X11Display::new(
-            &state.xcb_connection,
-            state.scale_factor,
-            state.x_root_index,
-        )
-        .log_err()
-        .map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
+        self.0
+            .borrow()
+            .displays
+            .first()
+            .map(|display| display.clone() as Rc<dyn PlatformDisplay>)
+    }
+
+    /// Reads the monitors again after RandR reported a change, moves windows
+    /// to the monitors now showing them, and reports the change to GPUI.
+    fn handle_displays_changed(&self) {
+        let (windows, common) = {
+            let mut state = self.0.borrow_mut();
+            let Some(displays) = X11Display::all(
+                &state.xcb_connection,
+                state.scale_factor,
+                state.x_root_index,
+            )
+            .log_err() else {
+                return;
+            };
+            state.displays = displays.into_iter().map(Rc::new).collect();
+            (
+                state.windows.keys().copied().collect::<Vec<_>>(),
+                state.common.clone(),
+            )
+        };
+        for x_window in windows {
+            self.update_window_display(x_window);
+        }
+        let callback = common.borrow_mut().callbacks.displays_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            common
+                .borrow_mut()
+                .callbacks
+                .displays_changed
+                .get_or_insert(callback);
+        }
+    }
+
+    /// Moves the window to the monitor showing most of it, and paces its
+    /// frames by that monitor's refresh rate.
+    fn update_window_display(&self, x_window: xproto::Window) {
+        let (window, displays) = {
+            let state = self.0.borrow();
+            let Some(window_ref) = state.windows.get(&x_window) else {
+                return;
+            };
+            (window_ref.window.clone(), state.displays.clone())
+        };
+        let Some(bounds) = window.root_device_bounds().log_err() else {
+            return;
+        };
+        // A window that moved off every monitor keeps the last one it was on.
+        let display = display_for_bounds(&displays, bounds)
+            .cloned()
+            .or_else(|| {
+                let current = window.display();
+                displays
+                    .iter()
+                    .find(|display| display.id() == current.id())
+                    .cloned()
+            })
+            .or_else(|| displays.first().cloned());
+        let Some(display) = display else {
+            return;
+        };
+        window.set_display(display);
+        self.0.borrow_mut().update_refresh_loop(x_window);
     }
 
     #[cfg(feature = "screen-capture")]
@@ -1725,6 +1796,7 @@ impl X11Client {
             &xcb_connection,
             client_side_decorations_supported,
             x_root_index,
+            &state.displays,
             x_window,
             &atoms,
             scale_factor,
@@ -1976,68 +2048,46 @@ impl X11ClientState {
         };
         let is_visible = window_ref.visibility().is_visible();
         match (is_visible, window_ref.refresh_state.take()) {
-            (false, refresh_state @ Some(RefreshState::Hidden { .. }))
-            | (false, refresh_state @ None)
-            | (true, refresh_state @ Some(RefreshState::PeriodicRefresh { .. })) => {
+            (false, refresh_state @ Some(RefreshState::Hidden)) | (false, refresh_state @ None) => {
                 window_ref.refresh_state = refresh_state;
             }
             (
-                false,
+                true,
                 Some(RefreshState::PeriodicRefresh {
                     refresh_rate,
                     event_loop_token,
                 }),
             ) => {
+                let display_refresh_rate = window_refresh_rate(window_ref);
+                if display_refresh_rate == refresh_rate {
+                    window_ref.refresh_state = Some(RefreshState::PeriodicRefresh {
+                        refresh_rate,
+                        event_loop_token,
+                    });
+                    return;
+                }
+                // The window moved to a monitor with another refresh rate.
                 self.loop_handle.remove(event_loop_token);
-                window_ref.refresh_state = Some(RefreshState::Hidden { refresh_rate });
-            }
-            (true, Some(RefreshState::Hidden { refresh_rate })) => {
-                let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
+                let event_loop_token = self.start_refresh_loop(x_window, display_refresh_rate);
                 let Some(window_ref) = self.windows.get_mut(&x_window) else {
                     return;
                 };
                 window_ref.refresh_state = Some(RefreshState::PeriodicRefresh {
-                    refresh_rate,
+                    refresh_rate: display_refresh_rate,
                     event_loop_token,
                 });
             }
-            (true, None) => {
-                let Some(screen_resources) = get_reply(
-                    || "Failed to get screen resources",
-                    self.xcb_connection
-                        .randr_get_screen_resources_current(x_window),
-                )
-                .log_err() else {
-                    return;
-                };
-
-                // Ideally this would be re-queried when the window changes screens, but there
-                // doesn't seem to be an efficient / straightforward way to do this. Should also be
-                // updated when screen configurations change.
-                let mode_info = screen_resources.crtcs.iter().find_map(|crtc| {
-                    let crtc_info = self
-                        .xcb_connection
-                        .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-                        .ok()?
-                        .reply()
-                        .ok()?;
-
-                    screen_resources
-                        .modes
-                        .iter()
-                        .find(|m| m.id == crtc_info.mode)
-                });
-                let refresh_rate = match mode_info {
-                    Some(mode_info) => mode_refresh_rate(mode_info),
-                    None => {
-                        log::error!(
-                            "Failed to get screen mode info from xrandr, \
-                            defaulting to 60hz refresh rate."
-                        );
-                        Duration::from_micros(1_000_000 / 60)
-                    }
-                };
-
+            (
+                false,
+                Some(RefreshState::PeriodicRefresh {
+                    event_loop_token, ..
+                }),
+            ) => {
+                self.loop_handle.remove(event_loop_token);
+                window_ref.refresh_state = Some(RefreshState::Hidden);
+            }
+            (true, Some(RefreshState::Hidden) | None) => {
+                let refresh_rate = window_refresh_rate(window_ref);
                 let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
                 let Some(window_ref) = self.windows.get_mut(&x_window) else {
                     return;
@@ -2223,17 +2273,38 @@ impl X11ClientState {
     }
 }
 
-// Adapted from:
-// https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
-pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
-    if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {
-        return Duration::from_millis(16);
-    }
+/// The interval to pace a window's frames by: its monitor's refresh interval,
+/// or 60 Hz when that's unknown.
+fn window_refresh_rate(window_ref: &WindowRef) -> Duration {
+    window_ref
+        .window
+        .display()
+        .refresh_interval()
+        .unwrap_or(Duration::from_nanos(16_666_667))
+}
 
-    let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
-    let micros = 1_000_000_000 / millihertz;
-    log::info!("Refreshing every {}ms", micros / 1_000);
-    Duration::from_micros(micros)
+/// Asks the X server to report monitor configuration changes, when it
+/// supports RandR 1.2.
+fn select_display_change_events(
+    xcb_connection: &XCBConnection,
+    root: xproto::Window,
+) -> anyhow::Result<()> {
+    let version = get_reply(
+        || "RandR QueryVersion failed",
+        xcb_connection.randr_query_version(1, 2),
+    )?;
+    if (version.major_version, version.minor_version) < (1, 2) {
+        return Ok(());
+    }
+    check_reply(
+        || "RandR SelectInput failed",
+        xcb_connection.randr_select_input(
+            root,
+            randr::NotifyMask::SCREEN_CHANGE
+                | randr::NotifyMask::CRTC_CHANGE
+                | randr::NotifyMask::OUTPUT_CHANGE,
+        ),
+    )
 }
 
 /// Applies a mapped/obscured change to the refresh loop and reports the
