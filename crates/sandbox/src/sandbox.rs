@@ -392,14 +392,34 @@ pub(crate) fn location_is_within(
     linux_location_is_equal_or_descendant(location, ancestor)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn location_is_within(
     location: &HostFilesystemLocation,
     ancestor: &HostFilesystemLocation,
 ) -> bool {
     location
-        .canonical_or_raw_path()
-        .starts_with(ancestor.canonical_or_raw_path())
+        .macos_canonical_path()
+        .starts_with(ancestor.macos_canonical_path())
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn location_is_within(
+    location: &HostFilesystemLocation,
+    ancestor: &HostFilesystemLocation,
+) -> bool {
+    location
+        .windows_canonical_path()
+        .starts_with(ancestor.windows_canonical_path())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+pub(crate) fn location_is_within(
+    location: &HostFilesystemLocation,
+    ancestor: &HostFilesystemLocation,
+) -> bool {
+    location
+        .untrusted_raw_path()
+        .starts_with(ancestor.untrusted_raw_path())
 }
 
 #[cfg(target_os = "linux")]

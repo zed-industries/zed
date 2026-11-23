@@ -69,63 +69,56 @@ pub(crate) enum NetworkAccess {
 
 /// Turn the crate's filesystem/network intent into a PSEC 1.0 policy.
 pub(crate) fn build_spec(fs: &FsSetup, network: NetworkAccess) -> Result<Vec<u8>> {
-    let (read_write, read_only, deny) = policy_paths(fs)?;
-    log::debug!(
-        "[sandbox] PSEC policy: read-write {read_write:?}, read-only {read_only:?}, deny {deny:?}, network {network:?}"
-    );
-    encode_spec(&read_write, &read_only, &deny, network)
+    let paths = policy_paths(fs);
+    log::debug!("[sandbox] PSEC policy: {paths:?}, network {network:?}");
+    encode_spec(&paths, network)
 }
 
-/// Resolve the read-write, read-only and denied paths that enforce `fs` where the most specific path wins.
-fn policy_paths(fs: &FsSetup) -> Result<(Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>)> {
-    // Every path as it resolved when it was captured, which is what the user approved.
-    let canonical = |locations: &[HostFilesystemLocation]| -> Vec<PathBuf> {
+/// The paths a PSEC policy grants or denies.
+#[derive(Debug, Default)]
+struct PolicyPaths {
+    read_write: Vec<PathBuf>,
+    read_only: Vec<PathBuf>,
+    denied: Vec<PathBuf>,
+}
+
+/// The paths that enforce `fs`. In PSEC the most specific path wins.
+fn policy_paths(fs: &FsSetup) -> PolicyPaths {
+    let paths = |locations: &[HostFilesystemLocation]| -> Vec<PathBuf> {
         locations
             .iter()
-            .map(|location| location.canonical_or_raw_path().to_path_buf())
+            .map(|location| location.windows_canonical_path().to_path_buf())
             .collect()
     };
-    let writable = canonical(&fs.writable_paths);
-    let protected = canonical(&fs.protected_paths);
-    let denied = canonical(&fs.paths_disallowing_reads);
-    let allowing = canonical(&fs.paths_allowing_reads);
+    let writable = paths(&fs.writable_paths);
+    let protected = paths(&fs.protected_paths);
+    let denied = paths(&fs.paths_disallowing_reads);
+    let allowing = paths(&fs.paths_allowing_reads);
     let is_within = |path: &Path, ancestors: &[PathBuf]| {
         ancestors.iter().any(|ancestor| path.starts_with(ancestor))
     };
 
     let roots = fixed_drive_roots();
-    let mut read_write = Vec::new();
-    if fs.allow_fs_write {
-        // A read-write grant on a volume root does not apply to anything
-        // inside it, so grant each top-level directory instead.
-        for root in &roots {
-            for directory in top_level_directories(root) {
-                match dunce::canonicalize(&directory) {
-                    Ok(directory) => read_write.push(directory),
-                    Err(error) => log::warn!(
-                        "[sandbox] failed to resolve {} for writable grants: {error}",
-                        directory.display()
-                    ),
-                }
-            }
-        }
-        read_write.sort();
-        read_write.dedup();
-    }
-    read_write.extend(writable.iter().cloned());
-
-    // Reads are allowed everywhere.
-    let mut read_only = roots;
-    for path in &protected {
-        // Like Bubblewrap, PSEC can only protect a path that exists when the
-        // environment is created.
-        if path
-            .try_exists()
-            .with_context(|| format!("invalid protected path `{}`", path.display()))?
-        {
-            read_only.push(path.clone());
-        }
-    }
+    let mut read_write: Vec<PathBuf> = if fs.allow_fs_write {
+        // A read-write grant on a volume root doesn't apply to anything inside it.
+        roots
+            .iter()
+            .flat_map(|root| top_level_directories(root))
+            .collect()
+    } else {
+        writable.clone()
+    };
+    // Reads are allowed everywhere. Like Bubblewrap, PSEC can only protect a path
+    // that exists when the environment is created.
+    let mut read_only: Vec<PathBuf> = roots
+        .into_iter()
+        .chain(
+            protected
+                .iter()
+                .filter(|path| !matches!(path.try_exists(), Ok(false)))
+                .cloned(),
+        )
+        .collect();
 
     // A path allowing reads gets the access the rest of the policy gives it.
     for path in &allowing {
@@ -136,24 +129,23 @@ fn policy_paths(fs: &FsSetup) -> Result<(Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf
         }
     }
 
-    // Any grant inside a denied path would override the deny, so keep only those
-    // that a path allowing reads covers.
+    // A grant inside a denied path would override the deny, unless a path allowing
+    // reads covers it.
     let is_hidden = |path: &PathBuf| is_within(path, &denied) && !is_within(path, &allowing);
     read_write.retain(|path| !is_hidden(path));
     read_only.retain(|path| !is_hidden(path));
-    Ok((read_write, read_only, denied))
+    PolicyPaths {
+        read_write,
+        read_only,
+        denied,
+    }
 }
 
 /// Encode a PSEC 1.0 policy FlatBuffer.
 ///
 /// The layout follows the PSEC FlatBuffers schema:
 /// <https://github.com/microsoft/mxc/blob/main/external/windows-sdk/ProcessSecurityEnvironment.fbs>.
-fn encode_spec(
-    read_write_paths: &[PathBuf],
-    read_only_paths: &[PathBuf],
-    denied_paths: &[PathBuf],
-    network: NetworkAccess,
-) -> Result<Vec<u8>> {
+fn encode_spec(paths: &PolicyPaths, network: NetworkAccess) -> Result<Vec<u8>> {
     // Vtable offsets (`4 + 2 * field index`) and enum values from the schema.
     const VERSION: VOffsetT = 4;
     const CAPABILITIES: VOffsetT = 6;
@@ -180,9 +172,9 @@ fn encode_spec(
             builder.create_vector(&paths)
         })
     };
-    let read_write = path_vector(read_write_paths);
-    let read_only = path_vector(read_only_paths);
-    let deny = path_vector(denied_paths);
+    let read_write = path_vector(&paths.read_write);
+    let read_only = path_vector(&paths.read_only);
+    let deny = path_vector(&paths.denied);
     let capabilities = match network {
         NetworkAccess::None => None,
         // Reaching a loopback listener in another process needs both of these.
@@ -592,7 +584,16 @@ fn top_level_directories(root: &Path) -> Vec<PathBuf> {
         // Junctions such as `C:\Documents and Settings` report as symlinks and
         // are skipped; their targets are granted directly.
         .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_dir()))
-        .map(|entry| entry.path())
+        .filter_map(|entry| match dunce::canonicalize(entry.path()) {
+            Ok(directory) => Some(directory),
+            Err(error) => {
+                log::warn!(
+                    "[sandbox] failed to resolve {} for writable grants: {error}",
+                    entry.path().display()
+                );
+                None
+            }
+        })
         .collect()
 }
 
@@ -918,7 +919,11 @@ mod tests {
         assert!(status.success());
 
         // Encoded directly: building the policy would resolve the junction first.
-        let spec = encode_spec(&[grant], &[], &[], NetworkAccess::None).unwrap();
+        let paths = PolicyPaths {
+            read_write: vec![grant],
+            ..Default::default()
+        };
+        let spec = encode_spec(&paths, NetworkAccess::None).unwrap();
         let command_line = format!(
             "zed.exe {LAUNCHER_FLAG} {} cmd.exe /c exit 0",
             URL_SAFE_NO_PAD.encode(spec)
@@ -1031,12 +1036,12 @@ mod tests {
             &[&project, &config],
         );
 
-        let (read_write, read_only, deny) = policy_paths(&fs).unwrap();
-        assert!(read_write.contains(&project));
-        assert!(!read_write.contains(&other));
-        assert!(read_only.contains(&project_git));
-        assert!(read_only.contains(&config));
-        assert!(!read_only.contains(&other_git));
-        assert_eq!(deny, [home]);
+        let paths = policy_paths(&fs);
+        assert!(paths.read_write.contains(&project));
+        assert!(!paths.read_write.contains(&other));
+        assert!(paths.read_only.contains(&project_git));
+        assert!(paths.read_only.contains(&config));
+        assert!(!paths.read_only.contains(&other_git));
+        assert_eq!(paths.denied, [home]);
     }
 }
