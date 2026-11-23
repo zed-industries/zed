@@ -429,7 +429,7 @@ impl AcpV2Connection {
             .block_task()
             .await
         {
-            Ok(InitializeOutcome::Initialized(response)) => response,
+            Ok(InitializeOutcome::Initialized(response)) => *response,
             Ok(InitializeOutcome::LowerVersion(mismatch)) => {
                 return Err(anyhow!(mismatch).context(UnsupportedVersion));
             }
@@ -1100,7 +1100,7 @@ impl AcpV2Connection {
             };
         thread.update(cx, |thread, cx| thread.mark_activity_unconfirmed(cx));
         let replay = if replay_history {
-            let replay = Rc::new(RefCell::new(super::V2Replay::default()));
+            let replay = Rc::new(RefCell::new(super::SessionReplay::default()));
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
                 session.replay = Some(replay.clone());
             }
@@ -3826,7 +3826,7 @@ mod tests {
             .expect_err("new observers must not wait on a disconnected session");
         assert_eq!(
             thread.read_with(cx, |thread, _| thread.foreground_activity()),
-            ForegroundActivity::Running
+            ForegroundActivity::Unconfirmed
         );
     }
 
@@ -5787,7 +5787,7 @@ done
         );
         assert_eq!(
             thread.read_with(cx, |thread, _| thread.foreground_activity()),
-            ForegroundActivity::Running
+            ForegroundActivity::Unconfirmed
         );
         assert!(
             bounded(thread.update(cx, |thread, cx| thread.cancel(cx)), cx)
@@ -6244,7 +6244,6 @@ done
     #[cfg(unix)]
     #[gpui::test]
     async fn v2_new_stdio_preserves_pre_response_updates_before_eof(cx: &mut TestAppContext) {
-        use acp_thread::ForegroundActivity;
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
@@ -6299,7 +6298,11 @@ done
             .expect("new response precedes EOF");
         bounded(client.connection.incoming_closed(), cx).await;
         thread.read_with(cx, |thread, cx| {
-            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert_eq!(
+                thread.activity_generation(),
+                1,
+                "the early running update was applied"
+            );
             assert!(thread.to_markdown(cx).contains("Early stdio message"));
         });
         assert_eq!(client.pending_session_updates.borrow().counts(), (0, 0, 0));
@@ -7838,9 +7841,12 @@ done
             store.respond_to_elicitation(
                 &entry_id,
                 acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new().content(std::collections::BTreeMap::from(
-                        [("name".to_owned(), acp::ElicitationContentValue::from("Ada"))],
-                    )),
+                    acp::ElicitationAcceptAction::new().content(
+                        agent_client_protocol::schema::IndexMap::from([(
+                            "name".to_owned(),
+                            acp::ElicitationContentValue::from("Ada"),
+                        )]),
+                    ),
                 ))
                 .meta(meta("elicitation-response")),
                 cx,
