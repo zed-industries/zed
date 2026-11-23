@@ -231,7 +231,7 @@ pub(crate) struct GetHover {
 
 #[derive(Debug)]
 pub(crate) struct GetCompletions {
-    pub position: PointUtf16,
+    pub position: Anchor,
     pub context: CompletionContext,
     pub server_id: Option<lsp::LanguageServerId>,
 }
@@ -3177,12 +3177,13 @@ impl LspCommand for GetCompletions {
     fn to_lsp(
         &self,
         path: &Path,
-        _: &Buffer,
+        buffer: &Buffer,
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::CompletionParams> {
+        let position = self.position.to_point_utf16(&buffer.snapshot());
         Ok(lsp::CompletionParams {
-            text_document_position: make_lsp_text_document_position(path, self.position)?,
+            text_document_position: make_lsp_text_document_position(path, position)?,
             context: Some(self.context.clone()),
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
@@ -3228,7 +3229,6 @@ impl LspCommand for GetCompletions {
         let mut completion_edits = Vec::new();
         buffer.update(&mut cx, |buffer, _cx| {
             let snapshot = buffer.snapshot();
-            let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 
             let mut range_for_token = None;
             completions.retain(|lsp_completion| {
@@ -3271,11 +3271,6 @@ impl LspCommand for GetCompletions {
                     // If the language server does not provide a range, then infer
                     // the range based on the syntax tree.
                     None => {
-                        if self.position != clipped_position {
-                            log::info!("completion out of expected range ");
-                            return false;
-                        }
-
                         let range = range_for_token
                             .get_or_insert_with(|| {
                                 let offset = self.position.to_offset(&snapshot);
@@ -3299,7 +3294,7 @@ impl LspCommand for GetCompletions {
                             .unwrap_or(&lsp_completion.label)
                             .clone();
 
-                        let insert_range = Some(range.start..snapshot.anchor_after(self.position));
+                        let insert_range = Some(range.start..self.position);
                         ParsedCompletionEdit {
                             replace_range: range,
                             insert_range,
@@ -3358,11 +3353,10 @@ impl LspCommand for GetCompletions {
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCompletions {
-        let anchor = buffer.anchor_after(self.position);
         proto::GetCompletions {
             project_id,
             buffer_id: buffer.remote_id().into(),
-            position: Some(language::proto::serialize_anchor(&anchor)),
+            position: Some(language::proto::serialize_anchor(&self.position)),
             version: serialize_version(&buffer.version()),
             server_id: self.server_id.map(|id| id.to_proto()),
         }
@@ -3374,19 +3368,18 @@ impl LspCommand for GetCompletions {
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> Result<Self> {
-        let version = deserialize_version(&message.version);
-        buffer
-            .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
-            .await?;
         let position = message
             .position
             .and_then(language::proto::deserialize_anchor)
-            .map(|p| {
-                buffer.read_with(&cx, |buffer, _| {
-                    buffer.clip_point_utf16(Unclipped(p.to_point_utf16(buffer)), Bias::Left)
-                })
-            })
             .context("invalid position")?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+        buffer
+            .update(&mut cx, |buffer, _| buffer.wait_for_anchors([position]))
+            .await?;
         Ok(Self {
             position,
             context: CompletionContext {
