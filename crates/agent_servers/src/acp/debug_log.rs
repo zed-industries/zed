@@ -69,7 +69,12 @@ impl AcpDebugMessage {
         match value {
             serde_json::Value::Array(entries) => entries
                 .into_iter()
-                .filter_map(|entry| Self::parse_value(direction, entry))
+                .filter_map(|entry| {
+                    let mut parsed = Self::parse_value(direction, entry)?;
+                    // A batch is useful in the log but isn't a valid ACP v2 initialize reply.
+                    parsed.valid_envelope = false;
+                    Some(parsed)
+                })
                 .collect(),
             value => Self::parse_value(direction, value).into_iter().collect(),
         }
@@ -335,6 +340,7 @@ mod tests {
             r#"{"jsonrpc":"1.0","id":"initialize","result":{"protocolVersion":1}}"#,
             r#"{"jsonrpc":"2.0","id":"initialize","result":{"protocolVersion":1},"error":{"code":-32022,"message":"Unsupported","data":{"requested":2,"supported":[1]}}}"#,
             r#"{"jsonrpc":"2.0","id":"initialize","method":null,"result":{"protocolVersion":1}}"#,
+            r#"[{"jsonrpc":"2.0","id":"initialize","result":{"protocolVersion":2,"agentCapabilities":{},"agentInfo":{"name":"agent","version":"1"}}}]"#,
         ] {
             let log = AcpDebugLog::default();
             log.record_line(

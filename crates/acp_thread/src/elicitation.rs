@@ -30,13 +30,11 @@ pub fn request_from_v1(request: v1::CreateElicitationRequest) -> Result<Elicitat
             mode.url,
         )),
         v1::ElicitationMode::Other(mode) => {
-            let mut converted = v2::OtherElicitationMode::new(
+            v2::ElicitationMode::Other(v2::OtherElicitationMode::new(
                 mode.mode,
                 scope_from_v1(mode.scope)?,
-                BTreeMap::new(),
-            );
-            converted.fields = mode.fields;
-            v2::ElicitationMode::Other(converted)
+                mode.fields.into_iter().collect(),
+            ))
         }
         _ => bail!("unsupported v1 elicitation mode"),
     };
@@ -64,11 +62,9 @@ pub fn response_to_v1(
         }
         v2::ElicitationAction::Decline => v1::ElicitationAction::Decline,
         v2::ElicitationAction::Cancel => v1::ElicitationAction::Cancel,
-        v2::ElicitationAction::Other(action) => {
-            let mut converted = v1::OtherElicitationAction::new(action.action, BTreeMap::new());
-            converted.fields = action.fields;
-            v1::ElicitationAction::Other(converted)
-        }
+        v2::ElicitationAction::Other(action) => v1::ElicitationAction::Other(
+            v1::OtherElicitationAction::new(action.action, action.fields.into_iter().collect()),
+        ),
         _ => bail!("unsupported v2 elicitation action"),
     };
     Ok(v1::CreateElicitationResponse::new(action).meta(response.meta))
@@ -183,10 +179,10 @@ fn property_from_v1(
             v2::ElicitationPropertySchema::Array(converted)
         }
         v1::ElicitationPropertySchema::Other(property) => {
-            let mut converted =
-                v2::OtherElicitationPropertySchema::new(property.type_, BTreeMap::new());
-            converted.fields = property.fields;
-            v2::ElicitationPropertySchema::Other(converted)
+            v2::ElicitationPropertySchema::Other(v2::OtherElicitationPropertySchema::new(
+                property.type_,
+                property.fields.into_iter().collect(),
+            ))
         }
         _ => bail!("unsupported v1 elicitation property schema"),
     })
@@ -219,11 +215,9 @@ fn items_from_v1(items: v1::MultiSelectItems) -> Result<v2::MultiSelectItems> {
             )
             .meta(items.meta),
         ),
-        v1::MultiSelectItems::Other(items) => {
-            let mut converted = v2::OtherMultiSelectItems::new(items.type_, BTreeMap::new());
-            converted.fields = items.fields;
-            v2::MultiSelectItems::Other(converted)
-        }
+        v1::MultiSelectItems::Other(items) => v2::MultiSelectItems::Other(
+            v2::OtherMultiSelectItems::new(items.type_, items.fields.into_iter().collect()),
+        ),
         _ => bail!("unsupported v1 elicitation multi-select items"),
     })
 }

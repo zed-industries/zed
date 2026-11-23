@@ -7,7 +7,7 @@ use crate::agent_connection_store::AgentConnectionStore;
 use crate::thread_metadata_store::{
     ThreadId, ThreadMetadata, ThreadMetadataStore, worktree_info_from_thread_paths,
 };
-use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
+use crate::{Agent, ArchiveSelectedThread, RemoveSelectedThread};
 
 use agent::ThreadStore;
 use agent_client_protocol::v2::schema as acp;
@@ -300,12 +300,8 @@ impl ThreadsArchiveView {
 
         for session in sessions {
             let highlight_positions = if !query.is_empty() {
-                let title = session
-                    .title
-                    .as_ref()
-                    .map(|t| t.as_ref())
-                    .unwrap_or(DEFAULT_THREAD_TITLE);
-                if let Some(positions) = fuzzy_match_positions(&query, title) {
+                let title = session.display_title();
+                if let Some(positions) = fuzzy_match_positions(&query, &title) {
                     positions
                 } else {
                     // If title didn't match, also try matching the project name
@@ -1319,11 +1315,7 @@ impl PickerDelegate for ProjectPickerDelegate {
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         format!(
             "Associate the \"{}\" thread with...",
-            self.thread
-                .title
-                .as_ref()
-                .map(|t| t.as_ref())
-                .unwrap_or(DEFAULT_THREAD_TITLE)
+            self.thread.display_title()
         )
         .into()
     }
@@ -2042,5 +2034,45 @@ mod tests {
             row_counts,
             [(51, 51), (100, 100), (100, 100), (100, 100), (100, 0)]
         );
+    }
+
+    #[gpui::test]
+    async fn test_filter_matches_displayed_title(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+        cx.update(ThreadMetadataStore::init_global);
+        cx.run_until_parked();
+        let metadata = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(acp::SessionId::new("session")),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Generated".into()),
+            title_override: Some("Renamed".into()),
+            updated_at: Utc::now(),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: Default::default(),
+            remote_connection: None,
+            archived: false,
+        };
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx))
+        });
+        let view = cx.add_window(|window, cx| {
+            let workspace = WeakEntity::new_invalid();
+            let connections = WeakEntity::new_invalid();
+            let servers = WeakEntity::new_invalid();
+            ThreadsArchiveView::new(workspace, connections, servers, window, cx)
+        });
+
+        for (query, expected) in [("renamed", true), ("generated", false)] {
+            view.update(cx, |view, window, cx| {
+                view.filter_editor
+                    .update(cx, |editor, cx| editor.set_text(query, window, cx));
+            })
+            .unwrap();
+            cx.run_until_parked();
+            let found = view.read_with(cx, |view, _| !view.items.is_empty());
+            assert_eq!(found.unwrap(), expected, "query: {query}");
+        }
     }
 }

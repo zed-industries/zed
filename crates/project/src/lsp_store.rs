@@ -16859,6 +16859,8 @@ pub enum CompletionDocumentation {
     MultiLinePlainText(SharedString),
     /// Markdown documentation.
     MultiLineMarkdown(SharedString),
+    /// Markdown displayed as a noninteractive label.
+    NonInteractiveMarkdown(SharedString),
     /// Both single line and multiple lines of plain text documentation.
     SingleLineAndMultiLinePlainText {
         single_line: SharedString,
@@ -16873,7 +16875,8 @@ impl CompletionDocumentation {
             CompletionDocumentation::Undocumented => "".into(),
             CompletionDocumentation::SingleLine(s) => s.clone(),
             CompletionDocumentation::MultiLinePlainText(s) => s.clone(),
-            CompletionDocumentation::MultiLineMarkdown(s) => s.clone(),
+            CompletionDocumentation::MultiLineMarkdown(s)
+            | CompletionDocumentation::NonInteractiveMarkdown(s) => s.clone(),
             CompletionDocumentation::SingleLineAndMultiLinePlainText { single_line, .. } => {
                 single_line.clone()
             }

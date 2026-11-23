@@ -1847,22 +1847,36 @@ impl ThreadView {
         (!matches!(record.state, SubmissionState::Completed)).then(|| record.content.clone())
     }
 
-    fn submission_text_parts(content: &[acp_v2::ContentBlock]) -> impl Iterator<Item = &str> {
-        content.iter().map(|block| match block {
-            acp_v2::ContentBlock::Text(text) => text.text.as_str(),
-            acp_v2::ContentBlock::ResourceLink(link) => link.name.as_str(),
-            acp_v2::ContentBlock::Resource(resource) => match &resource.resource {
-                acp_v2::EmbeddedResourceResource::TextResourceContents(resource) => {
-                    resource.uri.as_str()
-                }
-                acp_v2::EmbeddedResourceResource::BlobResourceContents(resource) => {
-                    resource.uri.as_str()
-                }
-                _ => "[Resource attachment]",
-            },
-            acp_v2::ContentBlock::Image(_) => "[Image attachment]",
-            acp_v2::ContentBlock::Audio(_) => "[Audio attachment]",
-            _ => "[Unsupported attachment]",
+    fn submission_text_parts<'a>(
+        content: &'a [acp_v2::ContentBlock],
+        separator: &'a str,
+    ) -> impl Iterator<Item = &'a str> {
+        let mut previous_text = None;
+        content.iter().flat_map(move |block| {
+            let is_text = matches!(block, acp_v2::ContentBlock::Text(_));
+            let separate = previous_text
+                .replace(is_text)
+                .is_some_and(|previous| !(previous && is_text));
+            let text = match block {
+                acp_v2::ContentBlock::Text(text) => text.text.as_str(),
+                acp_v2::ContentBlock::ResourceLink(link) => link.name.as_str(),
+                acp_v2::ContentBlock::Resource(resource) => match &resource.resource {
+                    acp_v2::EmbeddedResourceResource::TextResourceContents(resource) => {
+                        resource.uri.as_str()
+                    }
+                    acp_v2::EmbeddedResourceResource::BlobResourceContents(resource) => {
+                        resource.uri.as_str()
+                    }
+                    _ => "[Resource attachment]",
+                },
+                acp_v2::ContentBlock::Image(_) => "[Image attachment]",
+                acp_v2::ContentBlock::Audio(_) => "[Audio attachment]",
+                _ => "[Unsupported attachment]",
+            };
+            separate
+                .then_some(separator)
+                .into_iter()
+                .chain(std::iter::once(text))
         })
     }
 
@@ -1973,7 +1987,7 @@ impl ThreadView {
                             ),
                             SubmissionState::Disconnected { receipt: None } => (
                                 "Connection lost".into(),
-                                Some("The connection was lost before the agent confirmed this message.".into()),
+                                Some("The agent may already have acted on this message. Sending it again could run the same work twice.".into()),
                                 true,
                             ),
                             SubmissionState::Failed(error) => (
@@ -1985,7 +1999,7 @@ impl ThreadView {
                             _ => ("Message".into(), None, false),
                         };
                     let preview: String =
-                        Itertools::intersperse(Self::submission_text_parts(&record.content), " ")
+                        Self::submission_text_parts(&record.content, " ")
                             .flat_map(str::chars)
                             .take(201)
                             .map(|character| if character.is_whitespace() { ' ' } else { character })
@@ -2060,8 +2074,9 @@ impl ThreadView {
                                                 {
                                                     let text = Self::submission_text_parts(
                                                         &record.content,
+                                                        "\n",
                                                     )
-                                                    .join("\n");
+                                                    .collect::<String>();
                                                     cx.write_to_clipboard(
                                                         ClipboardItem::new_string(text),
                                                     );
@@ -2458,17 +2473,28 @@ impl ThreadView {
                 })
             });
             if is_first_message && thread.read_with(cx, |thread, _cx| thread.title().is_none())? {
-                let text: String = contents
-                    .iter()
-                    .filter_map(|block| match block {
-                        acp_v2::ContentBlock::Text(text_content) => Some(text_content.text.clone()),
-                        acp_v2::ContentBlock::ResourceLink(resource_link) => {
-                            Some(format!("@{}", resource_link.name))
+                let mut text = String::new();
+                let mut previous_text = false;
+                for block in &contents {
+                    let is_text = matches!(block, acp_v2::ContentBlock::Text(_));
+                    match block {
+                        acp_v2::ContentBlock::Text(content) => {
+                            if !previous_text && !text.is_empty() {
+                                text.push(' ');
+                            }
+                            text.push_str(&content.text);
                         }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                        acp_v2::ContentBlock::ResourceLink(link) => {
+                            if !text.is_empty() {
+                                text.push(' ');
+                            }
+                            text.push('@');
+                            text.push_str(&link.name);
+                        }
+                        _ => {}
+                    }
+                    previous_text = is_text;
+                }
                 let text = text.lines().next().unwrap_or("").trim();
                 if !text.is_empty() {
                     let title: SharedString = util::truncate_and_trailoff(text, 200).into();
@@ -4557,7 +4583,7 @@ impl ThreadView {
             .children(request.description.as_ref().map(|description| {
                 div()
                     .debug_selector(|| format!("generic-permission-description-{description}"))
-                    .child(description.clone())
+                    .child(markdown::MarkdownLabel(description.into()))
             }))
             .children(subject)
             .child(
@@ -7837,7 +7863,8 @@ impl ThreadView {
                                     })
                             }
                             ToolCallContent::SessionReference(_) => true,
-                            ToolCallContent::Other { markdown, .. } => {
+                            ToolCallContent::Text { markdown, .. }
+                            | ToolCallContent::Other { markdown, .. } => {
                                 !markdown.read(cx).source().is_empty()
                             }
                         });
@@ -11960,6 +11987,15 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
+            ToolCallContent::Text { markdown, .. } => self.render_markdown_output(
+                markdown.clone(),
+                entry_ix,
+                context_ix,
+                tool_call,
+                card_layout,
+                window,
+                cx,
+            ),
             ToolCallContent::ContentBlock { block, .. } => self.render_output_content_block(
                 entry_ix,
                 context_ix,
@@ -12551,6 +12587,15 @@ impl ThreadView {
                     .size(IconSize::Small)
                     .color(Color::Success)
                     .into_any_element(),
+                SubagentStatus::Idle => div()
+                    .id(status_icon)
+                    .child(
+                        Icon::new(IconName::Circle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .tooltip(Tooltip::text("Subagent idle; outcome unknown"))
+                    .into_any_element(),
                 SubagentStatus::Unknown => div()
                     .id(status_icon)
                     .child(
@@ -12562,9 +12607,23 @@ impl ThreadView {
                     .into_any_element(),
             });
 
-        let has_expandable_content = thread
+        let description = thread.as_ref().and_then(|thread| {
+            let thread = thread.read(cx);
+            if thread.connection().description_format()
+                != acp_thread::AgentDescriptionFormat::Markdown
+            {
+                return None;
+            }
+            thread
+                .subagent_association()?
+                .description
+                .as_ref()
+                .filter(|description| !description.is_empty())
+        });
+        let has_entries = thread
             .as_ref()
-            .map_or(false, |thread| !thread.read(cx).entries().is_empty());
+            .is_some_and(|thread| !thread.read(cx).entries().is_empty());
+        let has_expandable_content = has_entries || description.is_some();
 
         let tooltip_meta_description = if is_expanded {
             "Click to Collapse"
@@ -12731,6 +12790,17 @@ impl ThreadView {
                         )
                     }),
             )
+            .when_some(description.filter(|_| is_expanded), |this, description| {
+                this.child(
+                    div()
+                        .debug_selector(|| format!("subagent-description-{entry_ix}"))
+                        .px_2()
+                        .py_1()
+                        .text_ui_sm(cx)
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(markdown::MarkdownLabel(description.clone())),
+                )
+            })
             .when_some(thread_view, |this, thread_view| {
                 let thread = &thread_view.read(cx).thread;
                 let tv_session_id = thread.read(cx).session_id();
@@ -12792,13 +12862,15 @@ impl ThreadView {
                     }
                 } else {
                     this.when(is_expanded, |this| {
-                        this.child(self.render_subagent_expanded_content(
-                            thread_view,
-                            card_id,
-                            state,
-                            window,
-                            cx,
-                        ))
+                        this.when(has_entries || description.is_none(), |this| {
+                            this.child(self.render_subagent_expanded_content(
+                                thread_view,
+                                card_id,
+                                state,
+                                window,
+                                cx,
+                            ))
+                        })
                         .when_some(error_message, |this, message| {
                             this.child(
                                 Callout::new()
@@ -14907,6 +14979,25 @@ mod tests {
     use util::path;
     use util::paths::PathStyle;
     use workspace::MultiWorkspace;
+
+    #[test]
+    fn submission_preview_and_copy_separate_attachments_but_not_adjacent_text() {
+        let content = [
+            "key".into(),
+            "board".into(),
+            acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new("file", "file:///file")),
+            "work".into(),
+            "space".into(),
+        ];
+        assert_eq!(
+            ThreadView::submission_text_parts(&content, " ").collect::<String>(),
+            "keyboard file workspace"
+        );
+        assert_eq!(
+            ThreadView::submission_text_parts(&content, "\n").collect::<String>(),
+            "keyboard\nfile\nworkspace"
+        );
+    }
 
     #[test]
     fn test_reported_activity_completion_status() {

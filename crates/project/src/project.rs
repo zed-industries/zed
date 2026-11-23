@@ -138,7 +138,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    ResultExt as _, maybe,
+    ResultExt as _, canonical_float_bits, maybe,
     path_list::PathList,
     paths::{PathStyle, SanitizedPath},
     rel_path::RelPath,
@@ -1038,10 +1038,10 @@ impl Eq for DocumentColor {}
 impl std::hash::Hash for DocumentColor {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.lsp_range.hash(state);
-        self.color.red.to_bits().hash(state);
-        self.color.green.to_bits().hash(state);
-        self.color.blue.to_bits().hash(state);
-        self.color.alpha.to_bits().hash(state);
+        canonical_float_bits(self.color.red).hash(state);
+        canonical_float_bits(self.color.green).hash(state);
+        canonical_float_bits(self.color.blue).hash(state);
+        canonical_float_bits(self.color.alpha).hash(state);
         self.resolved.hash(state);
         self.color_presentations.hash(state);
     }
@@ -7459,4 +7459,46 @@ fn provide_inline_values(
     }
 
     variables
+}
+
+#[cfg(test)]
+mod tests {
+    use std::hash::{BuildHasher, RandomState};
+
+    use super::*;
+
+    #[test]
+    fn document_color_hash_agrees_with_equality_on_signed_zero() {
+        let color = DocumentColor {
+            lsp_range: lsp::Range::default(),
+            color: lsp::Color {
+                red: 0.0,
+                green: 0.0,
+                blue: 0.0,
+                alpha: 0.0,
+            },
+            resolved: false,
+            color_presentations: Vec::new(),
+        };
+        let hasher = RandomState::new();
+        for [red, green, blue, alpha] in [
+            [-0.0, 0.0, 0.0, 0.0],
+            [0.0, -0.0, 0.0, 0.0],
+            [0.0, 0.0, -0.0, 0.0],
+            [0.0, 0.0, 0.0, -0.0],
+            [-0.0; 4],
+        ] {
+            let negated = DocumentColor {
+                color: lsp::Color {
+                    red,
+                    green,
+                    blue,
+                    alpha,
+                },
+                ..color.clone()
+            };
+            assert_eq!(color, negated);
+            assert_eq!(hasher.hash_one(&color), hasher.hash_one(&negated));
+        }
+    }
 }

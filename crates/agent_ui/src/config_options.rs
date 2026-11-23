@@ -16,7 +16,7 @@ use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::{AgentConfigOptionValue, SettingsStore};
 use ui::{
-    ContextMenu, ContextMenuEntry, ElevationIndex, IconButton, KeyBinding, ListItem,
+    ContextMenu, ContextMenuEntry, ElevationIndex, IconButton, KeyBinding, LabelLike, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -25,7 +25,9 @@ use workspace::Workspace;
 use zed_actions::agent::ToggleModelSelector;
 
 use crate::model_search;
-use crate::ui::{documentation_aside_side, fast_mode_button, thinking_effort_trigger};
+use crate::ui::{
+    description_tooltip, documentation_aside_side, fast_mode_button, thinking_effort_trigger,
+};
 use crate::{
     CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleFastMode,
     ToggleProfileSelector, ToggleThinkingEffortMenu,
@@ -356,6 +358,7 @@ impl ConfigOptionsView {
             return None;
         }
 
+        let format = self.config_options.description_format();
         Some(ContextMenu::build(window, cx, |mut menu, _, cx| {
             menu = menu.header("Agent Options");
             for option in overflow {
@@ -380,7 +383,7 @@ impl ConfigOptionsView {
                             })
                             .when_some(option.description, |entry, description| {
                                 entry.documentation_aside(documentation_aside_side(cx), move |_| {
-                                    Label::new(description.clone()).into_any_element()
+                                    crate::ui::description(&description, format)
                                 })
                             });
                         menu = menu.item(entry);
@@ -557,6 +560,7 @@ impl Render for ConfigOptionSelector {
             return div().into_any_element();
         };
 
+        let format = self.config_options.description_format();
         if self.config_options.is_read_only() {
             let value = match &option.kind {
                 acp::SessionConfigKind::Select(select) => {
@@ -578,7 +582,10 @@ impl Render for ConfigOptionSelector {
                 ))
                 .px_1()
                 .child(Label::new(value).size(LabelSize::Small).color(Color::Muted))
-                .tooltip(Tooltip::text(option.description.unwrap_or(option.name)))
+                .map(|this| match option.description {
+                    Some(text) => this.tooltip(description_tooltip(text.into(), format)),
+                    None => this.tooltip(Tooltip::text(option.name)),
+                })
                 .into_any_element();
         }
 
@@ -599,15 +606,16 @@ impl Render for ConfigOptionSelector {
 
                 let option_category = option.category.clone();
                 let option_name = option.name;
-                let option_description: Option<SharedString> = option.description.map(Into::into);
+                let option_description = option.description;
 
                 let tooltip = Tooltip::element(move |_window, cx| {
                     let mut content = v_flex().gap_1().child(Label::new(option_name.clone()));
                     if let Some(desc) = option_description.as_ref() {
                         content = content.child(
-                            Label::new(desc.clone())
+                            LabelLike::new()
                                 .size(LabelSize::Small)
-                                .color(Color::Muted),
+                                .color(Color::Muted)
+                                .child(crate::ui::description(desc, format)),
                         );
                     }
 
@@ -706,7 +714,7 @@ impl Render for ConfigOptionSelector {
                 };
                 let label = format!("{}: {state}", option.name);
                 let tooltip_label = format!("{action} {}", option.name);
-                let option_description: Option<SharedString> = option.description.map(Into::into);
+                let option_description = option.description;
 
                 fast_mode_button(
                     ElementId::Name(format!("config-option-{}", option.config_id.0).into()),
@@ -726,9 +734,10 @@ impl Render for ConfigOptionSelector {
                         )
                         .when_some(option_description.as_ref(), |this, description| {
                             this.child(
-                                Label::new(description.clone())
+                                LabelLike::new()
                                     .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                    .color(Color::Muted)
+                                    .child(crate::ui::description(description, format)),
                             )
                         })
                         .into_any()
@@ -923,18 +932,20 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let description = self.option_description.clone()?;
+        let format = self.config_options.description_format();
         Some(
             div()
                 .id("config-option-description")
                 .debug_selector(|| "config-option-description".into())
                 .px_2()
                 .py_1()
-                .tooltip(Tooltip::text(description.clone()))
+                .tooltip(description_tooltip(description.clone(), format))
                 .child(
-                    Label::new(description)
+                    LabelLike::new()
                         .size(LabelSize::Small)
                         .color(Color::Muted)
-                        .line_clamp(3),
+                        .line_clamp(3)
+                        .child(crate::ui::description(description, format)),
                 )
                 .into_any_element(),
         )
@@ -1120,12 +1131,13 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
     ) -> Option<ui::DocumentationAside> {
         self.selected_description.as_ref().map(|(_, description)| {
             let description = description.clone();
+            let format = self.config_options.description_format();
 
             let side = documentation_aside_side(cx);
 
             ui::DocumentationAside::new(
                 side,
-                Rc::new(move |_| Label::new(description.clone()).into_any_element()),
+                Rc::new(move |_| crate::ui::description(description.clone(), format)),
             )
         })
     }
@@ -1535,7 +1547,7 @@ mod tests {
                     })
                     .collect::<Vec<_>>(),
             )
-            .description("Choose which folders the agent can see."),
+            .description("| Scope |\n| --- |\n| Folders the agent can see |"),
         ]);
         cx.run_until_parked();
 
@@ -1556,7 +1568,12 @@ mod tests {
         cx.dispatch_action(menu::SelectLast);
         cx.dispatch_action(menu::Confirm);
         draw_menu_frames(cx);
+        cx.run_until_parked();
         assert!(cx.debug_bounds("config-option-description").is_some());
+        assert!(
+            cx.debug_bounds("markdown_table").is_some(),
+            "option description renders as Markdown"
+        );
         cx.simulate_input("Choice 4");
         cx.dispatch_action(menu::Confirm);
         cx.run_until_parked();
@@ -1994,7 +2011,7 @@ mod tests {
             "Mode",
             acp::SessionConfigKind::Other(acp::OtherSessionConfigKind::new(
                 "_future",
-                std::collections::BTreeMap::from([(
+                agent_client_protocol::schema::IndexMap::from([(
                     "currentValue".to_string(),
                     serde_json::json!({"opaque": [1, true]}),
                 )]),
@@ -2263,6 +2280,10 @@ mod tests {
     }
 
     impl AgentSessionConfigOptions for TestSessionConfigOptions {
+        fn description_format(&self) -> acp_thread::AgentDescriptionFormat {
+            acp_thread::AgentDescriptionFormat::Markdown
+        }
+
         fn config_options(&self) -> Vec<acp::SessionConfigOption> {
             self.options.borrow().clone()
         }
