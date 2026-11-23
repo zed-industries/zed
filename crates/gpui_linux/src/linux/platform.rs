@@ -1689,7 +1689,7 @@ pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<gpui_wgpu::Comp
 
     fn read_sysfs_hex_id(path: &str) -> Option<u32> {
         let content = std::fs::read_to_string(path).ok()?;
-        let trimmed = content.trim().strip_prefix("0x").unwrap_or(content.trim());
+        let trimmed = content.trim().trim_prefix("0x");
         u32::from_str_radix(trimmed, 16).ok()
     }
 

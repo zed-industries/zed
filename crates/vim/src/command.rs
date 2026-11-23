@@ -1145,7 +1145,7 @@ impl VimCommand {
         let has_bang = rest.starts_with('!');
         let has_space = rest.starts_with("! ") || rest.starts_with(' ');
         let args = if has_bang {
-            rest.strip_prefix('!')?.trim_start().to_string()
+            rest.trim_prefix('!').trim_start().to_string()
         } else if rest.is_empty() {
             "".into()
         } else {

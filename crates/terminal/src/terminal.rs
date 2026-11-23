@@ -3546,7 +3546,7 @@ fn normalize_script_command_name(argument: &str) -> Option<String> {
         .and_then(|parent| parent.parent())
         .and_then(|package_path| package_path.file_name())
         .and_then(|package_name| package_name.to_str())
-        .and_then(|package_name| package_name.strip_suffix("-cli").or(Some(package_name)))
+        .map(|package_name| package_name.trim_suffix("-cli"))
         .and_then(normalize_path_command_name)
 }
 

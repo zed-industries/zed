@@ -836,8 +836,7 @@ fn handle_postprocessing() -> Result<()> {
 
         title_tag_contents
             .trim()
-            .strip_suffix("- Zed")
-            .unwrap_or(title_tag_contents)
+            .trim_suffix("- Zed")
             .trim()
             .to_string()
     }

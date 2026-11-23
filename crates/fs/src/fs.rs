@@ -2546,9 +2546,7 @@ impl FakeFs {
             .ref_name
             .as_ref()
             .expect("linked worktree must have a ref_name");
-        let branch_name = ref_name
-            .strip_prefix("refs/heads/")
-            .unwrap_or(ref_name.as_ref());
+        let branch_name = ref_name.trim_prefix("refs/heads/");
 
         // Create ref in git state.
         self.with_git_state(dot_git, false, |state| {
@@ -2605,7 +2603,7 @@ impl FakeFs {
         emit_git_event: bool,
         ref_name: &str,
     ) {
-        let branch_name = ref_name.strip_prefix("refs/heads/").unwrap_or(ref_name);
+        let branch_name = ref_name.trim_prefix("refs/heads/");
         let worktrees_entry_dir = dot_git.join("worktrees").join(branch_name);
 
         // Read gitdir to find the worktree checkout path.
