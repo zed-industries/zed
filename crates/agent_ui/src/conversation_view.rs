@@ -12335,11 +12335,10 @@ pub(crate) mod tests {
             bar.update_matches(window, cx);
         });
         cx.run_until_parked();
-
         assert_eq!(
             bar.read_with(cx, |bar, _| bar.match_source_ranges()),
             vec![14..19],
-            "only the link label renders, so the destination must not match"
+            "only the link label renders, so the destination must not match",
         );
     }
 

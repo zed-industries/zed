@@ -15,7 +15,7 @@ use gpui::{
     TextStyle, WeakEntity, actions, prelude::*,
 };
 use markdown::{
-    Markdown, MarkdownOptions, filter_non_rendered_matches, non_rendered_source_ranges,
+    Markdown, MarkdownOptions, filter_non_rendered_matches, parse_non_rendered_source_ranges,
 };
 use multi_buffer::{Anchor, Event as MultiBufferEvent, MultiBufferOffset, MultiBufferSnapshot};
 use project::search::SearchQuery;
@@ -476,7 +476,7 @@ impl ThreadSearchBar {
                                 }
                                 let ranges = filter_non_rendered_matches(
                                     ranges,
-                                    &non_rendered_source_ranges(&source, options),
+                                    &parse_non_rendered_source_ranges(&source, options),
                                 );
                                 if ranges.is_empty() {
                                     return None;

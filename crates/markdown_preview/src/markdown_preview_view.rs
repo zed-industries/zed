@@ -2370,31 +2370,7 @@ mod tests {
         WorkspaceId, open_paths,
     };
 
-    use super::{
-        MarkdownPreviewView, filter_non_rendered_matches, open_preview_url,
-        reset_persisted_font_size,
-    };
-
-    #[test]
-    fn filters_matches_in_non_rendered_link_source() {
-        let matches = vec![1..9, 30..37, 58..65];
-        let non_rendered_ranges = vec![0..1, 9..38];
-
-        assert_eq!(
-            filter_non_rendered_matches(matches, &non_rendered_ranges),
-            vec![1..9, 58..65]
-        );
-    }
-
-    #[test]
-    fn filters_matches_regardless_of_match_order() {
-        let non_rendered_ranges = vec![0..1, 9..38];
-
-        assert_eq!(
-            filter_non_rendered_matches(vec![58..65, 1..9, 30..37], &non_rendered_ranges),
-            vec![58..65, 1..9]
-        );
-    }
+    use super::{MarkdownPreviewView, open_preview_url, reset_persisted_font_size};
 
     #[gpui::test]
     async fn preview_tab_tooltip_matches_source_file_path(cx: &mut TestAppContext) {
