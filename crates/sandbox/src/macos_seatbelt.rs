@@ -43,6 +43,13 @@ use crate::ProtectedFileName;
 pub struct SandboxPermissions {
     /// Network access policy for the command.
     pub network: NetworkAccess,
+    /// With [`NetworkAccess::LocalhostPort`], whether the command may also
+    /// reach the system services for network configuration and TLS trust
+    /// evaluation. They run outside the sandbox, and `trustd` fetches URLs
+    /// named in certificates it is given, so they are a way around the proxy.
+    /// [`NetworkAccess::All`] always includes them, and
+    /// [`NetworkAccess::None`] never does.
+    pub allow_system_network_services: bool,
     /// Allow unrestricted filesystem writes.
     pub allow_fs_write: bool,
 }
@@ -535,7 +542,18 @@ fn generate_seatbelt_config(
     // few more Mach services. Kept out of the base allowlist so a no-network
     // command can't reach them. Still an allowlist (mirrors Codex's Seatbelt
     // network policy) that excludes LaunchServices/launchd.
-    if !matches!(permissions.network, NetworkAccess::None) {
+    //
+    // These services run outside the sandbox with unrestricted network access.
+    // `trustd` fetches the issuer and revocation URLs named in a certificate it
+    // is asked to evaluate, so a command confined to the proxy can still use it
+    // to send data to any host. A caller that needs the proxy's allowlist to
+    // hold therefore leaves them out.
+    let system_network_services = match permissions.network {
+        NetworkAccess::None => false,
+        NetworkAccess::LocalhostPort(_) => permissions.allow_system_network_services,
+        NetworkAccess::All => true,
+    };
+    if system_network_services {
         config.push_str(
             r#"
 ; Extra Mach services for DNS / TLS-trust / network configuration, needed only
@@ -686,6 +704,7 @@ mod tests {
             &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
@@ -767,6 +786,7 @@ mod tests {
             &[],
             SandboxPermissions {
                 network: NetworkAccess::All,
+                allow_system_network_services: true,
                 allow_fs_write: false,
             },
         )
@@ -985,6 +1005,7 @@ mod tests {
             &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
@@ -1093,6 +1114,7 @@ mod tests {
                     &[],
                     SandboxPermissions {
                         network: NetworkAccess::None,
+                        allow_system_network_services: true,
                         allow_fs_write,
                     },
                 )
@@ -1187,6 +1209,7 @@ mod tests {
             &[],
             SandboxPermissions {
                 network: NetworkAccess::All,
+                allow_system_network_services: true,
                 allow_fs_write: false,
             },
         )
@@ -1211,6 +1234,7 @@ mod tests {
             &[],
             SandboxPermissions {
                 network: NetworkAccess::LocalhostPort(54321),
+                allow_system_network_services: true,
                 allow_fs_write: false,
             },
         )
@@ -1221,6 +1245,58 @@ mod tests {
         assert!(config.contains("(allow network-bind (local ip \"localhost:*\"))"));
         assert!(!config.contains("(allow network*)"));
         assert!(!seatbelt_rules_only(&config).contains("mDNSResponder"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_system_network_services_follow_the_permission() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let services = [
+            "com.apple.SystemConfiguration.configd",
+            "com.apple.SystemConfiguration.DNSConfiguration",
+            "com.apple.networkd",
+            "com.apple.SecurityServer",
+            "com.apple.trustd",
+            "com.apple.trustd.agent",
+            "com.apple.ocspd",
+        ];
+        // Whether the services are reachable for each network mode with the
+        // permission off and on. Only the proxy mode leaves it to the caller.
+        let cases = [
+            (NetworkAccess::None, [false, false]),
+            (NetworkAccess::LocalhostPort(54321), [false, true]),
+            (NetworkAccess::All, [true, true]),
+        ];
+
+        for (network, reachable) in cases {
+            for (allow_system_network_services, reachable) in
+                [false, true].into_iter().zip(reachable)
+            {
+                let config = generate_seatbelt_config(
+                    &[dir.as_path()],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    SandboxPermissions {
+                        network,
+                        allow_system_network_services,
+                        allow_fs_write: false,
+                    },
+                )
+                .unwrap();
+                let rules = seatbelt_rules_only(&config);
+                for service in services {
+                    assert_eq!(
+                        rules.contains(&format!("(global-name \"{service}\")")),
+                        reachable,
+                        "{service} with {network:?} and \
+                         allow_system_network_services: {allow_system_network_services}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -1236,6 +1312,7 @@ mod tests {
                 &[22, 5432],
                 SandboxPermissions {
                     network: NetworkAccess::LocalhostPort(54321),
+                    allow_system_network_services: true,
                     allow_fs_write: false,
                 },
             )
@@ -1410,6 +1487,7 @@ mod tests {
             &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
@@ -1449,6 +1527,7 @@ mod tests {
             &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
@@ -1572,6 +1651,7 @@ mod tests {
             &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
