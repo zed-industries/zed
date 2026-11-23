@@ -442,6 +442,8 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                 };
                 (animation_ix, delta, true, None)
             } else {
+                // The chain can be shorter than on the render that handed off to this index.
+                state.animation_ix = state.animation_ix.min(self.animations.len() - 1);
                 let animation_ix = state.animation_ix;
                 let duration = self.animations[animation_ix].duration;
 
@@ -1074,6 +1076,24 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
         assert_eq!(*rendered_deltas.borrow(), [0.0, 0.1, 0.2, 0.2, 0.3]);
+    }
+
+    #[gpui::test]
+    fn test_chain_can_get_shorter_after_a_hand_off(cx: &mut TestAppContext) {
+        let chain = vec![one_second(), one_second()];
+        let (rendered_deltas, window) = open_test_window_with_animations(cx, chain);
+        cx.executor().advance_clock(Duration::from_millis(1500));
+        assert_eq!(simulate_next_frame(&window, cx), 1);
+
+        cx.executor().advance_clock(Duration::from_millis(250));
+        window
+            .update(cx, |view, _, cx| {
+                view.animations = vec![one_second()];
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(rendered_deltas.borrow().last(), Some(&0.25));
     }
 
     #[gpui::test]
