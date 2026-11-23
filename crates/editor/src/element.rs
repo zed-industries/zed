@@ -19,7 +19,7 @@ use crate::{
     column_pixels,
     cursor_animation::{
         CursorAnimationState, CursorViewport, LogicalCursorPosition,
-        animated_corners_overlap_target,
+        animated_corners_cover_target,
     },
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -11144,7 +11144,7 @@ impl CursorLayout {
                 }
                 window.paint_path(path, self.color);
 
-                if !animated_corners_overlap_target(bounds, &corners) {
+                if !animated_corners_cover_target(bounds, &corners) {
                     return;
                 }
             }

@@ -23,6 +23,8 @@ const RANK_TRAIL_FACTORS: [f32; 4] = [1.0, 0.9, 0.5, 0.3];
 const ANIMATION_LENGTH_SECONDS: f32 = 0.125;
 const SHORT_ANIMATION_LENGTH_SECONDS: f32 = 0.05;
 const TRAIL_SIZE: f32 = 1.0;
+/// Leaves room for float error and sub-pixel snapping of the target bounds.
+const MIN_TARGET_COVERAGE_FOR_TEXT: f32 = 0.99;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LogicalCursorPosition {
@@ -613,33 +615,72 @@ fn nearly_equal(left: f32, right: f32) -> bool {
     (left - right).abs() <= GEOMETRY_EPSILON
 }
 
-pub(crate) fn animated_corners_overlap_target(
+/// Whether the animated cursor polygon covers enough of the target cell to paint the cursor's
+/// inverted text over it. The text is drawn in the background color, so painting it over any
+/// part of the cell the polygon does not cover would erase the glyph underneath.
+pub(crate) fn animated_corners_cover_target(
     target_bounds: Bounds<Pixels>,
     corners: &[Point<Pixels>; 4],
 ) -> bool {
-    let min_x = corners
-        .iter()
-        .map(|p| p.x)
-        .min()
-        .expect("the corners argument is a 4 item array, which should always have an x min");
-    let max_x = corners
-        .iter()
-        .map(|p| p.x)
-        .max()
-        .expect("the corners argument is a 4 item array, which should always have an x max");
-    let min_y = corners
-        .iter()
-        .map(|p| p.y)
-        .min()
-        .expect("the corners argument is a 4 item array, which should always have an y min");
-    let max_y = corners
-        .iter()
-        .map(|p| p.y)
-        .max()
-        .expect("the corners argument is a 4 item array, which should always have an x max");
-    let animated_bounds = Bounds::from_corners(point(min_x, min_y), point(max_x, max_y));
+    let left = f32::from(target_bounds.left());
+    let right = f32::from(target_bounds.right());
+    let top = f32::from(target_bounds.top());
+    let bottom = f32::from(target_bounds.bottom());
+    let target_area = (right - left) * (bottom - top);
+    if !target_area.is_finite() || target_area <= 0.0 {
+        return false;
+    }
 
-    animated_bounds.intersects(&target_bounds)
+    let polygon = corners.map(|corner| AnimationPoint {
+        x: f32::from(corner.x),
+        y: f32::from(corner.y),
+    });
+    let clipped = clip_polygon_to_half_plane(&polygon, |point| point.x - left);
+    let clipped = clip_polygon_to_half_plane(&clipped, |point| right - point.x);
+    let clipped = clip_polygon_to_half_plane(&clipped, |point| point.y - top);
+    let clipped = clip_polygon_to_half_plane(&clipped, |point| bottom - point.y);
+
+    polygon_area(&clipped) / target_area >= MIN_TARGET_COVERAGE_FOR_TEXT
+}
+
+/// Sutherland-Hodgman clipping against the half-plane where `signed_distance` is non-negative.
+fn clip_polygon_to_half_plane(
+    polygon: &[AnimationPoint],
+    signed_distance: impl Fn(AnimationPoint) -> f32,
+) -> Vec<AnimationPoint> {
+    let Some(mut previous) = polygon.last().copied() else {
+        return Vec::new();
+    };
+    let mut clipped = Vec::with_capacity(polygon.len() + 1);
+    for &current in polygon {
+        let previous_distance = signed_distance(previous);
+        let current_distance = signed_distance(current);
+        if (previous_distance >= 0.0) != (current_distance >= 0.0) {
+            let progress = previous_distance / (previous_distance - current_distance);
+            let edge = current - previous;
+            clipped.push(AnimationPoint {
+                x: previous.x + edge.x * progress,
+                y: previous.y + edge.y * progress,
+            });
+        }
+        if current_distance >= 0.0 {
+            clipped.push(current);
+        }
+        previous = current;
+    }
+    clipped
+}
+
+fn polygon_area(polygon: &[AnimationPoint]) -> f32 {
+    let Some(mut previous) = polygon.last().copied() else {
+        return 0.0;
+    };
+    let mut twice_signed_area = 0.0;
+    for &current in polygon {
+        twice_signed_area += previous.x * current.y - current.x * previous.y;
+        previous = current;
+    }
+    twice_signed_area.abs() / 2.0
 }
 
 #[cfg(test)]
@@ -915,54 +956,91 @@ mod tests {
     }
 
     #[test]
-    fn one_cell_movement_overlaps_target_only_after_advancing() {
+    fn one_cell_movement_covers_target_before_settling() {
+        let now = Instant::now();
+        let assert_covers_target_before_settling =
+            |destination: LogicalCursorPosition, target: Bounds<Pixels>| {
+                let mut state = CursorAnimationState::default();
+                state.update(
+                    logical_position(0, 0),
+                    bounds_with_width(0.0, 0.0, 8.0),
+                    viewport(0.0),
+                    now,
+                );
+                let corners = state
+                    .update(destination, target, viewport(0.0), now)
+                    .expect("moving one cell should start an animation");
+                assert!(!animated_corners_cover_target(target, &corners));
+
+                for frame in 1..=30 {
+                    let corners = state
+                        .update(
+                            destination,
+                            target,
+                            viewport(0.0),
+                            now + Duration::from_millis(8 * frame),
+                        )
+                        .expect("the animation settled before it covered the target");
+                    if animated_corners_cover_target(target, &corners) {
+                        return;
+                    }
+                }
+                panic!("the animation never covered the target");
+            };
+
+        assert_covers_target_before_settling(
+            logical_position(0, 1),
+            bounds_with_width(8.0, 0.0, 8.0),
+        );
+        assert_covers_target_before_settling(
+            logical_position(1, 0),
+            bounds_with_width(0.0, 20.0, 8.0),
+        );
+    }
+
+    #[test]
+    fn top_left_corner_remaining_travel_points_at_the_target_top_left() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
-        let target = bounds_with_width(8.0, 0.0, 8.0);
         state.update(
             logical_position(0, 0),
             bounds_with_width(0.0, 0.0, 8.0),
             viewport(0.0),
             now,
         );
-
-        let corners = state
-            .update(logical_position(0, 1), target, viewport(0.0), now)
-            .unwrap();
-        assert!(!animated_corners_overlap_target(target, &corners));
-
-        let corners = state
+        state
             .update(
-                logical_position(0, 1),
-                target,
+                logical_position(1, 1),
+                bounds_with_width(8.0, 20.0, 8.0),
                 viewport(0.0),
-                now + Duration::from_millis(16),
+                now,
             )
-            .unwrap();
-        assert!(animated_corners_overlap_target(target, &corners));
+            .expect("moving one cell should start an animation");
 
-        let mut vertical_state = CursorAnimationState::default();
-        let vertical_target = bounds_with_width(0.0, 20.0, 8.0);
-        vertical_state.update(
-            logical_position(0, 0),
-            bounds_with_width(0.0, 0.0, 8.0),
-            viewport(0.0),
-            now,
-        );
-        let corners = vertical_state
-            .update(logical_position(1, 0), vertical_target, viewport(0.0), now)
-            .unwrap();
-        assert!(!animated_corners_overlap_target(vertical_target, &corners));
+        let travel = state.top_left_corner_remaining_travel();
+        assert!((f32::from(travel.x) - 8.0).abs() < 0.01, "{travel:?}");
+        assert!((f32::from(travel.y) - 20.0).abs() < 0.01, "{travel:?}");
+    }
 
-        let corners = vertical_state
-            .update(
-                logical_position(1, 0),
-                vertical_target,
-                viewport(0.0),
-                now + Duration::from_millis(16),
-            )
-            .unwrap();
-        assert!(animated_corners_overlap_target(vertical_target, &corners));
+    #[test]
+    fn cover_target_uses_polygon_shape_rather_than_bounding_box() {
+        let target = bounds_with_width(0.0, 0.0, 8.0);
+        let corners = |points: [(f32, f32); 4]| points.map(|(x, y)| point(px(x), px(y)));
+
+        // A diagonal sliver whose bounding box contains the target, but which passes to its
+        // right without touching it.
+        let diagonal_sliver = corners([(20.0, 0.0), (22.0, 0.0), (2.0, 40.0), (0.0, 40.0)]);
+        assert!(!animated_corners_cover_target(target, &diagonal_sliver));
+
+        let left_half = corners([(0.0, 0.0), (4.0, 0.0), (4.0, 20.0), (0.0, 20.0)]);
+        assert!(!animated_corners_cover_target(target, &left_half));
+
+        let trail_spanning_target =
+            corners([(-16.0, 0.0), (8.0, 0.0), (8.0, 20.0), (-16.0, 20.0)]);
+        assert!(animated_corners_cover_target(target, &trail_spanning_target));
+
+        let exact = corners([(0.0, 0.0), (8.0, 0.0), (8.0, 20.0), (0.0, 20.0)]);
+        assert!(animated_corners_cover_target(target, &exact));
     }
 
     #[test]
