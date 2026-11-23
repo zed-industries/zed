@@ -74,11 +74,22 @@ where
 /// `{"error": {...}}` envelope.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamError {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_error_code")]
     pub code: Option<String>,
     #[serde(default, rename = "type")]
     pub error_type: Option<String>,
     pub message: String,
+}
+
+fn deserialize_error_code<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Value::deserialize(deserializer)? {
+        Value::String(code) => Some(code),
+        Value::Number(code) => Some(code.to_string()),
+        _ => None,
+    })
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
