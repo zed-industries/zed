@@ -43,7 +43,7 @@ impl BashLspAdapter {
     async fn get_cached_server_binary(
         container_dir: PathBuf,
         env: HashMap<String, String>,
-        node: &NodeRuntime,
+        node: &crate::npm::NpmInstaller,
     ) -> Option<lsp::LanguageServerBinary> {
         maybe!(async {
             let server_path = container_dir
@@ -71,9 +71,15 @@ impl LspInstaller for BashLspAdapter {
         &self,
         container_dir: std::path::PathBuf,
         delegate: &dyn LspAdapterDelegate,
+        cx: AsyncApp,
     ) -> Option<lsp::LanguageServerBinary> {
         let env = delegate.shell_env().await;
-        Self::get_cached_server_binary(container_dir, env, &self.node).await
+        Self::get_cached_server_binary(
+            container_dir,
+            env,
+            &crate::npm::NpmInstaller::new(&self.node, self, cx),
+        )
+        .await
     }
 
     async fn check_if_user_installed(
@@ -97,8 +103,9 @@ impl LspInstaller for BashLspAdapter {
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Option<lsp::LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<Option<lsp::LanguageServerBinary>>> + use<> {
+        let node = crate::npm::NpmInstaller::new(&self.node, self, cx);
         let version = version.clone();
         let container_dir = container_dir.clone();
         let delegate = delegate.clone();
@@ -115,17 +122,17 @@ impl LspInstaller for BashLspAdapter {
                     &container_dir,
                     VersionStrategy::Latest(&version),
                 )
-                .await;
+                .await?;
 
             if should_install_language_server {
-                None
+                Ok(None)
             } else {
                 let env = delegate.shell_env().await;
-                Some(LanguageServerBinary {
-                    path: node.binary_path().await.ok()?,
+                Ok(Some(LanguageServerBinary {
+                    path: node.binary_path().await?,
                     env: Some(env),
                     arguments: vec![server_path.into(), "start".into()],
-                })
+                }))
             }
         }
     }
@@ -134,9 +141,9 @@ impl LspInstaller for BashLspAdapter {
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
-        _: &mut gpui::AsyncApp,
+        cx: &mut gpui::AsyncApp,
     ) -> Result<Self::BinaryVersion> {
-        self.node
+        crate::npm::NpmInstaller::new(&self.node, self, cx.clone())
             .npm_package_latest_version(Self::PACKAGE_NAME)
             .await
     }
@@ -146,8 +153,9 @@ impl LspInstaller for BashLspAdapter {
         _latest_version: Self::BinaryVersion,
         container_dir: std::path::PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<lsp::LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<lsp::LanguageServerBinary>> + use<> {
+        let node = crate::npm::NpmInstaller::new(&self.node, self, cx);
         let delegate = delegate.clone();
 
         async move {

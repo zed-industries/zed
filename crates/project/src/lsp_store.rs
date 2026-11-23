@@ -16963,6 +16963,7 @@ impl LspInstaller for SshLspAdapter {
         &self,
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
+        _: AsyncApp,
     ) -> Option<LanguageServerBinary> {
         None
     }
@@ -16981,7 +16982,8 @@ impl LspInstaller for SshLspAdapter {
         _: (),
         _: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        _: AsyncApp,
+    ) -> impl Future<Output = Result<LanguageServerBinary>> + use<> {
         async { anyhow::bail!("SshLspAdapter does not support fetch_server_binary") }
     }
 }

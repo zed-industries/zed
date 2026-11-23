@@ -782,10 +782,11 @@ impl LspInstaller for RustLspAdapter {
         version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<LanguageServerBinary>> + use<> {
         let delegate = delegate.clone();
 
-        async move {
+        cx.background_executor().spawn(async move {
             let GitHubLspBinaryVersion {
                 name,
                 url,
@@ -864,13 +865,14 @@ impl LspInstaller for RustLspAdapter {
                 env: None,
                 arguments: Default::default(),
             })
-        }
+        })
     }
 
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
+        _: AsyncApp,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
     }

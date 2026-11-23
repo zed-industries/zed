@@ -1350,6 +1350,7 @@ async fn get_copilot_lsp(
         .execute_command(
             node_runtime::LatestNpmPackageVersion {
                 package: PACKAGE_NAME.into(),
+                requirement: None,
             },
             bill.clone(),
             cx,

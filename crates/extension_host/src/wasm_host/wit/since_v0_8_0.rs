@@ -770,6 +770,7 @@ impl nodejs::Host for WasmState {
         self.execute_node_command(
             node_runtime::LatestNpmPackageVersion {
                 package: package_name,
+                requirement: None,
             },
             reason,
         )

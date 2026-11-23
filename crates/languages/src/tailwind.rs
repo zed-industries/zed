@@ -47,9 +47,9 @@ impl LspInstaller for TailwindLspAdapter {
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
-        _: &mut AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
-        self.node
+        crate::npm::NpmInstaller::new(&self.node, self, cx.clone())
             .npm_package_latest_version(Self::PACKAGE_NAME)
             .await
     }
@@ -75,8 +75,9 @@ impl LspInstaller for TailwindLspAdapter {
         _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<LanguageServerBinary>> + use<> {
+        let node = crate::npm::NpmInstaller::new(&self.node, self, cx);
 
         async move {
             let server_path = container_dir.join(SERVER_PATH);
@@ -97,8 +98,9 @@ impl LspInstaller for TailwindLspAdapter {
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<Option<LanguageServerBinary>>> + use<> {
+        let node = crate::npm::NpmInstaller::new(&self.node, self, cx);
         let version = version.clone();
         let container_dir = container_dir.clone();
 
@@ -112,16 +114,16 @@ impl LspInstaller for TailwindLspAdapter {
                     &container_dir,
                     VersionStrategy::Latest(&version),
                 )
-                .await;
+                .await?;
 
             if should_install_language_server {
-                None
+                Ok(None)
             } else {
-                Some(LanguageServerBinary {
-                    path: node.binary_path().await.ok()?,
+                Ok(Some(LanguageServerBinary {
+                    path: node.binary_path().await?,
                     env: None,
                     arguments: server_binary_arguments(&server_path),
-                })
+                }))
             }
         }
     }
@@ -130,8 +132,13 @@ impl LspInstaller for TailwindLspAdapter {
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
+        cx: AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(
+            container_dir,
+            &crate::npm::NpmInstaller::new(&self.node, self, cx),
+        )
+        .await
     }
 }
 
@@ -214,7 +221,7 @@ impl LspAdapter for TailwindLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &NodeRuntime,
+    node: &crate::npm::NpmInstaller,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let server_path = container_dir.join(SERVER_PATH);

@@ -9798,14 +9798,17 @@ dependencies = [
  "globset",
  "gpui",
  "grammars",
+ "http_client",
  "indoc",
  "itertools 0.14.0",
  "json_schema_store",
  "language",
  "log",
  "lsp",
+ "managed_resources",
  "node_runtime",
  "parking_lot",
+ "paths",
  "pet",
  "pet-conda",
  "pet-core",
@@ -9841,6 +9844,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "watch",
 ]
 
 [[package]]

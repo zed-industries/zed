@@ -179,6 +179,7 @@ impl ManagedResourceCommand<Npm> for NodeBinaryPath {
 
 pub struct LatestNpmPackageVersion {
     pub package: String,
+    pub requirement: Option<VersionReq>,
 }
 
 impl ManagedResourceCommand<Npm> for LatestNpmPackageVersion {
@@ -198,14 +199,20 @@ impl ManagedResourceCommand<Npm> for LatestNpmPackageVersion {
     }
 
     fn permission_description(&self, _: &Npm) -> String {
-        format!(
+        let description = format!(
             "Query the npm registry for the latest version of {}",
             self.package
-        )
+        );
+        match &self.requirement {
+            Some(requirement) => format!("{description} matching {requirement}"),
+            None => description,
+        }
     }
 
     async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
-        npm.runtime.npm_package_latest_version(&self.package).await
+        npm.runtime
+            .npm_package_latest_version_with_requirement(&self.package, self.requirement.as_ref())
+            .await
     }
 }
 
@@ -1982,7 +1989,8 @@ mod tests {
         );
         assert_eq!(
             LatestNpmPackageVersion {
-                package: "typescript".into()
+                package: "typescript".into(),
+                requirement: None,
             }
             .permission(&settings),
             Some(ResourcePermission::Denied)

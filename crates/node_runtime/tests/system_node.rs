@@ -191,7 +191,8 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
             );
             assert!(
                 node_runtime::LatestNpmPackageVersion {
-                    package: "test-package".into()
+                    package: "test-package".into(),
+                    requirement: None,
                 }
                 .run(&resource, &executor)
                 .await

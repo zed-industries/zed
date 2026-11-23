@@ -737,8 +737,9 @@ pub trait LspInstaller {
         _version: &Self::BinaryVersion,
         _container_dir: &PathBuf,
         _delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<Self> {
-        async { None }
+        _cx: AsyncApp,
+    ) -> impl Future<Output = Result<Option<LanguageServerBinary>>> + use<Self> {
+        async { Ok(None) }
     }
 
     fn fetch_server_binary(
@@ -746,12 +747,14 @@ pub trait LspInstaller {
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<Self>;
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<LanguageServerBinary>> + use<Self>;
 
     fn cached_server_binary(
         &self,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
+        cx: AsyncApp,
     ) -> impl Future<Output = Option<LanguageServerBinary>>;
 }
 
@@ -797,10 +800,9 @@ where
             .fetch_latest_server_version(delegate, pre_release, cx)
             .await?;
 
-        if let Some(binary) = cx
-            .background_executor()
-            .spawn(self.check_if_version_installed(&latest_version, &container_dir, &delegate))
-            .await
+        if let Some(binary) = self
+            .check_if_version_installed(&latest_version, &container_dir, &delegate, cx.clone())
+            .await?
         {
             log::debug!("language server {:?} is already installed", name.0);
             delegate.update_status(name.clone(), BinaryStatus::None);
@@ -808,9 +810,8 @@ where
         } else {
             log::debug!("downloading language server {:?}", name.0);
             delegate.update_status(name.clone(), BinaryStatus::Downloading);
-            let binary = cx
-                .background_executor()
-                .spawn(self.fetch_server_binary(latest_version, container_dir, delegate))
+            let binary = self
+                .fetch_server_binary(latest_version, container_dir, delegate, cx.clone())
                 .await;
 
             delegate.update_status(name.clone(), BinaryStatus::None);
@@ -874,7 +875,7 @@ where
             };
 
             let last_downloaded_binary = self
-                .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref(), cx.clone())
                 .await
                 .context(
                     "did not find existing language server binary, falling back to downloading",
@@ -891,7 +892,11 @@ where
 
                 if let Err(error) = binary.as_ref() {
                     if let Some(prev_downloaded_binary) = self
-                        .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                        .cached_server_binary(
+                            container_dir.to_path_buf(),
+                            delegate.as_ref(),
+                            cx.clone(),
+                        )
                         .await
                     {
                         log::info!(
@@ -1668,7 +1673,8 @@ impl LspInstaller for FakeLspAdapter {
         _: (),
         _: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        _: AsyncApp,
+    ) -> impl Future<Output = Result<LanguageServerBinary>> + use<> {
         async {
             unreachable!();
         }
@@ -1678,6 +1684,7 @@ impl LspInstaller for FakeLspAdapter {
         &self,
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
+        _: AsyncApp,
     ) -> Option<LanguageServerBinary> {
         unreachable!();
     }

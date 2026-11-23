@@ -3393,6 +3393,7 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
         .execute_command(
             node_runtime::LatestNpmPackageVersion {
                 package: PACKAGE_NAME.into(),
+                requirement: None,
             },
             bill.clone(),
             cx,
