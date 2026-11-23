@@ -20,6 +20,7 @@ use anyhow::Context as _;
 use collections::{FxHashMap, FxHashSet};
 use core::fmt;
 use derive_more::{Add, Deref, FromStr, Sub};
+use gpui_util::canonical_float_bits;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
@@ -731,7 +732,7 @@ impl WindowTextSystem {
         let mut process_line = |line_text: SharedString, line_start, line_end| {
             font_runs.clear();
 
-            let mut decoration_runs = <Vec<DecorationRun>>::with_capacity(32);
+            let mut decoration_runs = <Vec<DecorationRun>>::new();
             let mut run_start = line_start;
             while run_start < line_end {
                 let Some(run) = runs.peek_mut() else {
@@ -849,13 +850,26 @@ impl WindowTextSystem {
     /// Subsets of the line can be styled independently with the `runs` parameter.
     /// Generally, you should prefer to use [`Self::shape_line`] instead, which
     /// can be painted directly.
-    pub fn layout_line(
+    pub fn layout_line<Text>(
         &self,
-        text: &str,
+        text: Text,
         font_size: Pixels,
         runs: &[TextRun],
         force_width: Option<Pixels>,
-    ) -> Arc<LineLayout> {
+    ) -> Arc<LineLayout>
+    where
+        Text: AsRef<str>,
+        SharedString: From<Text>,
+    {
+        let font_runs = self.font_runs(runs);
+        let layout = self
+            .line_layout_cache
+            .layout_line(text, font_size, &font_runs, force_width);
+        self.font_runs_buffer.set(font_runs);
+        layout
+    }
+
+    fn font_runs(&self, runs: &[TextRun]) -> Vec<FontRun> {
         let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_buffer.take();
         font_runs.clear();
@@ -888,16 +902,7 @@ impl WindowTextSystem {
             }
         }
 
-        let layout = self.line_layout_cache.layout_line(
-            &SharedString::new(text),
-            font_size,
-            &font_runs,
-            force_width,
-        );
-
-        self.font_runs_buffer.set(font_runs);
-
-        layout
+        font_runs
     }
 
     /// Returns the shaped layout width of for the given character, in the given font and size.
@@ -1120,9 +1125,9 @@ impl Hash for RenderGlyphParams {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.font_id.0.hash(state);
         self.glyph_id.0.hash(state);
-        self.font_size.0.to_bits().hash(state);
+        self.font_size.hash(state);
         self.subpixel_variant.hash(state);
-        self.scale_factor.to_bits().hash(state);
+        canonical_float_bits(self.scale_factor).hash(state);
         self.is_emoji.hash(state);
         self.subpixel_rendering.hash(state);
         self.dilation.hash(state);

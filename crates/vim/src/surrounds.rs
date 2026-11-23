@@ -329,8 +329,7 @@ impl Vim {
 
                     for (open_offset, close_offset) in pairs_to_replace {
                         let mut open_str = pair.start.clone();
-                        let mut chars_and_offset =
-                            display_map.buffer_chars_at(open_offset).peekable();
+                        let mut chars_and_offset = display_map.buffer_chars_at(open_offset);
                         chars_and_offset.next(); // skip the bracket itself
                         let mut open_range_end = open_offset + 1usize;
                         while let Some((next_ch, _)) = chars_and_offset.next()

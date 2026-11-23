@@ -3,7 +3,7 @@ use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, ForegroundActivity, SubmissionResponse,
     ToolCallStatus,
 };
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Context as _, Result, anyhow};
 use client::RefreshLlmTokenListener;
 use futures::{FutureExt, StreamExt, channel::mpsc, channel::oneshot, select};
@@ -13,11 +13,7 @@ use indoc::indoc;
 use project::{FakeFs, Project};
 #[cfg(test)]
 use settings::Settings;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::Path, sync::Arc, time::Duration};
 use util::path;
 use util::path_list::PathList;
 
@@ -357,7 +353,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::schema::v2::PermissionOptionId::new($allow_option_id),
+                    ::agent_client_protocol::v2::schema::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;
@@ -509,32 +505,11 @@ pub async fn run_until_first_tool_call(
     }
 }
 
-pub fn get_zed_path() -> PathBuf {
-    let mut zed_path = std::env::current_exe().unwrap();
-
-    while zed_path
-        .file_name()
-        .is_none_or(|name| name.to_string_lossy() != "debug")
-    {
-        if !zed_path.pop() {
-            panic!("Could not find target directory");
-        }
-    }
-
-    zed_path.push("zed");
-
-    if !zed_path.exists() {
-        panic!("\n🚨 Run `cargo build` at least once before running e2e tests\n\n");
-    }
-
-    zed_path
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol::schema::v1 as acp_v1;
+    use agent_client_protocol::v1::schema as acp_v1;
     use std::rc::Rc;
 
     async fn stub_thread(

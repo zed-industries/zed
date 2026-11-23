@@ -9,9 +9,9 @@ use crate::{
     },
     mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
-use acp_thread::MentionUri;
+use acp_thread::{AgentDescriptionFormat, MentionUri};
 use agent::ThreadStore;
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Result, anyhow};
 use base64::Engine as _;
 use editor::{
@@ -31,6 +31,7 @@ use gpui::{
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
 use project::AgentId;
+use project::lsp_store::CompletionDocumentation;
 use project::{
     CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectPath, Worktree,
 };
@@ -47,6 +48,7 @@ use zed_actions::agent::{Chat, PasteRaw};
 
 #[derive(Default)]
 pub struct SessionCapabilities {
+    description_format: AgentDescriptionFormat,
     prompt_capabilities: acp_v2::PromptCapabilities,
     available_commands: Vec<acp_v2::AvailableCommand>,
     available_skills: Vec<AvailableSkill>,
@@ -54,13 +56,15 @@ pub struct SessionCapabilities {
 
 impl SessionCapabilities {
     pub fn new(
+        description_format: AgentDescriptionFormat,
         prompt_capabilities: acp_v2::PromptCapabilities,
         available_commands: Vec<acp_v2::AvailableCommand>,
         available_skills: Vec<AvailableSkill>,
     ) -> Self {
         Self {
+            description_format,
             prompt_capabilities,
-            available_commands,
+            available_commands: slash_commands(available_commands),
             available_skills,
         }
     }
@@ -69,7 +73,12 @@ impl SessionCapabilities {
         prompt_capabilities: acp_v2::PromptCapabilities,
         available_commands: Vec<acp_v2::AvailableCommand>,
     ) -> Self {
-        Self::new(prompt_capabilities, available_commands, Vec::new())
+        Self::new(
+            AgentDescriptionFormat::PlainText,
+            prompt_capabilities,
+            available_commands,
+            Vec::new(),
+        )
     }
 
     pub fn prompt_capabilities(&self) -> &acp_v2::PromptCapabilities {
@@ -116,14 +125,23 @@ impl SessionCapabilities {
         self.available_commands
             .iter()
             .map(|command| AvailableCommand {
-                name: command.name.clone().into(),
-                description: command.description.clone().into(),
+                name: command.name().to_owned().into(),
+                documentation: match self.description_format {
+                    AgentDescriptionFormat::PlainText => {
+                        CompletionDocumentation::MultiLinePlainText(command.description().into())
+                    }
+                    AgentDescriptionFormat::Markdown => {
+                        CompletionDocumentation::NonInteractiveMarkdown(
+                            command.description().into(),
+                        )
+                    }
+                },
                 requires_argument: matches!(
-                    command.input,
+                    command_input(command),
                     Some(acp_v2::AvailableCommandInput::Text(_))
                 ),
                 source: None,
-                category: acp_thread::command_category_from_meta(&command.meta),
+                category: acp_thread::command_category_from_meta(command.meta()),
             })
             .collect()
     }
@@ -137,7 +155,7 @@ impl SessionCapabilities {
     }
 
     pub fn set_available_commands(&mut self, available_commands: Vec<acp_v2::AvailableCommand>) {
-        self.available_commands = available_commands;
+        self.available_commands = slash_commands(available_commands);
     }
 
     pub fn set_available_skills(&mut self, available_skills: Vec<AvailableSkill>) {
@@ -248,6 +266,23 @@ pub enum MessageEditorEvent {
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
+
+/// Each command type defines how its entries are invoked, and only `command` entries are
+/// invoked as `/name`. ACP forbids showing any other type as a slash command, including
+/// types Zed doesn't know. `AcpThread` keeps the complete list.
+fn slash_commands(commands: Vec<acp_v2::AvailableCommand>) -> Vec<acp_v2::AvailableCommand> {
+    commands
+        .into_iter()
+        .filter(|command| matches!(command, acp_v2::AvailableCommand::Command(_)))
+        .collect()
+}
+
+fn command_input(command: &acp_v2::AvailableCommand) -> Option<&acp_v2::AvailableCommandInput> {
+    match command {
+        acp_v2::AvailableCommand::Command(command) => command.input.as_ref(),
+        _ => None,
+    }
+}
 
 const COMMAND_HINT_INLAY_ID: InlayId = InlayId::Hint(0);
 
@@ -654,9 +689,9 @@ impl MessageEditor {
         let command_name = parsed_command.command?;
         let available_command = available_commands
             .iter()
-            .find(|available_command| available_command.name == command_name)?;
+            .find(|available_command| available_command.name() == command_name)?;
 
-        let acp_v2::AvailableCommandInput::Text(input) = available_command.input.as_ref()? else {
+        let acp_v2::AvailableCommandInput::Text(input) = command_input(available_command)? else {
             return None;
         };
         let mut hint = input.hint.clone();
@@ -742,7 +777,13 @@ impl MessageEditor {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).text(cx).trim().is_empty()
+        self.editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .chars_at(MultiBufferOffset(0))
+            .all(char::is_whitespace)
     }
 
     pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
@@ -798,7 +839,7 @@ impl MessageEditor {
                 //    before reaching the resolver.
                 let direct_match = available_commands
                     .iter()
-                    .any(|available_command| available_command.name == command_name)
+                    .any(|available_command| available_command.name() == command_name)
                     || available_skills
                         .iter()
                         .any(|skill| skill.name.as_ref() == command_name);
@@ -844,7 +885,11 @@ impl MessageEditor {
         skills
             .iter()
             .map(|skill| format!("/{}:{}", skill.source, skill.name))
-            .chain(commands.iter().map(|command| format!("/{}", command.name)))
+            .chain(
+                commands
+                    .iter()
+                    .map(|command| format!("/{}", command.name())),
+            )
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -2302,9 +2347,9 @@ mod tests {
     use std::{ops::Range, path::Path, path::PathBuf, rc::Rc, sync::Arc};
 
     use super::PromptLocalCommand;
-    use acp_thread::MentionUri;
+    use acp_thread::{AgentDescriptionFormat, MentionUri};
     use agent::{ThreadStore, outline};
-    use agent_client_protocol::schema::v2 as acp_v2;
+    use agent_client_protocol::v2::schema as acp_v2;
     use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
@@ -2348,8 +2393,11 @@ mod tests {
             warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
+            AgentDescriptionFormat::PlainText,
             acp_v2::PromptCapabilities::default(),
-            vec![acp_v2::AvailableCommand::new("help", "Get help")],
+            vec![acp_v2::AvailableCommand::Command(acp_v2::Command::new(
+                "help", "Get help",
+            ))],
             vec![skill],
         );
 
@@ -2361,19 +2409,54 @@ mod tests {
     }
 
     #[test]
+    fn replaced_command_descriptions_keep_the_connections_format() {
+        use project::lsp_store::CompletionDocumentation;
+
+        for format in [
+            AgentDescriptionFormat::PlainText,
+            AgentDescriptionFormat::Markdown,
+        ] {
+            let mut capabilities =
+                SessionCapabilities::new(format, Default::default(), vec![], vec![]);
+            let source = "**Read** [docs](https://example.org)";
+            capabilities.set_available_commands(vec![acp_v2::AvailableCommand::Command(
+                acp_v2::Command::new("read", source),
+            )]);
+            let commands = capabilities.completion_commands();
+            let [command] = commands.as_slice() else {
+                panic!("one command")
+            };
+            match (format, &command.documentation) {
+                (
+                    AgentDescriptionFormat::Markdown,
+                    CompletionDocumentation::NonInteractiveMarkdown(text),
+                )
+                | (
+                    AgentDescriptionFormat::PlainText,
+                    CompletionDocumentation::MultiLinePlainText(text),
+                ) => assert_eq!(text, source),
+                _ => panic!("incorrect completion documentation format"),
+            }
+        }
+    }
+
+    #[test]
     fn test_completion_commands_derive_category_from_meta() {
         let session_capabilities = SessionCapabilities::new(
+            AgentDescriptionFormat::PlainText,
             acp_v2::PromptCapabilities::default(),
             vec![
-                acp_v2::AvailableCommand::new("compact", "Built-in").meta(
-                    acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
+                acp_v2::AvailableCommand::Command(
+                    acp_v2::Command::new("compact", "Built-in").meta(
+                        acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
+                    ),
                 ),
-                acp_v2::AvailableCommand::new("deploy", "MCP").meta(
+                acp_v2::AvailableCommand::Command(acp_v2::Command::new("deploy", "MCP").meta(
                     acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
-                ),
+                )),
                 // No category meta: this is how external ACP agents' commands
                 // arrive, and they should group on their own.
-                acp_v2::AvailableCommand::new("help", "External"),
+                acp_v2::AvailableCommand::Command(acp_v2::Command::new("help", "External")),
             ],
             Vec::new(),
         );
@@ -2395,6 +2478,42 @@ mod tests {
     }
 
     #[test]
+    fn test_only_command_entries_are_slash_commands() {
+        let commands: Vec<acp_v2::AvailableCommand> = serde_json::from_value(json!([
+            {"type": "command", "name": "help", "description": "Get help"},
+            {"type": "_future_kind", "name": "future", "description": "Future command",
+                "input": {"type": "text", "hint": "not a known input"}},
+            {"type": "skill", "name": "pdf", "description": "Read PDFs"},
+        ]))
+        .expect("unknown command kinds parse");
+        let mut session_capabilities = SessionCapabilities::new(
+            AgentDescriptionFormat::Markdown,
+            acp_v2::PromptCapabilities::default(),
+            commands.clone(),
+            Vec::new(),
+        );
+
+        let [command] = session_capabilities
+            .completion_commands()
+            .try_into()
+            .unwrap_or_else(|commands: Vec<_>| {
+                panic!("expected one command, got {}", commands.len())
+            });
+        assert_eq!(command.name.as_ref(), "help");
+
+        session_capabilities.set_available_commands(commands[1..].to_vec());
+        assert!(session_capabilities.completion_commands().is_empty());
+        assert!(!session_capabilities.has_slash_completions());
+        MessageEditor::validate_slash_commands(
+            "/future",
+            session_capabilities.available_commands(),
+            session_capabilities.available_skills(),
+            &AgentId::from("Zed"),
+        )
+        .expect_err("other command kinds are not invoked as slash commands");
+    }
+
+    #[test]
     fn test_validate_slash_commands_accepts_scope_qualified_skill() {
         let agent_id = AgentId::from("Zed");
         let make_skill = |name: &str, source: &str| AvailableSkill {
@@ -2409,7 +2528,9 @@ mod tests {
         // `/:<name>`); project-local skills carry their worktree root
         // name. The empty-scope encoding means a worktree literally
         // named `global` no longer collides with the global source.
-        let commands = vec![acp_v2::AvailableCommand::new("help", "Get help")];
+        let commands = vec![acp_v2::AvailableCommand::Command(acp_v2::Command::new(
+            "help", "Get help",
+        ))];
         let skills = vec![make_skill("deploy", ""), make_skill("deploy", "zed")];
         let no_skills = Vec::new();
 
@@ -2735,9 +2856,9 @@ mod tests {
         assert!(error_message.contains("Available commands for Claude Agent: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
-        session_capabilities
-            .write()
-            .set_available_commands(vec![acp_v2::AvailableCommand::new("help", "Get help")]);
+        session_capabilities.write().set_available_commands(vec![
+            acp_v2::AvailableCommand::Command(acp_v2::Command::new("help", "Get help")),
+        ]);
 
         // Test that unsupported slash commands trigger an error when we have a list of available commands
         editor.update_in(cx, |editor, window, cx| {
@@ -2854,9 +2975,16 @@ mod tests {
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
             acp_v2::PromptCapabilities::default(),
             vec![
-                acp_v2::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
-                acp_v2::AvailableCommand::new("say-hello", "Say hello to whoever you want").input(
-                    acp_v2::AvailableCommandInput::Text(acp_v2::TextCommandInput::new("<name>")),
+                acp_v2::AvailableCommand::Command(acp_v2::Command::new(
+                    "quick-math",
+                    "2 + 2 = 4 - 1 = 3",
+                )),
+                acp_v2::AvailableCommand::Command(
+                    acp_v2::Command::new("say-hello", "Say hello to whoever you want").input(
+                        acp_v2::AvailableCommandInput::Text(acp_v2::TextCommandInput::new(
+                            "<name>",
+                        )),
+                    ),
                 ),
             ],
         )));
@@ -3136,7 +3264,10 @@ mod tests {
 
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
             acp_v2::PromptCapabilities::default(),
-            vec![acp_v2::AvailableCommand::new("hello", "Say hello")],
+            vec![acp_v2::AvailableCommand::Command(acp_v2::Command::new(
+                "hello",
+                "Say hello",
+            ))],
         )));
 
         // Track every event emitted by the message editor across the

@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{schema::MaybeUndefined, v1::schema as acp_v1, v2::schema as acp_v2};
 use anyhow::{Result, bail};
 use collections::HashMap;
 use futures::{FutureExt as _, future::Shared};
@@ -57,10 +57,6 @@ pub struct SandboxWrap {
     /// Allow unrestricted filesystem writes except for protected paths (ignores
     /// ordinary writable paths).
     pub allow_fs_write: bool,
-    /// Whether the project (and therefore this terminal) is local. The
-    /// enforcing proxy binds a loopback port on this host, so it can only
-    /// confine local commands; a remote terminal can't reach it.
-    pub is_local: bool,
     /// Windows/WSL only: `(release channel, version)` of the Linux `zed` to
     /// provision inside WSL as the sandbox helper (version `latest` for dev
     /// builds). Resolved by the agent (which can read the running app's release
@@ -267,7 +263,12 @@ impl SandboxWrap {
             .filter_map(|path| sandbox::HostFilesystemLocation::capture(path).ok())
             .collect::<Vec<_>>();
         let fs = if self.allow_fs_write {
-            sandbox::SandboxFsPolicy::Unrestricted { protected_paths }
+            sandbox::SandboxFsPolicy::Unrestricted {
+                protected_paths,
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
+            }
         } else {
             // Project worktree paths are captured fresh; user-approved grants are
             // rebuilt via the verifying reopen (or captured when legacy bare
@@ -302,6 +303,9 @@ impl SandboxWrap {
             sandbox::SandboxFsPolicy::Restricted {
                 writable_paths,
                 protected_paths,
+                protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         };
         let network = match &self.network {
@@ -313,9 +317,14 @@ impl SandboxWrap {
                     .iter()
                     .map(|pattern| pattern.to_string())
                     .collect(),
+                allowed_tcp_ports: Vec::new(),
             },
         };
-        Ok(sandbox::SandboxPolicy { fs, network })
+        Ok(sandbox::SandboxPolicy {
+            fs,
+            network,
+            allowed_unix_sockets: Vec::new(),
+        })
     }
 }
 
@@ -429,6 +438,8 @@ pub struct DisplayTerminalState {
     command: DisplayCommand,
     pub meta: Option<acp_v2::Meta>,
     pub output_meta: Option<acp_v2::Meta>,
+    /// Whether the agent accepts `terminal/cancel` for this terminal.
+    can_cancel: bool,
     legacy_created: bool,
     legacy_exited: bool,
 }
@@ -459,6 +470,7 @@ pub struct DisplayTerminalPatch {
     pub cwd: MaybeUndefined<acp_v2::AbsolutePath>,
     pub output: MaybeUndefined<DisplayTerminalOutput>,
     pub exit_status: MaybeUndefined<acp_v2::TerminalExitStatus>,
+    pub capabilities: MaybeUndefined<acp_v2::TerminalCapabilities>,
     pub meta: MaybeUndefined<acp_v2::Meta>,
 }
 
@@ -699,7 +711,7 @@ impl Terminal {
 
     fn exit_status_from_v1(status: acp_v1::TerminalExitStatus) -> acp_v2::TerminalExitStatus {
         acp_v2::TerminalExitStatus::new()
-            .exit_code(status.exit_code)
+            .exit_code(status.exit_code.map(i64::from))
             .signal(status.signal)
             .meta(status.meta)
     }
@@ -709,6 +721,12 @@ impl Terminal {
             TerminalExecution::Display(state) => Some(state),
             TerminalExecution::Process(_) => None,
         }
+    }
+
+    /// Whether Zed may stop this agent-run terminal with `terminal/cancel`: the agent
+    /// advertises it and hasn't reported an exit status.
+    pub fn can_cancel(&self) -> bool {
+        self.output.is_none() && self.display_state().is_some_and(|state| state.can_cancel)
     }
 
     pub(crate) fn initialize_legacy_display(
@@ -763,6 +781,7 @@ impl Terminal {
             cwd,
             output,
             exit_status,
+            capabilities,
             meta,
         } = patch;
         let output_changed = !output.is_undefined();
@@ -794,6 +813,10 @@ impl Terminal {
             crate::MetadataUpdate::V2(meta).apply(&mut state.meta);
             if let Some(meta) = output_meta {
                 state.output_meta = meta;
+            }
+            if let Some(capabilities) = capabilities.as_opt_ref() {
+                state.can_cancel =
+                    capabilities.is_some_and(|capabilities| capabilities.cancel.is_some());
             }
         }
         if !cwd.is_undefined() {
@@ -901,7 +924,7 @@ impl Terminal {
     }
 
     // This method is adapted from `portable_pty::ExitStatus::from`, version 0.9.0
-    fn transform_exit_status(exit_status: ExitStatus) -> (u32, Option<String>) {
+    fn transform_exit_status(exit_status: ExitStatus) -> (i64, Option<String>) {
         #[cfg(unix)]
         {
             use std::os::unix::process::ExitStatusExt;
@@ -915,16 +938,13 @@ impl Terminal {
                     signame.to_string_lossy().to_string()
                 };
 
-                return (
-                    exit_status.code().map(|c| c as u32).unwrap_or(1),
-                    Some(signal),
-                );
+                return (exit_status.code().map(i64::from).unwrap_or(1), Some(signal));
             }
         }
 
         let code = exit_status
             .code()
-            .map(|c| c as u32)
+            .map(i64::from)
             .unwrap_or_else(|| if exit_status.success() { 0 } else { 1 });
 
         (code, None)

@@ -314,9 +314,7 @@ impl Editor {
                                 s.trim_end()
                             })
                             .unwrap_or(line_trimmed);
-                        let line_trimmed = line_trimmed
-                            .strip_prefix(prefix.as_ref())
-                            .unwrap_or(line_trimmed);
+                        let line_trimmed = line_trimmed.trim_prefix(prefix.as_ref());
                         Ok(line_trimmed)
                     } else if let Some(CommentFormat::BlockLine(prefix)) = &comment_prefix {
                         line_trimmed.strip_prefix(prefix).with_context(|| {

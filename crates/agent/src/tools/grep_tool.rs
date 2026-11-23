@@ -1,6 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use acp_thread::MentionUri;
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
@@ -34,6 +34,9 @@ pub const fn default_context_lines() -> u32 {
 /// - Results are paginated with 20 matches per page. Use the optional 'offset' parameter to request subsequent pages.
 /// - DO NOT use HTML entities solely to escape characters in the tool parameters.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+// Reject unknown fields so that a mistyped scoping parameter (e.g. `path`) fails loudly instead
+// of being silently dropped, which would widen the search to the whole project.
+#[serde(deny_unknown_fields)]
 pub struct GrepToolInput {
     /// A regex pattern to search for in the entire project. Note that the regex will be parsed by the Rust `regex` crate.
     ///
@@ -593,6 +596,41 @@ mod tests {
         );
     }
 
+    // An unknown input field must not be dropped silently: a mistyped scoping parameter
+    // (here `path`) would otherwise turn a scoped search into a project-wide one.
+    #[gpui::test]
+    async fn test_grep_tool_rejects_unknown_input_fields(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "notes.md": "section 1.11\n" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let tool = Arc::new(GrepTool { project });
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::ready(json!({
+                    "regex": "1\\.11",
+                    "path": "/root/notes.md",
+                    "context_lines": 4,
+                })),
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        });
+
+        let error = task
+            .await
+            .expect_err("grep input with unknown fields should be rejected");
+        assert!(
+            error.contains("unknown field `path`") && error.contains("include_pattern"),
+            "unexpected error message: {error}"
+        );
+    }
+
     // The grep tool streams a clickable `file://` ResourceLink and a tool-call
     // location for every match so each result opens the file at the matched line
     // in the agent panel. The model-facing text output stays link-free.
@@ -686,7 +724,7 @@ mod tests {
             locations.iter().any(|location| {
                 location.path.0.to_string_lossy().replace('\\', "/")
                     == path!("/root/src/alpha.txt").replace('\\', "/")
-                    && location.line == Some(1)
+                    && location.line.map(std::num::NonZeroU32::get) == Some(1)
             }),
             "missing location for alpha.txt, got: {locations:?}"
         );
@@ -694,7 +732,7 @@ mod tests {
             locations.iter().any(|location| {
                 location.path.0.to_string_lossy().replace('\\', "/")
                     == path!("/root/beta.txt").replace('\\', "/")
-                    && location.line == Some(1)
+                    && location.line.map(std::num::NonZeroU32::get) == Some(1)
             }),
             "missing location for beta.txt, got: {locations:?}"
         );
@@ -1545,13 +1583,8 @@ mod tests {
     fn extract_paths_from_results(results: &str) -> Vec<String> {
         results
             .lines()
-            .filter(|line| line.starts_with("## Matches in "))
-            .map(|line| {
-                line.strip_prefix("## Matches in ")
-                    .unwrap()
-                    .trim()
-                    .to_string()
-            })
+            .filter_map(|line| line.strip_prefix("## Matches in "))
+            .map(|path| path.trim().to_string())
             .collect()
     }
 }

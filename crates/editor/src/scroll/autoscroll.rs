@@ -64,12 +64,6 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Top, None)
     }
 
-    /// Scrolls so that the newest cursor is the given offset (in display rows)
-    /// from the bottom of the viewport.
-    pub fn bottom_relative(offset: ScrollOffset) -> Self {
-        Self::Strategy(AutoscrollStrategy::BottomRelative(offset), None)
-    }
-
     /// Scrolls so that the newest cursor is at the bottom.
     pub fn bottom() -> Self {
         Self::Strategy(AutoscrollStrategy::Bottom, None)
@@ -106,7 +100,6 @@ pub enum AutoscrollStrategy {
     Top,
     Bottom,
     TopRelative(ScrollOffset),
-    BottomRelative(ScrollOffset),
 }
 
 impl Eq for AutoscrollStrategy {}
@@ -280,10 +273,6 @@ impl Editor {
             }
             AutoscrollStrategy::TopRelative(lines) => {
                 scroll_position.y = target_top - lines as ScrollOffset;
-                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
-            }
-            AutoscrollStrategy::BottomRelative(lines) => {
-                scroll_position.y = target_bottom + lines as ScrollOffset;
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
         };

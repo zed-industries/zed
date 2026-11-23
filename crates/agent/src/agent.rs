@@ -1,4 +1,5 @@
 mod db;
+mod global_skills;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
@@ -14,6 +15,7 @@ mod tools;
 
 use context_server::ContextServerId;
 pub use db::*;
+pub use global_skills::*;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 use parking_lot::Mutex;
@@ -34,7 +36,7 @@ use acp_thread::{
     AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, ProcessOutput,
     TokenUsageRatio,
 };
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup,
     SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId,
@@ -473,7 +475,7 @@ impl LanguageModels {
             }
             if !provider_models.is_empty() {
                 language_model_list.insert(
-                    acp_thread::AgentModelGroupName(provider.name().0.clone()),
+                    acp_thread::AgentModelGroupName(provider.name().0),
                     provider_models,
                 );
             }
@@ -710,6 +712,14 @@ impl NativeAgent {
                 // Flush thread content on quit so an in-flight async save
                 // can't leave a thread orphaned ("no thread found with ID").
                 cx.on_app_quit(Self::flush_threads_on_quit),
+                // A project can be here without a session, so closing sessions
+                // doesn't remove every project's skills from the index.
+                cx.on_release(|this, cx| {
+                    let index = cx.default_global::<SkillIndex>();
+                    for project_id in this.projects.keys() {
+                        index.remote_global_skills.remove(project_id);
+                    }
+                }),
             ];
 
             if !cx.has_global::<SkillIndex>() {
@@ -756,6 +766,15 @@ impl NativeAgent {
             .detach();
     }
 
+    /// Remote projects get their global skills from the remote server instead.
+    fn refresh_projects_with_local_global_skills(&mut self, cx: &App) {
+        for state in self.projects.values_mut() {
+            if !global_skills_are_remote(state.project.read(cx)) {
+                state.project_context_needs_refresh.send(()).ok();
+            }
+        }
+    }
+
     async fn run_skills_scan(this: WeakEntity<Self>, fs: Arc<dyn Fs>, cx: &mut AsyncApp) {
         let skills_dir = global_skills_dir();
         if !fs.is_dir(&skills_dir).await {
@@ -778,9 +797,7 @@ impl NativeAgent {
             })
             .detach();
             this.skills_state = SkillsState::Watching;
-            for state in this.projects.values_mut() {
-                state.project_context_needs_refresh.send(()).ok();
-            }
+            this.refresh_projects_with_local_global_skills(cx);
         });
     }
 
@@ -790,63 +807,20 @@ impl NativeAgent {
         skills_dir: PathBuf,
         cx: &mut AsyncApp,
     ) {
-        let (mut events, watcher) = fs
-            .watch(&skills_dir, std::time::Duration::from_millis(500))
-            .await;
-
-        // Linux's inotify backend is non-recursive, so a watch on
-        // `skills_dir` only fires for direct children. Skill discovery
-        // is intentionally one level deep (`<skills_dir>/<skill>/SKILL.md`),
-        // so we only register watches on each immediate child directory
-        // and deliberately do NOT recurse: a stray `node_modules`,
-        // `target`, or `.git` inside a skill folder would otherwise
-        // register watches for tens of thousands of subdirectories.
-        // These per-child adds are cheap no-ops on macOS/Windows where
-        // the OS-level watch is already recursive.
-        if let Ok(mut entries) = fs.read_dir(&skills_dir).await {
-            while let Some(entry) = entries.next().await {
-                let Ok(path) = entry else { continue };
-                if let Ok(Some(metadata)) = fs.metadata(&path).await
-                    && metadata.is_dir
-                {
-                    watcher.add(&path).ok();
-                }
-            }
-        }
-
-        while let Some(events) = events.next().await {
-            // When a new immediate child directory of `skills_dir` is
-            // created, add a single watch for it so changes to its
-            // `SKILL.md` are observed on Linux. We intentionally do not
-            // recurse into the new directory — skill discovery is only
-            // one level deep.
-            for event in &events {
-                if event.kind == Some(fs::PathEventKind::Created)
-                    && event.path.parent() == Some(skills_dir.as_path())
-                    && fs.is_dir(&event.path).await
-                {
-                    watcher.add(&event.path).ok();
-                }
-            }
-
-            let watched_root_removed = events.iter().any(|event| {
-                event.path == skills_dir && event.kind == Some(fs::PathEventKind::Removed)
-            });
-
-            let updated = this.update(cx, |this, _cx| {
-                for state in this.projects.values_mut() {
-                    state.project_context_needs_refresh.send(()).ok();
-                }
-                if watched_root_removed {
-                    // Drop back to Idle so the next user trigger
-                    // retries the scan; the next trigger will rediscover
-                    // the directory if the user has recreated it.
-                    this.skills_state = SkillsState::Idle;
-                }
-            });
-            if updated.is_err() || watched_root_removed {
-                return;
-            }
+        let watched_root_removed = agent_skills::watch_skills_dir(fs, skills_dir, || {
+            this.update(cx, |this, cx| {
+                this.refresh_projects_with_local_global_skills(cx);
+            })
+            .is_ok()
+        })
+        .await;
+        if watched_root_removed {
+            // Drop back to Idle so the next user trigger retries the scan
+            // and rediscovers the directory if it's recreated.
+            this.update(cx, |this, _cx| {
+                this.skills_state = SkillsState::Idle;
+            })
+            .ok();
         }
     }
 
@@ -900,6 +874,9 @@ impl NativeAgent {
         let session_id = thread.id().clone();
         let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
+        let is_subagent = thread.is_subagent();
+        // A native subagent's title is the label its parent gave it.
+        let subagent_title = title.clone();
         let draft_prompt = thread.draft_prompt().map(Vec::from);
         let scroll_position = thread.ui_scroll_position();
         let token_usage = thread.latest_token_usage();
@@ -918,6 +895,15 @@ impl NativeAgent {
                 prompt_capabilities_rx,
                 cx,
             );
+            if is_subagent {
+                acp_thread.set_subagent_association(acp_thread::subagents::SubagentAssociation {
+                    title: subagent_title,
+                    description: None,
+                    can_cancel: true,
+                    cwd: None,
+                    additional_directories: None,
+                });
+            }
             acp_thread.set_draft_prompt(draft_prompt, cx);
             acp_thread.set_ui_scroll_position(scroll_position);
             acp_thread.update_token_usage(token_usage, cx);
@@ -1232,7 +1218,9 @@ impl NativeAgent {
             .collect::<Vec<_>>();
 
         // Load global skills
-        let global_skills_task = {
+        let global_skills_task = if global_skills_are_remote(project.read(cx)) {
+            load_remote_global_skills(project, cx)
+        } else {
             let global_skills_dir = global_skills_dir();
             let global_skills_fs = fs.clone();
             cx.background_spawn(async move {
@@ -1552,7 +1540,10 @@ impl NativeAgent {
             return;
         };
         match event {
-            project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+            // Only visible worktrees change these paths. Opening a file outside
+            // the project adds and removes an invisible worktree, which the
+            // context doesn't include.
+            project::Event::WorktreePathsChanged { .. } => {
                 state.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
@@ -1567,6 +1558,9 @@ impl NativeAgent {
                 }) {
                     state.project_context_needs_refresh.send(()).ok();
                 }
+            }
+            project::Event::GlobalSkillsChanged => {
+                state.project_context_needs_refresh.send(()).ok();
             }
             _ => {}
         }
@@ -1645,18 +1639,26 @@ impl NativeAgent {
 
     fn publish_skill_index(&self, cx: &mut Context<Self>) {
         let mut global_skills = Vec::new();
+        let mut remote_global_skills = HashMap::default();
         let mut project_groups: Vec<ProjectSkillGroup> = Vec::new();
         let mut seen_global = false;
+        let mut has_local_project = false;
 
-        for state in self.projects.values() {
+        for (project_id, state) in &self.projects {
+            let mut project_remote_global_skills =
+                global_skills_are_remote(state.project.read(cx)).then(Vec::new);
+            has_local_project |= project_remote_global_skills.is_none();
             for skill in state.skills.iter() {
                 match &skill.source {
                     SkillSource::BuiltIn => {}
-                    SkillSource::Global => {
-                        if !seen_global {
-                            global_skills.push(skill.clone());
+                    SkillSource::Global => match &mut project_remote_global_skills {
+                        Some(remote_skills) => remote_skills.push(skill.clone()),
+                        None => {
+                            if !seen_global {
+                                global_skills.push(skill.clone());
+                            }
                         }
-                    }
+                    },
                     SkillSource::ProjectLocal {
                         worktree_id,
                         worktree_root_name,
@@ -1679,12 +1681,19 @@ impl NativeAgent {
             if !global_skills.is_empty() {
                 seen_global = true;
             }
+            if let Some(remote_skills) = project_remote_global_skills {
+                remote_global_skills.insert(*project_id, remote_skills);
+            }
         }
 
-        cx.set_global(SkillIndex {
-            global_skills,
-            project_skills: project_groups,
-        });
+        let index = cx.default_global::<SkillIndex>();
+        // Each workspace has its own agent, so one with only remote projects
+        // leaves this machine's global skills to the others.
+        if has_local_project || self.projects.is_empty() {
+            index.global_skills = global_skills;
+        }
+        index.remote_global_skills.extend(remote_global_skills);
+        index.project_skills = project_groups;
     }
 
     fn update_available_commands_for_project(&self, project_id: EntityId, cx: &mut Context<Self>) {
@@ -1710,13 +1719,15 @@ impl NativeAgent {
         let Some(state) = project_state else {
             return Vec::new();
         };
-        let compact_command = acp_v2::AvailableCommand::new(
-            COMPACT_COMMAND_NAME,
-            "Summarize the conversation so far to free up context",
-        )
-        .meta(acp_thread::meta_with_command_category(
-            acp_thread::CommandCategory::Native,
-        ));
+        let compact_command = acp_v2::AvailableCommand::Command(
+            acp_v2::Command::new(
+                COMPACT_COMMAND_NAME,
+                "Summarize the conversation so far to free up context",
+            )
+            .meta(acp_thread::meta_with_command_category(
+                acp_thread::CommandCategory::Native,
+            )),
+        );
 
         let registry = state.context_server_registry.read(cx);
 
@@ -1740,10 +1751,9 @@ impl NativeAgent {
             };
 
             let mut command =
-                acp_v2::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
-                    .meta(acp_thread::meta_with_command_category(
-                        acp_thread::CommandCategory::Mcp,
-                    ));
+                acp_v2::Command::new(name, prompt.description.clone().unwrap_or_default()).meta(
+                    acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
+                );
 
             match prompt.arguments.as_deref() {
                 Some([arg]) => {
@@ -1760,7 +1770,7 @@ impl NativeAgent {
                 }
             }
 
-            Some(command)
+            Some(acp_v2::AvailableCommand::Command(command))
         });
 
         std::iter::once(compact_command)
@@ -1861,6 +1871,28 @@ impl NativeAgent {
                     })
                     .await
                     .map_err(Arc::new)?;
+                    let outcomes = thread.read_with(cx, |thread, _| {
+                        thread
+                            .subagent_outcomes()
+                            .iter()
+                            .map(|outcome| {
+                                (
+                                    outcome.entry_count,
+                                    acp_v2::StateUpdate::Idle(
+                                        acp_v2::IdleStateUpdate::new()
+                                            .stop_reason(outcome.stop_reason.clone()),
+                                    ),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    if !outcomes.is_empty() {
+                        acp_thread
+                            .update(cx, |acp_thread, cx| {
+                                acp_thread.restore_subagent_outcomes(outcomes, cx)
+                            })
+                            .map_err(Arc::new)?;
+                    }
                     Ok(acp_thread)
                 }
             })
@@ -1928,6 +1960,9 @@ impl NativeAgent {
         let has_remaining = self.sessions.values().any(|s| s.project_id == project_id);
         if !has_remaining {
             self.projects.remove(&project_id);
+            cx.default_global::<SkillIndex>()
+                .remote_global_skills
+                .remove(&project_id);
             self.publish_skill_index(cx);
         }
     }
@@ -3284,11 +3319,23 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         session_id: acp_v2::SessionId,
         project: Entity<Project>,
         _work_dirs: PathList,
-        _title: Option<SharedString>,
+        title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        self.0
-            .update(cx, |agent, cx| agent.open_thread(session_id, project, cx))
+        let load = self
+            .0
+            .update(cx, |agent, cx| agent.open_thread(session_id, project, cx));
+        cx.spawn(async move |cx| {
+            let thread = load.await?;
+            if let Some(title) = title {
+                thread.update(cx, |thread, cx| {
+                    if thread.title().is_none() {
+                        thread.set_provisional_title(title, cx);
+                    }
+                });
+            }
+            Ok(thread)
+        })
     }
 
     fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
@@ -3975,6 +4022,9 @@ impl SubagentHandle for NativeSubagentHandle {
                         task.await
                     } else {
                         thread.update(cx, |thread, cx| thread.request_cancel(cx)).await;
+                        // Let the run report its own idle state first, so this run's outcome
+                        // reported below comes after it.
+                        task.await.log_err();
                         Err(anyhow!(
                             "The agent is nearing the end of its context window and has been \
                              stopped. You can prompt the thread again to have the agent wrap up \
@@ -3987,6 +4037,7 @@ impl SubagentHandle for NativeSubagentHandle {
                 &response,
                 Ok(acp_v2::StopReason::Cancelled | acp_v2::StopReason::Refusal)
             );
+            let response_stop_reason = response.as_ref().ok().cloned();
             let result = match response {
                 Ok(reason) => match reason {
                     acp_v2::StopReason::Cancelled => Err(anyhow!("User canceled")),
@@ -4028,7 +4079,7 @@ impl SubagentHandle for NativeSubagentHandle {
                 })
                 .ok();
 
-            if discard_partial_output {
+            let result = if discard_partial_output {
                 result
             } else {
                 result.map_err(|error| {
@@ -4039,7 +4090,53 @@ impl SubagentHandle for NativeSubagentHandle {
                         anyhow!("{error:#}\n\nPartial subagent output (last 3 messages, up to 4096 characters each):\n\n{partial_output}")
                     }
                 })
-            }
+            };
+
+            // The run's own idle state only says how the model stopped. Report the verdict
+            // the parent's tool call gets, so the subagent's cards agree with it.
+            let stop_reason = match (&result, response_stop_reason) {
+                (Ok(_), Some(reason))
+                | (
+                    Err(_),
+                    Some(
+                        reason @ (acp_v2::StopReason::Cancelled
+                        | acp_v2::StopReason::MaxTokens
+                        | acp_v2::StopReason::MaxTurnRequests
+                        | acp_v2::StopReason::Refusal),
+                    ),
+                ) => reason,
+                (result, _) => {
+                    let mut error = acp_v2::Error::internal_error();
+                    error.message = match result {
+                        Ok(_) => "The subagent stopped without a reason".to_string(),
+                        Err(error) => error.to_string(),
+                    };
+                    acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new().error(error))
+                }
+            };
+            cx.update(|cx| {
+                let entry_count = acp_thread.read(cx).entries().len();
+                thread.update(cx, |thread, cx| {
+                    thread.record_subagent_outcome(
+                        SubagentOutcome {
+                            entry_count,
+                            stop_reason: stop_reason.clone(),
+                        },
+                        cx,
+                    )
+                });
+                acp_thread.update(cx, |acp_thread, cx| {
+                    acp_thread.update_session_state(
+                        acp_v2::StateUpdate::Idle(
+                            acp_v2::IdleStateUpdate::new().stop_reason(stop_reason),
+                        ),
+                        cx,
+                    )
+                })
+            })
+            .log_err();
+
+            result
         })
     }
 }
@@ -4219,6 +4316,15 @@ pub fn skill_body_resolver_for_project(
                     anyhow::Ok(buffer.read(cx).as_text_snapshot().as_rope().to_string())
                 })?;
 
+                read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
+            })
+        }
+        SkillSource::Global
+            if project.read_with(cx, |project, _| global_skills_are_remote(project)) =>
+        {
+            let global_skill_files = GlobalSkillFiles::Remote(project.clone());
+            cx.spawn(async move |cx| {
+                let content = global_skill_files.load(&skill.skill_file_path, cx).await?;
                 read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
             })
         }
@@ -5873,7 +5979,10 @@ mod internal_tests {
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let unknown = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
             "_future",
-            std::collections::BTreeMap::from([("payload".into(), json!("private-payload"))]),
+            agent_client_protocol::schema::IndexMap::from([(
+                "payload".into(),
+                json!("private-payload"),
+            )]),
         ));
 
         for text in ["ordinary prompt", "/compact"] {
@@ -6005,13 +6114,15 @@ mod internal_tests {
 
             assert_eq!(
                 commands,
-                &[acp_v2::AvailableCommand::new(
-                    COMPACT_COMMAND_NAME,
-                    "Summarize the conversation so far to free up context",
-                )
-                .meta(acp_thread::meta_with_command_category(
-                    acp_thread::CommandCategory::Native,
-                ))],
+                &[acp_v2::AvailableCommand::Command(
+                    acp_v2::Command::new(
+                        COMPACT_COMMAND_NAME,
+                        "Summarize the conversation so far to free up context",
+                    )
+                    .meta(acp_thread::meta_with_command_category(
+                        acp_thread::CommandCategory::Native,
+                    ))
+                )],
             );
         });
     }
@@ -6170,6 +6281,85 @@ mod internal_tests {
                     .map(|block| block.to_markdown(cx)),
                 Some("retained context")
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_load_session_restores_caller_title_only_without_saved_title(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let database = cx
+            .update(|cx| ThreadsDatabase::connect(cx))
+            .await
+            .expect("thread database should connect");
+
+        let untitled_session_id = acp_v2::SessionId::new("untitled");
+        let mut untitled_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        untitled_thread.title = SharedString::default();
+        database
+            .save_thread(
+                untitled_session_id.clone(),
+                untitled_thread,
+                PathList::new(&[Path::new("/a")]),
+            )
+            .await
+            .expect("untitled thread should save");
+
+        let titled_session_id = acp_v2::SessionId::new("titled");
+        let mut titled_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        titled_thread.title = "Saved title".into();
+        database
+            .save_thread(
+                titled_session_id.clone(),
+                titled_thread,
+                PathList::new(&[Path::new("/a")]),
+            )
+            .await
+            .expect("titled thread should save");
+
+        let restored_untitled = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    untitled_session_id.clone(),
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    Some("Sidebar title".into()),
+                    cx,
+                )
+            })
+            .await
+            .expect("untitled thread should load");
+        cx.run_until_parked();
+        restored_untitled.read_with(cx, |thread, _| {
+            assert_eq!(thread.title(), Some("Sidebar title".into()));
+            assert!(thread.has_provisional_title());
+        });
+        // The restored title is display-only, so it must not be written back
+        // as the native thread's own title.
+        let native_untitled =
+            cx.update(|cx| native_thread_for_session(&agent, &untitled_session_id, cx));
+        native_untitled.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+
+        let restored_titled = cx
+            .update(|cx| {
+                connection.load_session(
+                    titled_session_id,
+                    project,
+                    PathList::new(&[Path::new("/a")]),
+                    Some("Stale title".into()),
+                    cx,
+                )
+            })
+            .await
+            .expect("titled thread should load");
+        cx.run_until_parked();
+        restored_titled.read_with(cx, |thread, _| {
+            assert_eq!(thread.title(), Some("Saved title".into()));
+            assert!(!thread.has_provisional_title());
         });
     }
 
@@ -7880,7 +8070,7 @@ mod internal_tests {
 
         acp_thread.read_with(cx, |thread, _cx| {
             let commands = thread.available_commands();
-            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            let names: Vec<&str> = commands.iter().map(|c| c.name()).collect();
             assert!(
                 !names.contains(&"visible-skill"),
                 "skills should not be exposed as ACP slash commands: {names:?}"
@@ -7924,6 +8114,115 @@ mod internal_tests {
                 "deploy should be excluded from catalog: {catalog:?}"
             );
         });
+    }
+
+    async fn agent_with_project_session(
+        fs: Arc<FakeFs>,
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<NativeAgent>, Entity<acp_thread::AcpThread>) {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let connection = NativeAgentConnection(agent.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        (agent, acp_thread)
+    }
+
+    fn context_worktree_paths(
+        agent: &Entity<NativeAgent>,
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> Vec<Arc<Path>> {
+        agent.read_with(cx, |agent, cx| {
+            agent.projects[&project.entity_id()]
+                .project_context
+                .read(cx)
+                .worktrees
+                .iter()
+                .map(|worktree| worktree.abs_path.clone())
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_project_context_keeps_worktree_readded_during_rebuild(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/a", json!({})).await;
+        // Enough skills that the rebuild from the removal is still loading
+        // them when the re-added worktree arrives.
+        for index in 0..20 {
+            let name = format!("skill-{index}");
+            fs.insert_tree(
+                agent_skills::global_skills_dir().join(&name),
+                json!({ "SKILL.md": format!("---\nname: {name}\ndescription: test\n---\n") }),
+            )
+            .await;
+        }
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let (agent, _acp_thread) = agent_with_project_session(fs, &project, cx).await;
+        assert_eq!(
+            context_worktree_paths(&agent, &project, cx),
+            [Arc::from(Path::new("/a"))]
+        );
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap().read(cx).id()
+        });
+        project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        project
+            .update(cx, |project, cx| project.create_worktree("/a", true, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            context_worktree_paths(&agent, &project, cx),
+            [Arc::from(Path::new("/a"))]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_invisible_worktrees_dont_rebuild_project_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/a", json!({})).await;
+        fs.insert_tree("/outside", json!({ "file.txt": "text" }))
+            .await;
+        // Each rebuild lists the global skills dir.
+        fs.insert_tree(agent_skills::global_skills_dir(), json!({}))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let (_agent, _acp_thread) = agent_with_project_session(fs.clone(), &project, cx).await;
+        let worktree_count = |cx: &mut TestAppContext| {
+            project.read_with(cx, |project, cx| project.worktrees(cx).count())
+        };
+        let read_dir_count = fs.read_dir_call_count();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/outside/file.txt", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(worktree_count(cx), 2);
+        drop(buffer);
+        // Dropped entities are only freed when effects are next flushed.
+        cx.update(|_| {});
+        cx.run_until_parked();
+        assert_eq!(worktree_count(cx), 1);
+
+        assert_eq!(fs.read_dir_call_count(), read_dir_count);
     }
 
     #[gpui::test]
@@ -7997,7 +8296,7 @@ mod internal_tests {
                     .collect::<Vec<_>>()
             );
             let commands = acp_thread.read(cx).available_commands();
-            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            let names: Vec<&str> = commands.iter().map(|c| c.name()).collect();
             assert!(
                 !names.contains(&"my-skill"),
                 "untrusted skill leaked into slash commands: {names:?}"

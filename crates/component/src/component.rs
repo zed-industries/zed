@@ -73,12 +73,6 @@ impl ComponentRegistry {
         self.components.values()
     }
 
-    pub fn sorted_previews(&self) -> Vec<ComponentMetadata> {
-        let mut previews: Vec<_> = self.previews().cloned().collect();
-        previews.sort_by_key(|a| a.name());
-        previews
-    }
-
     pub fn components(&self) -> Vec<&ComponentMetadata> {
         self.components.values().collect()
     }

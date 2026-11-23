@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use gpui::{AnyElement, App, ClickEvent, ElementId, Stateful, Window, px};
 use ui::{Callout, Color, IconButton, IconName, IconSize, Severity, Tooltip, prelude::*};
@@ -151,7 +151,6 @@ impl Component for SessionNoticePreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
                 example_group_with_title(
                     "Layout",
@@ -199,7 +198,6 @@ impl Component for SessionNoticePreview {
                         .width(px(320.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
             ])
             .into_any_element()

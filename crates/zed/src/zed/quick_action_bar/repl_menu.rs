@@ -112,7 +112,7 @@ impl QuickActionBar {
                             .custom_row(move |_window, _cx| {
                                 h_flex()
                                     .child(
-                                        Label::new(status.clone().to_string())
+                                        Label::new(status.to_string())
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                     )

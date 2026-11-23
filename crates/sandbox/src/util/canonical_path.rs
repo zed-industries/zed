@@ -238,7 +238,7 @@ fn require_windows_grant_shape(path: &Path) -> io::Result<()> {
     // Linux-absolute (WSL): exactly one leading '/'.
     let is_wsl = text.starts_with('/') && !text.starts_with("//");
     // Windows drive (NTFS): `X:...`, optionally behind the `\\?\` verbatim prefix.
-    let drive = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    let drive = text.trim_prefix(r"\\?\");
     let drive = drive.as_bytes();
     let is_windows_drive = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
     if is_wsl || is_windows_drive {

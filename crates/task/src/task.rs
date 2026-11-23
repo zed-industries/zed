@@ -3,7 +3,6 @@
 mod adapter_schema;
 mod debug_format;
 mod serde_helpers;
-pub mod static_source;
 mod task_template;
 mod vscode_debug_format;
 mod vscode_format;
@@ -303,6 +302,10 @@ impl TaskVariables {
     pub fn get(&self, key: &VariableName) -> Option<&str> {
         self.0.get(key).map(|s| s.as_str())
     }
+    /// Removes the variable from the container, returning its value if it was present.
+    pub fn remove(&mut self, key: &VariableName) -> Option<String> {
+        self.0.remove(key)
+    }
     /// Clear out variables obtained from tree-sitter queries, which are prefixed with '_' character
     pub fn sweep(&mut self) {
         self.0.retain(|name, _| {
@@ -456,11 +459,7 @@ impl EnvVariableReplacer {
             }
 
             let (variable_name, default) = (left, right);
-            let append_previous_default = |ret: &mut String| {
-                if !default.is_empty() {
-                    ret.push_str(default);
-                }
-            };
+            let append_previous_default = |ret: &mut String| ret.push_str(default);
             if let Some(substitution) = self.variables.get(variable_name) {
                 // Got a VSCode->Zed hit, perform a substitution
                 let mut name = format!("${{{substitution}");

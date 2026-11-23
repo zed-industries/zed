@@ -61,6 +61,7 @@ fs.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client.workspace = true
 language = { workspace = true, features = ["test-support"] }
+open_path_prompt = { workspace = true, features = ["test-support"] }
 picker = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true

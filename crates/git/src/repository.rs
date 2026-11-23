@@ -271,21 +271,6 @@ impl Branch {
             .strip_prefix("refs/remotes/")
             .and_then(|stripped| stripped.split("/").next())
     }
-
-    pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
-        self.upstream
-            .as_ref()
-            .and_then(|upstream| upstream.tracking.status())
-    }
-
-    pub fn priority_key(&self) -> (bool, Option<i64>) {
-        (
-            self.is_head,
-            self.most_recent_commit
-                .as_ref()
-                .map(|commit| commit.commit_timestamp),
-        )
-    }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -351,24 +336,24 @@ impl Worktree {
             .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
 
-    pub fn directory_name(&self, name_anchor_path: Option<&Path>) -> String {
+    pub fn directory_name(&self, name_anchor_path: Option<&Path>, path_style: PathStyle) -> String {
         if self.is_main {
             return "main worktree".to_string();
         }
 
-        let dir_name = self
-            .path
-            .file_name()
+        let dir_name = path_style
+            .file_name(&self.path)
             .and_then(|name| name.to_str())
             .unwrap_or(self.display_name());
 
         if let Some(name_anchor_path) = name_anchor_path {
-            let name_anchor_dir = name_anchor_path.file_name().and_then(|name| name.to_str());
+            let name_anchor_dir = path_style
+                .file_name(name_anchor_path)
+                .and_then(|name| name.to_str());
             if name_anchor_dir == Some(dir_name) {
-                if let Some(parent_name) = self
-                    .path
-                    .parent()
-                    .and_then(|parent| parent.file_name())
+                if let Some(parent_name) = path_style
+                    .parent(&self.path)
+                    .and_then(|parent| path_style.file_name(parent))
                     .and_then(|name| name.to_str())
                 {
                     return parent_name.to_string();
@@ -428,6 +413,25 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(
     worktrees
 }
 
+fn main_worktree_index(raw_worktrees: &str, worktrees: &[Worktree]) -> Option<usize> {
+    let normalized = raw_worktrees.replace("\r\n", "\n");
+    let main_entry = normalized.split("\n\n").next()?;
+    let mut main_worktree_path = None;
+    for line in main_entry.lines() {
+        let line = line.trim();
+        if line == "bare" {
+            return None;
+        }
+        if let Some(path) = line.strip_prefix("worktree ") {
+            main_worktree_path = Some(Path::new(path));
+        }
+    }
+    let main_worktree_path = main_worktree_path?;
+    worktrees
+        .iter()
+        .position(|worktree| worktree.path == main_worktree_path)
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Upstream {
     pub ref_name: SharedString,
@@ -443,10 +447,6 @@ impl Upstream {
         self.ref_name
             .strip_prefix("refs/remotes/")
             .and_then(|stripped| stripped.split("/").next())
-    }
-
-    pub fn stripped_ref_name(&self) -> Option<&str> {
-        self.ref_name.strip_prefix("refs/remotes/")
     }
 
     pub fn branch_name(&self) -> Option<&str> {
@@ -479,10 +479,6 @@ impl From<UpstreamTrackingStatus> for UpstreamTracking {
 }
 
 impl UpstreamTracking {
-    pub fn is_gone(&self) -> bool {
-        matches!(self, UpstreamTracking::Gone)
-    }
-
     pub fn status(&self) -> Option<UpstreamTrackingStatus> {
         match self {
             UpstreamTracking::Gone => None,
@@ -1043,7 +1039,7 @@ pub trait GitRepository: Send + Sync {
     fn fetch(
         &self,
         fetch_options: FetchOptions,
-        askpass: AskPassDelegate,
+        askpass: Option<AskPassDelegate>,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -1824,11 +1820,13 @@ impl GitRepository for RealGitRepository {
                     );
                 }
 
+                // `git` blocks once an unread stderr pipe fills, for example with one ambiguity
+                // warning per `HEAD` lookup when `refs/tags/HEAD` exists.
                 let mut process = git
                     .build_command(&["cat-file", "--batch"])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
+                    .stderr(Stdio::null())
                     .kill_on_drop(true)
                     .spawn()?;
 
@@ -2226,6 +2224,9 @@ impl GitRepository for RealGitRepository {
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let git = self.git_binary();
         let main_worktree_path = original_repo_path_from_common_dir(&self.common_dir);
+        let own_working_directory = (self.git_dir == self.common_dir)
+            .then(|| self.working_directory.clone())
+            .flatten();
         self.executor
             .spawn(async move {
                 let output = git
@@ -2234,10 +2235,23 @@ impl GitRepository for RealGitRepository {
                     .await?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    Ok(parse_worktrees_from_str(
-                        &stdout,
-                        main_worktree_path.as_deref(),
-                    ))
+                    let mut worktrees =
+                        parse_worktrees_from_str(&stdout, main_worktree_path.as_deref());
+                    // When the common directory is not `<checkout>/.git`, `git worktree list` prints the Git directory itself as the main worktree.
+                    if main_worktree_path.is_none()
+                        && let Some(index) = main_worktree_index(&stdout, &worktrees)
+                    {
+                        match (own_working_directory, worktrees.get_mut(index)) {
+                            (Some(working_directory), Some(worktree)) => {
+                                worktree.path = working_directory;
+                                worktree.is_main = true;
+                            }
+                            _ => {
+                                worktrees.remove(index);
+                            }
+                        }
+                    }
+                    Ok(worktrees)
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git worktree list failed: {stderr}");
@@ -2777,43 +2791,41 @@ impl GitRepository for RealGitRepository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
-        ask_pass: AskPassDelegate,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary_in_worktree();
-        let executor = self.executor.clone();
         // Note: Do not spawn this command on the background thread, it might pop open the credential helper
         // which we want to block on.
         async move {
             let git = git?;
-            let mut cmd = git.build_command(&["commit", "--quiet", "-m"]);
-            cmd.envs(env.iter())
-                .arg(&message.to_string())
-                .arg("--cleanup=strip")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+            git.run_remote_command(Some(askpass), &env, &["commit", "--quiet", "-m"], |cmd| {
+                cmd.arg(message.as_str())
+                    .arg("--cleanup=strip")
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
 
-            if options.amend {
-                cmd.arg("--amend");
-            }
+                if options.amend {
+                    cmd.arg("--amend");
+                }
 
-            if options.signoff {
-                cmd.arg("--signoff");
-            }
+                if options.signoff {
+                    cmd.arg("--signoff");
+                }
 
-            if options.allow_empty {
-                cmd.arg("--allow-empty");
-            }
+                if options.allow_empty {
+                    cmd.arg("--allow-empty");
+                }
 
-            if options.no_verify {
-                cmd.arg("--no-verify");
-            }
+                if options.no_verify {
+                    cmd.arg("--no-verify");
+                }
 
-            if let Some((name, email)) = name_and_email {
-                cmd.arg("--author").arg(&format!("{name} <{email}>"));
-            }
-
-            run_git_command(env, ask_pass, cmd, executor).await?;
+                if let Some((name, email)) = name_and_email {
+                    cmd.arg("--author").arg(&format!("{name} <{email}>"));
+                }
+            })
+            .await?;
 
             Ok(())
         }
@@ -2849,7 +2861,7 @@ impl GitRepository for RealGitRepository {
         remote_branch_name: String,
         remote_name: String,
         options: Option<PushOptions>,
-        ask_pass: AskPassDelegate,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
@@ -2866,23 +2878,22 @@ impl GitRepository for RealGitRepository {
                 git_binary_path,
                 working_directory,
                 git_directory,
-                executor.clone(),
+                executor,
                 is_trusted,
             );
-            let mut command = git.build_command(&["push"]);
-            command
-                .envs(env.iter())
-                .args(options.map(|option| match option {
-                    PushOptions::SetUpstream => "--set-upstream",
-                    PushOptions::Force => "--force-with-lease",
-                }))
-                .arg(remote_name)
-                .arg(format!("{}:{}", branch_name, remote_branch_name))
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-
-            run_git_command(env, ask_pass, command, executor).await
+            git.run_remote_command(Some(askpass), &env, &["push"], |command| {
+                command
+                    .args(options.map(|option| match option {
+                        PushOptions::SetUpstream => "--set-upstream",
+                        PushOptions::Force => "--force-with-lease",
+                    }))
+                    .arg(remote_name)
+                    .arg(format!("{}:{}", branch_name, remote_branch_name))
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+            })
+            .await
         }
         .boxed()
     }
@@ -2892,7 +2903,7 @@ impl GitRepository for RealGitRepository {
         branch_name: Option<String>,
         remote_name: String,
         rebase: bool,
-        ask_pass: AskPassDelegate,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
@@ -2909,23 +2920,21 @@ impl GitRepository for RealGitRepository {
                 git_binary_path,
                 working_directory,
                 git_directory,
-                executor.clone(),
+                executor,
                 is_trusted,
             );
-            let mut command = git.build_command(&["pull"]);
-            command.envs(env.iter());
+            git.run_remote_command(Some(askpass), &env, &["pull"], |command| {
+                if rebase {
+                    command.arg("--rebase");
+                }
 
-            if rebase {
-                command.arg("--rebase");
-            }
-
-            command
-                .arg(remote_name)
-                .args(branch_name)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-
-            run_git_command(env, ask_pass, command, executor).await
+                command
+                    .arg(remote_name)
+                    .args(branch_name)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+            })
+            .await
         }
         .boxed()
     }
@@ -2933,7 +2942,7 @@ impl GitRepository for RealGitRepository {
     fn fetch(
         &self,
         fetch_options: FetchOptions,
-        ask_pass: AskPassDelegate,
+        askpass: Option<AskPassDelegate>,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
@@ -2951,16 +2960,13 @@ impl GitRepository for RealGitRepository {
                 git_binary_path,
                 working_directory,
                 git_directory,
-                executor.clone(),
+                executor,
                 is_trusted,
             );
-            let mut command = git.build_command(&["fetch", &remote_name]);
-            command
-                .envs(env.iter())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-
-            run_git_command(env, ask_pass, command, executor).await
+            git.run_remote_command(askpass, &env, &["fetch", &remote_name], |command| {
+                command.stdout(Stdio::piped()).stderr(Stdio::piped());
+            })
+            .await
         }
         .boxed()
     }
@@ -3788,8 +3794,19 @@ impl GitBinary {
         Ok(String::from_utf8(output.stdout)?)
     }
 
-    #[allow(clippy::disallowed_methods)]
     pub(crate) fn build_command<S>(&self, args: &[S]) -> util::command::Command
+    where
+        S: AsRef<OsStr>,
+    {
+        self.build_command_with_config(&[], args)
+    }
+
+    #[allow(clippy::disallowed_methods)]
+    fn build_command_with_config<S>(
+        &self,
+        config: &[(&str, &str)],
+        args: &[S],
+    ) -> util::command::Command
     where
         S: AsRef<OsStr>,
     {
@@ -3809,6 +3826,9 @@ impl GitBinary {
             command.args(["-c", "credential.helper="]);
             command.args(["-c", "protocol.ext.allow=never"]);
             command.args(["-c", "diff.external="]);
+        }
+        for (key, value) in config {
+            command.args(["-c", &format!("{key}={value}")]);
         }
         // If the `diff` command is being used, we'll want to add the
         // `--no-ext-diff` flag when working on an untrusted repository,
@@ -3832,36 +3852,103 @@ impl GitBinary {
         command.envs(&self.envs);
         command
     }
-}
 
-#[derive(Error, Debug)]
-#[error("Git command failed:\n{stdout}{stderr}\n")]
-struct GitBinaryCommandError {
-    stdout: String,
-    stderr: String,
-    status: ExitStatus,
-}
+    /// Git, credential helpers, and SSH have separate prompting mechanisms, so
+    /// omitting an askpass delegate must configure more than Zed's prompt path.
+    async fn run_remote_command<S>(
+        &self,
+        askpass: Option<AskPassDelegate>,
+        env: &HashMap<String, String>,
+        args: &[S],
+        configure: impl FnOnce(&mut util::command::Command),
+    ) -> Result<RemoteCommandOutput>
+    where
+        S: AsRef<OsStr>,
+    {
+        let mut config = Vec::new();
+        if askpass.is_none() {
+            // Narrower than clearing `credential.helper`, which would also disable
+            // helpers that answer from a keychain without prompting — exactly what
+            // makes an unattended fetch useful. Only prompting is forbidden, and
+            // this covers git's own prompt as well as helpers that honor it.
+            config.push(("credential.interactive", "false"));
+            // Auto-maintenance can repack the entire repository, far outweighing
+            // the fetch that triggered it. A background caller should not start
+            // that work on the user's behalf.
+            config.push(("gc.auto", "0"));
+            config.push(("core.askPass", ""));
+        }
 
-async fn run_git_command(
-    env: Arc<HashMap<String, String>>,
-    ask_pass: AskPassDelegate,
-    mut command: util::command::Command,
-    executor: BackgroundExecutor,
-) -> Result<RemoteCommandOutput> {
-    if env.contains_key("GIT_ASKPASS") {
-        let git_process = command.spawn()?;
-        let output = git_process.output().await?;
-        anyhow::ensure!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(RemoteCommandOutput {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        })
-    } else {
-        let ask_pass = AskPassSession::new(executor, ask_pass).await?;
+        let mut command = self.build_command_with_config(&config, args);
+        command.envs(env.iter());
+        configure(&mut command);
+
+        match askpass {
+            Some(delegate) => self.run_with_askpass(delegate, env, command).await,
+            None => {
+                // These are set after the project environment has been applied
+                // above, so that environment cannot override them.
+                command.env("GIT_TERMINAL_PROMPT", "0");
+                // `credential.interactive` says nothing about ssh, which prompts
+                // for key passphrases and host key confirmation on its own. Batch
+                // mode is composed onto the ssh command git would use anyway
+                // rather than replacing it, so a custom `core.sshCommand` keeps
+                // working.
+                if let Some(ssh_command) = self.batch_mode_ssh_command(env).await {
+                    command.env("GIT_SSH_COMMAND", ssh_command);
+                }
+                // Neither of these should be able to route back to a prompt via a
+                // value inherited from the environment Zed was launched with.
+                command.env_remove("GIT_ASKPASS");
+                command.env_remove("SSH_ASKPASS");
+                remote_command_output(command.output().await?)
+            }
+        }
+    }
+
+    /// The ssh command git should use for background work, if one can be
+    /// composed. See [`compose_batch_mode_ssh_command`].
+    async fn batch_mode_ssh_command(&self, env: &HashMap<String, String>) -> Option<String> {
+        // Same precedence the spawned command ends up with: the project
+        // environment is applied over `self.envs`, and both over the environment
+        // Zed itself was launched with, which the child inherits.
+        let inherited = |key: &str| {
+            env.get(key)
+                .or_else(|| self.envs.get(key))
+                .cloned()
+                .or_else(|| std::env::var(key).ok())
+        };
+        let ssh_command_env = inherited("GIT_SSH_COMMAND");
+        let core_ssh_command = if ssh_command_env.is_some() {
+            None
+        } else if self.is_trusted {
+            // Absent from config, git exits non-zero rather than printing nothing.
+            self.run(&["config", "--get", "core.sshCommand"]).await.ok()
+        } else {
+            // Pinned by `build_command`. Reading the repository's own value back
+            // here would hand it to git through an environment variable that
+            // outranks the pin.
+            Some("ssh".to_string())
+        };
+        compose_batch_mode_ssh_command(
+            ssh_command_env.as_deref(),
+            core_ssh_command.as_deref(),
+            inherited("GIT_SSH").as_deref(),
+        )
+    }
+
+    async fn run_with_askpass(
+        &self,
+        delegate: AskPassDelegate,
+        env: &HashMap<String, String>,
+        mut command: util::command::Command,
+    ) -> Result<RemoteCommandOutput> {
+        if env.contains_key("GIT_ASKPASS") {
+            let git_process = command.spawn()?;
+            return remote_command_output(git_process.output().await?);
+        }
+
+        let ask_pass = AskPassSession::new(self.executor.clone(), delegate).await?;
         command
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())
@@ -3882,6 +3969,51 @@ async fn run_git_command(
 
         run_askpass_command(ask_pass, git_process).await
     }
+}
+
+/// Composes batch mode onto the ssh command git would otherwise pick, or returns
+/// `None` when the only thing configured is the deprecated `GIT_SSH`.
+///
+/// git resolves its ssh command as `GIT_SSH_COMMAND`, then `core.sshCommand`,
+/// then `GIT_SSH`, then plain `ssh`. Setting `GIT_SSH_COMMAND` therefore silently
+/// replaces a `GIT_SSH` program (e.g. plink on Windows), and since `GIT_SSH` names
+/// a bare program rather than a shell command there is nothing to compose onto.
+/// Those setups are left alone and keep whatever prompting behavior they have.
+fn compose_batch_mode_ssh_command(
+    ssh_command_env: Option<&str>,
+    core_ssh_command: Option<&str>,
+    git_ssh_env: Option<&str>,
+) -> Option<String> {
+    let configured = ssh_command_env
+        .or(core_ssh_command)
+        .map(str::trim)
+        .filter(|command| !command.is_empty());
+    let base = match configured {
+        Some(configured) => configured,
+        None if git_ssh_env.is_some_and(|program| !program.trim().is_empty()) => return None,
+        None => "ssh",
+    };
+    Some(format!("{base} -o BatchMode=yes"))
+}
+
+fn remote_command_output(output: Output) -> Result<RemoteCommandOutput> {
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(RemoteCommandOutput {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+}
+
+#[derive(Error, Debug)]
+#[error("Git command failed:\n{stdout}{stderr}\n")]
+struct GitBinaryCommandError {
+    stdout: String,
+    stderr: String,
+    status: ExitStatus,
 }
 
 async fn run_askpass_command(
@@ -5745,6 +5877,33 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_load_revisions_with_ambiguous_head(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("file"), "contents").unwrap();
+        git_command(repo_dir.path(), ["add", "file"]);
+        git_command(repo_dir.path(), ["commit", "-m", "Initial commit"]);
+        git_command(repo_dir.path(), ["update-ref", "refs/tags/HEAD", "HEAD"]);
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Writes about 150 KB of warnings to stderr, more than a pipe buffer holds.
+        let results = repo
+            .load_revisions(vec!["HEAD:file".to_string(); 4000])
+            .await
+            .unwrap();
+        assert_eq!(results, vec![Some(b"contents".to_vec()); 4000]);
+    }
+
+    #[gpui::test]
     async fn test_blame_at_revision(cx: &mut TestAppContext) {
         disable_git_global_config();
         cx.executor().allow_parking();
@@ -5810,6 +5969,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(first_sha.clone(), 0..1)]
         );
+    }
+
+    #[gpui::test]
+    async fn test_blame_untracked_path_with_large_contents(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("committed.txt"), "line one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "First commit"]);
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Git exits without reading stdin for a path that isn't in HEAD.
+        let blame = repo
+            .blame(
+                repo_path("untracked.txt"),
+                Rope::from("line\n".repeat(1 << 20)),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+        assert_eq!(blame.entries, Vec::new());
     }
 
     #[gpui::test]
@@ -5974,6 +6163,65 @@ mod tests {
             }),
         };
         assert_eq!(upstream.branch_name(), Some("feature/git-pull-request"));
+    }
+
+    #[test]
+    fn test_directory_name_uses_path_style() {
+        let cases = [
+            (
+                "/worktrees/zed/plum-warbler/zed",
+                Some("/repos/zed"),
+                PathStyle::Unix,
+                "plum-warbler",
+            ),
+            (
+                "/worktrees/feature-1",
+                Some("/repos/zed"),
+                PathStyle::Unix,
+                "feature-1",
+            ),
+            ("/worktrees/feature-1", None, PathStyle::Unix, "feature-1"),
+            (
+                r"C:\worktrees\zed\plum-warbler\zed",
+                Some(r"C:\repos\zed"),
+                PathStyle::Windows,
+                "plum-warbler",
+            ),
+            (
+                r"C:\worktrees\feature-1",
+                Some(r"C:\repos\zed"),
+                PathStyle::Windows,
+                "feature-1",
+            ),
+            (
+                r"C:\worktrees\feature-1",
+                None,
+                PathStyle::Windows,
+                "feature-1",
+            ),
+            (
+                "C:/worktrees/zed/plum-warbler/zed",
+                Some("C:/repos/zed"),
+                PathStyle::Windows,
+                "plum-warbler",
+            ),
+        ];
+
+        for (worktree_path, name_anchor, path_style, expected) in cases {
+            let worktree = Worktree {
+                path: PathBuf::from(worktree_path),
+                ref_name: None,
+                sha: "8166e3d".into(),
+                is_main: false,
+                is_bare: false,
+            };
+
+            assert_eq!(
+                worktree.directory_name(name_anchor.map(Path::new), path_style),
+                expected,
+                "directory name for {worktree_path:?} anchored at {name_anchor:?} with {path_style:?}",
+            );
+        }
     }
 
     #[test]
@@ -6163,6 +6411,103 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing, None);
+    }
+
+    #[gpui::test]
+    async fn test_worktrees_of_a_repository_with_a_separate_git_dir(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let git_dir = temp_dir.path().join("clones").join("repo.git");
+        let checkout_dir = temp_dir.path().join("checkouts").join("repo");
+        let linked_dir = temp_dir.path().join("linked");
+        fs::create_dir_all(temp_dir.path().join("clones")).unwrap();
+        fs::create_dir_all(&checkout_dir).unwrap();
+        git_command(
+            &checkout_dir,
+            [
+                OsStr::new("init"),
+                OsStr::new("-b"),
+                OsStr::new("main"),
+                OsStr::new("--separate-git-dir"),
+                git_dir.as_os_str(),
+            ],
+        );
+        git_command(
+            &checkout_dir,
+            ["commit", "--allow-empty", "-m", "Initial commit"],
+        );
+        git_command(
+            &checkout_dir,
+            [
+                OsStr::new("worktree"),
+                OsStr::new("add"),
+                linked_dir.as_os_str(),
+            ],
+        );
+        let checkout = RealGitRepository::new(
+            &checkout_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let linked = RealGitRepository::new(
+            &linked_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let checkout_path = fs::canonicalize(&checkout_dir).unwrap();
+        let linked_path = fs::canonicalize(&linked_dir).unwrap();
+        let paths_and_main_flags = |worktrees: Vec<Worktree>| {
+            worktrees
+                .into_iter()
+                .map(|worktree| (fs::canonicalize(worktree.path).unwrap(), worktree.is_main))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            paths_and_main_flags(checkout.worktrees().await.unwrap()),
+            vec![(checkout_path, true), (linked_path.clone(), false)]
+        );
+        assert_eq!(
+            paths_and_main_flags(linked.worktrees().await.unwrap()),
+            vec![(linked_path, false)]
+        );
+    }
+
+    #[test]
+    fn test_main_worktree_index() {
+        let worktree = |path: &str, is_bare: bool| Worktree {
+            path: PathBuf::from(path),
+            ref_name: None,
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare,
+        };
+        let indices = [
+            (
+                "worktree /clones/repo.git\nHEAD abc123\n\nworktree /linked\nHEAD abc123\n\n",
+                vec![worktree("/clones/repo.git", false), worktree("/linked", false)],
+            ),
+            (
+                "worktree /clones/repo.git\r\nHEAD abc123\r\n\r\nworktree /linked\r\nHEAD abc123\r\n",
+                vec![worktree("/linked", false), worktree("/clones/repo.git", false)],
+            ),
+            (
+                "worktree /repo.git\nHEAD abc123\nbare\n\nworktree /linked\nHEAD abc123\n\n",
+                vec![worktree("/repo.git", true), worktree("/linked", false)],
+            ),
+            (
+                "worktree /repo.git\nbare\n\nworktree /linked\nHEAD abc123\n\n",
+                vec![worktree("/linked", false)],
+            ),
+        ]
+        .map(|(raw_worktrees, worktrees)| main_worktree_index(raw_worktrees, &worktrees));
+        assert_eq!(indices, [Some(0), Some(1), None, None]);
     }
 
     #[gpui::test]
@@ -6698,6 +7043,34 @@ mod tests {
         assert_eq!(
             remote_urls.get("upstream").unwrap(),
             "/Users/user/My Projects/upstream.git"
+        );
+    }
+
+    #[test]
+    fn test_compose_batch_mode_ssh_command() {
+        assert_eq!(
+            compose_batch_mode_ssh_command(None, None, None).as_deref(),
+            Some("ssh -o BatchMode=yes")
+        );
+        assert_eq!(
+            compose_batch_mode_ssh_command(Some("ssh -i key "), Some("ssh -F config"), None)
+                .as_deref(),
+            Some("ssh -i key -o BatchMode=yes"),
+            "GIT_SSH_COMMAND outranks core.sshCommand"
+        );
+        assert_eq!(
+            compose_batch_mode_ssh_command(None, Some("ssh -F config"), Some("plink")).as_deref(),
+            Some("ssh -F config -o BatchMode=yes"),
+            "core.sshCommand outranks GIT_SSH, so it is still composed onto"
+        );
+        assert_eq!(
+            compose_batch_mode_ssh_command(Some(""), None, None).as_deref(),
+            Some("ssh -o BatchMode=yes")
+        );
+        assert_eq!(
+            compose_batch_mode_ssh_command(None, None, Some("plink")),
+            None,
+            "setting GIT_SSH_COMMAND would silently replace the GIT_SSH program"
         );
     }
 }

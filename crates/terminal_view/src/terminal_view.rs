@@ -14,7 +14,6 @@ use gpui::{
     MouseDownEvent, Pixels, Point as GpuiPoint, Rems, Render, ScrollEvent, Styled, Subscription,
     Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
-use menu;
 use persistence::TerminalDb;
 use project::{Project, ProjectEntryId, search::SearchQuery};
 use schemars::JsonSchema;
@@ -77,10 +76,6 @@ fn viewport_line_for_point(point: Point, display_offset: usize) -> Option<usize>
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-
-/// Event to transmit the scroll from the element to the view
-#[derive(Clone, Debug, PartialEq)]
-pub struct ScrollTerminal(pub i32);
 
 /// Sends the specified text directly to the terminal.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
@@ -188,16 +183,6 @@ pub enum ContentMode {
 }
 
 impl ContentMode {
-    pub fn is_limited(&self) -> bool {
-        match self {
-            ContentMode::Scrollable => false,
-            ContentMode::Inline {
-                displayed_lines,
-                total_lines,
-            } => displayed_lines < total_lines,
-        }
-    }
-
     pub fn is_scrollable(&self) -> bool {
         matches!(self, ContentMode::Scrollable)
     }
@@ -769,6 +754,14 @@ impl TerminalView {
     }
 
     fn scroll_wheel(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
+        if event.modifiers.secondary(cx)
+            && matches!(self.mode, TerminalMode::Standalone)
+            && EditorSettings::get_global(cx).mouse_wheel_zoom
+        {
+            theme_settings::adjust_buffer_font_size_for_scroll(event.delta, cx);
+            return cx.stop_propagation();
+        }
+
         let terminal_content = self.terminal.read(cx).last_content();
 
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
@@ -1788,9 +1781,9 @@ impl Item for TerminalView {
 
                 let workspace = workspace.downgrade();
                 let terminal_panel = terminal_panel.downgrade();
-                // Defer the split operation to avoid re-entrancy panic.
-                // The pane may be the one currently being updated, so we cannot
-                // call mark_positions (via split) synchronously.
+                // Defer the split and move to avoid a re-entrancy panic: the pane
+                // may be the one currently being updated, and moving the item
+                // updates it.
                 window
                     .spawn(cx, async move |cx| {
                         cx.update(|window, cx| {
@@ -1799,12 +1792,9 @@ impl Item for TerminalView {
                                     workspace, project, is_zoomed, window, cx,
                                 );
                                 terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
-                                terminal_panel.center.split(
-                                    &this_pane,
-                                    &new_pane,
-                                    split_direction,
-                                    cx,
-                                );
+                                terminal_panel
+                                    .center
+                                    .split(&this_pane, &new_pane, split_direction);
                                 anyhow::Ok(new_pane)
                             }) else {
                                 return;
@@ -2276,7 +2266,7 @@ pub fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<Path
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } if !is_remote => shellexpand::full(directory)
             .ok()
-            .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+            .map(|dir| PathBuf::from(dir.into_owned()))
             .filter(|dir| dir.is_dir()),
         WorkingDirectory::Always { .. } => None,
     };
@@ -2313,7 +2303,7 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{ScrollDelta, TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
@@ -2411,6 +2401,90 @@ mod tests {
             assert!(!view.blinking_terminal_enabled);
             assert!(terminal.read(cx).matches.is_empty());
         });
+    }
+
+    #[gpui::test]
+    async fn test_mouse_wheel_zoom(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, _terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, false, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        let set_mouse_wheel_zoom = |enabled: bool, cx: &mut VisualTestContext| {
+            cx.update(|_window, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.editor.mouse_wheel_zoom = Some(enabled);
+                    });
+                });
+            });
+        };
+
+        let buffer_font_size = |cx: &VisualTestContext| {
+            cx.read(|cx| theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx))
+        };
+
+        let zoom_scroll =
+            |position: gpui::Point<Pixels>, lines: f32, cx: &mut VisualTestContext| {
+                let modifiers = cx.read(|cx| gpui::Modifiers::secondary_key(cx));
+
+                cx.simulate_event(ScrollEvent {
+                    position,
+                    delta: ScrollDelta::Lines(gpui::point(0., lines)),
+                    modifiers,
+                    ..Default::default()
+                });
+            };
+
+        cx.simulate_resize(gpui::size(px(400.), px(200.)));
+        cx.draw(
+            gpui::Point::default(),
+            gpui::size(px(400.), px(200.)),
+            |_, _| terminal_view.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        let position =
+            terminal_view.read_with(&cx, |view, cx| view.terminal_bounds(cx).bounds.center());
+
+        set_mouse_wheel_zoom(true, &mut cx);
+        let initial_font_size = buffer_font_size(&cx);
+        zoom_scroll(position, 1., &mut cx);
+        assert!(buffer_font_size(&cx) > initial_font_size);
+        zoom_scroll(position, -1., &mut cx);
+        assert_eq!(buffer_font_size(&cx), initial_font_size);
+        zoom_scroll(position, -1., &mut cx);
+        assert!(buffer_font_size(&cx) < initial_font_size);
+
+        set_mouse_wheel_zoom(false, &mut cx);
+        let initial_font_size = buffer_font_size(&cx);
+        zoom_scroll(position, 1., &mut cx);
+        assert_eq!(buffer_font_size(&cx), initial_font_size);
+
+        set_mouse_wheel_zoom(true, &mut cx);
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.set_embedded_mode(None, cx);
+
+                // Embedded terminals ignore scroll events unless focused.
+                window.focus(&terminal_view.focus_handle, cx)
+            });
+        });
+
+        cx.draw(
+            gpui::Point::default(),
+            gpui::size(px(400.), px(200.)),
+            |_, _| terminal_view.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        let position =
+            terminal_view.read_with(&cx, |view, cx| view.terminal_bounds(cx).bounds.center());
+
+        let initial_font_size = buffer_font_size(&cx);
+        zoom_scroll(position, 1., &mut cx);
+        assert_eq!(buffer_font_size(&cx), initial_font_size);
     }
 
     #[gpui::test]

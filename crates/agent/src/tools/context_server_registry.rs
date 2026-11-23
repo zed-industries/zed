@@ -1,5 +1,5 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
@@ -59,17 +59,6 @@ impl ContextServerRegistry {
             this.reload_prompts_for_server(server.id(), cx);
         }
         this
-    }
-
-    pub fn tools_for_server(
-        &self,
-        server_id: &ContextServerId,
-    ) -> impl Iterator<Item = &Arc<dyn AnyAgentTool>> {
-        self.registered_servers
-            .get(server_id)
-            .map(|server| server.tools.values())
-            .into_iter()
-            .flatten()
     }
 
     pub fn servers(

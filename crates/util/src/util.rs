@@ -7,6 +7,8 @@ pub mod archive;
 pub mod command;
 #[cfg(not(target_family = "wasm"))]
 pub mod fs;
+#[cfg(target_os = "linux")]
+pub mod libc_type;
 #[cfg(not(target_family = "wasm"))]
 pub mod process;
 #[cfg(not(target_family = "wasm"))]
@@ -614,11 +616,6 @@ mod rng {
                 rng,
                 simple_text: std::env::var("SIMPLE_TEXT").is_ok_and(|v| !v.is_empty()),
             }
-        }
-
-        pub fn with_simple_text(mut self) -> Self {
-            self.simple_text = true;
-            self
         }
     }
 

@@ -684,7 +684,6 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         )
         .await;
 
-    let test_plugin = "test_plugin";
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
@@ -701,13 +700,8 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     client_b.language_registry().add(ts_lang.clone());
 
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
-    let mut fake_language_servers = languages.register_fake_lsp(
-        "TypeScript",
-        FakeLspAdapter {
-            prettier_plugins: vec![test_plugin],
-            ..Default::default()
-        },
-    );
+    let mut fake_language_servers =
+        languages.register_fake_lsp("TypeScript", FakeLspAdapter::default());
 
     // User A connects to the remote project via SSH.
     server_cx.update(HeadlessProject::init);

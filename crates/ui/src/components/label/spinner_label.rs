@@ -166,9 +166,13 @@ impl RenderOnce for SpinnerLabel {
 
         self.base.with_animation(
             self.variant.animation_id(),
-            Animation::new(duration).repeat(),
+            // Each render also re-renders the views containing the spinner, so render only when
+            // the glyph changes. A shared clock lets spinners change, and render, together.
+            Animation::new(duration)
+                .repeat_synced()
+                .with_steps(frames.len()),
             move |mut label, delta| {
-                let frame_index = (delta * frames.len() as f32) as usize % frames.len();
+                let frame_index = (delta * frames.len() as f32).round() as usize % frames.len();
 
                 label.set_text(frames[frame_index]);
                 label
@@ -205,6 +209,49 @@ impl Component for SpinnerLabel {
             single_example("Sand Variant", SpinnerLabel::sand().into_any_element()),
         ];
 
-        example_group(examples).vertical().into_any_element()
+        example_group(examples).into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use std::{cell::Cell, rc::Rc};
+
+    struct SpinnerView {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for SpinnerView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div().child(SpinnerLabel::new())
+        }
+    }
+
+    #[gpui::test]
+    fn test_spinner_renders_only_as_often_as_its_glyph_changes(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let renders = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view({
+            let renders = renders.clone();
+            |_, _| SpinnerView { renders }
+        });
+        cx.run_until_parked();
+        let initial_renders = renders.get();
+
+        // One second of a 100 Hz display, during which the glyph changes 10 times.
+        for _ in 0..100 {
+            cx.executor().advance_clock(Duration::from_millis(10));
+            cx.update(|window, cx| window.simulate_next_frame(cx));
+            cx.run_until_parked();
+        }
+
+        assert_eq!(renders.get() - initial_renders, 10);
     }
 }

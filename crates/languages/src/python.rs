@@ -5,8 +5,11 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
+use github_releases::{
+    AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
+    latest_github_release,
+};
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
-use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 use language::language_settings::LanguageSettings;
 use language::{
     Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol,
@@ -39,7 +42,6 @@ use util::fs::{make_file_executable, remove_matching};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
@@ -573,7 +575,8 @@ impl LspInstaller for TyLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,
@@ -1142,12 +1145,7 @@ impl PythonContextProvider {
 fn python_module_name_from_relative_path(relative_path: &str) -> Option<String> {
     let rel_path = RelPath::new(relative_path.as_ref(), PathStyle::local()).ok()?;
     let path_with_dots = rel_path.display(PathStyle::Unix).replace('/', ".");
-    Some(
-        path_with_dots
-            .strip_suffix(".py")
-            .map(ToOwned::to_owned)
-            .unwrap_or(path_with_dots),
-    )
+    Some(path_with_dots.trim_suffix(".py").to_owned())
 }
 
 fn is_python_env_global(k: &PythonEnvironmentKind) -> bool {
@@ -1435,9 +1433,6 @@ impl ToolchainLister for PythonToolchainProvider {
     fn meta(&self) -> ToolchainMetadata {
         ToolchainMetadata {
             term: SharedString::new_static("Virtual Environment"),
-            new_toolchain_placeholder: SharedString::new_static(
-                "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
-            ),
             manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
         }
     }
@@ -2663,7 +2658,8 @@ impl LspInstaller for RuffLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,
@@ -2965,7 +2961,8 @@ impl LspInstaller for PyreflyLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,

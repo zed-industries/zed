@@ -8,8 +8,8 @@ pub mod fake_provider;
 pub use language_model_core::*;
 
 use anyhow::Result;
-use futures::{FutureExt, SinkExt};
-use futures::{StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
+use futures::FutureExt;
+use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, BackgroundExecutor, Task, Window};
 use icons::IconName;
 use parking_lot::Mutex;
@@ -35,7 +35,10 @@ pub fn stream_in_background<Output>(
 where
     Output: Send + 'static,
 {
-    let (mut sender, receiver) = mpsc::channel(BACKGROUND_STREAM_BUFFER_SIZE);
+    // `futures::channel::mpsc` parks a full sender behind a `std` mutex that the
+    // receiver also locks, which traps when the receiver polls on the browser's
+    // main thread.
+    let (sender, receiver) = async_channel::bounded(BACKGROUND_STREAM_BUFFER_SIZE);
     let task = executor.spawn(async move {
         while let Some(event) = events.next().await {
             if sender.send(event).await.is_err() {
@@ -129,6 +132,9 @@ pub struct LanguageModel {
     /// back to `supports_thinking` when `None`.
     pub default_thinking_enabled: Option<bool>,
     pub supports_fast_mode: bool,
+    pub supports_ultrafast_mode: bool,
+    /// Whether instruction updates can retain their positions in conversation history.
+    pub supports_system_prompt_updates: bool,
     /// The effort levels that can be used when thinking.
     pub supported_effort_levels: Arc<[LanguageModelEffortLevel]>,
     /// Whether this model supports provider-side automatic context
@@ -139,6 +145,9 @@ pub struct LanguageModel {
     pub supports_explicit_compaction_output_limit: bool,
     /// The provider-enforced input size required for explicit compaction.
     pub minimum_explicit_compaction_input_tokens: Option<u64>,
+    /// How Zed builds prompt-based compaction requests. This does not affect
+    /// provider-native compaction.
+    pub prompt_compaction_strategy: PromptCompactionStrategy,
     pub supports_images: bool,
     pub supports_tools: bool,
     pub tool_choice_support: LanguageModelToolChoiceSupport,
@@ -153,6 +162,16 @@ pub struct LanguageModel {
     /// Equals `max_token_count` unless the model has a separate prompt limit.
     pub max_input_tokens: u64,
     pub max_output_tokens: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PromptCompactionStrategy {
+    #[default]
+    RebuildPrompt,
+    /// Preserve tools, system instructions, conversation history, and reasoning
+    /// settings while disabling tool calls. Providers must only opt in when
+    /// `tool_choice: none` is enforced without invalidating that cached prefix.
+    PreserveRequestPrefix,
 }
 
 /// Which [`LanguageModelToolChoice`] values a model accepts.
@@ -208,11 +227,14 @@ impl LanguageModel {
             supports_disabling_thinking: true,
             default_thinking_enabled: None,
             supports_fast_mode: false,
+            supports_ultrafast_mode: false,
+            supports_system_prompt_updates: false,
             supported_effort_levels: Arc::default(),
             supports_server_side_compaction: false,
             supports_explicit_compaction: false,
             supports_explicit_compaction_output_limit: false,
             minimum_explicit_compaction_input_tokens: None,
+            prompt_compaction_strategy: PromptCompactionStrategy::default(),
             supports_images: false,
             supports_tools: false,
             tool_choice_support: LanguageModelToolChoiceSupport::default(),
@@ -311,6 +333,14 @@ impl LanguageModel {
         self.supports_fast_mode
     }
 
+    pub fn supports_speed(&self, speed: Speed) -> bool {
+        match speed {
+            Speed::Standard => true,
+            Speed::Fast => self.supports_fast_mode(),
+            Speed::Ultrafast => self.supports_ultrafast_mode,
+        }
+    }
+
     pub fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.supported_effort_levels.to_vec()
     }
@@ -337,6 +367,10 @@ impl LanguageModel {
 
     pub fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
         self.minimum_explicit_compaction_input_tokens
+    }
+
+    pub fn prompt_compaction_strategy(&self) -> PromptCompactionStrategy {
+        self.prompt_compaction_strategy
     }
 
     pub fn supports_images(&self) -> bool {
@@ -456,6 +490,7 @@ pub trait LanguageModelClient: 'static {
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
+                                Ok(LanguageModelCompletionEvent::InputTransformations(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -735,7 +770,7 @@ impl LanguageModelCostInfo {
     }
 
     fn cost_value_to_string(cost: &f64) -> SharedString {
-        if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
+        if (cost.fract() - 0.0).abs() < f64::EPSILON {
             SharedString::from(format!("{:.0}", cost))
         } else {
             SharedString::from(format!("{:.2}", cost))

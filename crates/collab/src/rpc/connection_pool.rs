@@ -32,11 +32,7 @@ impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
         // v0.204.1 was the first version after the auto-update bug.
         // We reject any clients older than that to hope we can persuade them to upgrade.
-        if self.0 < Version::new(0, 204, 1) {
-            return false;
-        }
-
-        true
+        self.0 >= Version::new(0, 204, 1)
     }
 }
 
@@ -99,18 +95,6 @@ impl ConnectionPool {
 
     pub fn connections(&self) -> impl Iterator<Item = &Connection> {
         self.connections.values()
-    }
-
-    pub fn user_connections(&self, user_id: UserId) -> impl Iterator<Item = &Connection> + '_ {
-        self.connected_users
-            .get(&user_id)
-            .into_iter()
-            .flat_map(|state| {
-                state
-                    .connection_ids
-                    .iter()
-                    .flat_map(|cid| self.connections.get(cid))
-            })
     }
 
     pub fn user_connection_ids(&self, user_id: UserId) -> impl Iterator<Item = ConnectionId> + '_ {

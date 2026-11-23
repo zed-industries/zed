@@ -5,7 +5,6 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
-    usize,
 };
 use tasks_ui::{TaskOverrides, TasksModal};
 
@@ -221,7 +220,6 @@ impl NewProcessModal {
                                 debug_picker
                                     .update_in(cx, |picker, window, cx| {
                                         picker.refresh(window, cx);
-                                        cx.notify();
                                     })
                                     .ok();
                             }
@@ -515,7 +513,7 @@ impl NewProcessModal {
                 };
 
                 for adapter in available_adapters.into_iter() {
-                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.clone()));
+                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter));
                 }
 
                 menu
@@ -1053,9 +1051,7 @@ impl DebugDelegate {
                 .debug_panel
                 .update(cx, |debug_panel, cx| {
                     let project = debug_panel.project().read(cx);
-                    let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
-
-                    let mut path = if worktrees.len() > 1
+                    let mut path = if project.visible_worktrees(cx).count() > 1
                         && let Some(worktree) = project.worktree_for_id(*worktree_id, cx)
                     {
                         worktree
@@ -1272,7 +1268,7 @@ impl PickerDelegate for DebugDelegate {
                         let index = delegate
                             .matches
                             .partition_point(|matching_task| matching_task.candidate_id <= index);
-                        Some(index).and_then(|index| (index != 0).then(|| index - 1))
+                        (index != 0).then(|| index - 1)
                     });
 
                     if delegate.matches.is_empty() {

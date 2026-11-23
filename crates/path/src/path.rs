@@ -18,7 +18,7 @@ use std::{
 use tendril::fmt::{Format, WTF8};
 
 use crate::path_component::{
-    Component, Components, Prefix, PrefixExt, iter_after, rsplit_file_at_dot,
+    Component, Components, PathBufExt, Prefix, PrefixExt, iter_after, rsplit_file_at_dot,
 };
 use crate::rel_path::{RelPath, StripPrefixError};
 
@@ -123,63 +123,11 @@ impl PathStyle {
         *self == PathStyle::Unix
     }
 
-    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
-        let right = right.as_ref();
-        if self.has_root(right) {
-            return None;
-        }
-        let right = right.to_str()?;
-        let left = left.as_ref().to_str()?;
-        if left.is_empty() {
-            Some(right.into())
-        } else {
-            Some(format!(
-                "{left}{}{right}",
-                if left.ends_with(self.primary_separator()) {
-                    ""
-                } else {
-                    self.primary_separator()
-                }
-            ))
-        }
-    }
+    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> PathBuf {
+        let mut buf = left.as_ref().to_path_buf();
+        buf.styled_push(right.as_ref(), self);
 
-    pub fn join_path(
-        self,
-        left: impl AsRef<Path>,
-        right: impl AsRef<Path>,
-    ) -> anyhow::Result<PathBuf> {
-        let left = left
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let right = self.normalize_separators(right);
-        let right_string = right
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let joined = self
-            .join(left, right_string)
-            .ok_or_else(|| anyhow::anyhow!("Path must be relative: {right:?}"))?;
-        Ok(self.normalize_lexically(&joined))
-    }
-
-    pub fn join_path_preserving_components(
-        self,
-        left: impl AsRef<Path>,
-        right: impl AsRef<Path>,
-    ) -> anyhow::Result<PathBuf> {
-        let left = left
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let right = right.as_ref();
-        let right_string = right
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let joined = self
-            .join(left, right_string)
-            .ok_or_else(|| anyhow::anyhow!("Path must be relative: {right:?}"))?;
-        Ok(PathBuf::from(&joined))
+        buf
     }
 
     pub fn normalize_separators(&self, path: impl AsRef<Path>) -> PathBuf {
@@ -350,35 +298,111 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_join_path_uses_path_style_separator() {
-        let posix_path = PathStyle::Unix
-            .join_path(Path::new("/home/user/dev"), "worktrees")
-            .unwrap();
-        let windows_path = PathStyle::Windows
-            .join_path(Path::new("C:\\Users\\user\\dev"), "worktrees")
-            .unwrap();
+    fn test_join() {
+        let unix_paths_and_joined = [
+            ("", "foo", "foo"),
+            ("foo", "bar", "foo/bar"),
+            ("foo/", "bar", "foo/bar"),
+            ("foo//", "bar", "foo//bar"),
+            ("foo/.", "bar", "foo/./bar"),
+            ("foo./.", "bar", "foo././bar"),
+            ("foo", "", "foo/"),
+            ("foo", ".", "foo/."),
+            ("foo", "..", "foo/.."),
+            ("foo", "/", "/"),
+            ("/foo/bar", "/", "/"),
+            ("/foo/bar", "/baz", "/baz"),
+            ("/foo/bar", "./baz", "/foo/bar/./baz"),
+        ];
+        for (left, right, joined) in unix_paths_and_joined {
+            assert_eq!(
+                PathStyle::Unix.join(left, right).as_os_str(),
+                OsStr::new(joined),
+                "join({left:?}, {right:?})"
+            );
+        }
 
-        assert_eq!(posix_path, PathBuf::from("/home/user/dev/worktrees"));
-        assert_eq!(
-            windows_path.to_string_lossy(),
-            "C:\\Users\\user\\dev\\worktrees"
-        );
-    }
-
-    #[test]
-    fn test_join_path_preserving_components() {
-        let posix_path = PathStyle::Unix
-            .join_path_preserving_components(Path::new("/home/user/symlink"), "../worktrees")
-            .unwrap();
-        let windows_path = PathStyle::Windows
-            .join_path_preserving_components(Path::new(r"C:\Users\user\symlink"), r"..\worktrees")
-            .unwrap();
-
-        assert_eq!(posix_path, PathBuf::from("/home/user/symlink/../worktrees"));
-        assert_eq!(
-            windows_path.to_string_lossy(),
-            r"C:\Users\user\symlink\..\worktrees"
-        );
+        let windows_paths_and_joined = [
+            ("", "foo", "foo"),
+            ("foo", "bar", r"foo\bar"),
+            ("foo/", "bar", r"foo/bar"),
+            (r"foo\", "bar", r"foo\bar"),
+            ("foo//", "bar", r"foo//bar"),
+            (r"foo\\", "bar", r"foo\\bar"),
+            ("foo/.", "bar", r"foo/.\bar"),
+            ("foo./.", "bar", r"foo./.\bar"),
+            (r"foo\.", "bar", r"foo\.\bar"),
+            (r"foo.\.", "bar", r"foo.\.\bar"),
+            ("foo", "", r"foo\"),
+            ("foo", ".", r"foo\."),
+            ("foo", "..", r"foo\.."),
+            ("foo", "/", "/"),
+            ("foo", r"\", r"\"),
+            ("/foo/bar", "/", "/"),
+            (r"\foo\bar", r"\", r"\"),
+            ("/foo/bar", "/baz", "/baz"),
+            ("/foo/bar", r"\baz", r"\baz"),
+            ("/foo/bar", "./baz", r"/foo/bar\./baz"),
+            ("/foo/bar", r".\baz", r"/foo/bar\.\baz"),
+            // a rooted `right` replaces everything in `left` after its prefix
+            (r"\foo", r"\bar", r"\bar"),
+            ("c:\\", "windows", "c:\\windows"),
+            ("c:", "windows", "c:windows"),
+            (r"a\b\c", "d", r"a\b\c\d"),
+            (r"\a\b\c", "d", r"\a\b\c\d"),
+            (r"a\b", r"c\d", r"a\b\c\d"),
+            (r"a\b", r"\c\d", r"\c\d"),
+            (r"a\b", ".", r"a\b\."),
+            (r"a\b", r"..\c", r"a\b\..\c"),
+            (r"a\b", "C:a.txt", "C:a.txt"),
+            (r"a\b", r"C:\a.txt", r"C:\a.txt"),
+            (r"C:\a", r"C:\b.txt", r"C:\b.txt"),
+            (r"C:\a\b\c", "C:d", "C:d"),
+            (r"C:a\b\c", "C:d", "C:d"),
+            ("C:", r"a\b\c", r"C:a\b\c"),
+            ("C:", r"..\a", r"C:..\a"),
+            // UNC
+            (r"\\server\share\foo", "bar", r"\\server\share\foo\bar"),
+            (r"\\server\share\foo", "C:baz", "C:baz"),
+            (r"\\server\share\foo", r"\bar", r"\\server\share\bar"),
+            // verbatim
+            (r"\\?\C:\a\b", r"C:c\d", r"C:c\d"),
+            (r"\\?\C:a\b", r"C:c\d", r"C:c\d"),
+            (r"\\?\C:\a\b", r"C:\c\d", r"C:\c\d"),
+            (r"\\?\foo\bar", "baz", r"\\?\foo\bar\baz"),
+            (
+                r"\\?\UNC\server\share\foo",
+                "bar",
+                r"\\?\UNC\server\share\foo\bar",
+            ),
+            (r"\\?\UNC\server\share", r"C:\a", r"C:\a"),
+            (r"\\?\UNC\server\share", "C:a", "C:a"),
+            (r"\\?\UNC\server", "foo", r"\\?\UNC\server\foo"),
+            (r"C:\a", r"\\?\UNC\server\share", r"\\?\UNC\server\share"),
+            (r"\\?\C:", "foo", r"\\?\C:\foo"),
+            (r"\\?\C:\bar", "../foo", r"\\?\C:\foo"),
+            (r"\\?\C:\bar", "../../foo", r"\\?\C:\foo"),
+            (r"\\?\C:\", "../foo", r"\\?\C:\foo"),
+            (r"\\?\C:", r"D:\foo/./", r"D:\foo/./"),
+            (r"\\?\C:", r"\\?\D:\foo\.\", r"\\?\D:\foo\.\"),
+            (r"\\?\A:\x\y", "/foo", r"\\?\A:\foo"),
+            (r"\\?\A:", r"..\foo\.", r"\\?\A:\foo"),
+            (r"\\?\A:\x\y", r".\foo\.", r"\\?\A:\x\y\foo"),
+            (r"\\?\A:\x\y", r"", r"\\?\A:\x\y\"),
+            (r"\\?\C:\foo", r"\bar", r"\\?\C:\bar"),
+            // device namespace
+            (r"\\.\foo\bar", "baz", r"\\.\foo\bar\baz"),
+            (r"\\.\foo\bar", "C:a", "C:a"),
+            (r"\\.\foo", r"..\bar", r"\\.\foo\..\bar"),
+            (r"\\.\device\foo", r"\bar", r"\\.\device\bar"),
+        ];
+        for (left, right, joined) in windows_paths_and_joined {
+            assert_eq!(
+                PathStyle::Windows.join(left, right).as_os_str(),
+                OsStr::new(joined),
+                "join({left:?}, {right:?})"
+            );
+        }
     }
 
     #[test]

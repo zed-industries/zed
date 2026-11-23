@@ -240,9 +240,7 @@ impl<'de> serde::Deserialize<'de> for CommitMetadataBySha {
         let map = raw
             .into_iter()
             .map(|(key, value)| {
-                let sha = key
-                    .strip_prefix(CommitMetadataBySha::SHA_PREFIX)
-                    .unwrap_or(&key);
+                let sha = key.trim_prefix(CommitMetadataBySha::SHA_PREFIX);
                 (CommitSha::new(sha.to_owned()), value)
             })
             .collect();
@@ -468,6 +466,8 @@ mod octo_client {
 
     impl OctocrabClient {
         pub async fn new(app_id: u64, app_private_key: &str, org: &str) -> Result<Self> {
+            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
             let octocrab = Octocrab::builder()
                 .cache(InMemoryCache::new())
                 .app(
