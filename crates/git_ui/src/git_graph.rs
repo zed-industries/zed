@@ -1468,6 +1468,7 @@ pub struct GitGraph {
     /// hidden regardless of whether the table is resizable. `true` means the column is hidden.
     column_visibility: TableRow<bool>,
     selected_entry_idx: Option<usize>,
+    selected_commit_sha: Option<Oid>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     ref_labels_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -1491,32 +1492,37 @@ pub struct GitGraph {
 
 impl GitGraph {
     fn invalidate_state(&mut self, cx: &mut Context<Self>) {
+        if self.pending_select_sha.is_none() {
+            self.pending_select_sha = self.selected_commit_sha;
+        }
+        self.selected_entry_idx = None;
+        self.hovered_entry_idx = None;
         self.graph_data.clear();
         self.search_state.matches.clear();
         self.search_state.selected_index = None;
         self.search_state.state.next_state();
         self.context_menu = None;
-        self.hovered_entry_idx = None;
+        cx.emit(ItemEvent::Edit);
+        cx.notify();
+    }
+
+    fn clear_selection(&mut self) {
+        self.pending_select_sha = None;
         self.selected_entry_idx = None;
+        self.selected_commit_sha = None;
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
         self._commit_diff_task = None;
         self.selected_commit_message = None;
         self._selected_commit_message_task = None;
         self.changed_files_expanded_dirs.clear();
-        cx.emit(ItemEvent::Edit);
-        cx.notify();
     }
 
-    fn invalidate_state_preserving_selection(&mut self, cx: &mut Context<Self>) {
-        if let Some(selected_sha) = self
-            .selected_entry_idx
-            .and_then(|index| self.graph_data.commits.get(index))
-            .map(|commit| commit.data.sha)
-        {
-            self.pending_select_sha = Some(selected_sha);
+    fn pending_selection_not_found(&mut self) {
+        self.pending_select_sha = None;
+        if self.selected_entry_idx.is_none() {
+            self.clear_selection();
         }
-        self.invalidate_state(cx);
     }
 
     /// Computes the height of a single commit row in the git graph.
@@ -1760,6 +1766,7 @@ impl GitGraph {
             column_widths,
             column_visibility,
             selected_entry_idx: None,
+            selected_commit_sha: None,
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
             ref_labels_bounds: Rc::new(Cell::new(None)),
@@ -1796,15 +1803,17 @@ impl GitGraph {
             {
                 match event {
                     GitGraphEvent::FullyLoaded => {
-                        if let Some(pending_sha_index) =
-                            self.pending_select_sha.take().and_then(|oid| {
-                                repository
-                                    .read(cx)
-                                    .get_graph_data(source.clone(), *order)
-                                    .and_then(|data| data.commit_oid_to_index.get(&oid).copied())
-                            })
-                        {
-                            self.select_entry(pending_sha_index, ScrollStrategy::Nearest, cx);
+                        if let Some(oid) = self.pending_select_sha {
+                            let pending_sha_index = repository
+                                .read(cx)
+                                .get_graph_data(source.clone(), *order)
+                                .and_then(|data| data.commit_oid_to_index.get(&oid).copied());
+                            match pending_sha_index {
+                                Some(index) => {
+                                    self.select_entry(index, ScrollStrategy::Nearest, cx)
+                                }
+                                None => self.pending_selection_not_found(),
+                            }
                         }
                         let count = match self.graph_data.max_commit_count {
                             AllCommitCount::FullyLoaded(count) | AllCommitCount::Loading(count) => {
@@ -1842,14 +1851,13 @@ impl GitGraph {
                                 });
 
                                 if !is_loading && pending_sha_index.is_none() {
-                                    self.pending_select_sha.take();
+                                    self.pending_selection_not_found();
                                 }
 
                                 pending_sha_index
                             })
                         {
                             self.select_entry(pending_selection_index, ScrollStrategy::Nearest, cx);
-                            self.pending_select_sha.take();
                         }
 
                         cx.notify();
@@ -1857,7 +1865,6 @@ impl GitGraph {
                 }
             }
             RepositoryEvent::TagsChanged => {
-                self.pending_select_sha = None;
                 self.invalidate_state(cx);
             }
             RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
@@ -1865,13 +1872,13 @@ impl GitGraph {
                 // meaning we are not inside the initial repo loading state
                 // NOTE: this fixes an loading performance regression
                 if repository.read(cx).scan_id > 1 {
-                    self.invalidate_state_preserving_selection(cx);
+                    self.invalidate_state(cx);
                 }
             }
             RepositoryEvent::StashEntriesChanged if self.log_source == LogSource::All => {
                 // Stash entries initial's scan id is 2, so we don't want to invalidate the graph before that
                 if repository.read(cx).scan_id > 2 {
-                    self.invalidate_state_preserving_selection(cx);
+                    self.invalidate_state(cx);
                 }
             }
             RepositoryEvent::GraphEvent(_, _) => {}
@@ -2185,11 +2192,7 @@ impl GitGraph {
     }
 
     fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        self.pending_select_sha = None;
-        self.selected_entry_idx = None;
-        self.selected_commit_diff = None;
-        self.selected_commit_diff_stats = None;
-        self.changed_files_expanded_dirs.clear();
+        self.clear_selection();
         cx.emit(ItemEvent::Edit);
         cx.notify();
     }
@@ -2395,29 +2398,37 @@ impl GitGraph {
             return;
         }
 
+        let Some(commit) = self.graph_data.commits.get(idx) else {
+            return;
+        };
+        let sha = commit.data.sha;
+
         self.selected_entry_idx = Some(idx);
-        self.selected_commit_diff = None;
-        self.selected_commit_diff_stats = None;
-        self.changed_files_expanded_dirs.clear();
-        self.changed_files_scroll_handle
-            .scroll_to_item(0, ScrollStrategy::Top);
         self.table_interaction_state.update(cx, |state, cx| {
             state.scroll_handle.scroll_to_item(idx, scroll_strategy);
             cx.notify();
         });
 
-        let Some(commit) = self.graph_data.commits.get(idx) else {
+        if self.selected_commit_sha == Some(sha) {
+            cx.emit(ItemEvent::Edit);
+            cx.notify();
             return;
-        };
+        }
+
+        self.selected_commit_sha = Some(sha);
+        self.selected_commit_diff = None;
+        self.selected_commit_diff_stats = None;
+        self.changed_files_expanded_dirs.clear();
+        self.changed_files_scroll_handle
+            .scroll_to_item(0, ScrollStrategy::Top);
 
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
 
-        let commit_message_handle = commit.data.sha;
-        let diff_handle = commit.data.sha.to_string();
+        let diff_handle = sha.to_string();
 
-        self.load_selected_commit_message(cx, &commit_message_handle, &repository);
+        self.load_selected_commit_message(cx, &sha, &repository);
 
         let diff_task =
             repository.update(cx, |repo, cx| repo.load_commit_diff(diff_handle, false, cx));
@@ -2555,7 +2566,7 @@ impl GitGraph {
                 .contains_key(&repo_id)
         {
             self.repo_id = repo_id;
-            self.pending_select_sha = None;
+            self.clear_selection();
             self.invalidate_state(cx);
         }
     }
@@ -3216,14 +3227,7 @@ impl GitGraph {
                                 })
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.pending_select_sha = None;
-                                    this.selected_entry_idx = None;
-                                    this.selected_commit_diff = None;
-                                    this.selected_commit_diff_stats = None;
-                                    this.selected_commit_message = None;
-                                    this._selected_commit_message_task = None;
-                                    this.changed_files_expanded_dirs.clear();
-                                    this._commit_diff_task = None;
+                                    this.clear_selection();
                                     cx.notify();
                                 })),
                         ),
@@ -6329,6 +6333,18 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let expanded_dir = RepoPath::new("src").expect("repository path should be valid");
+        let message_before_refresh = git_graph.update(cx, |graph, _| {
+            graph
+                .changed_files_expanded_dirs
+                .insert(expanded_dir.clone(), true);
+            graph
+                .selected_commit_message
+                .as_ref()
+                .map(|message| message.message.entity_id())
+        });
+        assert!(message_before_refresh.is_some());
+
         fs.set_graph_commits(
             Path::new("/project/.git"),
             vec![
@@ -6389,6 +6405,18 @@ mod tests {
                     .map(|message| message.sha),
                 Some(selected_commit)
             );
+            assert_eq!(
+                graph
+                    .selected_commit_message
+                    .as_ref()
+                    .map(|message| message.message.entity_id()),
+                message_before_refresh,
+                "details of an unchanged commit should not be reloaded"
+            );
+            assert_eq!(
+                graph.changed_files_expanded_dirs.get(&expanded_dir),
+                Some(&true)
+            );
         });
 
         git_graph.update(cx, |graph, cx| {
@@ -6404,6 +6432,61 @@ mod tests {
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.pending_select_sha, None);
             assert_eq!(graph.selected_entry_idx, None);
+        });
+
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(2, ScrollStrategy::Nearest, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_commit_sha, Some(selected_commit));
+        });
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![
+                Arc::new(InitialGraphCommitData {
+                    sha: initial_head,
+                    parents: smallvec![initial_commit],
+                    ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: initial_commit,
+                    parents: smallvec![],
+                    ref_names: vec![],
+                }),
+            ],
+        );
+        fs.with_git_state(Path::new("/project/.git"), true, |state| {
+            state.refs.insert("HEAD".into(), initial_head.to_string());
+        })
+        .expect("fake repository should exist");
+
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph
+                    .graph_data
+                    .commits
+                    .iter()
+                    .map(|commit| commit.data.sha)
+                    .collect::<Vec<_>>(),
+                vec![initial_head, initial_commit]
+            );
+            assert_eq!(graph.selected_entry_idx, None);
+            assert_eq!(graph.selected_commit_sha, None);
+            assert_eq!(graph.pending_select_sha, None);
+            assert!(graph.selected_commit_message.is_none());
         });
     }
 
@@ -7460,6 +7543,11 @@ mod tests {
             vec![vec![SharedString::from("HEAD -> main")]]
         );
 
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(0, ScrollStrategy::Nearest, cx);
+        });
+        cx.run_until_parked();
+
         fs.set_graph_commits(
             Path::new("/project/.git"),
             vec![Arc::new(InitialGraphCommitData {
@@ -7491,6 +7579,9 @@ mod tests {
                 SharedString::from("tag: v1.0.0"),
             ]]
         );
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(0));
+        });
     }
 
     #[gpui::test]
