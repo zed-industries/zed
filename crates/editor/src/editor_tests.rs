@@ -51589,6 +51589,65 @@ fn test_top_block_resize_keeps_viewport(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_custom_block_height_at_fractional_scale(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let text = (0..10)
+        .map(|row| format!("line {row}\n"))
+        .collect::<String>();
+    cx.set_state(&format!("ˇ{text}"));
+    let block_ids = cx.update_editor(|editor, _, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        editor.insert_blocks(
+            [
+                BlockProperties {
+                    placement: BlockPlacement::Above(Anchor::Min),
+                    height: Some(3),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|cx| div().h(cx.line_height * 3.).into_any()),
+                    priority: 0,
+                },
+                BlockProperties {
+                    placement: BlockPlacement::Above(snapshot.anchor_before(Point::new(5, 0))),
+                    height: Some(3),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|cx| div().h(cx.line_height * 2.5).into_any()),
+                    priority: 0,
+                },
+            ],
+            None,
+            cx,
+        )
+    });
+
+    let editor = cx.editor.clone();
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+        cx.simulate_scale_factor_change(scale);
+        for _ in 0..3 {
+            cx.draw(
+                gpui::Point::default(),
+                size(px(3000.), px(3000.)),
+                |_, _| editor.clone().into_any_element(),
+            );
+            cx.run_until_parked();
+        }
+        let heights = cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            block_ids
+                .iter()
+                .map(|block_id| {
+                    snapshot
+                        .block_for_id(BlockId::Custom(*block_id))
+                        .map(|block| block.height())
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(heights, [Some(3), Some(3)], "scale factor {scale}");
+    }
+}
+
+#[gpui::test]
 async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAppContext) {
     // Configure Rust to have a different continuation indent behavior than the default.
     init_test(cx, |settings| {

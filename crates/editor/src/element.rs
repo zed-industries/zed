@@ -3507,13 +3507,15 @@ impl EditorElement {
             window,
             cx,
         );
-        let quantized_height = (preliminary_size.height / line_height).ceil() * line_height;
+        let quantized_height =
+            lines_for_height(preliminary_size.height, line_height, window) * line_height;
         let final_size = if preliminary_size.height == quantized_height {
             preliminary_size
         } else {
             element.layout_as_root(size(available_width, quantized_height.into()), window, cx)
         };
-        let mut element_height_in_lines = ((final_size.height / line_height).ceil() as u32).max(1);
+        let mut element_height_in_lines =
+            (lines_for_height(final_size.height, line_height, window) as u32).max(1);
 
         let effective_row_start = block_row_start.0 as i32 + *block_resize_offset;
         debug_assert!(effective_row_start >= 0);
@@ -11337,6 +11339,13 @@ fn register_action_erased(
             })
         }
     })
+}
+
+pub(crate) fn lines_for_height(height: Pixels, line_height: Pixels, window: &Window) -> f32 {
+    // Layout heights are snapped to device pixels, which can put an exact line boundary
+    // slightly above its logical height and otherwise add a whole extra row.
+    let snapping_tolerance = px(0.5 / window.scale_factor());
+    ((height - snapping_tolerance) / line_height).ceil().max(0.)
 }
 
 /// Shared between `prepaint` and `compute_auto_height_layout` to ensure
