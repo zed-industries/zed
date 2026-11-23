@@ -15,16 +15,17 @@ use crate::{
     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
     Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
     MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, PaintedPath, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style, SubpixelSprite, Subscription,
-    SystemWindowTab, SystemWindowTabController, TabStopMap, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
-    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    PathHash, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style,
+    SubpixelSprite, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -993,12 +994,12 @@ pub(crate) struct TooltipRequest {
 #[derive(Clone, Default)]
 pub(crate) struct ElementIdStack {
     ids: SmallVec<[ElementId; 32]>,
-    hashes: SmallVec<[u64; 32]>,
+    hashes: SmallVec<[PathHash; 32]>,
 }
 
 impl ElementIdStack {
     pub(crate) fn push(&mut self, id: ElementId) {
-        self.hashes.push(crate::extend_path_hash(self.hash(), &id));
+        self.hashes.push(self.hash().extend(&id));
         self.ids.push(id);
     }
 
@@ -1013,11 +1014,8 @@ impl ElementIdStack {
     }
 
     /// The hash of the whole path on the stack.
-    fn hash(&self) -> u64 {
-        self.hashes
-            .last()
-            .copied()
-            .unwrap_or(crate::EMPTY_PATH_HASH)
+    fn hash(&self) -> PathHash {
+        self.hashes.last().copied().unwrap_or(PathHash::EMPTY)
     }
 
     pub(crate) fn global_id(&self) -> GlobalElementId {
@@ -5713,8 +5711,10 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
 
+        let scope = self.element_id_stack.hash();
         self.layout_engine.as_mut().unwrap().request_layout(
-            style,
+            scope,
+            &style,
             rem_size,
             scale_factor,
             &cx.layout_id_buffer,
@@ -5738,10 +5738,23 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        let scope = self.element_id_stack.hash();
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(scope, &style, rem_size, scale_factor, measure)
+    }
+
+    /// Drops the layout nodes kept from earlier frames, so the next frame builds its
+    /// layout tree from scratch.
+    #[cfg(test)]
+    pub(crate) fn clear_layout_cache(&mut self) {
+        self.layout_engine.as_mut().unwrap().clear_layout_cache();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn layout_node_count(&self) -> usize {
+        self.layout_engine.as_ref().unwrap().node_count()
     }
 
     /// Compute the layout for the given id within the given available space.
