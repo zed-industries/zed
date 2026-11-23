@@ -6222,7 +6222,7 @@ impl EditorElement {
                 self.refresh_slow_scrollbar_markers(layout, scrollbar_layout, window, cx);
 
                 let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
-                window.paint_layer(hitbox.bounds, |window| {
+                window.paint_layer(|window| {
                     for marker in markers.iter() {
                         let mut marker = marker.clone();
                         marker.bounds.origin += hitbox.origin;
