@@ -212,12 +212,9 @@ impl EventSource for XDPEventSource {
     }
 }
 
-/// The smallest and largest font scaling factors an app can lay out for.
 const MIN_TEXT_SCALE_FACTOR: f32 = 0.5;
 const MAX_TEXT_SCALE_FACTOR: f32 = 3.;
 
-/// A portal font scaling factor, clamped to the range above; `None` when the
-/// value cannot be used as a factor.
 fn text_scale_factor(value: f64) -> Option<f32> {
     if !value.is_finite() || value <= 0. {
         return None;

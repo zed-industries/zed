@@ -118,17 +118,6 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    /// Applies a font scaling factor read from the desktop portal. Returns the
-    /// callback to invoke, which the caller runs once this borrow is released so
-    /// that the app can read the factor back.
-    pub(crate) fn set_text_scale_factor(&mut self, scale: f32) -> Option<Box<dyn FnMut()>> {
-        if self.text_scale_factor == scale {
-            return None;
-        }
-        self.text_scale_factor = scale;
-        self.callbacks.text_scale_factor_change.take()
-    }
-
     pub fn new(
         signal: LoopSignal,
     ) -> (
@@ -1172,7 +1161,7 @@ impl Platform for LinuxPlatform {
         self.with_common(|common| common.text_scale_factor)
     }
 
-    fn on_text_scale_factor_changed(&self, callback: Box<dyn FnMut()>) {
+    fn on_text_scale_factor_change(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| common.callbacks.text_scale_factor_change = Some(callback));
     }
 

@@ -626,8 +626,8 @@ impl X11Client {
                             // noop, X11 manages this for us.
                         }
                         XDPEvent::TextScaleFactor(_) => {
-                            // noop: the desktop folds the text scale into `Xft.dpi`,
-                            // which the scale factor above already comes from.
+                            // noop, the desktop already folds this into `Xft.dpi`, which
+                            // the scale factor comes from.
                         }
                     }
                 }

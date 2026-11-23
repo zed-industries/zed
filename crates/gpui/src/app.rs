@@ -1128,7 +1128,7 @@ impl App {
             }
         }));
 
-        platform.on_text_scale_factor_changed(Box::new({
+        platform.on_text_scale_factor_change(Box::new({
             let app = Rc::downgrade(&app);
             move || {
                 if let Some(app) = app.upgrade() {
@@ -1359,10 +1359,8 @@ impl App {
         }))
     }
 
-    /// Invokes a handler when the desktop's font scaling factor changes, which
-    /// includes the first value arriving after startup, since reading it is
-    /// asynchronous. Re-read the factor with [`App::text_scale_factor`].
-    pub fn on_text_scale_factor_changed<F>(&self, mut callback: F) -> Subscription
+    /// Invokes a handler when the text scale factor changes
+    pub fn on_text_scale_factor_change<F>(&self, mut callback: F) -> Subscription
     where
         F: 'static + FnMut(&mut App),
     {
@@ -1961,12 +1959,7 @@ impl App {
         self.platform.button_layout()
     }
 
-    /// Returns the desktop's font scaling factor, which enlarges text only.
-    ///
-    /// Use it when building text styles so the app follows the desktop's
-    /// accessibility setting; `1.0` on platforms that have none. The value can
-    /// arrive after startup, so most callers also follow it with
-    /// [`App::on_text_scale_factor_changed`].
+    /// Returns the factor by which text should be scaled, on top of the window's scale factor.
     pub fn text_scale_factor(&self) -> f32 {
         self.platform.text_scale_factor()
     }
