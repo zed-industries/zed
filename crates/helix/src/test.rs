@@ -192,6 +192,22 @@ async fn test_insert_mode_highlights_selections(cx: &mut TestAppContext) {
     cx.assert_editor_background_highlights(HighlightKey::HelixInsertSelections, "«ax»bc");
 }
 
+// Like Helix, moving the cursor in insert mode turns the selections into
+// cursors, and typing afterwards does not extend them.
+#[gpui::test]
+async fn test_moving_in_insert_mode_drops_selections(cx: &mut TestAppContext) {
+    let mut cx = HelixTestContext::new(cx).await;
+    cx.set_state("#[abc|]# def");
+    cx.simulate_keys("ix<left>");
+    cx.assert_editor_background_highlights(HighlightKey::HelixInsertSelections, "xabc def");
+    cx.simulate_keys("y<esc>");
+    cx.assert_state("y#[x|]#abc def");
+
+    cx.set_state("#[abc|]# def");
+    cx.simulate_keys("a<right>z<esc>");
+    cx.assert_state("abc z#[d|]#ef");
+}
+
 #[gpui::test]
 async fn test_single_grapheme_selection_is_highlighted_as_cursor(cx: &mut TestAppContext) {
     let mut cx = HelixTestContext::new(cx).await;

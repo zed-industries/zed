@@ -445,7 +445,7 @@ impl Helix {
             }
             EditorEvent::SelectionsChanged { local: true } => {
                 if self.mode == Mode::Insert {
-                    self.highlight_insert_mode_ranges(cx);
+                    self.insert_selections_changed(cx);
                 } else {
                     self.update_editor(cx, |_, editor, cx| {
                         Self::ensure_selections_width(editor, window, cx)

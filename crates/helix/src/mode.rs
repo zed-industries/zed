@@ -31,8 +31,13 @@ actions!(
 pub(crate) struct InsertSession {
     kind: InsertKind,
     /// For each selection, the side the cursor is not on: the end for
-    /// [`InsertMode`], the start for [`AppendMode`].
+    /// [`InsertMode`], the start for [`AppendMode`]. Empty once the cursors
+    /// move without editing, which turns the selections into cursors.
     fixed_sides: Vec<Anchor>,
+    /// The cursors and the buffer edit count when the selections last
+    /// changed, to tell cursor movement from typing.
+    cursors: Vec<MultiBufferOffset>,
+    edit_count: usize,
     /// Groups the whole insert session into one undo step.
     pub(crate) first_transaction: Option<TransactionId>,
 }
@@ -134,11 +139,39 @@ impl Helix {
             });
             fixed_sides
         });
+        let (cursors, edit_count) = self
+            .update_editor(cx, |_, editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                (insert_cursors(editor, &snapshot), snapshot.edit_count())
+            })
+            .unwrap_or_default();
         self.insert_session = Some(InsertSession {
             kind,
             fixed_sides: fixed_sides.unwrap_or_default(),
+            cursors,
+            edit_count,
             first_transaction: None,
         });
+        self.highlight_insert_mode_ranges(cx);
+    }
+
+    /// Like Helix, moving the cursors in insert mode (arrows, clicks) instead
+    /// of typing turns the selections into cursors.
+    pub(crate) fn insert_selections_changed(&mut self, cx: &mut Context<Self>) {
+        let Some((cursors, edit_count)) = self.update_editor(cx, |_, editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            (insert_cursors(editor, &snapshot), snapshot.edit_count())
+        }) else {
+            return;
+        };
+        let Some(session) = self.insert_session.as_mut() else {
+            return;
+        };
+        if cursors != session.cursors && edit_count == session.edit_count {
+            session.fixed_sides.clear();
+        }
+        session.cursors = cursors;
+        session.edit_count = edit_count;
         self.highlight_insert_mode_ranges(cx);
     }
 
@@ -219,12 +252,7 @@ impl Helix {
         snapshot: &MultiBufferSnapshot,
     ) -> Option<Vec<(MultiBufferOffset, MultiBufferOffset)>> {
         let session = self.insert_session.as_ref()?;
-        let cursors = editor
-            .selections
-            .disjoint_anchors_arc()
-            .iter()
-            .map(|selection| selection.head().to_offset(snapshot))
-            .collect::<Vec<_>>();
+        let cursors = insert_cursors(editor, snapshot);
         if cursors.len() != session.fixed_sides.len() {
             return None;
         }
@@ -237,6 +265,15 @@ impl Helix {
                 .collect(),
         )
     }
+}
+
+fn insert_cursors(editor: &Editor, snapshot: &MultiBufferSnapshot) -> Vec<MultiBufferOffset> {
+    editor
+        .selections
+        .disjoint_anchors_arc()
+        .iter()
+        .map(|selection| selection.head().to_offset(snapshot))
+        .collect()
 }
 
 #[cfg(test)]

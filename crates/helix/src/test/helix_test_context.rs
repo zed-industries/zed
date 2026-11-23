@@ -24,6 +24,13 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         editor::init(cx);
         crate::init(cx);
+        let mut default_bindings =
+            KeymapFile::load_asset_allow_partial_failure("keymaps/default-macos.json", cx)
+                .expect("default keymap should load");
+        for binding in &mut default_bindings {
+            binding.set_meta(KeybindSource::Default.meta());
+        }
+        cx.bind_keys(default_bindings);
         let mut bindings =
             KeymapFile::load_asset(HELIX_KEYMAP_PATH, Some(KeybindSource::Helix), cx)
                 .expect("helix keymap should load");
