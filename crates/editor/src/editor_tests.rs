@@ -26263,6 +26263,35 @@ async fn test_as_is_completions(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_empty_ime_input_does_not_request_completions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    let requests = Arc::new(AtomicUsize::new(0));
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>({
+            let requests = requests.clone();
+            move |_, _| {
+                requests.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+
+    cx.set_state("fn a() {}\nˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.replace_and_mark_text_in_range(None, "", None, window, cx);
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(requests.load(atomic::Ordering::SeqCst), 0);
+}
+
+#[gpui::test]
 async fn test_panic_during_c_completions(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let language =
