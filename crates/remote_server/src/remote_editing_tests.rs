@@ -5408,6 +5408,11 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .unwrap()
         .unwrap();
     assert_eq!(default_branch_with_remote.as_deref(), Some("origin/main"));
+    assert_eq!(
+        cx.read(|cx| repository.read(cx).remote_default_branch.clone())
+            .as_deref(),
+        Some("origin/main")
+    );
 }
 
 #[gpui::test]

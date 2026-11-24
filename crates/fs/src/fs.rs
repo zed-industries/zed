@@ -31,8 +31,8 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::mem::MaybeUninit;
 
 use async_tar::Archive;
-use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
-use git::repository::{GitRepository, RealGitRepository};
+use futures::{AsyncRead, FutureExt as _, Stream, StreamExt, future::BoxFuture};
+use git::repository::{GitRepository, RealGitRepository, untrusted_git_command};
 #[cfg(windows)]
 use is_executable::IsExecutable;
 use rope::Rope;
@@ -205,6 +205,12 @@ pub trait Fs: Send + Sync {
     -> Result<()>;
     async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
     async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String>;
+    async fn git_command(
+        &self,
+        git_binary_path: &Path,
+        abs_work_directory: &Path,
+        args: Vec<String>,
+    ) -> Result<String>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -1435,6 +1441,35 @@ impl Fs for RealFs {
             anyhow::bail!(err);
         }
 
+        String::from_utf8(output.stdout).map_err(Into::into)
+    }
+
+    async fn git_command(
+        &self,
+        git_binary_path: &Path,
+        abs_work_directory: &Path,
+        args: Vec<String>,
+    ) -> Result<String> {
+        let mut command = untrusted_git_command(
+            git_binary_path,
+            abs_work_directory,
+            self.executor.clone(),
+            &args,
+        );
+        command.kill_on_drop(true);
+        let output = command.output().fuse();
+        let timeout = self.executor.timer(Duration::from_secs(5)).fuse();
+        futures::pin_mut!(output, timeout);
+        let output = futures::select_biased! {
+            output = output => output?,
+            _ = timeout => {
+                log::warn!("git command in {abs_work_directory:?} timed out");
+                anyhow::bail!("git command in {abs_work_directory:?} timed out");
+            }
+        };
+        if !output.status.success() {
+            anyhow::bail!(String::from_utf8(output.stderr)?);
+        }
         String::from_utf8(output.stdout).map_err(Into::into)
     }
 
@@ -3746,6 +3781,15 @@ impl Fs for FakeFs {
         anyhow::bail!("Git config is not supported in fake Fs")
     }
 
+    async fn git_command(
+        &self,
+        _git_binary_path: &Path,
+        _abs_work_directory: &Path,
+        _args: Vec<String>,
+    ) -> Result<String> {
+        anyhow::bail!("Git commands are not supported in fake Fs")
+    }
+
     fn record_watcher_diagnostics(&self) -> Option<fs_watcher::WatchRecording> {
         Some(fs_watcher::WatchRecording::new([
             self.native_watcher.clone(),
@@ -3965,5 +4009,93 @@ fn atomic_replace<P: AsRef<Path>>(
             None,
             None,
         )
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use gpui::BackgroundExecutor;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    #[gpui::test]
+    async fn test_git_command_times_out_and_kills_git(executor: BackgroundExecutor) {
+        executor.allow_parking();
+        let fs = RealFs::new(None, executor.clone());
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let repository = temp_dir.path().join("repository");
+        let fifo_path = repository.join(".git/included");
+        fs.git_command(
+            Path::new("git"),
+            temp_dir.path(),
+            ["init", "--quiet", "repository"].map(String::from).to_vec(),
+        )
+        .await
+        .unwrap();
+        let fifo_c_string =
+            std::ffi::CString::new(fifo_path.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_c_string.as_ptr(), 0o600) }, 0);
+        fs.git_command(
+            Path::new("git"),
+            &repository,
+            ["config", "include.path", "included"]
+                .map(String::from)
+                .to_vec(),
+        )
+        .await
+        .unwrap();
+
+        let git_command = executor.spawn({
+            let fs = fs.clone();
+            let repository = repository.clone();
+            async move {
+                fs.git_command(
+                    Path::new("git"),
+                    &repository,
+                    ["rev-parse", "--git-dir"].map(String::from).to_vec(),
+                )
+                .await
+            }
+        });
+        let open_writer = || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&fifo_path)
+        };
+        executor.run_until_parked();
+        let mut writers = Vec::new();
+        for _ in 0..50 {
+            if let Ok(writer) = open_writer() {
+                writers.push(writer);
+                break;
+            }
+            executor.timer(Duration::from_millis(10)).await;
+        }
+        assert_eq!(writers.len(), 1, "git never opened the included config");
+        executor.advance_clock(Duration::from_secs(5));
+        executor.run_until_parked();
+        let error = git_command
+            .now_or_never()
+            .expect("git command is still running")
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("git command in {repository:?} timed out")
+        );
+
+        let mut has_reader = true;
+        for _ in 0..50 {
+            match open_writer() {
+                Ok(writer) => writers.push(writer),
+                Err(_) => {
+                    has_reader = false;
+                    break;
+                }
+            }
+            executor.timer(Duration::from_millis(10)).await;
+        }
+        drop(writers);
+        assert!(!has_reader, "the timed out git process is still running");
     }
 }
