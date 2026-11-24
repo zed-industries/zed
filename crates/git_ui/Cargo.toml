@@ -69,6 +69,7 @@ tracing.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 unicode-width.workspace = true
+url.workspace = true
 util.workspace = true
 watch.workspace = true
 workspace.workspace = true

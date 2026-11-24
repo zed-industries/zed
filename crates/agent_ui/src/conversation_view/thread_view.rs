@@ -398,8 +398,7 @@ fn parse_cat_numbered_code(code: &str) -> Option<ParsedCatNumberedCode> {
 }
 
 fn strip_line_ending(line: &str) -> &str {
-    let without_lf = line.strip_suffix('\n').unwrap_or(line);
-    without_lf.strip_suffix('\r').unwrap_or(without_lf)
+    line.trim_suffix('\n').trim_suffix('\r')
 }
 
 fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
@@ -1847,22 +1846,36 @@ impl ThreadView {
         (!matches!(record.state, SubmissionState::Completed)).then(|| record.content.clone())
     }
 
-    fn submission_text_parts(content: &[acp_v2::ContentBlock]) -> impl Iterator<Item = &str> {
-        content.iter().map(|block| match block {
-            acp_v2::ContentBlock::Text(text) => text.text.as_str(),
-            acp_v2::ContentBlock::ResourceLink(link) => link.name.as_str(),
-            acp_v2::ContentBlock::Resource(resource) => match &resource.resource {
-                acp_v2::EmbeddedResourceResource::TextResourceContents(resource) => {
-                    resource.uri.as_str()
-                }
-                acp_v2::EmbeddedResourceResource::BlobResourceContents(resource) => {
-                    resource.uri.as_str()
-                }
-                _ => "[Resource attachment]",
-            },
-            acp_v2::ContentBlock::Image(_) => "[Image attachment]",
-            acp_v2::ContentBlock::Audio(_) => "[Audio attachment]",
-            _ => "[Unsupported attachment]",
+    fn submission_text_parts<'a>(
+        content: &'a [acp_v2::ContentBlock],
+        separator: &'a str,
+    ) -> impl Iterator<Item = &'a str> {
+        let mut previous_text = None;
+        content.iter().flat_map(move |block| {
+            let is_text = matches!(block, acp_v2::ContentBlock::Text(_));
+            let separate = previous_text
+                .replace(is_text)
+                .is_some_and(|previous| !(previous && is_text));
+            let text = match block {
+                acp_v2::ContentBlock::Text(text) => text.text.as_str(),
+                acp_v2::ContentBlock::ResourceLink(link) => link.name.as_str(),
+                acp_v2::ContentBlock::Resource(resource) => match &resource.resource {
+                    acp_v2::EmbeddedResourceResource::TextResourceContents(resource) => {
+                        resource.uri.as_str()
+                    }
+                    acp_v2::EmbeddedResourceResource::BlobResourceContents(resource) => {
+                        resource.uri.as_str()
+                    }
+                    _ => "[Resource attachment]",
+                },
+                acp_v2::ContentBlock::Image(_) => "[Image attachment]",
+                acp_v2::ContentBlock::Audio(_) => "[Audio attachment]",
+                _ => "[Unsupported attachment]",
+            };
+            separate
+                .then_some(separator)
+                .into_iter()
+                .chain(std::iter::once(text))
         })
     }
 
@@ -1973,7 +1986,7 @@ impl ThreadView {
                             ),
                             SubmissionState::Disconnected { receipt: None } => (
                                 "Connection lost".into(),
-                                Some("The connection was lost before the agent confirmed this message.".into()),
+                                Some("The agent may already have acted on this message. Sending it again could run the same work twice.".into()),
                                 true,
                             ),
                             SubmissionState::Failed(error) => (
@@ -1985,7 +1998,7 @@ impl ThreadView {
                             _ => ("Message".into(), None, false),
                         };
                     let preview: String =
-                        Itertools::intersperse(Self::submission_text_parts(&record.content), " ")
+                        Self::submission_text_parts(&record.content, " ")
                             .flat_map(str::chars)
                             .take(201)
                             .map(|character| if character.is_whitespace() { ' ' } else { character })
@@ -2060,8 +2073,9 @@ impl ThreadView {
                                                 {
                                                     let text = Self::submission_text_parts(
                                                         &record.content,
+                                                        "\n",
                                                     )
-                                                    .join("\n");
+                                                    .collect::<String>();
                                                     cx.write_to_clipboard(
                                                         ClipboardItem::new_string(text),
                                                     );
@@ -2265,6 +2279,7 @@ impl ThreadView {
                             server_view.clone(),
                             AuthRequired::new(),
                             connection,
+                            None,
                             window,
                             cx,
                         );
@@ -2457,17 +2472,28 @@ impl ThreadView {
                 })
             });
             if is_first_message && thread.read_with(cx, |thread, _cx| thread.title().is_none())? {
-                let text: String = contents
-                    .iter()
-                    .filter_map(|block| match block {
-                        acp_v2::ContentBlock::Text(text_content) => Some(text_content.text.clone()),
-                        acp_v2::ContentBlock::ResourceLink(resource_link) => {
-                            Some(format!("@{}", resource_link.name))
+                let mut text = String::new();
+                let mut previous_text = false;
+                for block in &contents {
+                    let is_text = matches!(block, acp_v2::ContentBlock::Text(_));
+                    match block {
+                        acp_v2::ContentBlock::Text(content) => {
+                            if !previous_text && !text.is_empty() {
+                                text.push(' ');
+                            }
+                            text.push_str(&content.text);
                         }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                        acp_v2::ContentBlock::ResourceLink(link) => {
+                            if !text.is_empty() {
+                                text.push(' ');
+                            }
+                            text.push('@');
+                            text.push_str(&link.name);
+                        }
+                        _ => {}
+                    }
+                    previous_text = is_text;
+                }
                 let text = text.lines().next().unwrap_or("").trim();
                 if !text.is_empty() {
                     let title: SharedString = util::truncate_and_trailoff(text, 200).into();
@@ -4556,7 +4582,7 @@ impl ThreadView {
             .children(request.description.as_ref().map(|description| {
                 div()
                     .debug_selector(|| format!("generic-permission-description-{description}"))
-                    .child(description.clone())
+                    .child(markdown::MarkdownLabel(description.into()))
             }))
             .children(subject)
             .child(
@@ -7836,7 +7862,8 @@ impl ThreadView {
                                     })
                             }
                             ToolCallContent::SessionReference(_) => true,
-                            ToolCallContent::Other { markdown, .. } => {
+                            ToolCallContent::Text { markdown, .. }
+                            | ToolCallContent::Other { markdown, .. } => {
                                 !markdown.read(cx).source().is_empty()
                             }
                         });
@@ -9710,7 +9737,7 @@ impl ThreadView {
         // (title, detail line, docs section slug)
         let (title, detail, docs_section): (SharedString, SharedString, Option<&'static str>) =
             match reason {
-                SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
+                SandboxNotAppliedReason::CreationFailed(error) => (
                     "Couldn't create a sandbox".into(),
                     error.user_facing_message().into(),
                     Some(error.docs_section()),
@@ -9745,10 +9772,10 @@ impl ThreadView {
     /// Find the first terminal tool call in the thread whose sandbox couldn't be
     /// created, so a later "disabled for this thread" warning can reuse the same
     /// explanation of *why* the sandbox failed.
-    fn find_thread_sandbox_error(&self, cx: &App) -> Option<acp_thread::LinuxWslSandboxError> {
+    fn find_thread_sandbox_error(&self, cx: &App) -> Option<acp_thread::SandboxCreationError> {
         self.thread.read(cx).entries().iter().find_map(|entry| {
             if let AgentThreadEntry::ToolCall(tool_call) = entry
-                && let Some(SandboxNotAppliedReason::ErrorLinuxWsl(error)) =
+                && let Some(SandboxNotAppliedReason::CreationFailed(error)) =
                     &tool_call.sandbox_not_applied
             {
                 return Some(error.clone());
@@ -10438,17 +10465,7 @@ impl ThreadView {
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
         let has_write = details.allow_fs_write_all || !details.write_paths.is_empty();
-        // The dedicated Windows-drive warning prompt is only ever sent while the
-        // warning is enabled, so key the banner on the prompt itself. Keeping it
-        // visible even after the "Don't show again" checkbox flips the setting
-        // avoids the card disappearing out from under the user mid-decision.
-        let has_windows_fs_warning = details.warn_windows_fs;
-        if !has_network
-            && !has_write
-            && !details.unsandboxed
-            && details.reason.is_empty()
-            && !has_windows_fs_warning
-        {
+        if !has_network && !has_write && !details.unsandboxed && details.reason.is_empty() {
             return Empty.into_any_element();
         }
 
@@ -10680,9 +10697,6 @@ impl ThreadView {
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .when(has_windows_fs_warning, |this| {
-                this.child(self.render_sandbox_windows_fs_warning(cx))
-            })
             .when(!confusable_findings.is_empty(), |this| {
                 this.child(self.render_sandbox_confusable_warning(
                     tool_call_id,
@@ -10695,20 +10709,16 @@ impl ThreadView {
             .children(write_section)
             .children(unsandboxed_section)
             .children(reason_section)
-            .when(!has_windows_fs_warning, |this| {
-                // The Windows-drive warning banner carries its own docs link, so
-                // skip the default one that every other sandbox prompt appends.
-                this.child(
-                    h_flex()
-                        .px_1()
-                        .py_0p5()
-                        .child(self.render_sandbox_docs_link(
-                            "sandbox-authorization-docs-link",
-                            None,
-                            cx,
-                        )),
-                )
-            })
+            .child(
+                h_flex()
+                    .px_1()
+                    .py_0p5()
+                    .child(self.render_sandbox_docs_link(
+                        "sandbox-authorization-docs-link",
+                        None,
+                        cx,
+                    )),
+            )
             .into_any_element()
     }
 
@@ -10879,107 +10889,6 @@ impl ThreadView {
             .into_any_element()
     }
 
-    /// Whether the Windows-drive (DrvFs) weaker-guarantee warning is enabled in
-    /// settings (on by default). Windows-only in effect: `warn_windows_fs` is
-    /// never set on other platforms.
-    fn ntfs_warning_enabled(cx: &App) -> bool {
-        AgentSettings::get_global(cx)
-            .sandbox_permissions
-            .warn_ntfs_grants
-    }
-
-    /// Informational banner shown on a sandbox approval prompt when the command
-    /// will write to a file on a Windows drive (reached inside WSL via DrvFs),
-    /// whose sandbox-integrity guarantees are weaker than the distro's native
-    /// filesystem. Unlike the confusable-Unicode banner this does not gate the
-    /// allow buttons: the approval itself is the acknowledgement. A settings gear
-    /// links to where the warning can be suppressed.
-    fn render_sandbox_windows_fs_warning(&self, cx: &Context<Self>) -> AnyElement {
-        v_flex()
-            .w_full()
-            .p_2()
-            .gap_1()
-            .border_t_1()
-            .border_color(cx.theme().status().warning_border)
-            .bg(cx.theme().status().warning_background.opacity(0.15))
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1p5()
-                    .items_start()
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Warning),
-                    )
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .flex_1()
-                            .gap_0p5()
-                            .child(
-                                Label::new("This command can write to a file on a Windows drive")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Warning),
-                            )
-                            .child(
-                                Label::new(
-                                    "Sandboxes with write access to a location on a Windows \
-                                     drive may not provide full filesystem isolation.",
-                                )
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                            )
-                            .child(h_flex().child(self.render_sandbox_docs_link(
-                                "sandbox-windows-fs-docs-link",
-                                Some("windows"),
-                                cx,
-                            ))),
-                    )
-                    .child(
-                        IconButton::new("configure-ntfs-warning", IconName::Settings)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Configure Windows-drive warning"))
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(zed_actions::OpenSettingsAt {
-                                        path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
-                                        target: None,
-                                    }),
-                                    cx,
-                                );
-                            }),
-                    ),
-            )
-            .child(
-                Checkbox::new(
-                    "sandbox-windows-fs-dont-warn",
-                    if Self::ntfs_warning_enabled(cx) {
-                        ToggleState::Unselected
-                    } else {
-                        ToggleState::Selected
-                    },
-                )
-                .label("Don't show this warning again")
-                .label_size(LabelSize::Small)
-                .on_click(cx.listener(|this, state: &ToggleState, _window, cx| {
-                    let disable = *state == ToggleState::Selected;
-                    let fs = this.thread.read(cx).project().read(cx).fs().clone();
-                    update_settings_file(fs, cx, move |settings, _| {
-                        settings
-                            .agent
-                            .get_or_insert_default()
-                            .sandbox_permissions
-                            .get_or_insert_default()
-                            .warn_ntfs_grants = Some(!disable);
-                    });
-                    cx.notify();
-                })),
-            )
-            .into_any_element()
-    }
-
     fn render_sandbox_fallback_authorization_details(
         &self,
         details: &SandboxFallbackAuthorizationDetails,
@@ -11036,10 +10945,8 @@ impl ThreadView {
         // to.
         let granted_path = granted.canonical_or_requested();
         let requested_path = granted.requested.clone();
-        // Grants are stored in the request's own namespace (a Windows path stays
-        // `C:\...`, a WSL path stays `/...`), so a genuine symlink/junction
-        // redirect is just a plain inequality between the request and its
-        // resolved canonical.
+        // A genuine symlink/junction redirect is just a plain inequality between
+        // the request and its resolved canonical.
         let is_redirected = granted
             .resolved
             .as_deref()
@@ -11959,6 +11866,15 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
+            ToolCallContent::Text { markdown, .. } => self.render_markdown_output(
+                markdown.clone(),
+                entry_ix,
+                context_ix,
+                tool_call,
+                card_layout,
+                window,
+                cx,
+            ),
             ToolCallContent::ContentBlock { block, .. } => self.render_output_content_block(
                 entry_ix,
                 context_ix,
@@ -12550,6 +12466,15 @@ impl ThreadView {
                     .size(IconSize::Small)
                     .color(Color::Success)
                     .into_any_element(),
+                SubagentStatus::Idle => div()
+                    .id(status_icon)
+                    .child(
+                        Icon::new(IconName::Circle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .tooltip(Tooltip::text("Subagent idle; outcome unknown"))
+                    .into_any_element(),
                 SubagentStatus::Unknown => div()
                     .id(status_icon)
                     .child(
@@ -12561,9 +12486,23 @@ impl ThreadView {
                     .into_any_element(),
             });
 
-        let has_expandable_content = thread
+        let description = thread.as_ref().and_then(|thread| {
+            let thread = thread.read(cx);
+            if thread.connection().description_format()
+                != acp_thread::AgentDescriptionFormat::Markdown
+            {
+                return None;
+            }
+            thread
+                .subagent_association()?
+                .description
+                .as_ref()
+                .filter(|description| !description.is_empty())
+        });
+        let has_entries = thread
             .as_ref()
-            .map_or(false, |thread| !thread.read(cx).entries().is_empty());
+            .is_some_and(|thread| !thread.read(cx).entries().is_empty());
+        let has_expandable_content = has_entries || description.is_some();
 
         let tooltip_meta_description = if is_expanded {
             "Click to Collapse"
@@ -12730,6 +12669,17 @@ impl ThreadView {
                         )
                     }),
             )
+            .when_some(description.filter(|_| is_expanded), |this, description| {
+                this.child(
+                    div()
+                        .debug_selector(|| format!("subagent-description-{entry_ix}"))
+                        .px_2()
+                        .py_1()
+                        .text_ui_sm(cx)
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(markdown::MarkdownLabel(description.clone())),
+                )
+            })
             .when_some(thread_view, |this, thread_view| {
                 let thread = &thread_view.read(cx).thread;
                 let tv_session_id = thread.read(cx).session_id();
@@ -12791,13 +12741,15 @@ impl ThreadView {
                     }
                 } else {
                     this.when(is_expanded, |this| {
-                        this.child(self.render_subagent_expanded_content(
-                            thread_view,
-                            card_id,
-                            state,
-                            window,
-                            cx,
-                        ))
+                        this.when(has_entries || description.is_none(), |this| {
+                            this.child(self.render_subagent_expanded_content(
+                                thread_view,
+                                card_id,
+                                state,
+                                window,
+                                cx,
+                            ))
+                        })
                         .when_some(error_message, |this, message| {
                             this.child(
                                 Callout::new()
@@ -13322,6 +13274,7 @@ impl ThreadView {
                             server_view,
                             AuthRequired::new(),
                             connection,
+                            None,
                             window,
                             cx,
                         );
@@ -14905,6 +14858,25 @@ mod tests {
     use util::path;
     use util::paths::PathStyle;
     use workspace::MultiWorkspace;
+
+    #[test]
+    fn submission_preview_and_copy_separate_attachments_but_not_adjacent_text() {
+        let content = [
+            "key".into(),
+            "board".into(),
+            acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new("file", "file:///file")),
+            "work".into(),
+            "space".into(),
+        ];
+        assert_eq!(
+            ThreadView::submission_text_parts(&content, " ").collect::<String>(),
+            "keyboard file workspace"
+        );
+        assert_eq!(
+            ThreadView::submission_text_parts(&content, "\n").collect::<String>(),
+            "keyboard\nfile\nworkspace"
+        );
+    }
 
     #[test]
     fn test_reported_activity_completion_status() {

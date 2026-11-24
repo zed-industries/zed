@@ -92,6 +92,13 @@ pub fn build_terminal_auth_task(
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AgentDescriptionFormat {
+    #[default]
+    PlainText,
+    Markdown,
+}
+
 pub trait AgentConnection {
     fn agent_id(&self) -> AgentId;
 
@@ -99,6 +106,11 @@ pub trait AgentConnection {
 
     fn agent_version(&self) -> Option<SharedString> {
         None
+    }
+
+    /// Native and v1 descriptions remain literal after conversion to v2 schema types.
+    fn description_format(&self) -> AgentDescriptionFormat {
+        AgentDescriptionFormat::PlainText
     }
 
     /// Initiate shutdown of connection-owned resources when their shared UI owner ends.
@@ -194,6 +206,13 @@ pub trait AgentConnection {
     }
 
     fn auth_methods(&self) -> &[acp_v2::AuthMethod];
+
+    /// A snapshot belongs to the live process, not to a session or a saved agent configuration.
+    fn auth_status(&self) -> Option<watch::Receiver<Option<acp_v2::AuthStatusResponse>>> {
+        None
+    }
+
+    fn refresh_auth_status(&self, _cx: &App) {}
 
     fn terminal_auth_task(
         &self,
@@ -423,6 +442,10 @@ pub trait AgentSessionModes {
 pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
     fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
+
+    fn description_format(&self) -> AgentDescriptionFormat {
+        AgentDescriptionFormat::PlainText
+    }
 
     /// Agent-owned sessions may report configuration without allowing the client to change it.
     fn is_read_only(&self) -> bool {
@@ -1013,6 +1036,7 @@ mod test_support {
         next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
         auth_methods: Vec<acp_v2::AuthMethod>,
+        description_format: AgentDescriptionFormat,
         next_authenticate_response: Arc<Mutex<Option<oneshot::Receiver<Result<()>>>>>,
         next_load_error: Arc<Mutex<Option<anyhow::Error>>>,
         next_receipt_response:
@@ -1062,6 +1086,7 @@ mod test_support {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
                 auth_methods: Vec::new(),
+                description_format: AgentDescriptionFormat::PlainText,
                 next_authenticate_response: Default::default(),
                 next_load_error: Default::default(),
                 next_receipt_response: Default::default(),
@@ -1129,6 +1154,11 @@ mod test_support {
 
         pub fn with_auth_methods(mut self, methods: Vec<acp_v2::AuthMethod>) -> Self {
             self.auth_methods = methods;
+            self
+        }
+
+        pub fn with_description_format(mut self, format: AgentDescriptionFormat) -> Self {
+            self.description_format = format;
             self
         }
 
@@ -1334,6 +1364,10 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn description_format(&self) -> AgentDescriptionFormat {
+            self.description_format
+        }
+
         fn shutdown(&self) {
             self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
         }

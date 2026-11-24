@@ -57,9 +57,7 @@ pub(super) fn render_local_action_button<T: 'static, A: Action>(
     .on_click(cx.listener({
         let focus_handle = focus_handle.clone();
         move |this, _: &ClickEvent, window, cx| {
-            if !focus_handle.is_focused(window) {
-                window.focus(&focus_handle, cx);
-            }
+            window.focus(&focus_handle, cx);
             handler(this, action, window, cx);
         }
     }))

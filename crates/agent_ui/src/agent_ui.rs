@@ -311,14 +311,6 @@ actions!(
         CycleNextInlineAssist,
         /// Cycles to the previous inline assist suggestion.
         CyclePreviousInlineAssist,
-        /// Moves focus up in the interface.
-        FocusUp,
-        /// Moves focus down in the interface.
-        FocusDown,
-        /// Moves focus left in the interface.
-        FocusLeft,
-        /// Moves focus right in the interface.
-        FocusRight,
         /// Opens the active thread as a markdown file.
         OpenActiveThreadAsMarkdown,
         /// Opens the agent diff view to review changes.

@@ -244,8 +244,7 @@ impl Component for StatusToast {
                         single_example("Warning", div().child(warning_example).into_any_element()),
                         single_example("Create PR", div().child(pr_example).into_any_element()),
                     ],
-                )
-                .vertical(),
+                ),
             ])
             .into_any_element()
     }

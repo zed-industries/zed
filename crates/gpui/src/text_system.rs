@@ -20,6 +20,7 @@ use anyhow::Context as _;
 use collections::{FxHashMap, FxHashSet};
 use core::fmt;
 use derive_more::{Add, Deref, FromStr, Sub};
+use gpui_util::canonical_float_bits;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
@@ -1124,9 +1125,9 @@ impl Hash for RenderGlyphParams {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.font_id.0.hash(state);
         self.glyph_id.0.hash(state);
-        self.font_size.0.to_bits().hash(state);
+        self.font_size.hash(state);
         self.subpixel_variant.hash(state);
-        self.scale_factor.to_bits().hash(state);
+        canonical_float_bits(self.scale_factor).hash(state);
         self.is_emoji.hash(state);
         self.subpixel_rendering.hash(state);
         self.dilation.hash(state);

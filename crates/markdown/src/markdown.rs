@@ -131,6 +131,8 @@ pub struct MarkdownStyle {
     pub table_cell_padding: Point<Pixels>,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
+    /// Show link destinations and image alt text in labels rather than interactive content.
+    pub links_as_text: bool,
     pub table_columns_min_size: bool,
     pub soft_break_as_hard_break: bool,
     pub rounded_images: bool,
@@ -161,6 +163,7 @@ impl Default for MarkdownStyle {
             table_cell_padding: point(px(4.), px(2.)),
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
+            links_as_text: false,
             table_columns_min_size: false,
             soft_break_as_hard_break: false,
             rounded_images: true,
@@ -1807,6 +1810,35 @@ pub enum AutoscrollBehavior {
     Controlled(ScrollHandle),
 }
 
+/// A noninteractive Markdown label for tooltips, pickers, and other compact UI.
+#[derive(IntoElement)]
+pub struct MarkdownLabel(pub SharedString);
+
+impl RenderOnce for MarkdownLabel {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let markdown = window.use_keyed_state(self.0.clone(), cx, |_, cx| {
+            Markdown::new(self.0, None, None, cx)
+        });
+        let text_style = window.text_style();
+        MarkdownElement::new(
+            markdown,
+            MarkdownStyle {
+                paragraph_line_height: text_style.line_height,
+                base_text_style: text_style,
+                prevent_mouse_interaction: true,
+                links_as_text: true,
+                paragraph_spacing: px(0.),
+                ..MarkdownStyle::themed(MarkdownFont::Editor, window, cx)
+            },
+        )
+        .code_block_renderer(CodeBlockRenderer::Default {
+            copy_button_visibility: CopyButtonVisibility::Hidden,
+            wrap_button_visibility: WrapButtonVisibility::Hidden,
+            border: false,
+        })
+    }
+}
+
 pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
@@ -2727,6 +2759,7 @@ impl Element for MarkdownElement {
         let mut current_code_block_text = None;
 
         let mut current_img_block_range: Option<Range<usize>> = None;
+        let mut link_destination = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
         let mut rendered_metadata_block = false;
@@ -2778,6 +2811,7 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::Start(tag) => {
                     match tag {
+                        MarkdownTag::Image { .. } if self.style.links_as_text => {}
                         MarkdownTag::Image { dest_url, .. } => {
                             let alt_text = collect_image_alt_text(
                                 &parsed_markdown.events[index..],
@@ -3053,6 +3087,20 @@ impl Element for MarkdownElement {
                                 ..Default::default()
                             })
                         }
+                        MarkdownTag::Link {
+                            link_type,
+                            dest_url,
+                            ..
+                        } if self.style.links_as_text => {
+                            if !matches!(
+                                link_type,
+                                pulldown_cmark::LinkType::Autolink
+                                    | pulldown_cmark::LinkType::Email
+                            ) && !dest_url.is_empty()
+                            {
+                                link_destination = Some(dest_url);
+                            }
+                        }
                         MarkdownTag::Link { dest_url, .. } => {
                             if builder.code_block_stack.is_empty() {
                                 builder.link_depth += 1;
@@ -3313,6 +3361,14 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Emphasis => builder.pop_text_style(),
                     MarkdownTagEnd::Strong => builder.pop_text_style(),
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
+                    MarkdownTagEnd::Link if self.style.links_as_text => {
+                        if let Some(url) = link_destination.take() {
+                            builder.push_text(
+                                &format!(" ({url})"),
+                                builder.current_source_index..range.end,
+                            );
+                        }
+                    }
                     MarkdownTagEnd::Link => {
                         if builder.code_block_stack.is_empty() {
                             builder.link_depth = builder.link_depth.saturating_sub(1);
@@ -7477,6 +7533,32 @@ mod tests {
         assert!(rendered.links.is_empty());
         assert!(rendered.link_for_source_index(0).is_none());
         assert!(rendered.link_for_source_index(5).is_none());
+    }
+
+    #[gpui::test]
+    fn links_as_text_preserves_formatting_without_links_or_images(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let source = "**[Read `docs`][ref]** ![preview](data:image/png;base64,AA==) <https://example.org>\n\n[ref]: /guide";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+        let rendered = render_markdown_entity_in_view(
+            markdown,
+            MarkdownStyle {
+                links_as_text: true,
+                ..Default::default()
+            },
+            None,
+            None,
+            cx,
+        );
+        assert!(rendered.links.is_empty());
+        assert!(rendered.image_links.is_empty());
+        let text = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<String>();
+        assert_eq!(text, "Read docs (/guide) preview https://example.org");
     }
 
     #[gpui::test]

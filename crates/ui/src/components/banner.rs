@@ -184,8 +184,6 @@ impl Component for Banner {
             ),
         ];
 
-        example_group(severity_examples)
-            .vertical()
-            .into_any_element()
+        example_group(severity_examples).into_any_element()
     }
 }

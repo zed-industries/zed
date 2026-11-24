@@ -611,6 +611,10 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
 #[gpui::test]
 async fn test_system_prompt(cx: &mut TestAppContext) {
     let ThreadTest { fake, thread, .. } = setup(cx, TestModel::Fake).await;
+
+    let local_shell = thread.read_with(cx, |thread, cx| {
+        crate::sandboxing::terminal_shell_name(thread.project().read(cx), cx)
+    });
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread
         .update(cx, |thread, cx| {
@@ -623,13 +627,9 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
         system_prompt_value(&system_prompt, "Operating System"),
         Some(std::env::consts::OS),
     );
-    let local_shell = util::shell::ShellKind::new(
-        util::get_default_system_shell_preferring_bash(),
-        cfg!(windows),
-    );
     assert_eq!(
         system_prompt_value(&system_prompt, "Default Shell"),
-        Some(local_shell.to_string().as_str()),
+        Some(local_shell.as_str()),
     );
     assert!(system_prompt.contains("## Fixing Diagnostics"));
 }
@@ -705,9 +705,11 @@ async fn test_system_prompt_uses_remote_terminal_environment(
 
     let system_prompt = pending_system_prompt(&fake_model_provider);
     let operating_system = system_prompt_value(&system_prompt, "Operating System");
-    let shell = system_prompt_value(&system_prompt, "Default Shell")
-        .and_then(|shell| shell.rsplit('/').next());
-    assert_eq!((operating_system, shell), (Some("linux"), Some("fish")));
+    let shell = system_prompt_value(&system_prompt, "Default Shell");
+    assert_eq!(
+        (operating_system, shell),
+        (Some("linux"), Some("/usr/bin/fish")),
+    );
 
     drop(thread);
     drop(remote_project);
@@ -6099,12 +6101,12 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
         thread.respond_to_elicitation(
             &elicitation_id,
             acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
-                acp_v2::ElicitationAcceptAction::new().content(std::collections::BTreeMap::from([
-                    (
+                acp_v2::ElicitationAcceptAction::new().content(
+                    agent_client_protocol::schema::IndexMap::from([(
                         "other".to_string(),
                         acp_v2::ElicitationContentValue::from("delve into src"),
-                    ),
-                ])),
+                    )]),
+                ),
             )),
             cx,
         );

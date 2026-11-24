@@ -92,6 +92,7 @@ impl RealCratesIoClient {
         let send_at = self.throttle.reserve(Instant::now());
         smol::Timer::at(send_at).await;
 
+        log::trace!("crates.io request: {} {url}", request.method());
         let mut response = self
             .http_client
             .send(request)
@@ -225,6 +226,9 @@ impl CratesIoClient for RealCratesIoClient {
             }
             if let Some(user_id) = query.user_id {
                 pairs.append_pair("user_id", &user_id.0.to_string());
+            }
+            if let Some(team_id) = query.team_id {
+                pairs.append_pair("team_id", &team_id.0.to_string());
             }
             if query.exclude_yanked {
                 pairs.append_pair("include_yanked", "no");

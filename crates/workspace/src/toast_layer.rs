@@ -168,10 +168,6 @@ impl ToastLayer {
         active_toast.toast.view().downcast::<V>().ok()
     }
 
-    pub fn has_active_toast(&self) -> bool {
-        self.active_toast.is_some()
-    }
-
     fn pause_dismiss_timer(&mut self) {
         let Some(dismiss_timer) = self.dismiss_timer.take() else {
             return;
@@ -213,7 +209,6 @@ impl ToastLayer {
             return;
         };
         self.start_dismiss_timer(duration, cx);
-        cx.notify();
     }
 
     /// Clears the dismiss timer if one exists

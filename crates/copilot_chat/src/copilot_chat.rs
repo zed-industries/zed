@@ -1012,16 +1012,36 @@ async fn get_models(
     client: Arc<dyn HttpClient>,
 ) -> Result<Vec<Model>> {
     let all_models = request_models(models_url, oauth_token, client).await?;
+    Ok(chat_models(all_models))
+}
+
+/// Selects the models Copilot offers for chat, with the default model first.
+///
+/// Copilot Free lists every model with `model_picker_enabled: false`, and
+/// rejects requests for all of them except the default chat model, even ones
+/// whose policy is `enabled`. So when no usable model is marked for the picker,
+/// only the default model is offered.
+fn chat_models(all_models: Vec<Model>) -> Vec<Model> {
+    let is_usable_chat_model = |model: &Model| {
+        model.capabilities.model_type.as_str() == "chat"
+            && model
+                .policy
+                .as_ref()
+                .is_none_or(|policy| policy.state == "enabled")
+    };
+    let any_picker_model = all_models
+        .iter()
+        .any(|model| model.model_picker_enabled && is_usable_chat_model(model));
 
     let mut models: Vec<Model> = all_models
         .into_iter()
         .filter(|model| {
-            model.model_picker_enabled
-                && model.capabilities.model_type.as_str() == "chat"
-                && model
-                    .policy
-                    .as_ref()
-                    .is_none_or(|policy| policy.state == "enabled")
+            is_usable_chat_model(model)
+                && if any_picker_model {
+                    model.model_picker_enabled
+                } else {
+                    model.is_chat_default
+                }
         })
         .collect();
 
@@ -1030,7 +1050,7 @@ async fn get_models(
         models.insert(0, default_model);
     }
 
-    Ok(models)
+    models
 }
 
 #[derive(Deserialize)]
@@ -2074,6 +2094,29 @@ mod tests {
     }
 
     #[test]
+    fn test_chat_models_without_picker_models_offers_default_model() {
+        // Copilot Free accounts list every model with `model_picker_enabled: false`.
+        let free = vec![
+            test_model("claude-opus-5", false, "chat", Some("disabled"), false),
+            test_model("gpt-4o", false, "chat", None, false),
+            test_model("gpt-6-luna", false, "chat", Some("enabled"), false),
+            test_model("gpt-4.1", false, "chat", Some("enabled"), true),
+            test_model("text-embedding-3-small", false, "embeddings", None, false),
+        ];
+        let ids = |models: Vec<Model>| models.into_iter().map(|model| model.id).collect::<Vec<_>>();
+        assert_eq!(ids(chat_models(free)), ["gpt-4.1"]);
+
+        let paid = vec![
+            test_model("claude-opus-5", true, "chat", Some("enabled"), false),
+            test_model("gpt-4o", true, "chat", None, false),
+            test_model("gpt-4o-2024-05-13", false, "chat", None, false),
+            test_model("gpt-6-luna", false, "chat", Some("enabled"), false),
+            test_model("claude-sonnet-5", true, "chat", Some("disabled"), false),
+        ];
+        assert_eq!(ids(chat_models(paid)), ["claude-opus-5", "gpt-4o"]);
+    }
+
+    #[test]
     fn test_tool_choice_required_serializes_as_required() {
         // Regression test: ToolChoice::Required must serialize as "required" (not "any")
         // for OpenAI-compatible APIs. Reverting the rename would break this.
@@ -2125,6 +2168,36 @@ mod tests {
             let expected = vec!["https://enterprise.example/copilot-agent"; usize::from(!sign_out)];
             assert_eq!(credentials.take_reads(), expected);
         }
+    }
+
+    fn test_model(
+        id: &str,
+        model_picker_enabled: bool,
+        model_type: &str,
+        policy_state: Option<&str>,
+        is_chat_default: bool,
+    ) -> Model {
+        serde_json::from_value(serde_json::json!({
+            "billing": { "is_premium": false, "multiplier": 0 },
+            "capabilities": {
+                "family": id,
+                "limits": { "max_context_window_tokens": 128000, "max_output_tokens": 16384, "max_prompt_tokens": 64000 },
+                "object": "model_capabilities",
+                "supports": { "streaming": true, "tool_calls": true },
+                "type": model_type
+            },
+            "id": id,
+            "is_chat_default": is_chat_default,
+            "is_chat_fallback": false,
+            "model_picker_enabled": model_picker_enabled,
+            "name": id,
+            "object": "model",
+            "policy": policy_state.map(|state| serde_json::json!({ "state": state, "terms": "" })),
+            "preview": false,
+            "vendor": "OpenAI",
+            "version": id
+        }))
+        .unwrap()
     }
 
     struct DisabledAi(bool);

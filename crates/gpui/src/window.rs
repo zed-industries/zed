@@ -15,16 +15,17 @@ use crate::{
     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
     Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
     MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, PaintedPath, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style, SubpixelSprite, Subscription,
-    SystemWindowTab, SystemWindowTabController, TabStopMap, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
-    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    PathHash, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style,
+    SubpixelSprite, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -68,9 +69,12 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+mod native_view;
 mod prompts;
 
 pub use a11y::A11ySubtreeBuilder;
+use native_view::NativeViewState;
+pub use native_view::{NativeView, NativeViewId};
 
 use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
@@ -773,7 +777,7 @@ pub enum WindowControlArea {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 impl HitboxId {
     /// A placeholder HitboxId exclusively for integration testing API's that
     /// need a hitbox but where the value of the hitbox does not matter. The
@@ -832,7 +836,7 @@ impl HitboxId {
         window.mouse_hit_test.ids.contains(&self)
     }
 
-    fn next(self) -> HitboxId {
+    pub(crate) fn next(self) -> HitboxId {
         HitboxId(self.0.wrapping_add(1))
     }
 }
@@ -990,12 +994,12 @@ pub(crate) struct TooltipRequest {
 #[derive(Clone, Default)]
 pub(crate) struct ElementIdStack {
     ids: SmallVec<[ElementId; 32]>,
-    hashes: SmallVec<[u64; 32]>,
+    hashes: SmallVec<[PathHash; 32]>,
 }
 
 impl ElementIdStack {
     pub(crate) fn push(&mut self, id: ElementId) {
-        self.hashes.push(crate::extend_path_hash(self.hash(), &id));
+        self.hashes.push(self.hash().extend(&id));
         self.ids.push(id);
     }
 
@@ -1010,11 +1014,8 @@ impl ElementIdStack {
     }
 
     /// The hash of the whole path on the stack.
-    fn hash(&self) -> u64 {
-        self.hashes
-            .last()
-            .copied()
-            .unwrap_or(crate::EMPTY_PATH_HASH)
+    fn hash(&self) -> PathHash {
+        self.hashes.last().copied().unwrap_or(PathHash::EMPTY)
     }
 
     pub(crate) fn global_id(&self) -> GlobalElementId {
@@ -1264,6 +1265,8 @@ pub struct Window {
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     next_hitbox_id: HitboxId,
+    native_views: Vec<std::rc::Weak<NativeViewState>>,
+    next_native_view_id: u64,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
@@ -2313,6 +2316,40 @@ impl Window {
                     .unwrap_or(None)
             })
         });
+        platform_window.on_hit_test_native_view({
+            let mut cx = cx.to_async();
+            Box::new(move |position| {
+                // The platform can ask while this window is already being
+                // updated, in which case the event stays with GPUI.
+                handle
+                    .update(&mut cx, |_, window, _| {
+                        window.hit_test_native_view(position)
+                    })
+                    .ok()
+                    .flatten()
+            })
+        });
+        platform_window.on_key_down_before_native_view({
+            let mut cx = cx.to_async();
+            Box::new(move |event| {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window.dispatch_key_down_before_native_view(event, cx)
+                    })
+                    .unwrap_or(false)
+            })
+        });
+        platform_window.on_native_view_focused({
+            let mut cx = cx.to_async();
+            Box::new(move |id| {
+                handle
+                    .update(&mut cx, |_, window, cx| window.focus_native_view(id, cx))
+                    .with_context(|| {
+                        format!("focusing a native view in window {:?}", handle.window_id())
+                    })
+                    .log_err();
+            })
+        });
         platform_window.on_move_tab_to_new_window({
             let mut cx = cx.to_async();
             Box::new(move || {
@@ -2420,6 +2457,8 @@ impl Window {
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
+            native_views: Vec::new(),
+            next_native_view_id: 0,
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
@@ -2725,7 +2764,9 @@ impl Window {
             return;
         }
 
+        self.end_composition_before_focusing_native_view(handle.id, cx);
         self.focus = Some(handle.id);
+        self.sync_native_view_focus();
         self.focus_generation = self.focus_generation.wrapping_add(1);
         self.clear_pending_keystrokes(cx);
 
@@ -2744,6 +2785,7 @@ impl Window {
             self.focus_generation = self.focus_generation.wrapping_add(1);
         }
         self.focus = None;
+        self.sync_native_view_focus();
         self.refresh();
     }
 
@@ -5669,8 +5711,10 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
 
+        let scope = self.element_id_stack.hash();
         self.layout_engine.as_mut().unwrap().request_layout(
-            style,
+            scope,
+            &style,
             rem_size,
             scale_factor,
             &cx.layout_id_buffer,
@@ -5694,10 +5738,23 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        let scope = self.element_id_stack.hash();
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(scope, &style, rem_size, scale_factor, measure)
+    }
+
+    /// Drops the layout nodes kept from earlier frames, so the next frame builds its
+    /// layout tree from scratch.
+    #[cfg(test)]
+    pub(crate) fn clear_layout_cache(&mut self) {
+        self.layout_engine.as_mut().unwrap().clear_layout_cache();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn layout_node_count(&self) -> usize {
+        self.layout_engine.as_ref().unwrap().node_count()
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -6675,35 +6732,39 @@ impl Window {
         let started_at = cx.background_executor().now();
         let task = self.spawn(cx, async move |cx| {
             cx.background_executor.timer(remaining).await;
-            cx.update(move |window, cx| {
-                let Some(currently_pending) = window
-                    .pending_input
-                    .take()
-                    .filter(|pending| pending.focus == window.focus)
-                else {
-                    return;
-                };
-
-                let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
-
-                let to_replay = window
-                    .rendered_frame
-                    .dispatch_tree
-                    .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
-
-                window.pending_input_changed(cx);
-                window.replay_pending_input(to_replay, cx)
-            })
-            .with_context(|| {
-                format!(
-                    "handling pending input timeout for window {:?}",
-                    cx.window_handle().window_id()
-                )
-            })
-            .log_err();
+            cx.update(move |window, cx| window.flush_pending_input(cx))
+                .with_context(|| {
+                    format!(
+                        "handling pending input timeout for window {:?}",
+                        cx.window_handle().window_id()
+                    )
+                })
+                .log_err();
         });
         (started_at, task)
+    }
+
+    /// Ends a pending multi-key binding as its timeout does, dispatching what
+    /// the keys pressed so far are bound to on their own.
+    fn flush_pending_input(&mut self, cx: &mut App) {
+        let Some(currently_pending) = self
+            .pending_input
+            .take()
+            .filter(|pending| pending.focus == self.focus)
+        else {
+            return;
+        };
+
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+
+        let to_replay = self
+            .rendered_frame
+            .dispatch_tree
+            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+
+        self.pending_input_changed(cx);
+        self.replay_pending_input(to_replay, cx)
     }
 
     fn finish_dispatch_key_event(

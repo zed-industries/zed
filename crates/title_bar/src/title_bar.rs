@@ -70,12 +70,6 @@ const MAX_SHORT_SHA_LENGTH: usize = 8;
 actions!(
     collab,
     [
-        /// Toggles the user menu dropdown.
-        ToggleUserMenu,
-        /// Toggles the project menu dropdown.
-        ToggleProjectMenu,
-        /// Switches to a different git branch.
-        SwitchBranch,
         /// A debug action to simulate an update being available to test the update banner UI.
         SimulateUpdateAvailable
     ]
@@ -270,7 +264,7 @@ impl Render for TitleBar {
                 .read(cx)
                 .root_name()
                 .file_name()
-                .map(|name| SharedString::from(name.to_string()));
+                .map(SharedString::from);
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
                 let worktree_paths = self.project.read(cx).worktree_paths(cx);

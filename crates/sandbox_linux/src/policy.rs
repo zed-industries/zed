@@ -115,6 +115,11 @@ pub struct NetRule {
     pub tcp: bool,
     pub udp: bool,
     pub connect: Access,
+    /// Whether a name this rule allows may resolve to a local-network
+    /// address. Without it, such an address needs a rule of its own, so a
+    /// granted name can't be pointed at the local network (DNS rebinding).
+    /// Loopback addresses need a rule of their own either way.
+    pub local_network: bool,
 }
 
 impl NetRule {
@@ -126,7 +131,15 @@ impl NetRule {
             tcp: true,
             udp: true,
             connect,
+            local_network: false,
         }
+    }
+
+    /// Lets names this rule allows resolve to local-network addresses, for a
+    /// host the user knows is on their network.
+    pub fn reaching_local_network(mut self) -> Self {
+        self.local_network = true;
+        self
     }
 
     pub fn ports(mut self, ports: PortSet) -> Self {
@@ -257,7 +270,7 @@ pub struct DomainPattern {
 impl DomainPattern {
     pub fn new(source: impl Into<String>) -> Result<Self> {
         let source = normalize_domain(&source.into());
-        let name = source.strip_prefix("*.").unwrap_or(&source);
+        let name = source.trim_prefix("*.");
         let valid_label = |label: &str| {
             !label.is_empty()
                 && label
@@ -607,6 +620,7 @@ pub(crate) struct WireNetRule {
     pub tcp: bool,
     pub udp: bool,
     pub connect: WireAccess,
+    pub local_network: bool,
 }
 
 impl WireNetRule {
@@ -659,6 +673,17 @@ impl WirePolicy {
                 .find(|rule| rule.covers(*port, *protocol) && rule.target.matches(host))
                 .map_or(WireAccess::Deny, |rule| rule.connect),
         }
+    }
+
+    /// Whether `name` may reach a local-network address it resolves to on
+    /// `port`: the rule that decides the name allows it, and says so.
+    pub fn name_reaches_local_network(&self, name: &str, port: u16, protocol: Protocol) -> bool {
+        let host = NetHost::Domain(name.to_owned());
+        self.net
+            .iter()
+            .rev()
+            .find(|rule| rule.covers(port, protocol) && rule.target.matches(&host))
+            .is_some_and(|rule| matches!(rule.connect, WireAccess::Allow) && rule.local_network)
     }
 
     /// Approximate: an `Allow` for some ports that a later `Deny` shadows
@@ -773,6 +798,7 @@ impl NetRule {
             tcp: self.tcp,
             udp: self.udp,
             connect: self.connect.to_wire(register),
+            local_network: self.local_network,
         }
     }
 }
@@ -1372,6 +1398,33 @@ mod tests {
         let ports = policy.udp_ports();
         assert!(ports.contains(&443) && ports.contains(&5000));
         assert_eq!(ports.len(), MAX_UDP_PORTS);
+    }
+
+    #[test]
+    fn test_names_reaching_local_network() {
+        let domain = |source: &str| NetTarget::Domain(DomainPattern::new(source).unwrap());
+        let policy = wire_net(vec![
+            NetRule::new(domain("*.lan"), Access::Ask(Handler::new(|_, _| {}))),
+            NetRule::new(domain("home.lan"), Allow)
+                .ports(PortSet::single(80))
+                .tcp_only()
+                .reaching_local_network(),
+            NetRule::new(domain("example.com"), Allow),
+            NetRule::new(domain("printer.lan"), Allow)
+                .reaching_local_network()
+                .ports(PortSet::single(631)),
+            NetRule::new(domain("printer.lan"), Deny).ports(PortSet::single(631)),
+        ]);
+        use Protocol::*;
+        assert!(policy.name_reaches_local_network("home.lan", 80, Tcp));
+        assert!(!policy.name_reaches_local_network("home.lan", 443, Tcp));
+        assert!(!policy.name_reaches_local_network("home.lan", 80, Udp));
+        // Allowed, but not for the local network.
+        assert!(!policy.name_reaches_local_network("example.com", 80, Tcp));
+        // Only asked about, so the address is asked about too.
+        assert!(!policy.name_reaches_local_network("other.lan", 80, Tcp));
+        // A later rule decides the name.
+        assert!(!policy.name_reaches_local_network("printer.lan", 631, Tcp));
     }
 
     #[test]

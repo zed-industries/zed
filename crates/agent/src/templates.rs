@@ -4,7 +4,6 @@ use handlebars::Handlebars;
 use project::Project;
 use serde::Serialize;
 use std::sync::Arc;
-use util::{get_default_system_shell_preferring_bash, shell::ShellKind};
 
 // Dev builds read the checkout's templates at runtime instead of embedding
 // them; see the `assets` crate for the rationale.
@@ -63,8 +62,10 @@ pub struct SystemPromptTemplate<'a> {
     /// section describes the right one rather than advertising a `$TMPDIR`
     /// that doesn't behave as stated.
     pub is_linux: bool,
-    /// Whether sandboxed terminal commands run through WSL on Windows.
+    /// Whether the host is Windows.
     pub is_windows: bool,
+    /// The shell terminal commands run in.
+    pub shell: String,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -75,7 +76,6 @@ impl Template for SystemPromptTemplate<'_> {
 pub struct SystemPromptEnvironment {
     os: &'static str,
     arch: &'static str,
-    shell: String,
 }
 
 impl SystemPromptEnvironment {
@@ -83,15 +83,10 @@ impl SystemPromptEnvironment {
         let Some(remote_client) = project.remote_client() else {
             return Self::local();
         };
-        let remote_client = remote_client.read(cx);
-        let platform = remote_client.remote_platform();
+        let platform = remote_client.read(cx).remote_platform();
         Self {
             os: platform.os.as_str(),
             arch: platform.arch.as_str(),
-            // The terminal tool uses the command shell, which can differ from the login shell.
-            shell: remote_client
-                .default_system_shell()
-                .unwrap_or_else(|| "unknown".to_owned()),
         }
     }
 
@@ -99,8 +94,6 @@ impl SystemPromptEnvironment {
         Self {
             os: std::env::consts::OS,
             arch: std::env::consts::ARCH,
-            shell: ShellKind::new(get_default_system_shell_preferring_bash(), cfg!(windows))
-                .to_string(),
         }
     }
 }
@@ -147,6 +140,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            shell: "bash".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -181,6 +175,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            shell: "bash".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -211,6 +206,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            shell: "bash".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -245,6 +241,7 @@ mod tests {
             sandboxing: true,
             is_linux: false,
             is_windows: false,
+            shell: "bash".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -289,6 +286,7 @@ mod tests {
             sandboxing: true,
             is_linux: true,
             is_windows: false,
+            shell: "bash".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -323,14 +321,14 @@ mod tests {
             sandboxing: true,
             is_linux: false,
             is_windows: true,
+            shell: "powershell".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
 
-        assert!(rendered.contains("commands run inside WSL under Bubblewrap"));
-        assert!(rendered.contains("Protected Git metadata remains read-only"));
-        assert!(rendered.contains("do not use this on Windows"));
-        assert!(rendered.contains("such requests are rejected"));
+        assert!(rendered.contains("inside a Windows AppContainer sandbox"));
+        assert!(rendered.contains("`.git` directories remain protected"));
+        assert!(rendered.contains("Host-scoped network access works through an HTTP/HTTPS proxy"));
         assert!(rendered.contains("allow_all_hosts: true"));
         assert!(rendered.contains("git --no-optional-locks status"));
         // Out-of-project `create_directory` grants aren't supported on Windows,
@@ -354,6 +352,7 @@ mod tests {
             sandboxing: true,
             is_linux: false,
             is_windows: false,
+            shell: "bash".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -377,6 +376,7 @@ mod tests {
             sandboxing: true,
             is_linux: false,
             is_windows: false,
+            shell: "bash".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -398,6 +398,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            shell: "bash".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -417,6 +418,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            shell: "bash".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

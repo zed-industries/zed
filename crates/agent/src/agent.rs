@@ -3805,14 +3805,11 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         // scope) at a client-side path would leak client environment into the
         // remote terminal and reference a directory that doesn't exist there.
         //
-        // Linux and Windows are excluded: the bwrap sandbox (run directly on
-        // Linux, and via WSL on Windows) already mounts a fresh, writable
-        // `tmpfs` over `/tmp`, so the environment looks like a normal
-        // filesystem with no special `$TMPDIR` (which would only make the
-        // sandbox more obviously Zed-specific). On Windows a per-thread
-        // `$TMPDIR` would also be a Windows path that's meaningless inside
-        // WSL, and adding it to the writable scope would bind a stray
-        // `/mnt/<drive>/...` path.
+        // Linux and Windows are excluded: the bwrap sandbox on Linux mounts a
+        // fresh, writable `tmpfs` over `/tmp`, and the Windows sandbox gives
+        // each command its own writable `%TEMP%`, so the environment looks like
+        // a normal filesystem with no special `$TMPDIR` (which would only make
+        // the sandbox more obviously Zed-specific).
         #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
         let mut extra_env = extra_env;
         #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
@@ -3854,6 +3851,12 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 Err(error) => return Task::ready(Err(error)),
             };
         }
+        let shell = match self.thread.read_with(cx, |thread, cx| {
+            crate::sandboxing::terminal_shell(thread.project().read(cx), cx)
+        }) {
+            Ok(shell) => shell,
+            Err(error) => return Task::ready(Err(error)),
+        };
         let task = self.acp_thread.update(cx, |thread, cx| {
             thread.create_terminal(
                 command,
@@ -3862,6 +3865,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 cwd,
                 output_byte_limit,
                 sandbox_wrap,
+                shell,
                 cx,
             )
         });
@@ -5979,7 +5983,10 @@ mod internal_tests {
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let unknown = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
             "_future",
-            std::collections::BTreeMap::from([("payload".into(), json!("private-payload"))]),
+            agent_client_protocol::schema::IndexMap::from([(
+                "payload".into(),
+                json!("private-payload"),
+            )]),
         ));
 
         for text in ["ordinary prompt", "/compact"] {

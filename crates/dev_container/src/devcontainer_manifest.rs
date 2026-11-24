@@ -2454,6 +2454,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             let container_started = !docker_inspect.is_running();
             if container_started {
                 log::debug!("Container not running. Will attempt to start, and then proceed");
+                self.run_initialize_commands().await?;
                 match self.dev_container().build_type() {
                     DevContainerBuildType::DockerCompose => {
                         let resources = self.docker_compose_manifest().await?;
@@ -5980,6 +5981,21 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             "compose resume should target requested services without recreating them, got: {:?}",
             command.args
         );
+    }
+
+    #[gpui::test]
+    async fn test_runs_initialize_command_before_restarting_container(cx: &mut TestAppContext) {
+        let json = r#"{"image": "image", "initializeCommand": ["touch", "marker"]}"#;
+        let (dependencies, mut manifest) =
+            init_default_devcontainer_manifest(cx, json).await.unwrap();
+        manifest.parse_nonremote_vars().unwrap();
+
+        // `FakeDocker` fails every start, so `touch` is recorded only if it runs first.
+        let result = manifest.check_for_existing_devcontainer().await;
+
+        assert!(matches!(result, Err(DevContainerError::DockerNotAvailable)));
+        let commands = dependencies.command_runner.commands_by_program("touch");
+        assert_eq!(commands.len(), 1);
     }
 
     #[cfg(not(target_os = "windows"))]
