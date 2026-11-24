@@ -188,16 +188,6 @@ impl Editor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn inline_value_inlays(&self, cx: &gpui::App) -> Vec<Inlay> {
-        self.display_map
-            .read(cx)
-            .current_inlays()
-            .filter(|inlay| matches!(inlay.id, InlayId::DebuggerValue(_)))
-            .cloned()
-            .collect()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
     pub fn all_inlays(&self, cx: &gpui::App) -> Vec<Inlay> {
         self.display_map
             .read(cx)

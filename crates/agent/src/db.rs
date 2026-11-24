@@ -26,7 +26,6 @@ use util::{ResultExt, path_list::PathList};
 use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
-pub type DbSummary = crate::legacy_thread::DetailedSummaryState;
 pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
 
 #[derive(Debug, Clone)]
@@ -79,6 +78,10 @@ pub struct DbThread {
     pub thinking_enabled: bool,
     #[serde(default)]
     pub thinking_effort: Option<String>,
+    #[serde(default)]
+    pub thread_only: bool,
+    #[serde(default)]
+    pub profile_downgraded_for_restricted_workspace: bool,
     #[serde(default)]
     pub draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
     #[serde(default)]
@@ -169,6 +172,8 @@ impl SharedThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            thread_only: false,
+            profile_downgraded_for_restricted_workspace: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
@@ -355,6 +360,8 @@ impl DbThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            thread_only: false,
+            profile_downgraded_for_restricted_workspace: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
@@ -979,6 +986,8 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            thread_only: false,
+            profile_downgraded_for_restricted_workspace: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,

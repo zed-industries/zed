@@ -70,10 +70,10 @@ impl State {
         );
 
         cx.spawn(async move |this, cx| {
-            let result = task.await?;
+            task.await?;
             this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
                 .ok();
-            Ok(result)
+            Ok(())
         })
     }
 
@@ -501,7 +501,7 @@ pub fn into_open_router(
                 }
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Compaction(_) => {}
+                MessageContent::Compaction(_) | MessageContent::ReasoningEffort { .. } => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         open_router::MessagePart::Image {

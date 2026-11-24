@@ -502,6 +502,7 @@ impl Room {
             id: self.id,
             reshared_projects,
             rejoined_projects,
+            resends_worktree_settings: true,
         });
 
         cx.spawn(async move |this, cx| {

@@ -1,20 +1,27 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
+use fs::Fs;
+use futures::{
+    StreamExt as _,
+    future::{self, Either},
+    stream,
+};
 use fuzzy::StringMatchCandidate;
 use git::repository::Worktree as GitWorktree;
 use gpui::{
-    Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
-    PromptLevel, Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window,
-    actions,
+    Action, AnyElement, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, Modifiers,
+    ModifiersChangedEvent, ParentElement, PromptLevel, Render, SharedString, Styled, Subscription,
+    Task, TaskExt, WeakEntity, Window, actions,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{
     DeltaClone, Event as ProjectEvent, Project, delta_checkout_short_name,
-    git_store::{GitStoreEvent, RepositoryEvent},
+    git_store::{GitStoreEvent, RepositoryEvent, RepositorySnapshot},
     repo_identity_path,
 };
 use ui::{
@@ -56,6 +63,7 @@ pub struct WorktreePicker {
     picker: Entity<Picker<WorktreePickerDelegate>>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
+    _load_group_checkouts: Option<Task<()>>,
 }
 
 impl WorktreePicker {
@@ -105,15 +113,40 @@ impl WorktreePicker {
             let repository = repository.read(cx);
             repo_identity_path(&repository.common_dir_abs_path, path_style).to_path_buf()
         });
+        let worktree_paths = project_ref.worktree_paths(cx);
         let delta_clone_path = repository.as_ref().and_then(|repository| {
             let common_dir_abs_path = &repository.read(cx).common_dir_abs_path;
-            project_ref
-                .worktree_paths(cx)
+            worktree_paths
                 .delta_clones()
                 .values()
                 .find(|clone| clone.path.as_path() == common_dir_abs_path.as_ref())
                 .map(|clone| clone.path.clone())
         });
+        let group_checkouts_request = repository
+            .as_ref()
+            .filter(|_| project_ref.is_local())
+            .and_then(|repository| {
+                let common_dir = repository.read(cx).common_dir_abs_path.clone();
+                let is_delta_checkout = delta_clone_path.is_some();
+                let source_common_dir = if is_delta_checkout {
+                    project_ref.visible_worktrees(cx).find_map(|worktree| {
+                        let snapshot = worktree.read(cx).snapshot();
+                        if snapshot.root_repo_common_dir() == Some(&common_dir) {
+                            snapshot.root_repo_source_common_dir().cloned()
+                        } else {
+                            None
+                        }
+                    })?
+                } else {
+                    common_dir.clone()
+                };
+                Some((
+                    source_common_dir,
+                    common_dir,
+                    is_delta_checkout,
+                    project_ref.fs().clone(),
+                ))
+            });
 
         let current_branch_name = repository.as_ref().and_then(|repo| {
             repo.read(cx)
@@ -122,9 +155,26 @@ impl WorktreePicker {
                 .map(|branch| branch.name().to_string())
         });
 
+        let snapshot_worktrees = repository
+            .as_ref()
+            .and_then(|repository| snapshot_worktrees(repository.read(cx)));
+        let has_snapshot_worktrees = snapshot_worktrees.is_some();
+        let snapshot_default_branch = repository.as_ref().and_then(|repository| {
+            repository
+                .read(cx)
+                .remote_default_branch
+                .as_deref()
+                .and_then(RemoteBranchName::parse)
+        });
+
         let all_worktrees_request = repository
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.worktrees()));
+
+        let git_binary_path_request = group_checkouts_request
+            .as_ref()
+            .and(repository.as_ref())
+            .map(|repository| repository.read(cx).git_binary_path(cx));
 
         let default_branch_request = repository.clone().map(|repository| {
             repository.update(cx, |repository, _| repository.default_branch(true))
@@ -134,7 +184,8 @@ impl WorktreePicker {
 
         let delegate = WorktreePickerDelegate {
             matches: initial_matches,
-            all_worktrees: Vec::new(),
+            all_worktrees: snapshot_worktrees.unwrap_or_default(),
+            group_checkouts: Vec::new(),
             matches_query: String::new(),
             keep_selection_on_update: false,
             worktrees_loaded: false,
@@ -149,7 +200,7 @@ impl WorktreePicker {
             workspace,
             focused_dock,
             current_branch_name,
-            default_branch: None,
+            default_branch: snapshot_default_branch,
             has_multiple_repositories,
             focus_handle: cx.focus_handle(),
             show_footer,
@@ -171,6 +222,13 @@ impl WorktreePicker {
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle;
         });
+        if has_snapshot_worktrees {
+            cx.defer_in(window, |worktree_picker, window, cx| {
+                worktree_picker.picker.update(cx, |picker, cx| {
+                    mark_worktrees_loaded(picker, window, cx);
+                });
+            });
+        }
 
         let mut subscriptions = Vec::new();
 
@@ -184,12 +242,12 @@ impl WorktreePicker {
                         }
                         Ok(Err(err)) => {
                             log::warn!("WorktreePicker: git worktree list failed: {err}");
-                            mark_worktrees_loaded(&picker_handle, cx);
+                            picker_handle.update_in(cx, mark_worktrees_loaded).ok();
                             return anyhow::Ok(());
                         }
                         Err(_) => {
                             log::warn!("WorktreePicker: worktree request was cancelled");
-                            mark_worktrees_loaded(&picker_handle, cx);
+                            picker_handle.update_in(cx, mark_worktrees_loaded).ok();
                             return anyhow::Ok(());
                         }
                     },
@@ -197,17 +255,26 @@ impl WorktreePicker {
                 };
 
                 let default_branch = match default_branch_request {
-                    Some(req) => req.await.ok().and_then(Result::ok).flatten(),
-                    None => None,
+                    Some(req) => req.await.ok().and_then(Result::ok),
+                    None => Some(None),
                 };
 
                 picker_handle.update_in(cx, |picker, window, cx| {
+                    let default_branch = match default_branch {
+                        Some(default_branch) => {
+                            default_branch.as_deref().and_then(RemoteBranchName::parse)
+                        }
+                        None => picker.delegate.default_branch.clone(),
+                    };
+                    let is_changed = picker.delegate.default_branch != default_branch
+                        || !same_worktrees(&picker.delegate.all_worktrees, &all_worktrees);
                     picker.delegate.all_worktrees = all_worktrees;
-                    picker.delegate.worktrees_loaded = true;
-                    picker.delegate.default_branch =
-                        default_branch.and_then(|branch| RemoteBranchName::parse(&branch));
-                    picker.delegate.refresh_project_worktree_paths(window, cx);
-                    picker.refresh(window, cx);
+                    picker.delegate.default_branch = default_branch;
+                    if !picker.delegate.worktrees_loaded {
+                        mark_worktrees_loaded(picker, window, cx);
+                    } else if is_changed {
+                        refresh_keeping_selection(picker, window, cx);
+                    }
                 })?;
 
                 anyhow::Ok(())
@@ -259,10 +326,73 @@ impl WorktreePicker {
             cx.emit(DismissEvent);
         }));
 
+        let load_group_checkouts = group_checkouts_request.zip(git_binary_path_request).map(
+            |((source_common_dir, listed_common_dir, include_source, fs), git_binary_path)| {
+                let picker = picker.downgrade();
+                cx.spawn_in(window, async move |_, cx| {
+                    let git_binary_path = git_binary_path.await;
+                    let source_checkout = include_source
+                        .then(|| git_binary_path.clone())
+                        .flatten()
+                        .map(|git_binary_path| {
+                            let source_common_dir = source_common_dir.clone();
+                            let fs = fs.clone();
+                            cx.background_spawn(async move {
+                                load_source_checkout(
+                                    &source_common_dir,
+                                    &git_binary_path,
+                                    fs.as_ref(),
+                                )
+                                .await
+                            })
+                        });
+                    let mut group_checkouts = cx
+                        .background_spawn(async move {
+                            load_delta_checkouts(
+                                &source_common_dir,
+                                Some(&listed_common_dir),
+                                git_binary_path,
+                                fs,
+                                path_style,
+                            )
+                            .await
+                        })
+                        .await;
+                    let mut late_source_checkout = None;
+                    if let Some(source_checkout) = source_checkout {
+                        let source_checkout_wait =
+                            cx.background_executor().timer(SOURCE_CHECKOUT_WAIT);
+                        match future::select(source_checkout, source_checkout_wait).await {
+                            Either::Left((source_checkout, _)) => {
+                                group_checkouts.extend(source_checkout);
+                            }
+                            Either::Right((_, source_checkout)) => {
+                                late_source_checkout = Some(source_checkout);
+                            }
+                        }
+                    }
+                    let Ok(()) = picker.update_in(cx, |picker, window, cx| {
+                        apply_group_checkouts(picker, group_checkouts, window, cx);
+                    }) else {
+                        return;
+                    };
+                    if let Some(source_checkout) = late_source_checkout {
+                        let source_checkout = Vec::from_iter(source_checkout.await);
+                        picker
+                            .update_in(cx, |picker, window, cx| {
+                                apply_group_checkouts(picker, source_checkout, window, cx);
+                            })
+                            .ok();
+                    }
+                })
+            },
+        );
+
         Self {
             focus_handle: picker.focus_handle(cx),
             picker,
             _subscriptions: subscriptions,
+            _load_group_checkouts: load_group_checkouts,
         }
     }
 
@@ -335,6 +465,11 @@ enum WorktreeEntry {
         positions: Vec<usize>,
         branch_positions: Vec<usize>,
     },
+    ClosedCheckout {
+        checkout: GroupCheckout,
+        positions: Vec<usize>,
+        branch_positions: Vec<usize>,
+    },
     CreateNamed {
         name: String,
         from_branch: Option<RemoteBranchName>,
@@ -360,6 +495,13 @@ impl WorktreeEntry {
                     ..
                 },
             ) => open_workspace.workspace == other_open_workspace.workspace,
+            (
+                Self::ClosedCheckout { checkout, .. },
+                Self::ClosedCheckout {
+                    checkout: other_checkout,
+                    ..
+                },
+            ) => checkout.path == other_checkout.path,
             _ => false,
         }
     }
@@ -373,11 +515,20 @@ struct OpenWorkspace {
     paths: String,
 }
 
+#[derive(Clone)]
+struct GroupCheckout {
+    path: PathBuf,
+    name: String,
+    branch: Option<String>,
+    is_source: bool,
+}
+
 struct WorktreePickerDelegate {
     matches: Vec<WorktreeEntry>,
     matches_query: String,
     keep_selection_on_update: bool,
     all_worktrees: Vec<GitWorktree>,
+    group_checkouts: Vec<GroupCheckout>,
     worktrees_loaded: bool,
     observed_workspaces: Vec<EntityId>,
     observed_git_stores: Vec<EntityId>,
@@ -413,15 +564,74 @@ fn worktree_name_anchor<'a>(
 }
 
 fn mark_worktrees_loaded(
-    picker: &WeakEntity<Picker<WorktreePickerDelegate>>,
-    cx: &mut gpui::AsyncWindowContext,
+    picker: &mut Picker<WorktreePickerDelegate>,
+    window: &mut Window,
+    cx: &mut Context<Picker<WorktreePickerDelegate>>,
 ) {
+    if picker.delegate.worktrees_loaded {
+        return;
+    }
+    picker.delegate.worktrees_loaded = true;
+    picker.delegate.refresh_project_worktree_paths(window, cx);
+    picker.refresh(window, cx);
+}
+
+fn snapshot_worktrees(repository: &RepositorySnapshot) -> Option<Vec<GitWorktree>> {
+    if repository.scan_id == 0 {
+        return None;
+    }
+    let current_worktree = GitWorktree {
+        path: repository.work_directory_abs_path.to_path_buf(),
+        ref_name: repository
+            .branch
+            .as_ref()
+            .map(|branch| branch.ref_name.clone()),
+        sha: repository
+            .head_commit
+            .as_ref()
+            .map(|head_commit| head_commit.sha.clone())
+            .unwrap_or_default(),
+        is_main: !repository.is_linked_worktree(),
+        is_bare: false,
+    };
+    Some(
+        std::iter::once(current_worktree)
+            .chain(
+                repository
+                    .linked_worktrees()
+                    .iter()
+                    .filter(|worktree| !worktree.is_bare)
+                    .cloned(),
+            )
+            .collect(),
+    )
+}
+
+fn same_worktrees(shown: &[GitWorktree], refreshed: &[GitWorktree]) -> bool {
+    shown.len() == refreshed.len() && refreshed.iter().all(|worktree| shown.contains(worktree))
+}
+
+fn apply_group_checkouts(
+    picker: &mut Picker<WorktreePickerDelegate>,
+    group_checkouts: Vec<GroupCheckout>,
+    window: &mut Window,
+    cx: &mut Context<Picker<WorktreePickerDelegate>>,
+) {
+    if group_checkouts.is_empty() {
+        return;
+    }
+    let keeps_selection = picker.delegate.matches_query.is_empty()
+        || picker.delegate.selected_index != picker.delegate.default_selected_index();
+    picker.delegate.group_checkouts.extend(group_checkouts);
     picker
-        .update_in(cx, |picker, window, cx| {
-            picker.delegate.worktrees_loaded = true;
-            picker.refresh(window, cx);
-        })
-        .ok();
+        .delegate
+        .group_checkouts
+        .sort_by_key(|checkout| !checkout.is_source);
+    if keeps_selection {
+        refresh_keeping_selection(picker, window, cx);
+    } else {
+        picker.refresh(window, cx);
+    }
 }
 
 fn refresh_keeping_selection(
@@ -454,6 +664,255 @@ fn worktree_row_name(
         })
         .map(String::from)
         .unwrap_or_else(|| worktree.directory_name(name_anchor_path, path_style))
+}
+
+async fn load_source_checkout(
+    source_common_dir: &Path,
+    git_binary_path: &Path,
+    fs: &dyn Fs,
+) -> Option<GroupCheckout> {
+    let (path, branch) = source_checkout_path(source_common_dir, git_binary_path, fs).await?;
+    Some(GroupCheckout {
+        path,
+        name: "main worktree".to_string(),
+        branch,
+        is_source: true,
+    })
+}
+
+const MAX_CONCURRENT_BRANCH_LOOKUPS: usize = 16;
+const SOURCE_CHECKOUT_WAIT: Duration = Duration::from_millis(500);
+
+async fn load_delta_checkouts(
+    source_common_dir: &Path,
+    listed_common_dir: Option<&Path>,
+    git_binary_path: Option<PathBuf>,
+    fs: Arc<dyn Fs>,
+    path_style: PathStyle,
+) -> Vec<GroupCheckout> {
+    let discovered_checkouts = project::git_store::discover_delta_checkouts(
+        source_common_dir,
+        listed_common_dir,
+        fs.as_ref(),
+    )
+    .await;
+    let mut delta_checkouts =
+        stream::iter(discovered_checkouts.into_iter().filter_map(|checkout| {
+            let checkout_path = checkout.clone.checkout_path.clone()?;
+            let fs = fs.clone();
+            let git_binary_path = git_binary_path.clone();
+            Some(async move {
+                let branch = checkout_branch_name(
+                    &checkout_path,
+                    &checkout.repository_dir,
+                    git_binary_path.as_deref(),
+                    fs.as_ref(),
+                )
+                .await;
+                let name = if checkout.is_delta_clone {
+                    delta_checkout_short_name(&checkout.clone, &checkout_path, path_style)
+                        .map(String::from)
+                        .unwrap_or_else(|| checkout_path.compact().to_string_lossy().into_owned())
+                } else {
+                    worktree_row_name(
+                        &GitWorktree {
+                            path: checkout_path.clone(),
+                            ref_name: None,
+                            sha: SharedString::default(),
+                            is_main: false,
+                            is_bare: false,
+                        },
+                        Some(repo_identity_path(source_common_dir, path_style)),
+                        None,
+                        path_style,
+                    )
+                };
+                GroupCheckout {
+                    path: checkout_path,
+                    name,
+                    branch,
+                    is_source: false,
+                }
+            })
+        }))
+        .buffer_unordered(MAX_CONCURRENT_BRANCH_LOOKUPS)
+        .collect::<Vec<_>>()
+        .await;
+    delta_checkouts.sort_by(|a, b| a.name.cmp(&b.name));
+    delta_checkouts
+}
+
+async fn ensure_checkout_available(checkout_path: &Path, fs: &dyn Fs) -> anyhow::Result<()> {
+    let is_available = fs
+        .canonicalize(checkout_path)
+        .await
+        .is_ok_and(|canonical_path| canonical_path == checkout_path)
+        && fs.is_dir(checkout_path).await;
+    anyhow::ensure!(is_available, "{checkout_path:?} is no longer available");
+    Ok(())
+}
+
+fn report_checkout_open_error(
+    workspace: &WeakEntity<Workspace>,
+    error: anyhow::Error,
+    cx: &mut AsyncWindowContext,
+) {
+    workspace
+        .update(cx, |_, cx| {
+            show_error_toast(
+                cx.entity(),
+                "worktree switch",
+                anyhow::anyhow!("{error:#}"),
+                cx,
+            );
+        })
+        .ok();
+}
+
+async fn source_checkout_path(
+    source_common_dir: &Path,
+    git_binary_path: &Path,
+    fs: &dyn Fs,
+) -> Option<(PathBuf, Option<String>)> {
+    let identity_path = repo_identity_path(source_common_dir, PathStyle::local());
+    if identity_path != source_common_dir
+        && let Some(source_checkout) =
+            verified_source_checkout(identity_path, source_common_dir, git_binary_path, fs).await
+    {
+        return Some(source_checkout);
+    }
+    let configured_worktree = configured_worktree(git_binary_path, source_common_dir, fs).await?;
+    verified_source_checkout(&configured_worktree, source_common_dir, git_binary_path, fs).await
+}
+
+async fn configured_worktree(
+    git_binary_path: &Path,
+    git_dir: &Path,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    let value = fs
+        .git_command(
+            git_binary_path,
+            git_dir,
+            [
+                "--git-dir",
+                ".",
+                "config",
+                "-z",
+                "--default=",
+                "--get",
+                "core.worktree",
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .await
+        .log_with_level(log::Level::Debug)?;
+    let value = value.trim_suffix('\0');
+    (!value.is_empty()).then(|| git_dir.join(value))
+}
+
+async fn verified_source_checkout(
+    candidate: &Path,
+    source_common_dir: &Path,
+    git_binary_path: &Path,
+    fs: &dyn Fs,
+) -> Option<(PathBuf, Option<String>)> {
+    let candidate = fs.canonicalize(candidate).await.ok()?;
+    let work_tree_output = git_output(
+        git_binary_path,
+        &candidate,
+        &[
+            "rev-parse",
+            "--is-inside-work-tree",
+            "--show-prefix",
+            "--git-common-dir",
+        ],
+        fs,
+    )
+    .await?;
+    let common_dir = work_tree_output.strip_prefix("true\n\n")?;
+    let common_dir = fs
+        .canonicalize(&candidate.join(last_output_field(common_dir)))
+        .await
+        .ok()?;
+    if common_dir != source_common_dir {
+        return None;
+    }
+    let git_dir = if candidate.join(".git") == source_common_dir {
+        common_dir
+    } else {
+        let git_dir = git_output(
+            git_binary_path,
+            &candidate,
+            &["rev-parse", "--absolute-git-dir"],
+            fs,
+        )
+        .await?;
+        fs.canonicalize(Path::new(last_output_field(&git_dir)))
+            .await
+            .ok()?
+    };
+    if git_dir != source_common_dir {
+        return None;
+    }
+    let branch = checkout_branch_name(&candidate, &git_dir, Some(git_binary_path), fs).await;
+    Some((candidate, branch))
+}
+
+async fn git_output(
+    git_binary_path: &Path,
+    work_directory: &Path,
+    args: &[&str],
+    fs: &dyn Fs,
+) -> Option<String> {
+    fs.git_command(
+        git_binary_path,
+        work_directory,
+        args.iter().copied().map(String::from).collect(),
+    )
+    .await
+    .log_with_level(log::Level::Debug)
+}
+
+fn last_output_field(output: &str) -> &str {
+    output.trim_suffix('\n')
+}
+
+async fn current_branch_name(
+    checkout_path: &Path,
+    git_binary_path: &Path,
+    fs: &dyn Fs,
+) -> Option<String> {
+    let branch = git_output(
+        git_binary_path,
+        checkout_path,
+        &["symbolic-ref", "--quiet", "HEAD"],
+        fs,
+    )
+    .await?;
+    branch
+        .trim_end_matches(['\n', '\r'])
+        .strip_prefix("refs/heads/")
+        .filter(|branch| !branch.is_empty())
+        .map(str::to_owned)
+}
+
+async fn checkout_branch_name(
+    checkout_path: &Path,
+    git_dir: &Path,
+    git_binary_path: Option<&Path>,
+    fs: &dyn Fs,
+) -> Option<String> {
+    let head_path = git_dir.join("HEAD");
+    if !fs.is_file(&head_path).await {
+        return None;
+    }
+    let head = fs.load(&head_path).await.ok()?;
+    match head.trim().strip_prefix("ref: refs/heads/") {
+        Some(".invalid") => current_branch_name(checkout_path, git_binary_path?, fs).await,
+        branch => branch.map(str::to_owned),
+    }
 }
 
 fn single_repository_branch_name(workspace: &Entity<Workspace>, cx: &App) -> Option<String> {
@@ -646,6 +1105,23 @@ impl WorktreePickerDelegate {
             .collect::<Vec<_>>();
         open_workspaces.sort_by(|a, b| a.name.cmp(&b.name));
         open_workspaces
+    }
+
+    fn closed_group_checkouts(&self) -> Vec<GroupCheckout> {
+        if !self.worktrees_loaded {
+            return Vec::new();
+        }
+        self.group_checkouts
+            .iter()
+            .filter(|checkout| {
+                !self.project_worktree_paths.contains(&checkout.path)
+                    && !self
+                        .all_worktrees
+                        .iter()
+                        .any(|worktree| worktree.path == checkout.path)
+            })
+            .cloned()
+            .collect()
     }
 
     fn observe_window_workspaces(
@@ -1053,26 +1529,28 @@ impl WorktreePickerDelegate {
     }
 
     fn sync_selected_index(&mut self, has_query: bool) {
-        if !has_query {
-            return;
+        if has_query {
+            self.selected_index = self.default_selected_index();
         }
+    }
 
-        if let Some(index) = self.matches.iter().position(|entry| {
-            matches!(
-                entry,
-                WorktreeEntry::Worktree { .. } | WorktreeEntry::OpenWorkspace { .. }
-            )
-        }) {
-            self.selected_index = index;
-        } else if let Some(index) = self
-            .matches
+    fn default_selected_index(&self) -> usize {
+        self.matches
             .iter()
-            .position(|entry| matches!(entry, WorktreeEntry::CreateNamed { .. }))
-        {
-            self.selected_index = index;
-        } else {
-            self.selected_index = 0;
-        }
+            .position(|entry| {
+                matches!(
+                    entry,
+                    WorktreeEntry::Worktree { .. }
+                        | WorktreeEntry::OpenWorkspace { .. }
+                        | WorktreeEntry::ClosedCheckout { .. }
+                )
+            })
+            .or_else(|| {
+                self.matches
+                    .iter()
+                    .position(|entry| matches!(entry, WorktreeEntry::CreateNamed { .. }))
+            })
+            .unwrap_or(0)
     }
 }
 
@@ -1125,6 +1603,7 @@ impl PickerDelegate for WorktreePickerDelegate {
         let keep_selection = std::mem::take(&mut self.keep_selection_on_update);
         let open_workspaces = self.other_open_workspaces(window, cx);
         self.observe_window_workspaces(&open_workspaces, window, cx);
+        let closed_checkouts = self.closed_group_checkouts();
 
         let normalized_query = query.replace(' ', "-");
         let worktree_name_anchor = self.worktree_name_anchor().map(Path::to_path_buf);
@@ -1157,7 +1636,10 @@ impl PickerDelegate for WorktreePickerDelegate {
         if query.is_empty() {
             let mut matches = self.build_fixed_entries();
 
-            if !repo_worktrees.is_empty() || !open_workspaces.is_empty() {
+            if !repo_worktrees.is_empty()
+                || !open_workspaces.is_empty()
+                || !closed_checkouts.is_empty()
+            {
                 let project_paths = &self.project_worktree_paths;
 
                 let sort_by_name = |a: &GitWorktree, b: &GitWorktree| row_name(a).cmp(&row_name(b));
@@ -1169,6 +1651,15 @@ impl PickerDelegate for WorktreePickerDelegate {
                         branch_positions: Vec::new(),
                     }
                 });
+                let has_closed_checkouts = !closed_checkouts.is_empty();
+                let closed_checkout_entries =
+                    closed_checkouts
+                        .into_iter()
+                        .map(|checkout| WorktreeEntry::ClosedCheckout {
+                            checkout,
+                            positions: Vec::new(),
+                            branch_positions: Vec::new(),
+                        });
 
                 let (mut open_here, mut others): (Vec<_>, Vec<_>) = repo_worktrees
                     .into_iter()
@@ -1189,7 +1680,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                     }
                     matches.extend(open_workspace_entries);
 
-                    if !others.is_empty() {
+                    if !others.is_empty() || has_closed_checkouts {
                         matches.push(WorktreeEntry::Separator);
                     }
 
@@ -1209,6 +1700,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                         });
                     }
                 }
+                matches.extend(closed_checkout_entries);
             }
 
             self.set_matches(matches, query, keep_selection);
@@ -1229,6 +1721,13 @@ impl PickerDelegate for WorktreePickerDelegate {
                 &open_workspace.name,
             ));
             if let Some(branch) = &open_workspace.branch {
+                candidates.push(StringMatchCandidate::new(row_index * 2 + 1, branch));
+            }
+        }
+        for (index, checkout) in closed_checkouts.iter().enumerate() {
+            let row_index = repo_worktrees.len() + open_workspaces.len() + index;
+            candidates.push(StringMatchCandidate::new(row_index * 2, &checkout.name));
+            if let Some(branch) = &checkout.branch {
                 candidates.push(StringMatchCandidate::new(row_index * 2 + 1, branch));
             }
         }
@@ -1276,6 +1775,15 @@ impl PickerDelegate for WorktreePickerDelegate {
                                 positions: Vec::new(),
                                 branch_positions: Vec::new(),
                             }
+                        } else if let Some(checkout) = worktree_index
+                            .checked_sub(repo_worktrees_clone.len() + open_workspaces.len())
+                            .and_then(|index| closed_checkouts.get(index))
+                        {
+                            WorktreeEntry::ClosedCheckout {
+                                checkout: checkout.clone(),
+                                positions: Vec::new(),
+                                branch_positions: Vec::new(),
+                            }
                         } else {
                             continue;
                         };
@@ -1293,6 +1801,11 @@ impl PickerDelegate for WorktreePickerDelegate {
                                 ..
                             }
                             | WorktreeEntry::OpenWorkspace {
+                                positions,
+                                branch_positions,
+                                ..
+                            }
+                            | WorktreeEntry::ClosedCheckout {
                                 positions,
                                 branch_positions,
                                 ..
@@ -1447,6 +1960,101 @@ impl PickerDelegate for WorktreePickerDelegate {
                     }
                 }
             }
+            WorktreeEntry::ClosedCheckout { checkout, .. } => {
+                let checkout_path = checkout.path.clone();
+                let fs = self.project.read(cx).fs().clone();
+                if secondary {
+                    let source_workspace = self.workspace.clone();
+                    window
+                        .spawn(cx, async move |cx| {
+                            match ensure_checkout_available(&checkout_path, fs.as_ref()).await {
+                                Ok(()) => {
+                                    source_workspace
+                                        .update_in(cx, |workspace, window, cx| {
+                                            open_worktree_paths_in_new_window(
+                                                workspace,
+                                                vec![checkout_path],
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                                Err(error) => {
+                                    report_checkout_open_error(&source_workspace, error, cx)
+                                }
+                            }
+                        })
+                        .detach();
+                } else if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten()
+                    && let Some(workspace) = self.workspace.upgrade()
+                    && workspace
+                        .read(cx)
+                        .active_worktree_creation()
+                        .label
+                        .is_none()
+                {
+                    let (_, non_git_paths) = classify_worktrees(self.project.read(cx), cx);
+                    let paths = switch_worktree_paths(&checkout_path, &non_git_paths);
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.set_active_worktree_creation(
+                            Some(SharedString::from(checkout.name.clone())),
+                            true,
+                            cx,
+                        );
+                    });
+                    let source_workspace = workspace.downgrade();
+                    let multi_workspace = multi_workspace.downgrade();
+                    window
+                        .spawn(cx, async move |cx| {
+                            let opened = match ensure_checkout_available(
+                                &checkout_path,
+                                fs.as_ref(),
+                            )
+                            .await
+                            {
+                                Ok(()) => {
+                                    let Ok(open_task) = multi_workspace.update_in(
+                                        cx,
+                                        |multi_workspace, window, cx| {
+                                            multi_workspace.find_or_create_local_workspace(
+                                                PathList::new(&paths),
+                                                None,
+                                                None,
+                                                OpenMode::Add,
+                                                None,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    ) else {
+                                        return;
+                                    };
+                                    open_task.await
+                                }
+                                Err(error) => Err(error),
+                            };
+                            source_workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.set_active_worktree_creation(None, false, cx);
+                                })
+                                .ok();
+                            match opened {
+                                Ok(workspace) => {
+                                    multi_workspace
+                                        .update_in(cx, |multi_workspace, window, cx| {
+                                            multi_workspace.activate(workspace, None, window, cx);
+                                        })
+                                        .ok();
+                                }
+                                Err(error) => {
+                                    report_checkout_open_error(&source_workspace, error, cx)
+                                }
+                            }
+                        })
+                        .detach();
+                }
+            }
             WorktreeEntry::CreateNamed {
                 name,
                 from_branch,
@@ -1546,67 +2154,28 @@ impl PickerDelegate for WorktreePickerDelegate {
                 open_workspace,
                 positions,
                 branch_positions,
-            } => Some(
-                ListItem::new(SharedString::from(format!("open-workspace-{ix}")))
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2p5()
-                            .child(
-                                Icon::new(IconName::GitWorktree)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small),
-                            )
-                            .child(
-                                v_flex()
-                                    .w_full()
-                                    .min_w_0()
-                                    .child(
-                                        HighlightedLabel::new(
-                                            open_workspace.name.clone(),
-                                            positions.clone(),
-                                        )
-                                        .truncate(),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .w_full()
-                                            .min_w_0()
-                                            .gap_1p5()
-                                            .when_some(
-                                                open_workspace.branch.clone(),
-                                                |this, branch| {
-                                                    this.child(
-                                                        HighlightedLabel::new(
-                                                            branch,
-                                                            branch_positions.clone(),
-                                                        )
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                    )
-                                                    .child(
-                                                        Label::new("\u{2022}")
-                                                            .alpha(0.5)
-                                                            .color(Color::Muted)
-                                                            .size(LabelSize::Small),
-                                                    )
-                                                },
-                                            )
-                                            .child(
-                                                Label::new(open_workspace.paths.clone())
-                                                    .truncate_start()
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small)
-                                                    .flex_1(),
-                                            ),
-                                    ),
-                            ),
-                    )
-                    .into_any_element(),
-            ),
+            } => Some(render_workspace_row(
+                SharedString::from(format!("open-workspace-{ix}")),
+                open_workspace.name.clone(),
+                positions.clone(),
+                open_workspace.branch.clone(),
+                branch_positions.clone(),
+                open_workspace.paths.clone(),
+                selected,
+            )),
+            WorktreeEntry::ClosedCheckout {
+                checkout,
+                positions,
+                branch_positions,
+            } => Some(render_workspace_row(
+                SharedString::from(format!("closed-checkout-{ix}")),
+                checkout.name.clone(),
+                positions.clone(),
+                checkout.branch.clone(),
+                branch_positions.clone(),
+                checkout.path.compact().to_string_lossy().into_owned(),
+                selected,
+            )),
             WorktreeEntry::Worktree {
                 worktree,
                 positions,
@@ -1899,8 +2468,12 @@ impl PickerDelegate for WorktreePickerDelegate {
 
         let is_existing_worktree =
             selected_entry.is_some_and(|e| matches!(e, WorktreeEntry::Worktree { .. }));
-        let is_open_workspace =
-            selected_entry.is_some_and(|e| matches!(e, WorktreeEntry::OpenWorkspace { .. }));
+        let is_open_workspace = selected_entry.is_some_and(|e| {
+            matches!(
+                e,
+                WorktreeEntry::OpenWorkspace { .. } | WorktreeEntry::ClosedCheckout { .. }
+            )
+        });
 
         let can_delete = selected_entry.is_some_and(|e| {
             matches!(e, WorktreeEntry::Worktree { worktree, .. } if self.can_delete_worktree(worktree))
@@ -2020,6 +2593,64 @@ impl PickerDelegate for WorktreePickerDelegate {
             None
         }
     }
+}
+
+fn render_workspace_row(
+    id: SharedString,
+    name: String,
+    positions: Vec<usize>,
+    branch: Option<String>,
+    branch_positions: Vec<usize>,
+    paths: String,
+    selected: bool,
+) -> AnyElement {
+    ListItem::new(id)
+        .inset(true)
+        .spacing(ListItemSpacing::Sparse)
+        .toggle_state(selected)
+        .child(
+            h_flex()
+                .w_full()
+                .gap_2p5()
+                .child(
+                    Icon::new(IconName::GitWorktree)
+                        .color(Color::Muted)
+                        .size(IconSize::Small),
+                )
+                .child(
+                    v_flex()
+                        .w_full()
+                        .min_w_0()
+                        .child(HighlightedLabel::new(name, positions).truncate())
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .gap_1p5()
+                                .when_some(branch, |this, branch| {
+                                    this.child(
+                                        HighlightedLabel::new(branch, branch_positions)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("\u{2022}")
+                                            .alpha(0.5)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    )
+                                })
+                                .child(
+                                    Label::new(paths)
+                                        .truncate_start()
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small)
+                                        .flex_1(),
+                                ),
+                        ),
+                ),
+        )
+        .into_any_element()
 }
 
 fn create_new_list_item(
@@ -2190,14 +2821,15 @@ pub async fn open_remote_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::{FakeFs, Fs as _, RemoveOptions};
-    use gpui::{AppContext, TestAppContext, VisualTestContext};
+    use fs::{FakeFs, RemoveOptions, RenameOptions};
+    use gpui::{AnyWindowHandle, AppContext, TestAppContext, VisualTestContext};
     use project::project_settings::ProjectSettings;
     use project::{Project, WorktreeSettings};
     use serde_json::json;
     use settings::Settings as _;
     use settings::SettingsStore;
     use util::path;
+    use util::paths::SanitizedPath;
     use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -3095,6 +3727,17 @@ mod tests {
                 "open: project/thread-alpha • notes (Some(\"feature-x\"))".to_string(),
             ]
         );
+        let (project, workspace) = worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            let delegate = &worktree_picker.picker.read(cx).delegate;
+            (delegate.project.clone(), delegate.workspace.clone())
+        });
+        let reopened_picker = cx
+            .update(|window, cx| cx.new(|cx| WorktreePicker::new(project, workspace, window, cx)));
+        assert_eq!(
+            picker_rows(&reopened_picker, &mut cx),
+            picker_rows(&worktree_picker, &mut cx),
+            "a picker opened after loading shows the same rows before any Git request returns"
+        );
 
         set_picker_query(&worktree_picker, "tree", &mut cx);
         select_picker_row(
@@ -3441,6 +4084,1327 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_closed_delta_checkouts_of_the_source_are_listed(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        let delta_clone = |branch: &str, source: &str| {
+            json!({
+                "HEAD": format!("ref: refs/heads/{branch}\n"),
+                "config": "[core]\n\tbare = false\n",
+                "delta": { "copy-baseline": "" },
+                "objects": { "info": { "alternates": format!("{source}\n") } },
+            })
+        };
+        let delta_checkout = |namespace: &str| {
+            json!({
+                ".git": format!(
+                    "gitdir: {}/{namespace}/project.git\n",
+                    path!("/root/project/.delta/clones")
+                ),
+            })
+        };
+        let source_objects = path!("/root/project/.git/objects");
+        let mut gamma_clone = delta_clone("feature-g", source_objects);
+        gamma_clone["worktrees"] = json!({
+            "epsilon": {
+                "HEAD": "ref: refs/heads/feature-e\n",
+                "commondir": "../..",
+                "gitdir": format!(
+                    "{}\n",
+                    path!("/root/project/.delta/worktrees/epsilon/project/.git")
+                ),
+            },
+        });
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    ".git": {
+                        "HEAD": "ref: refs/heads/main\n",
+                        "info": { "exclude": "/.delta/worktrees/\n/.delta/clones/\n" },
+                        "worktrees": {
+                            "self": {
+                                "HEAD": "ref: refs/heads/main\n",
+                                "commondir": "../..",
+                                "gitdir": format!("{}\n", path!("/root/project/.git")),
+                            },
+                        },
+                    },
+                    ".delta": {
+                        "clones": {
+                            "alpha": { "project.git": delta_clone("feature-a", source_objects) },
+                            "beta": { "project.git": delta_clone("feature-b", source_objects) },
+                            "gamma": { "project.git": gamma_clone },
+                            "zeta": { "project.git": delta_clone("feature-z", source_objects) },
+                            "foreign": {
+                                "project.git": delta_clone(
+                                    "feature-f",
+                                    path!("/root/other/.git/objects"),
+                                ),
+                            },
+                        },
+                        "mounted": { "zeta": { "project": delta_checkout("zeta") } },
+                        "worktrees": {
+                            "alpha": { "project": delta_checkout("alpha") },
+                            "beta": { "project": delta_checkout("beta") },
+                            "gamma": { "project": delta_checkout("gamma") },
+                            "epsilon": {
+                                "project": {
+                                    ".git": format!(
+                                        "gitdir: {}\n",
+                                        path!(
+                                            "/root/project/.delta/clones/gamma/project.git/worktrees/epsilon"
+                                        )
+                                    ),
+                                },
+                            },
+                            "foreign": { "project": delta_checkout("foreign") },
+                            "plain": { "project": { "file.txt": "" } },
+                        },
+                    },
+                    "file.txt": "buffer_text",
+                },
+                "other": { ".git": {} },
+            }),
+        )
+        .await;
+        fs.create_symlink(
+            Path::new(path!("/root/project/.delta/worktrees/zeta")),
+            PathBuf::from(path!("/root/project/.delta/mounted/zeta")),
+        )
+        .await
+        .unwrap();
+        let alpha_path = PathBuf::from(path!("/root/project/.delta/worktrees/alpha/project"));
+        let beta_path = PathBuf::from(path!("/root/project/.delta/worktrees/beta/project"));
+        let gamma_path = PathBuf::from(path!("/root/project/.delta/worktrees/gamma/project"));
+        fs.set_branch_name(&alpha_path.join(".git"), Some("feature-a"));
+        fs.set_branch_name(&beta_path.join(".git"), Some("feature-b"));
+        let beta_project = Project::test(fs.clone(), [beta_path.as_path()], cx).await;
+        let alpha_project = Project::test(fs.clone(), [alpha_path.as_path()], cx).await;
+        let (worktree_picker, window_handle, _, mut cx) =
+            init_worktree_picker_with_open_workspace(beta_project, alpha_project, cx).await;
+
+        assert_eq!(
+            picker_rows(&worktree_picker, &mut cx),
+            vec![
+                "[This Window]".to_string(),
+                format!("git: {}", beta_path.display()),
+                "open: alpha (Some(\"feature-a\"))".to_string(),
+                "closed: gamma (Some(\"feature-g\"))".to_string(),
+                "closed: gamma/project/epsilon/project (Some(\"feature-e\"))".to_string(),
+            ]
+        );
+
+        let group_checkouts = worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                std::mem::take(&mut picker.delegate.group_checkouts)
+            })
+        });
+        set_picker_query(&worktree_picker, "feature-g", &mut cx);
+        let selected_before_scan = selected_picker_row(&worktree_picker, &mut cx);
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                apply_group_checkouts(picker, group_checkouts, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            (
+                selected_before_scan,
+                selected_picker_row(&worktree_picker, &mut cx)
+            ),
+            (
+                Some("create: named".to_string()),
+                Some("closed: gamma (Some(\"feature-g\"))".to_string())
+            ),
+            "checkouts found after a query was typed take the selection from the create row"
+        );
+
+        let group_checkouts = worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                std::mem::take(&mut picker.delegate.group_checkouts)
+            })
+        });
+        set_picker_query(&worktree_picker, "feature", &mut cx);
+        select_picker_row(
+            &worktree_picker,
+            |entry| matches!(entry, WorktreeEntry::Worktree { .. }),
+            &mut cx,
+        );
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                apply_group_checkouts(picker, group_checkouts, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            selected_picker_row(&worktree_picker, &mut cx),
+            Some(format!("git: {}", beta_path.display())),
+            "a row picked with the keyboard stays selected when checkouts are found"
+        );
+
+        set_picker_query(&worktree_picker, "feature-e", &mut cx);
+        assert_eq!(
+            picker_rows(&worktree_picker, &mut cx),
+            vec!["closed: gamma/project/epsilon/project (Some(\"feature-e\"))".to_string()]
+        );
+        let epsilon_path = Path::new(path!("/root/project/.delta/worktrees/epsilon"));
+        fs.rename(
+            epsilon_path,
+            Path::new(path!("/root/project/.delta/worktrees/epsilon-renamed")),
+            RenameOptions::default(),
+        )
+        .await
+        .unwrap();
+        for secondary in [true, false] {
+            worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+                worktree_picker.picker.update(cx, |picker, cx| {
+                    picker.delegate.confirm(secondary, window, cx);
+                })
+            });
+            cx.run_until_parked();
+        }
+        fs.insert_symlink(
+            epsilon_path,
+            PathBuf::from(path!("/root/project/.delta/worktrees/gamma")),
+        )
+        .await;
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.confirm(false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            window_root_paths(&cx),
+            vec![vec![beta_path.clone()]],
+            "a checkout renamed or replaced by a symlink after listing opens nothing in its place"
+        );
+
+        set_picker_query(&worktree_picker, "feature-g", &mut cx);
+        assert_eq!(
+            picker_rows(&worktree_picker, &mut cx),
+            vec!["closed: gamma (Some(\"feature-g\"))".to_string()]
+        );
+
+        let beta_workspace = window_handle
+            .read_with(&cx, |multi_workspace, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        for _ in 0..2 {
+            worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+                worktree_picker.picker.update(cx, |picker, cx| {
+                    picker.delegate.confirm(false, window, cx);
+                })
+            });
+        }
+        cx.run_until_parked();
+        assert_eq!(window_root_paths(&cx), vec![vec![gamma_path.clone()]]);
+        assert_eq!(
+            window_handle
+                .read_with(&cx, |multi_workspace, cx| multi_workspace
+                    .workspaces()
+                    .map(|workspace| workspace
+                        .read(cx)
+                        .root_paths(cx)
+                        .iter()
+                        .map(|root_path| root_path.to_path_buf())
+                        .collect::<Vec<_>>())
+                    .collect::<Vec<_>>())
+                .unwrap(),
+            vec![vec![beta_path], vec![alpha_path], vec![gamma_path]]
+        );
+        assert_eq!(
+            beta_workspace.read_with(&cx, |workspace, _| workspace
+                .active_worktree_creation()
+                .label
+                .clone()),
+            None
+        );
+    }
+
+    #[gpui::test]
+    async fn test_opened_checkouts_stay_open_when_ai_is_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            project::DisableAiSettings::override_global(
+                project::DisableAiSettings { disable_ai: true },
+                cx,
+            )
+        });
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        let delta_clone = |branch: &str| {
+            json!({
+                "HEAD": format!("ref: refs/heads/{branch}\n"),
+                "config": "[core]\n\tbare = false\n",
+                "delta": { "copy-baseline": "" },
+                "objects": {
+                    "info": {
+                        "alternates": format!("{}\n", path!("/root/project/.git/objects")),
+                    },
+                },
+            })
+        };
+        let delta_checkout = |namespace: &str| {
+            json!({
+                "project": {
+                    ".git": format!(
+                        "gitdir: {}/{namespace}/project.git\n",
+                        path!("/root/project/.delta/clones")
+                    ),
+                },
+            })
+        };
+        fs.insert_tree(
+            path!("/root/project"),
+            json!({
+                ".git": { "HEAD": "ref: refs/heads/main\n" },
+                ".delta": {
+                    "clones": {
+                        "alpha": { "project.git": delta_clone("feature-a") },
+                        "beta": { "project.git": delta_clone("feature-b") },
+                        "gamma": { "project.git": delta_clone("feature-g") },
+                    },
+                    "worktrees": {
+                        "alpha": delta_checkout("alpha"),
+                        "beta": delta_checkout("beta"),
+                        "gamma": delta_checkout("gamma"),
+                    },
+                },
+            }),
+        )
+        .await;
+        let checkout_path = |namespace: &str| {
+            PathBuf::from(path!("/root/project/.delta/worktrees"))
+                .join(namespace)
+                .join("project")
+        };
+        let alpha_project = Project::test(fs.clone(), [checkout_path("alpha").as_path()], cx).await;
+        alpha_project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(alpha_project, window, cx));
+        let mut cx = VisualTestContext::from_window(AnyWindowHandle::from(window_handle), cx);
+
+        for namespace in ["beta", "gamma"] {
+            let workspace = window_handle
+                .read_with(&cx, |multi_workspace, _| {
+                    multi_workspace.workspace().clone()
+                })
+                .unwrap();
+            let project = workspace.read_with(&cx, |workspace, _| workspace.project().clone());
+            project
+                .update(&mut cx, |project, cx| project.git_scans_complete(cx))
+                .await;
+            let worktree_picker = cx.update(|window, cx| {
+                cx.new(|cx| WorktreePicker::new(project, workspace.downgrade(), window, cx))
+            });
+            cx.run_until_parked();
+            select_picker_row(
+                &worktree_picker,
+                |entry| {
+                    matches!(
+                        entry,
+                        WorktreeEntry::ClosedCheckout { checkout, .. } if checkout.name == namespace
+                    )
+                },
+                &mut cx,
+            );
+            worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+                worktree_picker.picker.update(cx, |picker, cx| {
+                    picker.delegate.confirm(false, window, cx);
+                })
+            });
+            cx.run_until_parked();
+        }
+
+        assert_eq!(
+            window_handle
+                .read_with(&cx, |multi_workspace, cx| {
+                    multi_workspace
+                        .workspaces()
+                        .map(|workspace| workspace.read(cx).root_paths(cx).to_vec())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap(),
+            vec![
+                vec![Arc::from(checkout_path("beta").as_path())],
+                vec![Arc::from(checkout_path("gamma").as_path())],
+            ],
+            "a checkout opened from the picker is kept when the next one is opened"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkouts_of_a_dot_named_git_dir_source_are_listed_from_subfolders(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let delta_clone = |branch: &str| {
+            json!({
+                "HEAD": format!("ref: refs/heads/{branch}\n"),
+                "config": "[core]\n\tbare = false\n",
+                "delta": { "copy-baseline": "" },
+                "objects": {
+                    "info": {
+                        "alternates": format!("{}\n", path!("/root/project/.metadata/objects")),
+                    },
+                },
+            })
+        };
+        let mut rows_by_opened_folder = Vec::new();
+        for opened_folder in [
+            path!("/root/checkout/src"),
+            path!("/root/project/src"),
+            path!("/root/project/.metadata/.delta/worktrees/sibling/project/src"),
+        ] {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                path!("/root"),
+                json!({
+                    "project": {
+                        ".git": format!("gitdir: {}\n", path!("/root/project/.metadata")),
+                        ".metadata": {
+                            "HEAD": "ref: refs/heads/main\n",
+                            ".delta": {
+                                "clones": { "sibling": { "project.git": delta_clone(".invalid") } },
+                                "worktrees": {
+                                    "sibling": {
+                                        "project": {
+                                            ".git": format!(
+                                                "gitdir: {}\n",
+                                                path!(
+                                                    "/root/project/.metadata/.delta/clones/sibling/project.git"
+                                                )
+                                            ),
+                                            "src": {},
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        "src": {},
+                    },
+                    "clones": { "project.git": delta_clone("feature") },
+                    "checkout": {
+                        ".git": format!("gitdir: {}\n", path!("/root/clones/project.git")),
+                        "src": {},
+                    },
+                }),
+            )
+            .await;
+            let project = Project::test(fs.clone(), [Path::new(opened_folder)], cx).await;
+            project
+                .update(cx, |project, cx| project.git_scans_complete(cx))
+                .await;
+            let window_handle =
+                cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            let workspace = window_handle
+                .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                .unwrap();
+            let mut visual_cx =
+                VisualTestContext::from_window(AnyWindowHandle::from(window_handle), cx);
+            let worktree_picker = visual_cx.update(|window, cx| {
+                cx.new(|cx| WorktreePicker::new(project, workspace.downgrade(), window, cx))
+            });
+            visual_cx.run_until_parked();
+            rows_by_opened_folder.push(picker_rows(&worktree_picker, &mut visual_cx));
+        }
+
+        let sibling_row = "closed: sibling (None)".to_string();
+        assert_eq!(
+            rows_by_opened_folder,
+            vec![
+                vec![
+                    format!("git: {}", path!("/root/checkout")),
+                    sibling_row.clone()
+                ],
+                vec![format!("git: {}", path!("/root/project")), sibling_row],
+                vec![format!(
+                    "git: {}",
+                    path!("/root/project/.metadata/.delta/worktrees/sibling/project")
+                )],
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_source_row_is_a_working_checkout_of_the_source(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let git_dir = |config: &str, extra_files: serde_json::Value| {
+            let mut git_dir = json!({
+                "HEAD": "ref: refs/heads/main\n",
+                "objects": null,
+                "refs": null,
+                "config": config,
+            });
+            if let (Some(git_dir), serde_json::Value::Object(extra_files)) =
+                (git_dir.as_object_mut(), extra_files)
+            {
+                git_dir.extend(extra_files);
+            }
+            git_dir
+        };
+        let dot_bare_layouts = [
+            (
+                "bare",
+                "[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+                false,
+            ),
+            (
+                "non_bare",
+                "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+                true,
+            ),
+        ];
+        let mut layout = dot_bare_layouts
+            .iter()
+            .map(|(name, config, _)| {
+                (
+                    name.to_string(),
+                    json!({
+                        ".git": "gitdir: .bare\n",
+                        ".bare": git_dir(config, json!({})),
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        let plain_config = "[core]\n\trepositoryformatversion = 0\n\tbare = false\n";
+        layout.insert(
+            "storage".to_string(),
+            json!({
+                "absolute.git": git_dir(plain_config, json!({})),
+                "relative.git": git_dir(
+                    "[core]\n\trepositoryformatversion = 1\n\tbare = false\n[extensions]\n\tworktreeConfig = true\n",
+                    json!({ "config.worktree": "[core]\n\tworktree = ../../relative\n" }),
+                ),
+                "included.git": git_dir(
+                    &format!("{plain_config}[include]\n\tpath = extra\n"),
+                    json!({ "extra": "[core]\n\tworktree = ../../included\n" }),
+                ),
+                "linked.git": git_dir(
+                    plain_config,
+                    json!({
+                        "worktrees": {
+                            "linked": {
+                                "HEAD": "ref: refs/heads/linked\n",
+                                "commondir": "../..",
+                                "gitdir": "",
+                            },
+                        },
+                    }),
+                ),
+            }),
+        );
+        for checkout in ["absolute", "relative", "included", "linked"] {
+            layout.insert(checkout.to_string(), json!({ ".git": "" }));
+        }
+        layout.insert(
+            "unrelated".to_string(),
+            json!({ ".git": {}, ".metadata": git_dir(plain_config, json!({})) }),
+        );
+        layout.insert(
+            "unversioned_subdirectory_worktree".to_string(),
+            json!({
+                ".git": "gitdir: .bare\n",
+                ".bare": git_dir("[core]\n\tbare = false\n\tworktree = ../sub\n", json!({})),
+                "sub": {},
+            }),
+        );
+        layout.insert(
+            "outer".to_string(),
+            json!({
+                ".git": {},
+                "damaged": { ".git": { "HEAD": "damaged\n" } },
+            }),
+        );
+        let tree = util::test::TempTree::new(serde_json::Value::Object(layout));
+        let fs = fs::RealFs::new(None, cx.executor());
+        let root = SanitizedPath::new(&fs.canonicalize(tree.path()).await.unwrap()).to_path_buf();
+        let storage = root.join("storage");
+        let config_path = |path: &Path| {
+            path.to_string_lossy()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+        };
+        std::fs::write(
+            storage.join("absolute.git").join("config"),
+            format!(
+                "{plain_config}\tworktree = \"{}\"\n",
+                config_path(&root.join("absolute"))
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            storage.join("linked.git").join("config"),
+            format!(
+                "{plain_config}\tworktree = \"{}\"\n",
+                config_path(&root.join("linked"))
+            ),
+        )
+        .unwrap();
+        let linked_admin_dir = storage.join("linked.git").join("worktrees").join("linked");
+        std::fs::write(
+            linked_admin_dir.join("gitdir"),
+            format!("{}\n", root.join("linked").join(".git").display()),
+        )
+        .unwrap();
+        for (checkout, git_dir) in [
+            ("absolute", storage.join("absolute.git")),
+            ("relative", storage.join("relative.git")),
+            ("included", storage.join("included.git")),
+            ("linked", linked_admin_dir),
+        ] {
+            std::fs::write(
+                root.join(checkout).join(".git"),
+                format!("gitdir: {}\n", git_dir.display()),
+            )
+            .unwrap();
+        }
+
+        let mut cases = dot_bare_layouts
+            .iter()
+            .map(|(name, _, is_working_checkout)| {
+                (
+                    root.join(name).join(".bare"),
+                    is_working_checkout.then(|| root.join(name)),
+                )
+            })
+            .collect::<Vec<_>>();
+        cases.push((storage.join("absolute.git"), Some(root.join("absolute"))));
+        cases.push((storage.join("relative.git"), Some(root.join("relative"))));
+        cases.push((storage.join("included.git"), Some(root.join("included"))));
+        cases.push((storage.join("linked.git"), None));
+        cases.push((root.join("unrelated").join(".metadata"), None));
+        cases.push((root.join("outer").join("damaged").join(".git"), None));
+        cases.push((
+            root.join("unversioned_subdirectory_worktree").join(".bare"),
+            Some(root.join("unversioned_subdirectory_worktree")),
+        ));
+        #[cfg(unix)]
+        {
+            let symlinked = root.join("symlinked");
+            std::fs::create_dir_all(symlinked.join(".metadata").join("objects")).unwrap();
+            std::fs::create_dir_all(symlinked.join(".metadata").join("refs")).unwrap();
+            std::fs::write(
+                symlinked.join(".metadata").join("HEAD"),
+                "ref: refs/heads/main\n",
+            )
+            .unwrap();
+            std::fs::write(symlinked.join(".metadata").join("config"), plain_config).unwrap();
+            std::os::unix::fs::symlink(".metadata", symlinked.join(".git")).unwrap();
+            cases.push((symlinked.join(".metadata"), Some(symlinked)));
+
+            let line_break = root.join("line\nbreak");
+            let line_break_git_dir = storage.join("line_break.git");
+            std::fs::create_dir_all(&line_break).unwrap();
+            std::fs::create_dir_all(line_break_git_dir.join("objects")).unwrap();
+            std::fs::create_dir_all(line_break_git_dir.join("refs")).unwrap();
+            std::fs::write(line_break_git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+            std::fs::write(
+                line_break_git_dir.join("config"),
+                format!(
+                    "{plain_config}\tworktree = \"{}\"\n",
+                    config_path(&line_break)
+                ),
+            )
+            .unwrap();
+            std::fs::write(
+                line_break.join(".git"),
+                format!("gitdir: {}\n", line_break_git_dir.display()),
+            )
+            .unwrap();
+            cases.push((line_break_git_dir, Some(line_break)));
+        }
+        let mut source_rows = Vec::new();
+        for (source_common_dir, _) in &cases {
+            let checkouts = load_group_checkouts(source_common_dir, true, fs.clone(), cx).await;
+            source_rows.push(
+                checkouts
+                    .into_iter()
+                    .find(|checkout| checkout.name == "main worktree")
+                    .map(|checkout| checkout.path),
+            );
+        }
+        assert_eq!(
+            source_rows,
+            cases
+                .into_iter()
+                .map(|(_, expected_row)| expected_row)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkouts_in_managed_stores_are_listed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let source = || {
+            json!({
+                "HEAD": "ref: refs/heads/main\n",
+                "config": "[core]\n\tbare = true\n",
+                "objects": {},
+            })
+        };
+        let delta_clone = |source_common_dir: &str| {
+            json!({
+                "HEAD": "ref: refs/heads/feature\n",
+                "config": "[core]\n\tbare = false\n",
+                "delta": { "copy-baseline": "" },
+                "objects": {
+                    "info": { "alternates": format!("{source_common_dir}/objects\n") },
+                },
+            })
+        };
+        let checkout = |clone_path: &str| json!({ ".git": format!("gitdir: {clone_path}\n") });
+        let account_source =
+            path!("/base/user_01g3vqv3ejt1em7rjrbwde86vm/managed-repositories/id/project.git");
+        let store_source = path!("/other/store/managed-repositories/id/project.git");
+        fs.insert_tree(
+            path!("/base"),
+            json!({
+                "user_01g3vqv3ejt1em7rjrbwde86vm": {
+                    "managed-repositories": {
+                        "id": {
+                            "project.git": source(),
+                            "clones": { "legacy": { "project.git": delta_clone(account_source) } },
+                            "worktrees": {
+                                "legacy": {
+                                    "project": checkout(path!(
+                                        "/base/user_01g3vqv3ejt1em7rjrbwde86vm/managed-repositories/id/clones/legacy/project.git"
+                                    )),
+                                },
+                            },
+                        },
+                    },
+                },
+                "worktrees": {
+                    "allocation": {
+                        "project.git": delta_clone(account_source),
+                        "project": checkout(path!("/base/worktrees/allocation/project.git")),
+                    },
+                },
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/base/user_01g3vqv3ejt1em7rjrbwde86vm/worktrees"),
+            json!({
+                "custom": {
+                    "project.git": delta_clone(account_source),
+                    "project": checkout(path!(
+                        "/base/user_01g3vqv3ejt1em7rjrbwde86vm/worktrees/custom/project.git"
+                    )),
+                },
+            }),
+        )
+        .await;
+        let bare_root_source = path!("/legacy/store/managed-repositories/id");
+        fs.insert_tree(
+            path!("/legacy/store"),
+            json!({
+                "managed-repositories": {
+                    "id": {
+                        "HEAD": "ref: refs/heads/main\n",
+                        "config": "[core]\n\tbare = true\n",
+                        "objects": {},
+                        "clones": { "thread": { "project.git": delta_clone(bare_root_source) } },
+                        "worktrees": {
+                            "thread": {
+                                "project": checkout(path!(
+                                    "/legacy/store/managed-repositories/id/clones/thread/project.git"
+                                )),
+                            },
+                        },
+                    },
+                },
+                "worktrees": {
+                    "allocation": {
+                        "project.git": delta_clone(bare_root_source),
+                        "project": checkout(path!("/legacy/store/worktrees/allocation/project.git")),
+                    },
+                },
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/other/store"),
+            json!({ "managed-repositories": { "id": { "project.git": source() } } }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/ssd/checkouts"),
+            json!({
+                "8p2k4m6q9r1s": {
+                    "project.git": delta_clone(store_source),
+                    "project": checkout(path!("/other/store/worktrees/8p2k4m6q9r1s/project.git")),
+                },
+                "allocation": {
+                    "project.git": delta_clone(store_source),
+                    "project": checkout(path!("/other/store/worktrees/allocation/project.git")),
+                },
+            }),
+        )
+        .await;
+        fs.insert_symlink(
+            path!("/other/store/worktrees"),
+            PathBuf::from(path!("/ssd/checkouts")),
+        )
+        .await;
+
+        fs.insert_symlink(path!("/alias"), PathBuf::from(path!("/other")))
+            .await;
+        let aliased_store_source = path!("/alias/store/managed-repositories/id/project.git");
+
+        let mut checkouts_by_source = Vec::new();
+        for source_common_dir in [
+            account_source,
+            store_source,
+            aliased_store_source,
+            bare_root_source,
+        ] {
+            checkouts_by_source.push(
+                load_group_checkouts(Path::new(source_common_dir), true, fs.clone(), cx)
+                    .await
+                    .into_iter()
+                    .map(|checkout| checkout.path)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(
+            checkouts_by_source,
+            vec![
+                vec![
+                    PathBuf::from(path!("/base/worktrees/allocation/project")),
+                    PathBuf::from(path!(
+                        "/base/user_01g3vqv3ejt1em7rjrbwde86vm/worktrees/custom/project"
+                    )),
+                    PathBuf::from(path!(
+                        "/base/user_01g3vqv3ejt1em7rjrbwde86vm/managed-repositories/id/worktrees/legacy/project"
+                    )),
+                ],
+                vec![PathBuf::from(path!("/ssd/checkouts/8p2k4m6q9r1s/project"))],
+                vec![PathBuf::from(path!("/ssd/checkouts/8p2k4m6q9r1s/project"))],
+                vec![
+                    PathBuf::from(path!("/legacy/store/worktrees/allocation/project")),
+                    PathBuf::from(path!(
+                        "/legacy/store/managed-repositories/id/worktrees/thread/project"
+                    )),
+                ],
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_registered_worktrees_of_the_source_and_its_clones_are_listed(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let registry_entry = |branch: &str, gitdir: &str| {
+            json!({
+                "HEAD": format!("ref: refs/heads/{branch}\n"),
+                "commondir": "../..",
+                "gitdir": format!("{gitdir}\n"),
+            })
+        };
+        fs.insert_tree(
+            path!("/code"),
+            json!({
+                "project.git": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "config": "[core]\n\tbare = true\n",
+                    "objects": {},
+                    "worktrees": {
+                        "main": registry_entry("main", path!("/code/project/.git")),
+                        "rel": registry_entry("rel", "../../../nested/rel/.git"),
+                        "stale": registry_entry("stale", path!("/code/stale/.git")),
+                        "foreign": registry_entry("foreign", path!("/code/other/.git")),
+                    },
+                    ".delta": {
+                        "clones": {
+                            "alpha": {
+                                "project.git": {
+                                    "HEAD": "ref: refs/heads/feature-a\n",
+                                    "config": "[core]\n\tbare = false\n",
+                                    "delta": { "copy-baseline": "" },
+                                    "objects": {
+                                        "info": {
+                                            "alternates": format!(
+                                                "{}\n",
+                                                path!("/code/project.git/objects")
+                                            ),
+                                        },
+                                    },
+                                    "worktrees": {
+                                        "beta": registry_entry(
+                                            "feature-b",
+                                            path!("/code/project.git/.delta/worktrees/beta/project/.git"),
+                                        ),
+                                        "feature": registry_entry(
+                                            "feature-f",
+                                            path!(
+                                                "/code/project.git/.delta/worktrees/alpha/worktrees/project/feature/project/.git"
+                                            ),
+                                        ),
+                                    },
+                                },
+                            },
+                        },
+                        "worktrees": {
+                            "beta": {
+                                "project": {
+                                    ".git": format!(
+                                        "gitdir: {}\n",
+                                        path!(
+                                            "/code/project.git/.delta/clones/alpha/project.git/worktrees/beta"
+                                        )
+                                    ),
+                                },
+                            },
+                            "alpha": {
+                                "project": {
+                                    ".git": format!(
+                                        "gitdir: {}\n",
+                                        path!("/code/project.git/.delta/clones/alpha/project.git")
+                                    ),
+                                },
+                                "worktrees": {
+                                    "project": {
+                                        "feature": {
+                                            "project": {
+                                                ".git": format!(
+                                                    "gitdir: {}\n",
+                                                    path!(
+                                                        "/code/project.git/.delta/clones/alpha/project.git/worktrees/feature"
+                                                    )
+                                                ),
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+                "project": {
+                    ".git": format!("gitdir: {}\n", path!("/code/project.git/worktrees/main")),
+                },
+                "nested": {
+                    "rel": { ".git": "gitdir: ../../project.git/worktrees/rel\n" },
+                },
+                "other": { ".git": { "HEAD": "ref: refs/heads/foreign\n" } },
+            }),
+        )
+        .await;
+
+        let checkouts =
+            load_group_checkouts(Path::new(path!("/code/project.git")), true, fs.clone(), cx)
+                .await
+                .into_iter()
+                .map(|checkout| (checkout.name, checkout.path, checkout.branch))
+                .collect::<Vec<_>>();
+        let row = |name: &str, path: &str, branch: &str| {
+            (
+                name.to_string(),
+                PathBuf::from(path),
+                Some(branch.to_string()),
+            )
+        };
+        assert_eq!(
+            checkouts,
+            vec![
+                row(
+                    "alpha",
+                    path!("/code/project.git/.delta/worktrees/alpha/project"),
+                    "feature-a"
+                ),
+                row(
+                    "alpha/project/beta/project",
+                    path!("/code/project.git/.delta/worktrees/beta/project"),
+                    "feature-b"
+                ),
+                row(
+                    "alpha/project/feature/project",
+                    path!(
+                        "/code/project.git/.delta/worktrees/alpha/worktrees/project/feature/project"
+                    ),
+                    "feature-f"
+                ),
+                row("project", path!("/code/project"), "main"),
+                row("rel", path!("/code/nested/rel"), "rel"),
+            ]
+        );
+
+        fs.insert_symlink(path!("/link"), PathBuf::from(path!("/code")))
+            .await;
+        let mut listed_checkouts = Vec::new();
+        for listed_common_dir in [
+            path!("/link/project.git"),
+            path!("/code/project.git/.delta/clones/alpha/project.git"),
+        ] {
+            let fs = fs.clone();
+            listed_checkouts.push(
+                cx.background_spawn(async move {
+                    load_delta_checkouts(
+                        Path::new(path!("/code/project.git")),
+                        Some(Path::new(listed_common_dir)),
+                        None,
+                        fs,
+                        PathStyle::local(),
+                    )
+                    .await
+                })
+                .await
+                .into_iter()
+                .map(|checkout| checkout.name)
+                .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(
+            listed_checkouts,
+            vec![
+                vec![
+                    "alpha".to_string(),
+                    "alpha/project/beta/project".to_string(),
+                    "alpha/project/feature/project".to_string()
+                ],
+                vec![
+                    "alpha".to_string(),
+                    "project".to_string(),
+                    "rel".to_string()
+                ],
+            ],
+            "worktrees that the active repository's own list shows are left out"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_source_row_is_listed_and_opened_with_real_git(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let (_tree, fs, source_path) = real_git_delta_source(cx).await;
+        let checkout_path = source_path
+            .join(".delta")
+            .join("worktrees")
+            .join("alpha")
+            .join("project");
+        for foreign_path in [
+            checkout_path.with_file_name("project~"),
+            source_path.join(".delta/worktrees/gamma/project"),
+        ] {
+            std::fs::create_dir_all(&foreign_path).unwrap();
+            std::fs::write(
+                foreign_path.join(".git"),
+                format!(
+                    "gitdir: {}\n",
+                    source_path
+                        .join(".delta/clones/alpha/project.git")
+                        .display()
+                ),
+            )
+            .unwrap();
+        }
+        let (worktree_picker, mut cx) = open_real_git_worktree_picker(fs, &checkout_path, cx).await;
+        let shown_at_open = shown_git_state(&worktree_picker, &mut cx);
+        wait_for_git_refresh(&worktree_picker, &mut cx).await;
+        assert_eq!(shown_at_open, shown_git_state(&worktree_picker, &mut cx));
+        let expected_rows = vec![
+            format!("git: {}", checkout_path.display()),
+            "closed: main worktree (Some(\"main\"))".to_string(),
+            "closed: beta (Some(\"topic\"))".to_string(),
+        ];
+        for _ in 0..400 {
+            cx.run_until_parked();
+            if picker_rows(&worktree_picker, &mut cx) == expected_rows {
+                break;
+            }
+            cx.background_executor
+                .timer(std::time::Duration::from_millis(50))
+                .await;
+        }
+        assert_eq!(picker_rows(&worktree_picker, &mut cx), expected_rows);
+
+        select_picker_row(
+            &worktree_picker,
+            |entry| matches!(entry, WorktreeEntry::ClosedCheckout { .. }),
+            &mut cx,
+        );
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.confirm(false, window, cx);
+            })
+        });
+        for _ in 0..400 {
+            cx.run_until_parked();
+            if window_root_paths(&cx) == vec![vec![source_path.clone()]] {
+                break;
+            }
+            cx.background_executor
+                .timer(std::time::Duration::from_millis(50))
+                .await;
+        }
+        assert_eq!(window_root_paths(&cx), vec![vec![source_path]]);
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_closed_checkouts_wait_briefly_for_a_blocked_source_row(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let (_tree, fs, source_path) = real_git_delta_source(cx).await;
+        #[allow(clippy::disallowed_methods)]
+        let mkfifo = std::process::Command::new("mkfifo")
+            .arg(source_path.join(".git/included"))
+            .status()
+            .unwrap();
+        assert!(mkfifo.success());
+        fs.git_command(
+            Path::new("git"),
+            &source_path,
+            ["config", "include.path", "included"]
+                .map(String::from)
+                .to_vec(),
+        )
+        .await
+        .unwrap();
+        let checkout_path = source_path.join(".delta/worktrees/alpha/project");
+        let (worktree_picker, mut cx) = open_real_git_worktree_picker(fs, &checkout_path, cx).await;
+
+        let expected_rows = vec![
+            format!("git: {}", checkout_path.display()),
+            "closed: beta (Some(\"topic\"))".to_string(),
+        ];
+        let started = cx.background_executor.now();
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if picker_rows(&worktree_picker, &mut cx) == expected_rows {
+                break;
+            }
+            cx.background_executor
+                .timer(std::time::Duration::from_millis(50))
+                .await;
+        }
+        let elapsed = cx.background_executor.now() - started;
+        let arrival = if elapsed < SOURCE_CHECKOUT_WAIT {
+            "before the source row wait ends"
+        } else if elapsed < Duration::from_secs(5) {
+            "after the source row wait, before git gives up"
+        } else {
+            "after git gives up"
+        };
+        assert_eq!(
+            (picker_rows(&worktree_picker, &mut cx), arrival),
+            (
+                expected_rows,
+                "after the source row wait, before git gives up"
+            ),
+            "after {elapsed:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_picker_opens_with_the_rows_git_reports(cx: &mut TestAppContext) {
+        let (fs, _source_picker, _repository, worktree_path, _source_cx) =
+            init_worktree_picker_test(cx).await;
+        fs.set_branch_name(&worktree_path.join(".git"), Some("dirty-wt"));
+        let linked_project = Project::test(fs.clone(), [worktree_path.as_path()], cx).await;
+        linked_project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let window_handle = cx
+            .add_window(|window, cx| MultiWorkspace::test_new(linked_project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(AnyWindowHandle::from(window_handle), cx);
+        let open_picker = |cx: &mut VisualTestContext| {
+            let project = linked_project.clone();
+            let workspace = workspace.downgrade();
+            cx.update(|window, cx| cx.new(|cx| WorktreePicker::new(project, workspace, window, cx)))
+        };
+        let worktree_picker = open_picker(&mut cx);
+        let shown_at_open = shown_git_state(&worktree_picker, &mut cx);
+        wait_for_git_refresh(&worktree_picker, &mut cx).await;
+
+        assert_eq!(
+            (shown_at_open.0.clone(), shown_at_open.1.clone()),
+            (
+                Some("create: default branch".to_string()),
+                vec![
+                    format!("git: {}", worktree_path.display()),
+                    format!("git: {}", path!("/root/project")),
+                ]
+            )
+        );
+        assert_eq!(shown_at_open, shown_git_state(&worktree_picker, &mut cx));
+
+        fs.pause_events();
+        fs.insert_tree(
+            path!("/root/project/.git/worktrees/fresh-wt"),
+            json!({
+                "HEAD": "ref: refs/heads/fresh-wt\n",
+                "gitdir": format!("{}\n", path!("/root/worktrees/fresh-wt/.git")),
+            }),
+        )
+        .await;
+        let stale_picker = open_picker(&mut cx);
+        let rows_at_open = shown_git_state(&stale_picker, &mut cx).1;
+        wait_for_git_refresh(&stale_picker, &mut cx).await;
+        assert_eq!(
+            (rows_at_open, shown_git_state(&stale_picker, &mut cx).1),
+            (
+                vec![
+                    format!("git: {}", worktree_path.display()),
+                    format!("git: {}", path!("/root/project")),
+                ],
+                vec![
+                    format!("git: {}", worktree_path.display()),
+                    format!("git: {}", path!("/root/worktrees/fresh-wt")),
+                    format!("git: {}", path!("/root/project")),
+                ]
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reftable_checkout_branch_is_read_through_git(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let tree = util::test::TempTree::new(json!({ "source": { ".git": {} } }));
+        let fs = fs::RealFs::new(None, cx.executor());
+        let root = SanitizedPath::new(&fs.canonicalize(tree.path()).await.unwrap()).to_path_buf();
+        let source = root.join("source");
+        let clone_path = source.join(".delta/clones/thread/source.git");
+        let checkout_path = source.join(".delta/worktrees/thread/source");
+        let supports_reftable = fs
+            .git_command(
+                Path::new("git"),
+                &root,
+                vec![
+                    "init".to_string(),
+                    "--quiet".to_string(),
+                    "--ref-format=reftable".to_string(),
+                    root.join("probe").display().to_string(),
+                ],
+            )
+            .await
+            .is_ok();
+        if !supports_reftable {
+            return;
+        }
+        std::fs::create_dir_all(clone_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(checkout_path.parent().unwrap()).unwrap();
+        fs.git_command(
+            Path::new("git"),
+            &root,
+            vec![
+                "init".to_string(),
+                "--quiet".to_string(),
+                "--initial-branch=feature".to_string(),
+                "--ref-format=reftable".to_string(),
+                format!("--separate-git-dir={}", clone_path.display()),
+                checkout_path.display().to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+        std::fs::create_dir_all(clone_path.join("delta")).unwrap();
+        std::fs::write(clone_path.join("delta/copy-baseline"), "").unwrap();
+        std::fs::create_dir_all(clone_path.join("objects/info")).unwrap();
+        std::fs::write(
+            clone_path.join("objects/info/alternates"),
+            format!("{}\n", source.join(".git/objects").display()),
+        )
+        .unwrap();
+
+        let checkouts = load_group_checkouts(&source.join(".git"), false, fs, cx).await;
+        assert_eq!(
+            checkouts
+                .iter()
+                .map(|checkout| (checkout.path.clone(), checkout.branch.clone()))
+                .collect::<Vec<_>>(),
+            vec![(checkout_path, Some("feature".to_string()))]
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_special_git_entries_do_not_block_discovery(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let tree = util::test::TempTree::new(json!({
+            "source": {
+                ".git": {},
+                ".delta": {
+                    "clones": {
+                        "healthy": {
+                            "source.git": {
+                                "HEAD": "ref: refs/heads/feature\n",
+                                "config": "[core]\n\tbare = false\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": { "info": null },
+                                "refs": null,
+                            },
+                        },
+                    },
+                    "worktrees": {
+                        "healthy": { "source": { ".git": "" } },
+                        "special": { "source": null },
+                        "special_commondir": { "source": { ".git": "" } },
+                    },
+                },
+            },
+            "special_git_dir": { "HEAD": "ref: refs/heads/main\n", "objects": null, "refs": null },
+        }));
+        let fs = fs::RealFs::new(None, cx.executor());
+        let root = fs.canonicalize(tree.path()).await.unwrap();
+        let source = root.join("source");
+        let clone_path = source.join(".delta/clones/healthy/source.git");
+        let checkout_path = source.join(".delta/worktrees/healthy/source");
+        std::fs::write(
+            clone_path.join("objects/info/alternates"),
+            format!("{}\n", source.join(".git/objects").display()),
+        )
+        .unwrap();
+        std::fs::write(
+            checkout_path.join(".git"),
+            format!("gitdir: {}\n", clone_path.display()),
+        )
+        .unwrap();
+        std::fs::write(
+            source.join(".delta/worktrees/special_commondir/source/.git"),
+            format!("gitdir: {}\n", root.join("special_git_dir").display()),
+        )
+        .unwrap();
+        for fifo_path in [
+            source.join(".delta/worktrees/special/source/.git"),
+            root.join("special_git_dir/commondir"),
+        ] {
+            #[allow(clippy::disallowed_methods)]
+            let mkfifo = std::process::Command::new("mkfifo")
+                .arg(fifo_path)
+                .status()
+                .unwrap();
+            assert!(mkfifo.success());
+        }
+
+        let checkouts = load_group_checkouts(&source.join(".git"), false, fs, cx).await;
+        assert_eq!(
+            checkouts
+                .iter()
+                .map(|checkout| checkout.path.clone())
+                .collect::<Vec<_>>(),
+            vec![checkout_path]
+        );
+    }
+
     async fn init_worktree_picker_with_open_workspace(
         project: Entity<Project>,
         open_project: Entity<Project>,
@@ -3612,6 +5576,59 @@ mod tests {
         })
     }
 
+    async fn wait_for_git_refresh(
+        worktree_picker: &Entity<WorktreePicker>,
+        cx: &mut VisualTestContext,
+    ) {
+        let repository = worktree_picker.update(cx, |worktree_picker, cx| {
+            worktree_picker
+                .picker
+                .read(cx)
+                .delegate
+                .project
+                .read(cx)
+                .active_repository(cx)
+                .unwrap()
+        });
+        cx.update(|_, cx| repository.update(cx, |repository, _| repository.default_branch(true)))
+            .await
+            .unwrap()
+            .unwrap();
+        cx.run_until_parked();
+    }
+
+    fn shown_git_state(
+        worktree_picker: &Entity<WorktreePicker>,
+        cx: &mut VisualTestContext,
+    ) -> (Option<String>, Vec<String>, Vec<(PathBuf, String, bool)>) {
+        let git_rows = picker_rows(worktree_picker, cx)
+            .into_iter()
+            .filter(|row| row.starts_with("git: "))
+            .collect();
+        let mut worktrees = worktree_picker.update(cx, |worktree_picker, cx| {
+            worktree_picker
+                .picker
+                .read(cx)
+                .delegate
+                .all_worktrees
+                .iter()
+                .map(|worktree| {
+                    (
+                        worktree.path.clone(),
+                        worktree.display_name().to_string(),
+                        worktree.is_main,
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        worktrees.sort();
+        (
+            selected_picker_row(worktree_picker, cx),
+            git_rows,
+            worktrees,
+        )
+    }
+
     fn picker_row_text(entry: &WorktreeEntry) -> Option<String> {
         match entry {
             WorktreeEntry::SectionHeader(label) => Some(format!("[{label}]")),
@@ -3622,7 +5639,131 @@ mod tests {
                 "open: {} ({:?})",
                 open_workspace.name, open_workspace.branch
             )),
+            WorktreeEntry::ClosedCheckout { checkout, .. } => {
+                Some(format!("closed: {} ({:?})", checkout.name, checkout.branch))
+            }
             _ => None,
         }
+    }
+
+    async fn load_group_checkouts(
+        source_common_dir: &Path,
+        include_source: bool,
+        fs: Arc<dyn Fs>,
+        cx: &TestAppContext,
+    ) -> Vec<GroupCheckout> {
+        let source_common_dir = source_common_dir.to_path_buf();
+        cx.background_spawn(async move {
+            let git_binary_path = PathBuf::from("git");
+            let source_checkout = if include_source {
+                load_source_checkout(&source_common_dir, &git_binary_path, fs.as_ref()).await
+            } else {
+                None
+            };
+            source_checkout
+                .into_iter()
+                .chain(
+                    load_delta_checkouts(
+                        &source_common_dir,
+                        None,
+                        Some(git_binary_path),
+                        fs,
+                        PathStyle::local(),
+                    )
+                    .await,
+                )
+                .collect()
+        })
+        .await
+    }
+
+    async fn real_git_delta_source(
+        cx: &mut TestAppContext,
+    ) -> (util::test::TempTree, Arc<dyn Fs>, PathBuf) {
+        let tree = util::test::TempTree::new(json!({
+            "project": {
+                ".git": {},
+                "file.txt": "",
+                ".delta": {
+                    "clones": {
+                        "alpha": {
+                            "project.git": {
+                                "HEAD": "ref: refs/heads/feature\n",
+                                "config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": { "info": null },
+                                "refs": null,
+                            },
+                        },
+                        "beta": {
+                            "project.git": {
+                                "HEAD": "ref: refs/heads/topic\n",
+                                "config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+                                "delta": { "copy-baseline": "" },
+                                "objects": { "info": null },
+                                "refs": null,
+                            },
+                        },
+                    },
+                    "worktrees": {
+                        "alpha": { "project": { ".git": "" } },
+                        "beta": { "project": { ".git": "" } },
+                    },
+                },
+            },
+        }));
+        let fs: Arc<dyn Fs> = fs::RealFs::new(None, cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        let root = SanitizedPath::new(&fs.canonicalize(tree.path()).await.unwrap()).to_path_buf();
+        let source_path = root.join("project");
+        for name in ["alpha", "beta"] {
+            let clone_path = source_path.join(format!(".delta/clones/{name}/project.git"));
+            std::fs::write(
+                clone_path.join("objects/info/alternates"),
+                format!("{}\n", source_path.join(".git/objects").display()),
+            )
+            .unwrap();
+            let checkout_path = source_path.join(format!(".delta/worktrees/{name}/project"));
+            std::fs::write(
+                checkout_path.join(".git"),
+                format!("gitdir: {}\n", clone_path.display()),
+            )
+            .unwrap();
+            fs.git_command(
+                Path::new("git"),
+                &source_path,
+                vec![
+                    "config".to_string(),
+                    "--file".to_string(),
+                    clone_path.join("config").display().to_string(),
+                    "core.worktree".to_string(),
+                    checkout_path.display().to_string(),
+                ],
+            )
+            .await
+            .unwrap();
+        }
+        (tree, fs, source_path)
+    }
+
+    async fn open_real_git_worktree_picker(
+        fs: Arc<dyn Fs>,
+        checkout_path: &Path,
+        cx: &mut TestAppContext,
+    ) -> (Entity<WorktreePicker>, VisualTestContext) {
+        let project = Project::test(fs, [checkout_path], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(AnyWindowHandle::from(window_handle), cx);
+        let worktree_picker = cx.update(|window, cx| {
+            cx.new(|cx| WorktreePicker::new(project, workspace.downgrade(), window, cx))
+        });
+        (worktree_picker, cx)
     }
 }

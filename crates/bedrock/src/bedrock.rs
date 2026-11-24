@@ -195,12 +195,15 @@ pub enum Thinking {
     Reasoning {
         effort: BedrockAdaptiveThinkingEffort,
     },
-    /// Explicitly turns thinking off. Required by Claude Opus 5, where
-    /// adaptive thinking runs by default when the `thinking` field is
+    /// Explicitly turns thinking off. Required by Claude Opus 5 and Haiku 5.5,
+    /// where adaptive thinking runs by default when the `thinking` field is
     /// omitted; only accepted at effort `high` or below.
     ///
     /// <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
     Disabled,
+    /// The lowest thinking setting, for models that think by default but
+    /// reject [`Thinking::Disabled`] (Claude Sonnet 5.5).
+    BetweenTools,
 }
 
 /// Converts the request's thinking configuration into the
@@ -278,6 +281,15 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
                 )])),
             );
         }
+        Thinking::BetweenTools => {
+            fields.insert(
+                "thinking".to_string(),
+                Document::from(HashMap::from([(
+                    "type".to_string(),
+                    Document::String("between_tools".to_string()),
+                )])),
+            );
+        }
     }
     fields
 }
@@ -294,18 +306,10 @@ pub struct Request {
     /// system prompt anchors its own cache prefix independent of tools and
     /// messages.
     pub system: Vec<BedrockSystemContentBlock>,
-    pub metadata: Option<Metadata>,
-    pub stop_sequences: Vec<String>,
     pub temperature: Option<f32>,
-    pub top_k: Option<u32>,
     pub top_p: Option<f32>,
     pub guardrail_identifier: Option<String>,
     pub guardrail_version: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Metadata {
-    pub user_id: Option<String>,
 }
 
 #[derive(Error, Debug)]
@@ -361,6 +365,15 @@ mod tests {
         assert_eq!(string_field(thinking, "type"), Some("disabled"));
         // `disabled` combined with an effort of `xhigh`/`max` is a 400, so no
         // output_config may accompany the opt-out.
+        assert!(!fields.contains_key("output_config"));
+    }
+
+    #[test]
+    fn test_between_tools_thinking_serializes_type() {
+        let fields = thinking_request_fields(&Thinking::BetweenTools);
+
+        let thinking = fields.get("thinking").expect("thinking field");
+        assert_eq!(string_field(thinking, "type"), Some("between_tools"));
         assert!(!fields.contains_key("output_config"));
     }
 

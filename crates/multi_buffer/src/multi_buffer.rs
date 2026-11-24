@@ -410,9 +410,6 @@ impl Sub<OffsetUtf16> for MultiBufferOffsetUtf16 {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct BufferOffsetUtf16(pub OffsetUtf16);
-
 impl MultiBufferOffset {
     const ZERO: Self = Self(0);
     pub fn saturating_sub(self, other: MultiBufferOffset) -> usize {
@@ -1271,24 +1268,6 @@ pub enum ExpandExcerptDirection {
     UpAndDown,
 }
 
-impl ExpandExcerptDirection {
-    pub fn should_expand_up(&self) -> bool {
-        match self {
-            ExpandExcerptDirection::Up => true,
-            ExpandExcerptDirection::Down => false,
-            ExpandExcerptDirection::UpAndDown => true,
-        }
-    }
-
-    pub fn should_expand_down(&self) -> bool {
-        match self {
-            ExpandExcerptDirection::Up => false,
-            ExpandExcerptDirection::Down => true,
-            ExpandExcerptDirection::UpAndDown => true,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndentGuide {
     pub buffer_id: BufferId,
@@ -1461,8 +1440,6 @@ impl MultiBuffer {
         self.read(cx).has_conflict()
     }
 
-    // The `is_empty` signature doesn't match what clippy expects
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self, cx: &App) -> MultiBufferOffset {
         self.read(cx).len()
     }
@@ -5732,13 +5709,16 @@ impl MultiBufferSnapshot {
             value: None,
         });
 
+        // The cursor is on the diff transform that contains `start_offset`. Seek to the
+        // start of its excerpt, so that a range starting on a transform in the middle of
+        // an excerpt is not mistaken for one starting at the excerpt. Otherwise the walk
+        // below would begin with an excerpt that starts before the range, and stop there.
+        cursor.seek_to_start_of_current_excerpt();
         if cursor
             .fetch_excerpt_with_range()
             .is_some_and(|(_, range)| bounds.contains(&range.start.key))
         {
             cursor.prev_excerpt();
-        } else {
-            cursor.seek_to_start_of_current_excerpt();
         }
         let mut prev_excerpt = cursor
             .fetch_excerpt_with_range()
@@ -5747,53 +5727,52 @@ impl MultiBufferSnapshot {
         cursor.next_excerpt_forwards();
 
         iter::from_fn(move || {
-            loop {
-                if self.singleton {
-                    return None;
-                }
-
-                let (next_excerpt, next_range) = cursor.fetch_excerpt_with_range()?;
-                cursor.next_excerpt_forwards();
-                if !bounds.contains(&next_range.start.key) {
-                    prev_excerpt = Some(next_excerpt);
-                    continue;
-                }
-
-                let next_region_start = next_range.start.value.unwrap();
-                let next_region_end = if let Some((_, range)) = cursor.fetch_excerpt_with_range() {
-                    range.start.value.unwrap()
-                } else {
-                    self.max_point()
-                };
-
-                let prev = prev_excerpt.as_ref().map(|excerpt| ExcerptBoundaryInfo {
-                    start_anchor: Anchor::in_buffer(
-                        excerpt.path_key_index,
-                        excerpt.range.context.start,
-                    ),
-                    range: excerpt.range.clone(),
-                    end_row: MultiBufferRow(next_region_start.row),
-                });
-
-                let next = ExcerptBoundaryInfo {
-                    start_anchor: Anchor::in_buffer(
-                        next_excerpt.path_key_index,
-                        next_excerpt.range.context.start,
-                    ),
-                    range: next_excerpt.range.clone(),
-                    end_row: if next_excerpt.has_trailing_newline {
-                        MultiBufferRow(next_region_end.row - 1)
-                    } else {
-                        MultiBufferRow(next_region_end.row)
-                    },
-                };
-
-                let row = MultiBufferRow(next_region_start.row);
-
-                prev_excerpt = Some(next_excerpt);
-
-                return Some(ExcerptBoundary { row, prev, next });
+            if self.singleton {
+                return None;
             }
+
+            let (next_excerpt, next_range) = cursor.fetch_excerpt_with_range()?;
+            cursor.next_excerpt_forwards();
+            #[cfg(test)]
+            multi_buffer_tests::EXCERPT_BOUNDARY_STEPS.with(|steps| steps.set(steps.get() + 1));
+            if !bounds.contains(&next_range.start.key) {
+                return None;
+            }
+
+            let next_region_start = next_range.start.value.unwrap();
+            let next_region_end = if let Some((_, range)) = cursor.fetch_excerpt_with_range() {
+                range.start.value.unwrap()
+            } else {
+                self.max_point()
+            };
+
+            let prev = prev_excerpt.as_ref().map(|excerpt| ExcerptBoundaryInfo {
+                start_anchor: Anchor::in_buffer(
+                    excerpt.path_key_index,
+                    excerpt.range.context.start,
+                ),
+                range: excerpt.range.clone(),
+                end_row: MultiBufferRow(next_region_start.row),
+            });
+
+            let next = ExcerptBoundaryInfo {
+                start_anchor: Anchor::in_buffer(
+                    next_excerpt.path_key_index,
+                    next_excerpt.range.context.start,
+                ),
+                range: next_excerpt.range.clone(),
+                end_row: if next_excerpt.has_trailing_newline {
+                    MultiBufferRow(next_region_end.row - 1)
+                } else {
+                    MultiBufferRow(next_region_end.row)
+                },
+            };
+
+            let row = MultiBufferRow(next_region_start.row);
+
+            prev_excerpt = Some(next_excerpt);
+
+            Some(ExcerptBoundary { row, prev, next })
         })
     }
 
@@ -6510,7 +6489,7 @@ impl MultiBufferSnapshot {
         self.lift_buffer_metadata::<MBD, _, _>(range, move |buffer, buffer_range| {
             Some(
                 buffer
-                    .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
+                    .diagnostics_in_range(buffer_range, false)
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
@@ -6537,7 +6516,7 @@ impl MultiBufferSnapshot {
         self.lift_buffer_metadata::<MBD, _, _>(range, move |buffer, buffer_range| {
             Some(
                 buffer
-                    .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
+                    .diagnostics_in_range(buffer_range, false)
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
@@ -6679,11 +6658,6 @@ impl MultiBufferSnapshot {
 
     fn try_path_for_anchor(&self, anchor: ExcerptAnchor) -> Option<&PathKey> {
         self.path_keys.get_index(anchor.path.0 as usize)
-    }
-
-    pub fn path_for_anchor(&self, anchor: ExcerptAnchor) -> &PathKey {
-        self.try_path_for_anchor(anchor)
-            .expect("invalid anchor: path was never added to multibuffer")
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
@@ -7056,7 +7030,6 @@ impl MultiBufferSnapshot {
         start..end
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     fn check_invariants(&self) {
         let excerpts = self.excerpts.items(());
 
@@ -8446,7 +8419,7 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 }
 
 impl ToOffset for Point {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         snapshot.point_to_offset(*self)
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
@@ -8456,7 +8429,7 @@ impl ToOffset for Point {
 
 impl ToOffset for MultiBufferOffset {
     #[track_caller]
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         assert!(
             *self <= snapshot.len(),
             "offset {} is greater than the snapshot.len() {}",
@@ -8471,7 +8444,7 @@ impl ToOffset for MultiBufferOffset {
 }
 
 impl ToOffset for MultiBufferOffsetUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         snapshot.offset_utf16_to_offset(*self)
     }
 
@@ -8481,7 +8454,7 @@ impl ToOffset for MultiBufferOffsetUtf16 {
 }
 
 impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
         snapshot.point_utf16_to_offset(*self)
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
@@ -8490,28 +8463,28 @@ impl ToOffset for PointUtf16 {
 }
 
 impl ToPoint for MultiBufferOffset {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point {
         snapshot.offset_to_point(*self)
     }
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
         snapshot.offset_to_point_utf16(*self)
     }
 }
 
 impl ToPoint for Point {
-    fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, _: &MultiBufferSnapshot) -> Point {
         *self
     }
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
         snapshot.point_to_point_utf16(*self)
     }
 }
 
 impl ToPoint for PointUtf16 {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point {
         snapshot.point_utf16_to_point(*self)
     }
-    fn to_point_utf16<'a>(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
         *self
     }
 }

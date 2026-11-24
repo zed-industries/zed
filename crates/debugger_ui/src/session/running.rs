@@ -355,9 +355,7 @@ impl Item for SubView {
                     cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
                 );
                 debug_assert!(_previous_subscription.is_none());
-                running
-                    .panes
-                    .split(&this_pane, &new_pane, split_direction, cx);
+                running.panes.split(&this_pane, &new_pane, split_direction);
                 anyhow::Ok(new_pane)
             });
 
@@ -1625,7 +1623,7 @@ impl RunningState {
                 }
             }
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(source_pane, cx).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
@@ -2063,9 +2061,9 @@ impl RunningState {
         Member::Axis(group_root)
     }
 
-    pub(crate) fn invert_axies(&mut self, cx: &mut App) {
+    pub(crate) fn invert_axies(&mut self) {
         self.dock_axis = self.dock_axis.invert();
-        self.panes.invert_axies(cx);
+        self.panes.invert_axies();
     }
 }
 

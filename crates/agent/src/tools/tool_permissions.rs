@@ -350,20 +350,6 @@ pub fn authorize_symlink_escapes(
     event_stream.authorize_always_prompt(title, context, cx)
 }
 
-/// Checks whether a path escapes the project via symlink, without creating
-/// an authorization task. Useful for pre-filtering paths before settings checks.
-pub fn path_has_symlink_escape(
-    project: &Project,
-    path: impl AsRef<Path>,
-    canonical_worktree_roots: &[PathBuf],
-    cx: &App,
-) -> bool {
-    matches!(
-        resolve_project_path(project, path, canonical_worktree_roots, cx),
-        Ok(ResolvedProjectPath::SymlinkEscape { .. })
-    )
-}
-
 /// Collects symlink escape info for a path without creating an authorization task.
 /// Returns `Some((display_path, canonical_target))` if the path escapes via symlink.
 pub fn detect_symlink_escape<'a>(

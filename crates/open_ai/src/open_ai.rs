@@ -815,7 +815,6 @@ pub enum ToolChoice {
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
-    #[allow(dead_code)]
     Function { function: FunctionDefinition },
 }
 

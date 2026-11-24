@@ -30,7 +30,7 @@ impl GitRepository {
             .trim_matches('/')
             .split_once('/')
             .context("repository URL must contain an owner and repository name")?;
-        let repo = repo.strip_suffix(".git").unwrap_or(repo);
+        let repo = repo.trim_suffix(".git");
         ensure!(
             !owner.is_empty() && !repo.is_empty() && !repo.contains('/'),
             "expected an owner/repo path, got {repository}"
@@ -221,6 +221,7 @@ mod tests {
         for revision in [REVISION, WORKSPACE_REVISION] {
             let args = GpuiArgs {
                 sha: revision.parse().map_err(anyhow::Error::msg)?,
+                dry_run: false,
             };
             assert_eq!(
                 package.repository.display(&args).to_string(),
@@ -234,6 +235,7 @@ mod tests {
     fn git_repositories_have_checkout_coordinates() -> Result<()> {
         let args = GpuiArgs {
             sha: WORKSPACE_REVISION.parse().map_err(anyhow::Error::msg)?,
+            dry_run: false,
         };
         for url in [
             "https://github.com/zed-industries/fork",

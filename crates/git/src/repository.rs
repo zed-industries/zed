@@ -243,15 +243,7 @@ pub struct Branch {
 pub struct BranchesScanResult {
     pub branches: Vec<Branch>,
     pub error: Option<SharedString>,
-}
-
-impl From<Vec<Branch>> for BranchesScanResult {
-    fn from(branches: Vec<Branch>) -> Self {
-        Self {
-            branches,
-            error: None,
-        }
-    }
+    pub remote_default_branch: Option<SharedString>,
 }
 
 impl Branch {
@@ -1126,6 +1118,10 @@ pub trait GitRepository: Send + Sync {
 
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
+
+    fn git_binary_path(&self) -> Option<PathBuf> {
+        None
+    }
 }
 
 pub enum DiffType {
@@ -2231,6 +2227,7 @@ impl GitRepository for RealGitRepository {
                     .zip(trackings)
                     .filter_map(|(listed_ref, tracking)| listed_ref.branch(tracking))
                     .collect::<Vec<_>>();
+                let remote_default_branch = parse_remote_default_branch(&listed_refs);
                 if branches.is_empty() {
                     let args = vec!["symbolic-ref", "--quiet", "HEAD"];
 
@@ -2250,7 +2247,11 @@ impl GitRepository for RealGitRepository {
                     }
                 }
 
-                Ok(BranchesScanResult { branches, error })
+                Ok(BranchesScanResult {
+                    branches,
+                    error,
+                    remote_default_branch,
+                })
             })
             .boxed()
     }
@@ -3234,26 +3235,8 @@ impl GitRepository for RealGitRepository {
                     .filter_map(|line| line.split_once('\t'))
                     .collect();
 
-                if let Some(target) = refs.get("refs/remotes/upstream/HEAD") {
-                    let strip_prefix = if include_remote_name {
-                        "refs/remotes/"
-                    } else {
-                        "refs/remotes/upstream/"
-                    };
-                    if let Some(branch) = target.strip_prefix(strip_prefix) {
-                        return Ok(Some(branch.into()));
-                    }
-                }
-
-                if let Some(target) = refs.get("refs/remotes/origin/HEAD") {
-                    let strip_prefix = if include_remote_name {
-                        "refs/remotes/"
-                    } else {
-                        "refs/remotes/origin/"
-                    };
-                    if let Some(branch) = target.strip_prefix(strip_prefix) {
-                        return Ok(Some(branch.into()));
-                    }
+                if let Some(branch) = remote_head_branch(&refs, include_remote_name) {
+                    return Ok(Some(branch));
                 }
 
                 let local_branch_exists =
@@ -3549,6 +3532,10 @@ impl GitRepository for RealGitRepository {
     fn is_trusted(&self) -> bool {
         self.is_trusted.load(std::sync::atomic::Ordering::Acquire)
     }
+
+    fn git_binary_path(&self) -> Option<PathBuf> {
+        Some(self.any_git_binary_path.clone())
+    }
 }
 
 async fn run_commit_data_reader(
@@ -3724,6 +3711,22 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         }
     }));
     args
+}
+
+pub fn untrusted_git_command<S: AsRef<OsStr>>(
+    git_binary_path: &Path,
+    working_directory: &Path,
+    executor: BackgroundExecutor,
+    args: &[S],
+) -> util::command::Command {
+    GitBinary::new(
+        git_binary_path.to_path_buf(),
+        working_directory.to_path_buf(),
+        working_directory.to_path_buf(),
+        executor,
+        false,
+    )
+    .build_command(args)
 }
 
 pub(crate) struct GitBinary {
@@ -4153,11 +4156,40 @@ impl MapSeekTarget<RepoPath> for RepoPathDescendants<'_> {
     }
 }
 
+fn parse_remote_default_branch(listed_refs: &[ListedRef]) -> Option<SharedString> {
+    let symrefs = listed_refs
+        .iter()
+        .filter_map(|listed_ref| {
+            let ref_name = std::str::from_utf8(listed_ref.ref_name).ok()?;
+            let symref = std::str::from_utf8(listed_ref.symref).ok()?;
+            (!symref.is_empty()).then_some((ref_name, symref))
+        })
+        .collect::<HashMap<_, _>>();
+    remote_head_branch(&symrefs, true)
+}
+
+fn remote_head_branch(
+    refs: &HashMap<&str, &str>,
+    include_remote_name: bool,
+) -> Option<SharedString> {
+    ["upstream", "origin"].into_iter().find_map(|remote| {
+        let target = refs.get(format!("refs/remotes/{remote}/HEAD").as_str())?;
+        let strip_prefix = if include_remote_name {
+            "refs/remotes/".to_string()
+        } else {
+            format!("refs/remotes/{remote}/")
+        };
+        target
+            .strip_prefix(strip_prefix.as_str())
+            .map(SharedString::from)
+    })
+}
+
 /// Each field ends with a NUL, so that a line break in one doesn't end its ref: an upstream's name
 /// is a config value, which can contain line breaks.
 const BRANCH_LISTING_FORMAT: &str = concat!(
     "%(HEAD)%00%(objectname)%00%(parent)%00%(refname)%00%(upstream)%00",
-    "%(committerdate:unix)%00%(authorname)%00%(contents:subject)%00",
+    "%(committerdate:unix)%00%(authorname)%00%(contents:subject)%00%(symref)%00",
 );
 
 /// A ref that `git for-each-ref` listed. Its fields are bytes, because ref names needn't be UTF-8,
@@ -4172,6 +4204,7 @@ struct ListedRef<'a> {
     commit_timestamp: Option<i64>,
     author_name: &'a [u8],
     subject: &'a [u8],
+    symref: &'a [u8],
 }
 
 impl ListedRef<'_> {
@@ -4214,6 +4247,7 @@ fn parse_listed_refs(listing: &[u8]) -> Vec<ListedRef<'_>> {
                 date,
                 author_name,
                 subject,
+                symref,
             ] = fields;
             ListedRef {
                 is_head: head == b"*",
@@ -4224,6 +4258,7 @@ fn parse_listed_refs(listing: &[u8]) -> Vec<ListedRef<'_>> {
                 commit_timestamp: String::from_utf8_lossy(date).parse().ok(),
                 author_name,
                 subject,
+                symref,
             }
         })
         .collect()
@@ -6297,8 +6332,9 @@ mod tests {
         ref_name: &str,
         tracking: UpstreamTracking,
     ) {
-        let BranchesScanResult { branches, error } = repo.branches().await.unwrap();
-        assert_eq!(error, None);
+        let scan = repo.branches().await.unwrap();
+        assert_eq!(scan.error, None);
+        let branches = scan.branches;
         assert!(
             branches
                 .iter()
@@ -6469,8 +6505,9 @@ mod tests {
 
         let repo = open_repo(path, cx);
         let list = async || -> Vec<UpstreamTracking> {
-            let BranchesScanResult { branches, error } = repo.branches().await.unwrap();
-            assert!(error.is_some());
+            let scan = repo.branches().await.unwrap();
+            assert!(scan.error.is_some());
+            let branches = scan.branches;
             let names = branches.iter().map(Branch::name).collect::<Vec<_>>();
             assert_eq!(names, ["aaa", "abc"]);
             let upstreams = branches.into_iter().map(|branch| branch.upstream.unwrap());
@@ -6607,8 +6644,9 @@ mod tests {
         let repo = open_repo(path, cx);
         // The first listing reads the tracking after listing, and the next one alongside it.
         for _ in 0..2 {
-            let BranchesScanResult { branches, error } = repo.branches().await.unwrap();
-            let error = error.unwrap_or_default();
+            let scan = repo.branches().await.unwrap();
+            let error = scan.error.unwrap_or_default();
+            let branches = scan.branches;
             assert!(
                 error.starts_with("failed to get upstream tracking"),
                 "{error}"
@@ -6696,7 +6734,7 @@ mod tests {
     fn test_branches_parsing() {
         // suppress "help: octal escapes are not supported, `\0` is always null"
         #[allow(clippy::octal_escapes)]
-        let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\01733187470\0John Doe\0generated protobuf\0\n";
+        let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\01733187470\0John Doe\0generated protobuf\0\0\n";
         assert_eq!(
             parse_branches(input),
             vec![Branch {
@@ -6720,7 +6758,7 @@ mod tests {
     #[test]
     fn test_branches_parsing_containing_refs_with_missing_fields() {
         #[allow(clippy::octal_escapes)]
-        let input = " \090012116c03db04344ab10d50348553aa94f1ea0\0\0refs/heads/broken\0\0\0\0\0\n \0eb0cae33272689bd11030822939dd2701c52f81e\0895951d681e5561478c0acdd6905e8aacdfd2249\0refs/heads/dev\0\01762948725\0Zed\0Add feature\0\n*\0895951d681e5561478c0acdd6905e8aacdfd2249\0\0refs/heads/main\0\01762948695\0Zed\0Initial commit\0\n \0eb0cae33272689bd11030822939dd2701c52f81e\0\0refs/replace/895951d681e5561478c0acdd6905e8aacdfd2249\0\01762948725\0Zed\0Add feature\0\n";
+        let input = " \090012116c03db04344ab10d50348553aa94f1ea0\0\0refs/heads/broken\0\0\0\0\0\0\n \0eb0cae33272689bd11030822939dd2701c52f81e\0895951d681e5561478c0acdd6905e8aacdfd2249\0refs/heads/dev\0\01762948725\0Zed\0Add feature\0\0\n*\0895951d681e5561478c0acdd6905e8aacdfd2249\0\0refs/heads/main\0\01762948695\0Zed\0Initial commit\0\0\n \0eb0cae33272689bd11030822939dd2701c52f81e\0\0refs/replace/895951d681e5561478c0acdd6905e8aacdfd2249\0\01762948725\0Zed\0Add feature\0\0\n";
 
         let branches = parse_branches(input);
         assert_eq!(
@@ -7584,6 +7622,68 @@ mod tests {
         assert_eq!(
             repo.default_branch(true).await.unwrap(),
             Some("origin/main".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_branch_scan_reads_the_remote_default_branch(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some(PathBuf::from("git")),
+            cx.executor(),
+        )
+        .unwrap();
+        fs::write(repo_dir.path().join("message"), b"Latin-1 subject \xe9\n").unwrap();
+        git_command(
+            repo_dir.path(),
+            [
+                "-c",
+                "i18n.commitEncoding=ISO-8859-1",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "--file",
+                "message",
+            ],
+        );
+
+        let mut remote_default_branches = Vec::new();
+        for remote in ["origin", "upstream"] {
+            git_command(
+                repo_dir.path(),
+                ["update-ref", &format!("refs/remotes/{remote}/main"), "HEAD"],
+            );
+            git_command(
+                repo_dir.path(),
+                [
+                    "symbolic-ref",
+                    &format!("refs/remotes/{remote}/HEAD"),
+                    &format!("refs/remotes/{remote}/main"),
+                ],
+            );
+            remote_default_branches.push((
+                repo.branches().await.unwrap().remote_default_branch,
+                repo.default_branch(true).await.unwrap(),
+            ));
+        }
+        assert_eq!(
+            remote_default_branches,
+            [
+                (
+                    Some(SharedString::from("origin/main")),
+                    Some(SharedString::from("origin/main")),
+                ),
+                (
+                    Some(SharedString::from("upstream/main")),
+                    Some(SharedString::from("upstream/main")),
+                ),
+            ]
         );
     }
 

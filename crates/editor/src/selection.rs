@@ -189,7 +189,6 @@ impl Editor {
             });
         });
         self.request_autoscroll(Autoscroll::newest(), cx);
-        cx.notify();
     }
 
     pub fn select_to_end(&mut self, _: &SelectToEnd, window: &mut Window, cx: &mut Context<Self>) {

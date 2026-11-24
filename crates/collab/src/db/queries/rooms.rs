@@ -542,6 +542,12 @@ impl Database {
 
                 self.update_project_worktrees(project_id, &reshared_project.worktrees, &tx)
                     .await?;
+                if rejoin_room.resends_worktree_settings {
+                    worktree_settings_file::Entity::delete_many()
+                        .filter(worktree_settings_file::Column::ProjectId.eq(project_id))
+                        .exec(&*tx)
+                        .await?;
+                }
 
                 reshared_projects.push(ResharedProject {
                     id: project_id,
@@ -793,6 +799,7 @@ impl Database {
                             head_commit_details,
                             branch_list: Vec::new(),
                             branch_list_error: None,
+                            remote_default_branch: None,
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path.clone(),

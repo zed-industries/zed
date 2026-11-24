@@ -1,3 +1,4 @@
+mod auth_status;
 mod debug_log;
 mod runtime;
 mod session_updates;
@@ -20,9 +21,12 @@ use acp_thread::{
 };
 use action_log::ActionLog;
 use agent_client_protocol::{
-    Agent, Client, HandleDispatchFrom, Handled, JsonRpcMessage, JsonRpcResponse, Protocol,
-    Responder, UntypedMessage,
-    v2::{Builder as V2Builder, ConnectionTo as V2ConnectionTo, Responder as V2Responder},
+    Agent, Client, ErrorCode as RpcErrorCode, HandleDispatchFrom, Handled, JsonRpcMessage,
+    JsonRpcResponse, Protocol, Responder, UntypedMessage,
+    v2::{
+        Builder as V2Builder, ConnectionTo as V2ConnectionTo, InitializeOutcome,
+        Responder as V2Responder,
+    },
 };
 use agent_client_protocol::{
     schema::MaybeUndefined,
@@ -111,6 +115,10 @@ async fn exited_load_error_after_drain(
 pub struct UnsupportedVersion;
 
 #[derive(Debug, Error)]
+#[error("Could not parse the ACP initialize response")]
+struct InvalidInitializeResponse;
+
+#[derive(Debug, Error)]
 #[error("ACP v1 fallback failed: {failure}; v2 negotiation: {negotiation:#}")]
 struct V1FallbackFailure {
     failure: String,
@@ -146,7 +154,11 @@ pub async fn connect(
         .await
         {
             Ok(connection) => return Ok(Rc::new(connection)),
-            Err(error) if error.is::<UnsupportedVersion>() => Some(error),
+            Err(error)
+                if error.is::<UnsupportedVersion>() || error.is::<InvalidInitializeResponse>() =>
+            {
+                Some(error)
+            }
             Err(error) => return Err(error),
         }
     } else {
@@ -187,22 +199,33 @@ fn v1_only_mismatch(error: &agent_client_protocol::Error) -> bool {
 }
 
 fn initialization_error(error: anyhow::Error, debug_log: &AcpDebugLog) -> anyhow::Error {
-    // `connect` classifies the agent's answer in-band, but an agent that exits right after
-    // answering surfaces as a process exit, so its answer is recovered from the debug log.
-    if error.is::<UnsupportedVersion>() || error.is::<agent_client_protocol::Error>() {
+    if error.is::<UnsupportedVersion>() {
         return error;
     }
     match debug_log.initialization_response() {
-        Some(Ok(Some(value))) => {
-            if serde_json::from_value::<acp::InitializeResponse>(value).is_ok_and(|response| {
-                response.protocol_version == agent_client_protocol::schema::ProtocolVersion::V1
-            }) {
-                error.context(UnsupportedVersion)
-            } else {
-                error
+        // Decode the recorded result even if process exit won the race with the SDK.
+        // An unreadable protocolVersion yields Invalid params; other decode failures yield Parse error.
+        Some(Ok(Some(value))) => match InitializeOutcome::from_json("initialize", value) {
+            Ok(InitializeOutcome::LowerVersion(mismatch)) => {
+                error.context(mismatch).context(UnsupportedVersion)
             }
-        }
-        Some(Err(protocol_error)) => {
+            Err(decode_error)
+                if matches!(
+                    decode_error.code,
+                    RpcErrorCode::PARSE_ERROR | RpcErrorCode::INVALID_PARAMS
+                ) =>
+            {
+                let original = error.downcast_ref::<agent_client_protocol::Error>();
+                let error = if original == Some(&decode_error) {
+                    error
+                } else {
+                    error.context(decode_error)
+                };
+                error.context(InvalidInitializeResponse)
+            }
+            _ => error,
+        },
+        Some(Err(protocol_error)) if !error.is::<agent_client_protocol::Error>() => {
             let retry_v1 = v1_only_mismatch(&protocol_error);
             let error =
                 anyhow!(protocol_error).context(format!("ACP initialization failed: {error}"));
@@ -242,6 +265,7 @@ where
 
 /// Holds state needed by foreground work dispatched from background handler closures.
 struct ClientContext {
+    auth_status: std::rc::Weak<auth_status::ConnectionAuthStatus>,
     sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     pending_session_updates: Option<Rc<RefCell<PendingSessionUpdates>>>,
     session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
@@ -287,6 +311,9 @@ struct ClientDisconnectWork {
 
 impl ForegroundWorkItem for ClientDisconnectWork {
     fn run(self: Box<Self>, cx: &mut AsyncApp, context: &ClientContext) {
+        if let Some(status) = context.auth_status.upgrade() {
+            status.disconnect();
+        }
         if let Some(scopes) = &context.active_request_scopes {
             scopes.borrow_mut().clear();
         }
@@ -460,9 +487,13 @@ impl ConfigOptions {
     }
 }
 
-struct ReadOnlyConfigOptions(ConfigOptions);
+struct ReadOnlyConfigOptions(ConfigOptions, acp_thread::AgentDescriptionFormat);
 
 impl acp_thread::AgentSessionConfigOptions for ReadOnlyConfigOptions {
+    fn description_format(&self) -> acp_thread::AgentDescriptionFormat {
+        self.1
+    }
+
     fn config_options(&self) -> Vec<acp_v2::SessionConfigOption> {
         self.0.config_options.borrow().clone()
     }
@@ -489,7 +520,7 @@ pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
     /// The root of an announced child session controls when the child is addressable.
     subagent_root: Option<acp_v2::SessionId>,
-    replay: Option<Rc<RefCell<V2Replay>>>,
+    replay: Option<Rc<RefCell<SessionReplay>>>,
     suppress_abort_err: bool,
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
     config_options: Option<ConfigOptions>,
@@ -498,10 +529,20 @@ pub struct AcpSession {
 }
 
 #[derive(Default)]
-struct V2Replay {
-    /// Each session, including each child, has its own history boundary.
+struct SessionReplay {
+    /// In v2 each session, including each child, has its own replay_complete marker.
+    /// In v1 only the load response separates history from current updates.
     completed: HashSet<acp_v2::SessionId>,
     finished: bool,
+}
+
+impl AcpSession {
+    fn is_replaying(&self, id: &acp_v2::SessionId) -> bool {
+        self.replay.as_ref().is_some_and(|replay| {
+            let replay = replay.borrow();
+            !replay.finished && !replay.completed.contains(id)
+        })
+    }
 }
 
 /// Builds a v2 terminal-notification handler without selecting it for application connections.
@@ -634,6 +675,16 @@ fn with_v2_client_ingress<Handler: HandleDispatchFrom<Agent>>(
         move |notification, encoded_bytes| dispatch(notification.into(), encoded_bytes)
     });
     with_v2_session_notifications(builder, dispatch)
+        .on_receive_notification(
+            {
+                let dispatch_sender = dispatch_sender.clone();
+                async move |update: acp_v2::AuthStatusUpdateNotification, _connection| {
+                    enqueue_notification(&dispatch_sender, update, auth_status::update_v2);
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
         .on_receive_request(
             {
                 let dispatch_sender = dispatch_sender.clone();
@@ -924,27 +975,26 @@ fn apply_v2_session_notification(
     sessions: &Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let (is_subagent, replay) = {
+    let (is_subagent, replaying) = {
         let sessions = sessions.borrow();
         let session = sessions
             .get(&notification.session_id)
             .filter(|session| session.thread.entity_id() == thread.entity_id())
             .context("Session was released or replaced before applying an update")?;
-        (session.subagent_root.is_some(), session.replay.clone())
-    };
-    if matches!(notification.update, InboundSessionUpdate::ReplayComplete) {
-        if let Some(replay) = replay {
-            let mut replay = replay.borrow_mut();
-            if !replay.finished {
-                replay.completed.insert(notification.session_id);
+        if matches!(notification.update, InboundSessionUpdate::ReplayComplete) {
+            if let Some(replay) = &session.replay {
+                let mut replay = replay.borrow_mut();
+                if !replay.finished {
+                    replay.completed.insert(notification.session_id);
+                }
             }
+            return Ok(());
         }
-        return Ok(());
-    }
-    let replaying = replay.is_some_and(|replay| {
-        let replay = replay.borrow();
-        !replay.finished && !replay.completed.contains(&notification.session_id)
-    });
+        (
+            session.subagent_root.is_some(),
+            session.is_replaying(&notification.session_id),
+        )
+    };
     if let InboundSessionUpdate::Subagent(update) = &mut notification.update {
         let parent = thread
             .upgrade()
@@ -1291,9 +1341,7 @@ mod selection_tests {
     use serde_json::json;
 
     #[gpui::test]
-    async fn beta_selection_uses_fresh_v1_fallback_only_for_version_mismatch(
-        cx: &mut TestAppContext,
-    ) {
+    async fn beta_selection_retries_v1_on_a_fresh_connection(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let mut store = settings::SettingsStore::test(cx);
             store.register_setting::<feature_flags::FeatureFlagsSettings>();
@@ -1305,13 +1353,22 @@ mod selection_tests {
         let project = Project::example([directory.path()], &mut cx.to_async()).await;
         let v1 = r#""result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"selected-v1","version":"1"}}"#;
         let v2 = r#""result":{"protocolVersion":2,"info":{"name":"selected-v2","version":"1"},"capabilities":{"session":{}}}"#;
-        for (beta, response, exit_after_response, expected, requests) in [
-            (false, v2, false, Some(false), "1"),
-            (true, v2, false, Some(true), "2"),
-            (true, v1, false, Some(false), "2 1"),
+        let mislabeled_v1 = r#""result":{"protocolVersion":2,"agentInfo":{"name":"antigravity-acp","version":"1.5.2"},"agentCapabilities":{"loadSession":true},"authMethods":[]}"#;
+        let malformed_v2 = r#""result":{"protocolVersion":2,"info":{"name":"missing-version"}}"#;
+        let malformed_version = r#""result":{"protocolVersion":"malformed"}"#;
+        for (beta, response, v1_response, exit_after_response, expected, requests) in [
+            (false, v2, v1, false, Some(false), "1"),
+            (true, v2, v1, false, Some(true), "2"),
+            (true, v1, v1, false, Some(false), "2 1"),
+            (true, mislabeled_v1, v1, false, Some(false), "2 1"),
+            (true, mislabeled_v1, mislabeled_v1, false, None, "2 1"),
+            (true, malformed_v2, v1, false, Some(false), "2 1"),
+            (true, malformed_v2, v1, true, Some(false), "2 1"),
+            (true, malformed_v2, malformed_version, true, None, "2 1"),
             (
                 true,
                 r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[1]}}"#,
+                v1,
                 false,
                 Some(false),
                 "2 1",
@@ -1319,6 +1376,7 @@ mod selection_tests {
             (
                 true,
                 r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[1]}}"#,
+                v1,
                 true,
                 Some(false),
                 "2 1",
@@ -1326,6 +1384,7 @@ mod selection_tests {
             (
                 true,
                 r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[3]}}"#,
+                v1,
                 true,
                 None,
                 "2",
@@ -1333,6 +1392,7 @@ mod selection_tests {
             (
                 true,
                 r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[1,2]}}"#,
+                v1,
                 false,
                 None,
                 "2",
@@ -1340,6 +1400,7 @@ mod selection_tests {
             (
                 true,
                 r#""error":{"code":-32602,"message":"Bad initialize parameters"}"#,
+                v1,
                 false,
                 None,
                 "2",
@@ -1347,25 +1408,38 @@ mod selection_tests {
             (
                 true,
                 r#""result":{"protocolVersion":1},"error":{"code":-32022,"message":"Invalid envelope","data":{"requested":2,"supported":[1]}}"#,
+                v1,
                 true,
+                None,
+                "2",
+            ),
+            (
+                true,
+                r#""error":{"code":-32700,"message":"Could not parse client input"}"#,
+                v1,
+                false,
+                None,
+                "2",
+            ),
+            (
+                true,
+                r#""result":{"protocolVersion":3,"info":{"name":"future","version":"1"}}"#,
+                v1,
+                false,
                 None,
                 "2",
             ),
             (
                 true,
                 r#""result":{"info":{"name":"malformed","version":"1"}}"#,
+                v1,
                 false,
-                None,
-                "2",
+                Some(false),
+                "2 1",
             ),
-            (
-                true,
-                r#""result":{"protocolVersion":"malformed","agentCapabilities":{}}"#,
-                false,
-                None,
-                "2",
-            ),
-            (true, "", true, None, "2"),
+            (true, malformed_version, v1, false, Some(false), "2 1"),
+            (true, r#""result":null"#, v1, false, Some(false), "2 1"),
+            (true, "", v1, true, None, "2"),
         ] {
             cx.update(|cx| {
                 set_acp_beta(beta, cx);
@@ -1374,7 +1448,9 @@ mod selection_tests {
             std::fs::write(&trace, "").expect("clear trace");
             let command = AgentServerCommand {
                 path: "/bin/sh".into(),
-                args: vec!["-c".into(), r#"
+                args: vec![
+                    "-c".into(),
+                    r#"
 printf 'start %s\n' "$$" >> "$ACP_SELECTION_TRACE"
 while IFS= read -r request; do
     case "$request" in
@@ -1390,17 +1466,26 @@ while IFS= read -r request; do
                     ;;
                 *)
                     printf 'initialize 1\n' >> "$ACP_SELECTION_TRACE"
-                    printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"selected-v1","version":"1"}}}\n' "$id"
+                    printf '{"jsonrpc":"2.0","id":%s,%s}\n' "$id" "$ACP_SELECTION_V1_RESPONSE"
                     ;;
             esac
             ;;
     esac
 done
-"#.into()],
+"#
+                    .into(),
+                ],
                 env: Some(HashMap::from_iter([
-                    ("ACP_SELECTION_TRACE".into(), trace.to_string_lossy().into_owned()),
+                    (
+                        "ACP_SELECTION_TRACE".into(),
+                        trace.to_string_lossy().into_owned(),
+                    ),
                     ("ACP_SELECTION_RESPONSE".into(), response.into()),
-                    ("ACP_SELECTION_EXIT".into(), if exit_after_response { "1" } else { "0" }.into()),
+                    ("ACP_SELECTION_V1_RESPONSE".into(), v1_response.into()),
+                    (
+                        "ACP_SELECTION_EXIT".into(),
+                        if exit_after_response { "1" } else { "0" }.into(),
+                    ),
                 ])),
             };
             let connecting = cx.spawn({
@@ -1434,6 +1519,15 @@ done
                 );
                 cx.update(|cx| set_acp_beta(false, cx));
                 assert_eq!(
+                    connection.description_format(),
+                    if v2 {
+                        acp_thread::AgentDescriptionFormat::Markdown
+                    } else {
+                        acp_thread::AgentDescriptionFormat::PlainText
+                    },
+                    "descriptions follow the negotiated connection, not the current beta flag"
+                );
+                assert_eq!(
                     connection.clone().downcast::<AcpV2Connection>().is_some(),
                     v2
                 );
@@ -1443,6 +1537,20 @@ done
                 let error = result
                     .err()
                     .unwrap_or_else(|| panic!("unexpected successful selection for {response}"));
+                if requests == "2 1" {
+                    let failure = error
+                        .downcast_ref::<V1FallbackFailure>()
+                        .expect("failed v1 retry");
+                    assert!(failure.negotiation.is::<InvalidInitializeResponse>());
+                    assert_eq!(
+                        failure
+                            .negotiation
+                            .downcast_ref::<agent_client_protocol::Error>()
+                            .expect("original decode error")
+                            .code,
+                        RpcErrorCode::PARSE_ERROR
+                    );
+                }
                 if response.starts_with(r#""error":{"code":-32022"#) {
                     let protocol_error = error
                         .downcast_ref::<agent_client_protocol::Error>()

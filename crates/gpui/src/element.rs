@@ -227,31 +227,37 @@ pub trait ParentElement {
 #[derive(Clone, Debug)]
 pub struct GlobalElementId {
     ids: Arc<[ElementId]>,
-    hash: u64,
+    hash: PathHash,
 }
 
-/// The hash of an empty id path; every path hash is folded from it with
-/// [`extend_path_hash`], one id at a time, so the window can keep the hash
-/// of each prefix of its id stack and never re-hash a path.
-pub(crate) const EMPTY_PATH_HASH: u64 = 0;
+/// The hash of an element id path. Every path hash is folded from [`PathHash::EMPTY`] with
+/// [`PathHash::extend`], one id at a time, so the window can keep the hash of each prefix
+/// of its id stack and never re-hash a path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct PathHash(u64);
 
-/// The hash of the path `prefix` + `id`, given the hash of `prefix`.
-pub(crate) fn extend_path_hash(prefix: u64, id: &ElementId) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = collections::FxHasher::with_seed(prefix as usize);
-    id.hash(&mut hasher);
-    hasher.finish()
+impl PathHash {
+    /// The hash of an empty id path.
+    pub(crate) const EMPTY: Self = Self(0);
+
+    /// The hash of this path with `id` appended.
+    pub(crate) fn extend(self, id: &ElementId) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = collections::FxHasher::with_seed(self.0 as usize);
+        id.hash(&mut hasher);
+        Self(hasher.finish())
+    }
 }
 
 impl GlobalElementId {
     pub(crate) fn new(ids: &[ElementId]) -> Self {
-        let hash = ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash);
+        let hash = ids.iter().fold(PathHash::EMPTY, PathHash::extend);
         Self::with_hash(ids, hash)
     }
 
     /// `ids` with its hash already known, as the window's id stack keeps it.
-    pub(crate) fn with_hash(ids: &[ElementId], hash: u64) -> Self {
-        debug_assert_eq!(hash, ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash));
+    pub(crate) fn with_hash(ids: &[ElementId], hash: PathHash) -> Self {
+        debug_assert_eq!(hash, ids.iter().fold(PathHash::EMPTY, PathHash::extend));
         Self {
             ids: Arc::from(ids),
             hash,
@@ -259,7 +265,7 @@ impl GlobalElementId {
     }
 
     pub(crate) fn accesskit_node_id(&self) -> accesskit::NodeId {
-        accesskit::NodeId(self.hash)
+        accesskit::NodeId(self.hash.0)
     }
 }
 
@@ -287,7 +293,7 @@ impl Eq for GlobalElementId {}
 
 impl std::hash::Hash for GlobalElementId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.hash);
+        state.write_u64(self.hash.0);
     }
 }
 
@@ -987,7 +993,7 @@ mod global_element_id_tests {
         let cached = started.elapsed();
         let started = std::time::Instant::now();
         for _ in 0..n {
-            acc ^= GlobalElementId::new(std::hint::black_box(&ids)).hash;
+            acc ^= GlobalElementId::new(std::hint::black_box(&ids)).hash.0;
         }
         let build = started.elapsed();
         eprintln!(

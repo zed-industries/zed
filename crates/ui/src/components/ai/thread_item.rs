@@ -980,9 +980,7 @@ impl Component for ThreadItem {
             ),
         ];
 
-        example_group(thread_item_examples)
-            .vertical()
-            .into_any_element()
+        example_group(thread_item_examples).into_any_element()
     }
 }
 

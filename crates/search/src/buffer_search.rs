@@ -1237,17 +1237,6 @@ impl BufferSearchBar {
         self.search_options.contains(search_option)
     }
 
-    pub fn enable_search_option(
-        &mut self,
-        search_option: SearchOptions,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.search_options.contains(search_option) {
-            self.toggle_search_option(search_option, window, cx)
-        }
-    }
-
     pub fn set_search_within_selection(
         &mut self,
         search_within_selection: Option<FilteredSearchRange>,

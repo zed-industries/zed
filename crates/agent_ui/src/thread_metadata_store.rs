@@ -933,23 +933,6 @@ impl ThreadMetadataStore {
         self.in_flight_archives.remove(&thread_id);
     }
 
-    /// Returns `true` if any unarchived thread other than `thread_id`
-    /// references `path` in its folder paths. Used to determine whether a
-    /// worktree can safely be removed from disk.
-    pub fn path_is_referenced_by_unarchived_threads(
-        &self,
-        thread_id: Option<ThreadId>,
-        path: &Path,
-        remote_connection: Option<&RemoteConnectionOptions>,
-    ) -> bool {
-        self.path_is_referenced_by_unarchived_threads_matching(
-            thread_id,
-            path,
-            remote_connection,
-            |_| true,
-        )
-    }
-
     pub fn path_is_referenced_by_unarchived_threads_matching(
         &self,
         thread_id: Option<ThreadId>,
@@ -1910,6 +1893,8 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            thread_only: false,
+            profile_downgraded_for_restricted_workspace: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
