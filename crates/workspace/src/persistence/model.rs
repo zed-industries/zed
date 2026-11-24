@@ -435,16 +435,29 @@ impl SerializedPane {
             }
         }
 
-        let mut items = Vec::new();
-        for item_handle in futures::future::join_all(item_tasks).await {
-            let item_handle = item_handle.log_err();
-            items.push(item_handle.clone());
+        let items = futures::future::join_all(item_tasks)
+            .await
+            .into_iter()
+            .map(|item_handle| item_handle.log_err())
+            .collect::<Vec<_>>();
 
-            if let Some(item_handle) = item_handle {
-                pane.update_in(cx, |pane, window, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, window, cx);
-                })?;
-            }
+        // `items` keeps a `None` for every item that failed to deserialize, and those
+        // are never added to the pane. Counting them would leave the pinned count
+        // pointing past the pinned tabs and pin unpinned ones in their place. It's set
+        // before adding the items so that `max_tabs` can't close the pinned ones.
+        let pinned_count = items
+            .iter()
+            .take(self.pinned_count)
+            .filter(|item| item.is_some())
+            .count();
+        pane.update(cx, |pane, _| {
+            pane.set_pinned_count(pinned_count);
+        })?;
+
+        for item_handle in items.iter().flatten() {
+            pane.update_in(cx, |pane, window, cx| {
+                pane.add_item(item_handle.clone(), true, true, None, window, cx);
+            })?;
         }
 
         if let Some(active_item) = active_item_index.and_then(|index| items.get(index)?.clone()) {
@@ -460,18 +473,6 @@ impl SerializedPane {
                 pane.set_preview_item_id(Some(preview_item.item_id()), cx);
             })?;
         }
-
-        // `items` keeps a `None` for every item that failed to deserialize, and those
-        // were never added to the pane. Counting them would leave the pinned count
-        // pointing past the pinned tabs and pin unpinned ones in their place.
-        let pinned_count = items
-            .iter()
-            .take(self.pinned_count)
-            .filter(|item| item.is_some())
-            .count();
-        pane.update(cx, |pane, _| {
-            pane.set_pinned_count(pinned_count);
-        })?;
 
         anyhow::Ok(items)
     }

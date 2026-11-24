@@ -1263,8 +1263,7 @@ impl Markdown {
             self.active_root_block = None;
             self.images_by_source_offset.clear();
             self.mermaid_state.clear(cx);
-            cx.notify();
-            cx.refresh_windows();
+            Self::notify_parsed(cx);
             return;
         }
 
@@ -1446,11 +1445,19 @@ impl Markdown {
                 } else if let Some(source_index) = this.pending_autoscroll.take() {
                     this.autoscroll_request = Some(source_index);
                 }
-                cx.notify();
-                cx.refresh_windows();
+                Self::notify_parsed(cx);
             })
             .ok();
         })
+    }
+
+    fn notify_parsed(cx: &mut Context<Self>) {
+        cx.notify();
+        // Notifying doesn't reach consumers that hide the element while parsing, or that only
+        // measure it without painting it.
+        if cx.is_read_without_view(cx.entity_id()) {
+            cx.refresh_windows();
+        }
     }
 }
 
@@ -8575,6 +8582,66 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_parsing_painted_markdown_does_not_redraw_cached_siblings(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new("Hello".into(), None, None, cx));
+        let sibling_renders = Rc::new(Cell::new(0));
+        let sibling = cx.new(|_| RenderCounter(sibling_renders.clone()));
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let markdown = markdown.clone();
+            let rendered_text = rendered_text.clone();
+            move |_, _| MarkdownWithCachedSibling {
+                markdown,
+                sibling,
+                rendered_text,
+            }
+        });
+        cx.run_until_parked();
+        let initial_sibling_renders = sibling_renders.get();
+
+        markdown.update(cx, |markdown, cx| markdown.append(" world", cx));
+        cx.run_until_parked();
+
+        let rendered_text = rendered_text.borrow().clone().unwrap();
+        assert_eq!(
+            rendered_text
+                .text_for_range(0.."Hello world".len())
+                .trim_end(),
+            "Hello world"
+        );
+        assert_eq!(sibling_renders.get(), initial_sibling_renders);
+    }
+
+    #[gpui::test]
+    fn test_parsing_redraws_markdown_shown_only_once_parsed(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new("Hello".into(), None, None, cx));
+        let rendered_text = Rc::new(RefCell::new(None));
+        let child = cx.new(|_| MarkdownOnceParsed {
+            markdown: markdown.clone(),
+            rendered_text: rendered_text.clone(),
+        });
+        let (_, cx) = cx.add_window_view({
+            let child = child.clone();
+            |_, _| CachedChild(child)
+        });
+        cx.run_until_parked();
+
+        let text = rendered_text.borrow().clone().unwrap();
+        assert_eq!(text.text_for_range(0.."Hello".len()).trim_end(), "Hello");
+
+        markdown.update(cx, |markdown, cx| markdown.append(" world", cx));
+        child.update(cx, |_, cx| cx.notify());
+        assert!(markdown.read_with(cx, |markdown, _| markdown.is_parsing()));
+        cx.run_until_parked();
+
+        let text = rendered_text.borrow().clone().unwrap();
+        let range = 0.."Hello world".len();
+        assert_eq!(text.text_for_range(range).trim_end(), "Hello world");
+    }
+
     const WRAPPED_LINK_TABLE: &str = indoc::indoc! {r#"
         | # | Link |
         | --- | --- |
@@ -8885,6 +8952,70 @@ mod tests {
                 cx,
             );
             *self.rendered_text.borrow_mut() = Some(rendered_markdown.text.clone());
+        }
+    }
+
+    struct RenderCounter(Rc<Cell<usize>>);
+
+    impl Render for RenderCounter {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.set(self.0.get() + 1);
+            div().size_full()
+        }
+    }
+
+    struct MarkdownWithCachedSibling {
+        markdown: Entity<Markdown>,
+        sibling: Entity<RenderCounter>,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl Render for MarkdownWithCachedSibling {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(CapturingMarkdownElement {
+                    markdown_element: MarkdownElement::new(
+                        self.markdown.clone(),
+                        MarkdownStyle::default(),
+                    ),
+                    rendered_text: self.rendered_text.clone(),
+                })
+                .child(
+                    self.sibling
+                        .clone()
+                        .cached(StyleRefinement::default().size_full()),
+                )
+        }
+    }
+
+    struct MarkdownOnceParsed {
+        markdown: Entity<Markdown>,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl Render for MarkdownOnceParsed {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let is_parsing = self.markdown.read(cx).is_parsing();
+            div().size_full().when(!is_parsing, |this| {
+                this.child(CapturingMarkdownElement {
+                    markdown_element: MarkdownElement::new(
+                        self.markdown.clone(),
+                        MarkdownStyle::default(),
+                    ),
+                    rendered_text: self.rendered_text.clone(),
+                })
+            })
+        }
+    }
+
+    struct CachedChild(Entity<MarkdownOnceParsed>);
+
+    impl Render for CachedChild {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0
+                .clone()
+                .cached(StyleRefinement::default().size_full())
         }
     }
 

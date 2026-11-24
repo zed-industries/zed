@@ -2088,6 +2088,7 @@ mod tests {
             &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write,
             },
         )
