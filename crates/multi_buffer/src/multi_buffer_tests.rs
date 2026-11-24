@@ -527,10 +527,10 @@ fn test_excerpt_boundaries_in_range_stops_at_range_end(cx: &mut App) {
     let steps = MultiBufferSnapshot::take_excerpt_boundary_steps();
 
     assert_eq!(rows, [10, 11, 12]);
-    // Allow one excerpt before the range and one after, which the walk reads to
-    // find the edges. The lower bound catches a counter the walk stopped incrementing.
-    assert!(
-        rows.len() <= steps && steps <= rows.len() + 2,
+    // One more than the boundaries found: the excerpt after the range ends the walk.
+    assert_eq!(
+        steps,
+        rows.len() + 1,
         "visited {steps} excerpts for a range that covers {} of {buffer_count}",
         rows.len()
     );
