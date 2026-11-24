@@ -5147,6 +5147,9 @@ impl LspStore {
                     }
                 }
             }
+            BufferStoreEvent::BufferDropped(buffer_id) => {
+                self.cleanup_buffer_lsp_data(*buffer_id);
+            }
             _ => {}
         }
     }
@@ -5413,8 +5416,7 @@ impl LspStore {
                     *refcount
                 };
                 if refcount == 0 {
-                    lsp_store.lsp_data.remove(&buffer_id);
-                    lsp_store.buffer_reload_tasks.remove(&buffer_id);
+                    lsp_store.cleanup_buffer_lsp_data(buffer_id);
                     let local = lsp_store.as_local_mut().unwrap();
                     local.registered_buffers.remove(&buffer_id);
 
@@ -14387,6 +14389,11 @@ impl LspStore {
                 buffer_servers.remove(&for_server);
             }
         }
+    }
+
+    fn cleanup_buffer_lsp_data(&mut self, buffer_id: BufferId) {
+        self.lsp_data.remove(&buffer_id);
+        self.buffer_reload_tasks.remove(&buffer_id);
     }
 
     pub fn result_id_for_buffer_pull(
