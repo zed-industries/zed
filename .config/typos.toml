@@ -90,10 +90,6 @@ extend-ignore-re = [
     "#fof",
     # Stripped version of reserved keyword `type`
     "typ",
-    # AMD GPU Services
-    "ags",
-    # AMD GPU Services
-    "AGS",
     # "noet" is a vim variable (ideally to ignore locally)
     "noet",
     # Yarn Plug'n'Play

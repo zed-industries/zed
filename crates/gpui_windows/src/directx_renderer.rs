@@ -862,15 +862,19 @@ impl DirectXRenderer {
             0x8086 => "Intel Corporation".to_string(),
             id => format!("Unknown Vendor (ID: {:#X})", id),
         };
-        let driver_version = match desc.VendorId {
-            0x10DE => nvidia::get_driver_version(),
-            0x1002 => amd::get_driver_version(),
-            // For Intel and other vendors, we use the DXGI API to get the driver version.
-            _ => dxgi::get_driver_version(&devices.adapter),
-        }
-        .context("Failed to get gpu driver info")
-        .log_err()
-        .unwrap_or("Unknown Driver".to_string());
+        let driver_version = unsafe { devices.adapter.CheckInterfaceSupport(&IDXGIDevice::IID) }
+            .map(|version| {
+                format!(
+                    "{}.{}.{}.{}",
+                    version >> 48,
+                    (version >> 32) & 0xFFFF,
+                    (version >> 16) & 0xFFFF,
+                    version & 0xFFFF
+                )
+            })
+            .context("Failed to get gpu driver info")
+            .log_err()
+            .unwrap_or("Unknown Driver".to_string());
         Ok(GpuSpecs {
             is_software_emulated,
             device_name,
@@ -1896,188 +1900,5 @@ pub(crate) mod shader_resources {
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
             }
         }
-    }
-}
-
-mod nvidia {
-    use std::{
-        ffi::CStr,
-        os::raw::{c_char, c_int, c_uint},
-    };
-
-    use anyhow::Result;
-    use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
-
-    use crate::with_dll_library;
-
-    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L180
-    const NVAPI_SHORT_STRING_MAX: usize = 64;
-
-    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L235
-    #[allow(non_camel_case_types)]
-    type NvAPI_ShortString = [c_char; NVAPI_SHORT_STRING_MAX];
-
-    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L447
-    #[allow(non_camel_case_types)]
-    type NvAPI_SYS_GetDriverAndBranchVersion_t = unsafe extern "C" fn(
-        driver_version: *mut c_uint,
-        build_branch_string: *mut NvAPI_ShortString,
-    ) -> c_int;
-
-    pub(super) fn get_driver_version() -> Result<String> {
-        #[cfg(target_pointer_width = "64")]
-        let nvidia_dll_name = s!("nvapi64.dll");
-        #[cfg(target_pointer_width = "32")]
-        let nvidia_dll_name = s!("nvapi.dll");
-
-        with_dll_library(nvidia_dll_name, |nvidia_dll| unsafe {
-            let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
-                .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
-            let nvapi_query: extern "C" fn(u32) -> *mut () = std::mem::transmute(nvapi_query_addr);
-
-            // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_interface.h#L41
-            let nvapi_get_driver_version_ptr = nvapi_query(0x2926aaad);
-            if nvapi_get_driver_version_ptr.is_null() {
-                anyhow::bail!("Failed to get NVIDIA driver version function pointer");
-            }
-            let nvapi_get_driver_version: NvAPI_SYS_GetDriverAndBranchVersion_t =
-                std::mem::transmute(nvapi_get_driver_version_ptr);
-
-            let mut driver_version: c_uint = 0;
-            let mut build_branch_string: NvAPI_ShortString = [0; NVAPI_SHORT_STRING_MAX];
-            let result = nvapi_get_driver_version(
-                &mut driver_version as *mut c_uint,
-                &mut build_branch_string as *mut NvAPI_ShortString,
-            );
-
-            if result != 0 {
-                anyhow::bail!(
-                    "Failed to get NVIDIA driver version, error code: {}",
-                    result
-                );
-            }
-            let major = driver_version / 100;
-            let minor = driver_version % 100;
-            let branch_string = CStr::from_ptr(build_branch_string.as_ptr());
-            Ok(format!(
-                "{}.{} {}",
-                major,
-                minor,
-                branch_string.to_string_lossy()
-            ))
-        })
-    }
-}
-
-mod amd {
-    use std::os::raw::{c_char, c_int, c_void};
-
-    use anyhow::Result;
-    use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
-
-    use crate::with_dll_library;
-
-    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
-    const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12);
-
-    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L204
-    // This is an opaque type, using struct to represent it properly for FFI
-    #[repr(C)]
-    struct AGSContext {
-        _private: [u8; 0],
-    }
-
-    #[repr(C)]
-    pub struct AGSGPUInfo {
-        pub driver_version: *const c_char,
-        pub radeon_software_version: *const c_char,
-        pub num_devices: c_int,
-        pub devices: *mut c_void,
-    }
-
-    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L429
-    #[allow(non_camel_case_types)]
-    type agsInitialize_t = unsafe extern "C" fn(
-        version: c_int,
-        config: *const c_void,
-        context: *mut *mut AGSContext,
-        gpu_info: *mut AGSGPUInfo,
-    ) -> c_int;
-
-    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L436
-    #[allow(non_camel_case_types)]
-    type agsDeInitialize_t = unsafe extern "C" fn(context: *mut AGSContext) -> c_int;
-
-    pub(super) fn get_driver_version() -> Result<String> {
-        #[cfg(target_pointer_width = "64")]
-        let amd_dll_name = s!("amd_ags_x64.dll");
-        #[cfg(target_pointer_width = "32")]
-        let amd_dll_name = s!("amd_ags_x86.dll");
-
-        with_dll_library(amd_dll_name, |amd_dll| unsafe {
-            let ags_initialize_addr = GetProcAddress(amd_dll, s!("agsInitialize"))
-                .ok_or_else(|| anyhow::anyhow!("Failed to get agsInitialize address"))?;
-            let ags_deinitialize_addr = GetProcAddress(amd_dll, s!("agsDeInitialize"))
-                .ok_or_else(|| anyhow::anyhow!("Failed to get agsDeInitialize address"))?;
-
-            let ags_initialize: agsInitialize_t = std::mem::transmute(ags_initialize_addr);
-            let ags_deinitialize: agsDeInitialize_t = std::mem::transmute(ags_deinitialize_addr);
-
-            let mut context: *mut AGSContext = std::ptr::null_mut();
-            let mut gpu_info: AGSGPUInfo = AGSGPUInfo {
-                driver_version: std::ptr::null(),
-                radeon_software_version: std::ptr::null(),
-                num_devices: 0,
-                devices: std::ptr::null_mut(),
-            };
-
-            let result = ags_initialize(
-                AGS_CURRENT_VERSION,
-                std::ptr::null(),
-                &mut context,
-                &mut gpu_info,
-            );
-            if result != 0 {
-                anyhow::bail!("Failed to initialize AMD AGS, error code: {}", result);
-            }
-
-            // Vulkan actually returns this as the driver version
-            let software_version = if !gpu_info.radeon_software_version.is_null() {
-                std::ffi::CStr::from_ptr(gpu_info.radeon_software_version)
-                    .to_string_lossy()
-                    .into_owned()
-            } else {
-                "Unknown Radeon Software Version".to_string()
-            };
-
-            let driver_version = if !gpu_info.driver_version.is_null() {
-                std::ffi::CStr::from_ptr(gpu_info.driver_version)
-                    .to_string_lossy()
-                    .into_owned()
-            } else {
-                "Unknown Radeon Driver Version".to_string()
-            };
-
-            ags_deinitialize(context);
-            Ok(format!("{} ({})", software_version, driver_version))
-        })
-    }
-}
-
-mod dxgi {
-    use windows::{
-        Win32::Graphics::Dxgi::{IDXGIAdapter1, IDXGIDevice},
-        core::Interface,
-    };
-
-    pub(super) fn get_driver_version(adapter: &IDXGIAdapter1) -> anyhow::Result<String> {
-        let number = unsafe { adapter.CheckInterfaceSupport(&IDXGIDevice::IID as _) }?;
-        Ok(format!(
-            "{}.{}.{}.{}",
-            number >> 48,
-            (number >> 32) & 0xFFFF,
-            (number >> 16) & 0xFFFF,
-            number & 0xFFFF
-        ))
     }
 }
