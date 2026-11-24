@@ -4454,8 +4454,12 @@ async fn resolve_names(git: &GitBinary, names: &[&[u8]]) -> Result<Vec<Vec<u8>>>
     let mut stdin = process.stdin.take().context("no stdin for git cat-file")?;
     let mut input = names.join(&b'\n');
     input.push(b'\n');
-    // The input is written while the output is read, so that neither pipe fills up.
-    let write = async move { stdin.write_all(&input).await };
+    // The input is written while the output is read, so that neither pipe fills up. Closing flushes
+    // it, which Windows needs: a child's stdin buffers writes there.
+    let write = async move {
+        stdin.write_all(&input).await?;
+        stdin.close().await
+    };
     let (written, output) = futures::join!(write, process.output());
     let output = output?;
     anyhow::ensure!(
