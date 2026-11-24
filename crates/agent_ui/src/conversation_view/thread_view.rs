@@ -14293,7 +14293,11 @@ impl Render for ThreadView {
                             )
                         });
                         if model_allows_disabling {
-                            thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                            let enable_thinking = !thread.thinking_enabled();
+                            thread.set_thinking_enabled(enable_thinking, cx);
+                            thread.save_model_options(cx, move |model| {
+                                model.enable_thinking = enable_thinking
+                            });
                         }
                     });
                 }
