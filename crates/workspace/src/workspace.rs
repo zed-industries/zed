@@ -19145,6 +19145,42 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_restoring_pinned_tabs_past_max_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.max_tabs = std::num::NonZero::new(1);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (item, missing) = ("TestItem", "Unrestorable");
+        for (kinds, pinned_count, expected) in [
+            (vec![item; 3], 3, (3, 3)),
+            // A pinned item that fails to restore must not shield the tab that shifts into its place.
+            (vec![missing, item, item, item], 1, (1, 0)),
+        ] {
+            let children = kinds
+                .iter()
+                .enumerate()
+                .map(|(id, kind)| SerializedItem::new(kind, id as u64, false, false))
+                .collect();
+            let serialized_pane = SerializedPane::new(children, true, pinned_count);
+            let pane = restore_pane(&workspace, serialized_pane, cx).await;
+            let restored = pane.read_with(cx, |pane, _| (pane.items_len(), pane.pinned_count()));
+            assert_eq!(restored, expected);
+        }
+    }
+
+    #[gpui::test]
     async fn test_restoring_active_and_preview_tabs_when_items_fail_to_deserialize(
         cx: &mut TestAppContext,
     ) {
