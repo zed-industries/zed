@@ -614,8 +614,10 @@ impl LocalLspStore {
                 }
 
                 let code_action_kinds = adapter.code_action_kinds();
-                // Keep pending changes separate from the folders sent during initialization,
-                // so changes while initialization is in flight can be notified afterward.
+                // Snapshot the roots already registered during startup.
+                // Sharing the pending set would make later additions appear
+                // already communicated to the server, suppressing their
+                // post-initialization notifications.
                 let workspace_folders = pending_workspace_folders.lock().clone();
                 lsp::LanguageServer::new(
                     stderr_capture,
@@ -4101,6 +4103,11 @@ impl LocalLspStore {
         })
     }
 
+    // A shared server can have multiple project roots across multiple
+    // worktrees.
+    // Derive its folders from the remaining registrations and existing entries,
+    // knowing that `set_workspace_folders` sends only the resulting additions
+    // and removals.
     fn refresh_workspace_folders(&self, server_ids: &[LanguageServerId], cx: &App) {
         let worktree_store = self.worktree_store.read(cx);
         for server_id in server_ids {
@@ -14079,7 +14086,11 @@ impl LspStore {
                 }
             }
         }
+
+        // A registered project root can disappear or reappear within a worktree
+        // without the worktree itself being removed.
         local.refresh_workspace_folders(&language_server_ids, cx);
+
         for (path, _, _) in changes {
             if let Some(file_name) = path.file_name()
                 && local.watched_manifest_filenames.contains(file_name)
