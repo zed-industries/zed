@@ -4,6 +4,7 @@ mod search_everywhere_tests;
 mod text_search;
 
 use std::{
+    num::NonZeroUsize,
     ops::Range,
     sync::{
         Arc,
@@ -15,7 +16,9 @@ use std::{
 use command_palette::humanize_action_name;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::Editor;
-use fuzzy_nucleo::{Case, LengthPenalty, PathMatch, StringMatchCandidate};
+use fuzzy_nucleo::{
+    Case, MaxResults, PathMatch, PathMatchOptions, StringMatchCandidate, StringMatchOptions,
+};
 use gpui::{
     Action, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Global, Render, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
@@ -561,6 +564,10 @@ impl SearchEverywhereDelegate {
     }
 }
 
+fn max_results(limit: usize) -> MaxResults {
+    MaxResults::Limit(NonZeroUsize::new(limit).unwrap_or(NonZeroUsize::MIN))
+}
+
 async fn match_symbols(
     symbols: Vec<Symbol>,
     query: &str,
@@ -582,10 +589,12 @@ async fn match_symbols(
     fuzzy_nucleo::match_strings_async(
         &candidates,
         query,
-        Case::smart_if_uppercase_in(query),
-        LengthPenalty::On,
-        limit,
-        cancel_flag,
+        StringMatchOptions {
+            max_results: max_results(limit),
+            cancel_flag: Some(cancel_flag),
+            case: Case::Smart,
+            ..Default::default()
+        },
         executor,
     )
     .await
@@ -823,9 +832,11 @@ impl PickerDelegate for SearchEverywhereDelegate {
                         &candidate_sets,
                         &query,
                         &None,
-                        Case::Ignore,
-                        limit,
-                        &cancel_flag,
+                        PathMatchOptions {
+                            max_results: max_results(limit),
+                            cancel_flag: Some(&cancel_flag),
+                            case: Case::Ignore,
+                        },
                         executor.clone(),
                     )
                     .await
@@ -837,10 +848,12 @@ impl PickerDelegate for SearchEverywhereDelegate {
                 let actions: Vec<SearchMatch> = fuzzy_nucleo::match_strings_async(
                     &action_candidates,
                     &query,
-                    Case::Ignore,
-                    LengthPenalty::On,
-                    limit,
-                    &cancel_flag,
+                    StringMatchOptions {
+                        max_results: max_results(limit),
+                        cancel_flag: Some(&cancel_flag),
+                        case: Case::Ignore,
+                        ..Default::default()
+                    },
                     executor.clone(),
                 )
                 .await
