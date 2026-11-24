@@ -384,86 +384,21 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
 }
 
 #[gpui::test]
-async fn test_excerpt_boundaries_in_range_starting_at_diff_hunk(cx: &mut TestAppContext) {
-    let (multibuffer, [_, buffer_2, buffer_3, _]) = multibuffer_with_expanded_diff_hunks(cx);
-    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-
-    // Row 3 starts a diff hunk in the middle of buffer 2. That is the start of a
-    // diff transform, not of an excerpt, so buffer 2 is the excerpt before the
-    // range and has to be `prev` at row 9.
-    let boundaries = snapshot
-        .excerpt_boundaries_in_range(Point::new(3, 0)..=Point::new(9, 0))
-        .map(|boundary| {
-            (
-                boundary.row.0,
-                boundary.prev.as_ref().map(|prev| prev.buffer_id()),
-                boundary.next.buffer_id(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let buffer_2_id = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
-    let buffer_3_id = buffer_3.read_with(cx, |buffer, _| buffer.remote_id());
-    assert_eq!(boundaries, [(9, Some(buffer_2_id), buffer_3_id)]);
-}
-
-#[gpui::test]
-async fn test_excerpt_boundaries_in_subranges_match_full_walk(cx: &mut TestAppContext) {
-    let (multibuffer, _buffers) = multibuffer_with_expanded_diff_hunks(cx);
-    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-    let all_rows = boundary_rows(&snapshot, MultiBufferOffset(0)..);
-    assert_eq!(all_rows.len(), 4, "text: {:?}", snapshot.text());
-
-    let max_row = snapshot.max_point().row;
-    for start_row in 0..=max_row {
-        let start = Point::new(start_row, 0);
-        let rows = boundary_rows(&snapshot, start..);
-        let expected = all_rows
-            .iter()
-            .copied()
-            .filter(|row| *row >= start_row)
-            .collect::<Vec<_>>();
-        assert_eq!(rows, expected, "range {start_row}..");
-
-        for end_row in start_row..=max_row {
-            let end = Point::new(end_row, 0);
-            let rows = boundary_rows(&snapshot, start..end);
-            let expected = all_rows
-                .iter()
-                .copied()
-                .filter(|row| *row >= start_row && *row < end_row)
-                .collect::<Vec<_>>();
-            assert_eq!(rows, expected, "range {start_row}..{end_row}");
-
-            let rows = boundary_rows(&snapshot, start..=end);
-            let expected = all_rows
-                .iter()
-                .copied()
-                .filter(|row| *row >= start_row && *row <= end_row)
-                .collect::<Vec<_>>();
-            assert_eq!(rows, expected, "range {start_row}..={end_row}");
-        }
-    }
-}
-
-/// Four buffers, one excerpt each. The second has two expanded diff hunks.
-///
-/// ```text
-///  0   a1
-///  1   a2
-///  2   b1
-///  3 - b2
-///  4 + B2
-///  5   b3
-///  6 - b4
-///  7 + B4
-///  8   b5
-///  9   c1
-/// 10   c2
-/// 11   d1
-/// ```
-fn multibuffer_with_expanded_diff_hunks(
-    cx: &mut TestAppContext,
-) -> (Entity<MultiBuffer>, [Entity<Buffer>; 4]) {
+async fn test_excerpt_boundaries_in_subranges_with_diff_hunks(cx: &mut TestAppContext) {
+    // Four buffers, one excerpt each. The second has two expanded diff hunks.
+    //
+    //  0   a1
+    //  1   a2
+    //  2   b1
+    //  3 - b2
+    //  4 + B2
+    //  5   b3
+    //  6 - b4
+    //  7 + B4
+    //  8   b5
+    //  9   c1
+    // 10   c2
+    // 11   d1
     let buffers = [
         cx.new(|cx| Buffer::local("a1\na2", cx)),
         cx.new(|cx| Buffer::local("b1\nB2\nb3\nB4\nb5", cx)),
@@ -496,10 +431,83 @@ fn multibuffer_with_expanded_diff_hunks(
     });
     cx.run_until_parked();
 
-    let text = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx).text());
-    assert_eq!(text, "a1\na2\nb1\nb2\nB2\nb3\nb4\nB4\nb5\nc1\nc2\nd1");
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(
+        snapshot.text(),
+        "a1\na2\nb1\nb2\nB2\nb3\nb4\nB4\nb5\nc1\nc2\nd1"
+    );
 
-    (multibuffer, buffers)
+    fn boundaries<T: ToOffset>(
+        snapshot: &MultiBufferSnapshot,
+        range: impl RangeBounds<T>,
+    ) -> Vec<(u32, Option<BufferId>, BufferId)> {
+        snapshot
+            .excerpt_boundaries_in_range(range)
+            .map(|boundary| {
+                (
+                    boundary.row.0,
+                    boundary.prev.as_ref().map(|prev| prev.buffer_id()),
+                    boundary.next.buffer_id(),
+                )
+            })
+            .collect()
+    }
+
+    let [id_1, id_2, id_3, id_4] =
+        buffers.map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id()));
+    let all_boundaries = [
+        (0, None, id_1),
+        (2, Some(id_1), id_2),
+        (9, Some(id_2), id_3),
+        (11, Some(id_3), id_4),
+    ];
+    assert_eq!(
+        boundaries(&snapshot, MultiBufferOffset(0)..),
+        all_boundaries
+    );
+
+    // Rows 3 to 8 each start a diff transform in the middle of buffer 2. A range
+    // that starts there must not treat that row as the start of an excerpt: buffer 2
+    // stays the excerpt before the range, and is `prev` of the boundary at row 9.
+    let max_row = snapshot.max_point().row;
+    for start_row in 0..=max_row {
+        let start = Point::new(start_row, 0);
+        let expected = all_boundaries
+            .iter()
+            .copied()
+            .filter(|(row, _, _)| *row >= start_row)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            boundaries(&snapshot, start..),
+            expected,
+            "range {start_row}.."
+        );
+
+        for end_row in start_row..=max_row {
+            let end = Point::new(end_row, 0);
+            let expected = all_boundaries
+                .iter()
+                .copied()
+                .filter(|(row, _, _)| *row >= start_row && *row < end_row)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                boundaries(&snapshot, start..end),
+                expected,
+                "range {start_row}..{end_row}"
+            );
+
+            let expected = all_boundaries
+                .iter()
+                .copied()
+                .filter(|(row, _, _)| *row >= start_row && *row <= end_row)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                boundaries(&snapshot, start..=end),
+                expected,
+                "range {start_row}..={end_row}"
+            );
+        }
+    }
 }
 
 #[gpui::test]
