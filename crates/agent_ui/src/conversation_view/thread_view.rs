@@ -10198,6 +10198,7 @@ impl ThreadView {
                             .group(&card_header_id)
                             .relative()
                             .w_full()
+                            .items_start()
                             .justify_between()
                             .when(use_card_layout, |this| {
                                 this.p_0p5()
@@ -10211,6 +10212,7 @@ impl ThreadView {
                                 is_cancelled_edit,
                                 has_diff_changes,
                                 use_card_layout,
+                                needs_confirmation,
                                 window,
                                 cx,
                             ))
@@ -11458,6 +11460,13 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let mut seen_kinds: ArrayVec<acp_v2::PermissionOptionKind, 3, u8> = ArrayVec::new();
+        let colors = cx.theme().colors();
+        let border_color = colors.border.opacity(0.8);
+        let focused_border_color = colors.border_focused;
+        let background = colors.editor_background;
+        let hover_background = colors
+            .element_background
+            .blend(colors.editor_foreground.opacity(0.025));
 
         div()
             .p_1()
@@ -11465,103 +11474,148 @@ impl ThreadView {
             .border_color(self.tool_card_border_color(cx))
             .w_full()
             .v_flex()
-            .gap_0p5()
+            .gap_1()
             .children(options.iter().map(move |option| {
                 let option_id = SharedString::from(option.option_id.0.clone());
-                Button::new((option_id, entry_ix), option.name.clone())
-                    .map(|this| {
-                        // The sandbox-fallback prompt offers a "Retry" option
-                        // that re-attempts creating the sandbox; it isn't an
-                        // allow/deny choice, so give it its own icon and no
-                        // keybinding.
-                        let is_retry = option.option_id.0.as_ref()
-                            == acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID;
-                        let (icon, action) = if is_retry {
-                            (
-                                Icon::new(IconName::RotateCcw)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                                None,
-                            )
-                        } else {
-                            match &option.kind {
-                                acp_v2::PermissionOptionKind::AllowOnce => (
-                                    Icon::new(IconName::Check)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Success),
-                                    Some(&AllowOnce as &dyn Action),
-                                ),
-                                acp_v2::PermissionOptionKind::AllowAlways => (
-                                    Icon::new(IconName::CheckDouble)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Success),
-                                    if option.option_id.0.as_ref()
-                                        == acp_thread::SandboxPermission::AllowThread.as_id()
-                                    {
-                                        None
-                                    } else {
-                                        Some(&AllowAlways as &dyn Action)
-                                    },
-                                ),
-                                acp_v2::PermissionOptionKind::RejectOnce => (
-                                    Icon::new(IconName::Close)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Error),
-                                    Some(&RejectOnce as &dyn Action),
-                                ),
-                                acp_v2::PermissionOptionKind::RejectAlways | _ => (
-                                    Icon::new(IconName::Close)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Error),
-                                    None,
-                                ),
-                            }
-                        };
+                // The sandbox-fallback prompt offers a "Retry" option
+                // that re-attempts creating the sandbox; it isn't an
+                // allow/deny choice, so give it its own icon and no
+                // keybinding.
+                let is_retry = option.option_id.0.as_ref()
+                    == acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID;
+                let (icon, action) = if is_retry {
+                    (
+                        Icon::new(IconName::RotateCcw)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                        None,
+                    )
+                } else {
+                    match &option.kind {
+                        acp_v2::PermissionOptionKind::AllowOnce => (
+                            Icon::new(IconName::Check)
+                                .size(IconSize::XSmall)
+                                .color(Color::Success),
+                            Some(&AllowOnce as &dyn Action),
+                        ),
+                        acp_v2::PermissionOptionKind::AllowAlways => (
+                            Icon::new(IconName::CheckDouble)
+                                .size(IconSize::XSmall)
+                                .color(Color::Success),
+                            if option.option_id.0.as_ref()
+                                == acp_thread::SandboxPermission::AllowThread.as_id()
+                            {
+                                None
+                            } else {
+                                Some(&AllowAlways as &dyn Action)
+                            },
+                        ),
+                        acp_v2::PermissionOptionKind::RejectOnce => (
+                            Icon::new(IconName::Close)
+                                .size(IconSize::XSmall)
+                                .color(Color::Error),
+                            Some(&RejectOnce as &dyn Action),
+                        ),
+                        acp_v2::PermissionOptionKind::RejectAlways => (
+                            Icon::new(IconName::Close)
+                                .size(IconSize::XSmall)
+                                .color(Color::Error),
+                            None,
+                        ),
+                        _ => (
+                            Icon::new(IconName::ChevronRight)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                            None,
+                        ),
+                    }
+                };
 
-                        // An "allow" choice is disabled while a surprising-Unicode
-                        // warning is unacknowledged; "deny"/"retry" stay enabled.
-                        let is_allow = matches!(
-                            option.kind,
-                            acp_v2::PermissionOptionKind::AllowOnce
-                                | acp_v2::PermissionOptionKind::AllowAlways
-                        ) && !is_retry;
-                        let disabled = allow_disabled && is_allow;
+                // An "allow" choice is disabled while a surprising-Unicode
+                // warning is unacknowledged; "deny"/"retry" stay enabled.
+                let is_allow = matches!(
+                    option.kind,
+                    acp_v2::PermissionOptionKind::AllowOnce
+                        | acp_v2::PermissionOptionKind::AllowAlways
+                ) && !is_retry;
+                let disabled = allow_disabled && is_allow;
 
-                        let this = this.start_icon(icon).disabled(disabled);
-
-                        let Some(action) = action else {
-                            return this;
-                        };
-
-                        if !is_first || disabled || seen_kinds.contains(&option.kind) {
-                            return this;
+                let key_binding = if is_first && !disabled && !seen_kinds.contains(&option.kind) {
+                    action.map(|action| {
+                        if !seen_kinds.is_full() {
+                            let _ = seen_kinds.push(option.kind.clone());
                         }
-
-                        seen_kinds.push(option.kind.clone()).unwrap();
-
-                        this.key_binding(
-                            KeyBinding::for_action_in(action, focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12_f32))),
-                        )
+                        KeyBinding::for_action_in(action, focus_handle, cx)
+                            .size(rems_from_px(12_f32))
                     })
-                    .label_size(LabelSize::Small)
-                    .on_click(cx.listener({
-                        let option_id = option.option_id.clone();
-                        let option_kind = option.kind.clone();
-                        let session_id = session_id.clone();
-                        move |this, _, window, cx| {
-                            this.authorize_permission_request(
-                                session_id.clone(),
-                                request_id,
-                                SelectedPermissionOutcome::new(
-                                    option_id.clone(),
-                                    option_kind.clone(),
-                                ),
-                                window,
-                                cx,
-                            );
+                } else {
+                    None
+                };
+
+                let option_id_clone = option.option_id.clone();
+                let option_kind = option.kind.clone();
+                let session_id_clone = session_id.clone();
+
+                h_flex()
+                    .id((option_id, entry_ix))
+                    .w_full()
+                    .min_h(rems_from_px(28_f32))
+                    .items_start()
+                    .gap_1p5()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(border_color.opacity(0.5))
+                    .bg(background)
+                    .px_2()
+                    .py_1()
+                    .tooltip(Tooltip::text(option.name.clone()))
+                    .map(|this| {
+                        if disabled {
+                            this.cursor_not_allowed()
+                        } else {
+                            this.cursor_pointer()
+                                .tab_index(0)
+                                .hover(move |this| this.bg(hover_background))
+                                .focus_visible(move |this| this.border_color(focused_border_color))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.authorize_permission_request(
+                                        session_id_clone.clone(),
+                                        request_id,
+                                        SelectedPermissionOutcome::new(
+                                            option_id_clone.clone(),
+                                            option_kind.clone(),
+                                        ),
+                                        window,
+                                        cx,
+                                    );
+                                }))
                         }
-                    }))
+                    })
+                    .child(
+                        div()
+                            .mt(px(2.))
+                            .flex_none()
+                            .child(if disabled {
+                                icon.color(Color::Disabled)
+                            } else {
+                                icon
+                            }),
+                    )
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .flex_1()
+                            .child(
+                                Label::new(option.name.clone())
+                                    .size(LabelSize::Small)
+                                    .color(if disabled {
+                                        Color::Disabled
+                                    } else {
+                                        Color::Default
+                                    }),
+                            ),
+                    )
+                    .children(key_binding.map(|kb| div().flex_none().mt(px(1.)).child(kb)))
             }))
     }
 
@@ -11627,6 +11681,7 @@ impl ThreadView {
         has_failed: bool,
         has_diff_changes: bool,
         use_card_layout: bool,
+        needs_confirmation: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -11713,10 +11768,24 @@ impl ThreadView {
                 })
         };
 
+        let can_wrap_label = (needs_confirmation
+            || tool_call.authorization_id().is_some()
+            || matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation))
+            && !has_location;
+
         h_flex()
             .relative()
-            .w_full()
-            .h(window.line_height() - px(2.))
+            .flex_1()
+            .min_w_0()
+            .map(|this| {
+                if can_wrap_label {
+                    this.min_h(window.line_height() - px(2.))
+                        .items_start()
+                } else {
+                    this.h(window.line_height() - px(2.))
+                        .overflow_hidden()
+                }
+            })
             .text_size(self.tool_name_font_size())
             .gap_1p5()
             .when(has_location || use_card_layout, |this| this.px_1())
@@ -11725,11 +11794,11 @@ impl ThreadView {
                     .rounded(rems_from_px(3_f32)) // Concentric border radius
                     .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.5)))
             })
-            .overflow_hidden()
             .child(
                 div()
                     .id(("tool-call-icon", entry_ix))
                     .flex_none()
+                    .when(can_wrap_label, |this| this.mt(px(2.)))
                     .when_some(
                         Self::tool_call_icon_tooltip(
                             tool_call.tool_name.as_ref(),
@@ -11767,8 +11836,9 @@ impl ThreadView {
                     }))
                     .into_any_element()
             } else {
-                h_flex()
-                    .w_full()
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
                     .child(self.render_markdown(
                         tool_call.label.clone(),
                         MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx),
@@ -11776,7 +11846,7 @@ impl ThreadView {
                     ))
                     .into_any()
             })
-            .when(!is_edit, |this| this.child(gradient_overlay))
+            .when(!is_edit && !can_wrap_label, |this| this.child(gradient_overlay))
     }
 
     fn open_tool_call_location(
