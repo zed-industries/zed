@@ -394,17 +394,14 @@ mod tests {
     fn prefers_the_geographic_profile_with_the_fewest_destinations() -> Result<()> {
         let catalog = ModelCatalog::new(
             &[
-                profile("wide.vendor.chat", "vendor.chat", 4)?,
-                profile("narrow.vendor.chat", "vendor.chat", 2)?,
-                profile("wider.vendor.chat", "vendor.chat", 5)?,
+                profile("aaa.vendor.chat", "vendor.chat", 4)?,
+                profile("zzz.vendor.chat", "vendor.chat", 2)?,
+                profile("mmm.vendor.chat", "vendor.chat", 5)?,
             ],
             &[foundation_model("vendor.chat", &[])?],
         );
 
-        assert_eq!(
-            only_model(&catalog, false)?.request_id,
-            "narrow.vendor.chat"
-        );
+        assert_eq!(only_model(&catalog, false)?.request_id, "zzz.vendor.chat");
         Ok(())
     }
 
