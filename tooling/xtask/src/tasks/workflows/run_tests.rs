@@ -464,7 +464,7 @@ fn check_style() -> NamedJob {
 
 fn check_dependencies() -> NamedJob {
     fn install_cargo_shear() -> Step<Use> {
-        steps::taiki_install_action("cargo-shear@1.13.4")
+        steps::taiki_install_action("cargo-shear@1.14.1")
     }
 
     fn run_cargo_shear() -> Step<Run> {
