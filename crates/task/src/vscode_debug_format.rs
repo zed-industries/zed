@@ -3,10 +3,10 @@ use serde::Deserialize;
 use util::ResultExt as _;
 
 use crate::{
-    DebugScenario, DebugTaskFile, EnvVariableReplacer, TcpArgumentsTemplate, VariableName,
+    BuildTaskDefinition, DebugScenario, DebugTaskFile, EnvVariableReplacer, TcpArgumentsTemplate,
+    VariableName,
 };
 
-// TODO support preLaunchTask linkage with other tasks
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct VsCodeDebugTaskDefinition {
@@ -14,6 +14,8 @@ struct VsCodeDebugTaskDefinition {
     name: String,
     #[serde(default)]
     port: Option<u16>,
+    #[serde(default)]
+    pre_launch_task: serde_json::Value,
     #[serde(flatten)]
     other_attributes: serde_json::Value,
 }
@@ -31,9 +33,17 @@ impl VsCodeDebugTaskDefinition {
                 config.insert("port".to_owned(), port.into());
             }
         }
+        let build = match &self.pre_launch_task {
+            serde_json::Value::String(task_name)
+                if !task_name.is_empty() && task_name != "${defaultBuildTask}" =>
+            {
+                Some(BuildTaskDefinition::ByName(task_name.as_str().into()))
+            }
+            _ => None,
+        };
         let definition = DebugScenario {
             label: label.into(),
-            build: None,
+            build,
             adapter: adapter.into(),
             tcp_connection: self.port.map(|port| TcpArgumentsTemplate {
                 port: Some(port),
@@ -100,7 +110,7 @@ fn task_type_to_adapter_name(task_type: &str) -> String {
 mod tests {
     use serde_json::json;
 
-    use crate::{DebugScenario, DebugTaskFile, VariableName};
+    use crate::{BuildTaskDefinition, DebugScenario, DebugTaskFile, VariableName};
 
     use super::VsCodeDebugTaskFile;
 
@@ -154,6 +164,125 @@ mod tests {
                 tcp_connection: None,
                 build: None
             }])
+        );
+    }
+
+    #[test]
+    fn test_pre_launch_task_maps_to_build() {
+        let raw = r#"
+            {
+                "version": "0.2.0",
+                "configurations": [
+                    {
+                        "name": "Debug with build",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/app.js",
+                        "preLaunchTask": "build"
+                    },
+                    {
+                        "name": "Debug with empty build",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/app.js",
+                        "preLaunchTask": ""
+                    }
+                ]
+            }
+        "#;
+        let parsed: VsCodeDebugTaskFile =
+            serde_json_lenient::from_str(raw).expect("deserializing launch.json");
+        let zed = DebugTaskFile::try_from(parsed).expect("converting to Zed debug templates");
+
+        let expected_config = json!({
+            "request": "launch",
+            "program": "${ZED_WORKTREE_ROOT}/app.js",
+            "type": "node",
+        });
+        pretty_assertions::assert_eq!(
+            zed,
+            DebugTaskFile(vec![
+                DebugScenario {
+                    label: "Debug with build".into(),
+                    adapter: "JavaScript".into(),
+                    config: expected_config.clone(),
+                    tcp_connection: None,
+                    build: Some(BuildTaskDefinition::ByName("build".into())),
+                },
+                DebugScenario {
+                    label: "Debug with empty build".into(),
+                    adapter: "JavaScript".into(),
+                    config: expected_config,
+                    tcp_connection: None,
+                    build: None,
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn test_unsupported_pre_launch_task_values_are_ignored() {
+        let raw = r#"
+            {
+                "version": "0.2.0",
+                "configurations": [
+                    {
+                        "name": "Object form",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/app.js",
+                        "preLaunchTask": { "task": "build", "type": "shell" }
+                    },
+                    {
+                        "name": "Default build task sentinel",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/app.js",
+                        "preLaunchTask": "${defaultBuildTask}"
+                    },
+                    {
+                        "name": "No pre launch task",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/app.js"
+                    }
+                ]
+            }
+        "#;
+        let parsed: VsCodeDebugTaskFile =
+            serde_json_lenient::from_str(raw).expect("deserializing launch.json");
+        let zed = DebugTaskFile::try_from(parsed).expect("converting to Zed debug templates");
+
+        let expected_config = json!({
+            "request": "launch",
+            "program": "${ZED_WORKTREE_ROOT}/app.js",
+            "type": "node",
+        });
+        pretty_assertions::assert_eq!(
+            zed,
+            DebugTaskFile(vec![
+                DebugScenario {
+                    label: "Object form".into(),
+                    adapter: "JavaScript".into(),
+                    config: expected_config.clone(),
+                    tcp_connection: None,
+                    build: None,
+                },
+                DebugScenario {
+                    label: "Default build task sentinel".into(),
+                    adapter: "JavaScript".into(),
+                    config: expected_config.clone(),
+                    tcp_connection: None,
+                    build: None,
+                },
+                DebugScenario {
+                    label: "No pre launch task".into(),
+                    adapter: "JavaScript".into(),
+                    config: expected_config,
+                    tcp_connection: None,
+                    build: None,
+                },
+            ])
         );
     }
 
