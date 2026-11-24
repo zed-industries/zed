@@ -474,6 +474,19 @@ impl WrappedLineLayout {
     }
 }
 
+/// Moves the layouts in `unused` that are held outside the cache into `cache`, and drops
+/// the rest. The two never share a key, so only the smaller map's entries are moved.
+fn keep_held_layouts<V>(
+    cache: &mut FxHashMap<Arc<CacheKey>, Arc<V>>,
+    unused: &mut FxHashMap<Arc<CacheKey>, Arc<V>>,
+) {
+    unused.retain(|_, layout| Arc::strong_count(layout) > 1);
+    if unused.len() > cache.len() {
+        std::mem::swap(cache, unused);
+    }
+    cache.extend(unused.drain());
+}
+
 pub(crate) struct LineLayoutCache {
     state: RefCell<LineLayoutCacheState>,
     wrap_scratch: RefCell<WrapScratch>,
@@ -587,10 +600,20 @@ impl LineLayoutCache {
             current_frame,
         } = &mut *self.state.borrow_mut();
         std::mem::swap(previous_frame, current_frame);
-        current_frame.lines.clear();
-        current_frame.wrapped_lines.clear();
+        // Text that kept its measurement isn't shaped again, so the layouts it holds must
+        // stay cached. Wrapped lines go first, since they hold their unwrapped lines.
+        keep_held_layouts(
+            &mut previous_frame.wrapped_lines,
+            &mut current_frame.wrapped_lines,
+        );
+        keep_held_layouts(&mut previous_frame.lines, &mut current_frame.lines);
         current_frame.used_lines.clear();
         current_frame.used_wrapped_lines.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_frame_wrapped_line_count(&self) -> usize {
+        self.state.borrow().previous_frame.used_wrapped_lines.len()
     }
 
     pub fn layout_wrapped_line<Text>(
@@ -611,6 +634,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width,
+            max_lines,
             force_width: None,
         } as &dyn AsCacheKeyRef;
 
@@ -653,6 +677,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
+                max_lines,
                 force_width: None,
             });
 
@@ -684,6 +709,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width: None,
+            max_lines: None,
             force_width,
         } as &dyn AsCacheKeyRef;
 
@@ -717,6 +743,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width: None,
+                max_lines: None,
                 force_width,
             });
             let layout = Arc::new(layout);
@@ -792,6 +819,7 @@ struct CacheKey {
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,
+    max_lines: Option<usize>,
     force_width: Option<Pixels>,
 }
 
@@ -801,6 +829,7 @@ struct CacheKeyRef<'a> {
     font_size: Pixels,
     runs: &'a [FontRun],
     wrap_width: Option<Pixels>,
+    max_lines: Option<usize>,
     force_width: Option<Pixels>,
 }
 
@@ -825,6 +854,7 @@ impl AsCacheKeyRef for CacheKey {
             font_size: self.font_size,
             runs: self.runs.as_slice(),
             wrap_width: self.wrap_width,
+            max_lines: self.max_lines,
             force_width: self.force_width,
         }
     }
@@ -875,6 +905,33 @@ mod tests {
         let state = text_system.line_layout_cache.state.borrow();
         let (key, _) = state.current_frame.lines.iter().next().unwrap();
         assert_eq!(key.text.as_ptr(), text.as_ptr());
+    }
+
+    #[test]
+    fn layouts_held_outside_the_cache_outlive_frames_that_dont_use_them() {
+        let text_system =
+            WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new()))));
+        let shape = |text: &'static str| {
+            let runs = [TextRun {
+                len: text.len(),
+                font: font(".ZedMono"),
+                ..Default::default()
+            }];
+            text_system
+                .shape_text(text.into(), px(14.), &runs, Some(px(100.)), None)
+                .unwrap()
+                .remove(0)
+                .layout
+        };
+
+        let held = shape("held");
+        let dropped = Arc::downgrade(&shape("dropped").unwrapped_layout);
+        for _ in 0..3 {
+            text_system.finish_frame();
+        }
+
+        assert!(Arc::ptr_eq(&shape("held"), &held));
+        assert!(dropped.upgrade().is_none());
     }
 
     fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
@@ -1087,5 +1144,21 @@ mod tests {
         let warm = warm_cache.layout_wrapped_line("ab", px(0.), &runs, Some(px(0.)), None);
 
         assert_eq!(warm.wrap_boundaries, cold.wrap_boundaries);
+    }
+
+    #[test]
+    fn test_wrap_cache_distinguishes_max_lines() {
+        let text = "one two three four five six";
+        let runs = [FontRun {
+            len: text.len(),
+            font_id: FontId(1),
+        }];
+        let cache = LineLayoutCache::new(Arc::new(NoopTextSystem::new()), Arc::default());
+
+        let unclamped = cache.layout_wrapped_line(text, px(14.), &runs, Some(px(50.)), None);
+        assert!(unclamped.wrap_boundaries.len() > 1);
+
+        let clamped = cache.layout_wrapped_line(text, px(14.), &runs, Some(px(50.)), Some(1));
+        assert!(clamped.wrap_boundaries.is_empty());
     }
 }

@@ -54,7 +54,8 @@ use schemars::{JsonSchema, Schema};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use settings::{
-    LanguageModelSelection, Settings, SettingsStore, ToolPermissionMode, update_settings_file,
+    LanguageModelSelection, Settings, SettingsContent, SettingsStore, ToolPermissionMode,
+    update_settings_file,
 };
 use std::fmt::Write;
 use std::{cell::RefCell, ops::ControlFlow};
@@ -1249,6 +1250,30 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
+struct NewThreadSettings {
+    profile_id: AgentProfileId,
+    profile_downgraded_for_restricted_workspace: bool,
+    thinking_enabled: bool,
+    thinking_effort: Option<String>,
+    speed: Option<Speed>,
+}
+
+impl NewThreadSettings {
+    fn get(project: &Entity<Project>, cx: &App) -> Self {
+        let settings = AgentSettings::get_global(cx);
+        let (profile_id, profile_downgraded_for_restricted_workspace) =
+            Thread::profile_for_restricted_workspace(settings.default_profile.clone(), project, cx);
+        let default_model = settings.default_model.as_ref();
+        Self {
+            profile_id,
+            profile_downgraded_for_restricted_workspace,
+            thinking_enabled: default_model.is_some_and(|model| model.enable_thinking),
+            thinking_effort: default_model.and_then(|model| model.effort.clone()),
+            speed: default_model.and_then(|model| model.speed),
+        }
+    }
+}
+
 pub enum ThreadModel {
     Ready(LanguageModel),
     Unresolved(SelectedModel),
@@ -1294,6 +1319,8 @@ pub(crate) struct StreamingSaveKey {
     speed: Option<Speed>,
     thinking_enabled: bool,
     thinking_effort: Option<String>,
+    thread_only: bool,
+    profile_downgraded_for_restricted_workspace: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     sandbox_grants: crate::db::DbSandboxGrants,
 }
@@ -1345,6 +1372,8 @@ pub struct Thread {
     thinking_enabled: bool,
     thinking_effort: Option<String>,
     speed: Option<Speed>,
+    /// Nothing changed in a thread-only thread is saved as a default.
+    thread_only: bool,
     prompt_capabilities_tx: watch::Sender<acp_v2::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
@@ -1439,21 +1468,13 @@ impl Thread {
         action_log: Entity<ActionLog>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let settings = AgentSettings::get_global(cx);
-        let (profile_id, profile_downgraded_for_restricted_workspace) =
-            Self::profile_for_restricted_workspace(settings.default_profile.clone(), &project, cx);
-        let enable_thinking = settings
-            .default_model
-            .as_ref()
-            .is_some_and(|model| model.enable_thinking);
-        let thinking_effort = settings
-            .default_model
-            .as_ref()
-            .and_then(|model| model.effort.clone());
-        let speed = settings
-            .default_model
-            .as_ref()
-            .and_then(|model| model.speed);
+        let NewThreadSettings {
+            profile_id,
+            profile_downgraded_for_restricted_workspace,
+            thinking_enabled,
+            thinking_effort,
+            speed,
+        } = NewThreadSettings::get(&project, cx);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_ref()));
         let model = match model {
@@ -1495,9 +1516,10 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: enable_thinking,
+            thinking_enabled,
             speed,
             thinking_effort,
+            thread_only: false,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1864,13 +1886,15 @@ impl Thread {
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
-            profile_downgraded_for_restricted_workspace: false,
+            profile_downgraded_for_restricted_workspace: db_thread
+                .profile_downgraded_for_restricted_workspace,
             project_context,
             templates,
             model,
             summarization_model: None,
             thinking_enabled: db_thread.thinking_enabled,
             thinking_effort: db_thread.thinking_effort,
+            thread_only: db_thread.thread_only,
             speed: db_thread.speed,
             project,
             action_log,
@@ -1979,6 +2003,9 @@ impl Thread {
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
+            thread_only: self.thread_only,
+            profile_downgraded_for_restricted_workspace: self
+                .profile_downgraded_for_restricted_workspace,
             draft_prompt: self.draft_prompt.clone(),
             ui_scroll_position: self.ui_scroll_position.map(|lo| {
                 crate::db::SerializedScrollPosition {
@@ -2012,6 +2039,9 @@ impl Thread {
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
+            thread_only: self.thread_only,
+            profile_downgraded_for_restricted_workspace: self
+                .profile_downgraded_for_restricted_workspace,
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
         }
@@ -2201,8 +2231,8 @@ impl Thread {
         self.speed
     }
 
-    pub fn set_speed(&mut self, speed: Speed, cx: &mut Context<Self>) {
-        self.speed = Some(speed);
+    pub fn set_speed(&mut self, speed: Option<Speed>, cx: &mut Context<Self>) {
+        self.speed = speed;
 
         for subagent in &self.running_subagents {
             subagent
@@ -2214,6 +2244,75 @@ impl Thread {
                 .ok();
         }
         cx.notify();
+    }
+
+    pub fn is_thread_only(&self) -> bool {
+        self.thread_only
+    }
+
+    pub fn mark_thread_only(&mut self, cx: &mut Context<Self>) {
+        self.thread_only = true;
+        cx.notify();
+    }
+
+    pub fn save_default_model(&self, cx: &App) {
+        let Some(model) = self.model() else {
+            return;
+        };
+        let selection = LanguageModelSelection {
+            provider: model.provider_id().0.to_string().into(),
+            model: model.id().0.to_string(),
+            enable_thinking: self.thinking_enabled,
+            effort: self.thinking_effort.clone(),
+            speed: self.speed,
+        };
+        self.write_default(cx, move |settings| {
+            settings.agent.get_or_insert_default().set_model(selection);
+        });
+    }
+
+    pub fn save_default_profile(&self, cx: &App) {
+        let profile_id = self.profile_id.clone();
+        self.write_default(cx, move |settings| {
+            settings
+                .agent
+                .get_or_insert_default()
+                .set_profile(profile_id.0);
+        });
+    }
+
+    /// Saves a change to the thread's thinking, effort or speed to the matching
+    /// favorite model, and to the default model when the thread is on it.
+    pub fn save_model_options(
+        &self,
+        cx: &App,
+        update: impl 'static + Send + Fn(&mut LanguageModelSelection),
+    ) {
+        let Some(model) = self.model() else {
+            return;
+        };
+        let provider_id = model.provider_id().0.to_string();
+        let model_id = model.id().0.to_string();
+        self.write_default(cx, move |settings| {
+            let Some(agent) = settings.agent.as_mut() else {
+                return;
+            };
+            agent.update_default_model(&provider_id, &model_id, &update);
+            agent.update_favorite_model(&provider_id, &model_id, &update);
+        });
+    }
+
+    /// Thread-only threads and subagents save no defaults. Nothing else checks
+    /// that, so every default a thread saves has to go through here.
+    fn write_default(&self, cx: &App, update: impl 'static + Send + FnOnce(&mut SettingsContent)) {
+        if self.thread_only || self.is_subagent() {
+            return;
+        }
+        update_settings_file(
+            self.project.read(cx).fs().clone(),
+            cx,
+            move |settings, _cx| update(settings),
+        );
     }
 
     pub fn last_message(&self) -> Option<&Message> {
@@ -2377,6 +2476,63 @@ impl Thread {
                 .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
                 .ok();
         }
+    }
+
+    fn model_to_reset_to(&self, cx: &App) -> Option<LanguageModel> {
+        if !self.thread_only {
+            return None;
+        }
+        LanguageModelRegistry::read_global(cx).authenticated_default_model(cx)
+    }
+
+    /// Makes what a thread-only thread is on the user's defaults and ends
+    /// thread-only mode.
+    pub fn save_as_defaults(&mut self, cx: &mut Context<Self>) {
+        if !self.thread_only {
+            return;
+        }
+        self.thread_only = false;
+        self.save_default_model(cx);
+        let enable_thinking = self.thinking_enabled;
+        let effort = self.thinking_effort.clone();
+        let speed = self.speed;
+        self.save_model_options(cx, move |model| {
+            model.enable_thinking = enable_thinking;
+            model.effort = effort.clone();
+            model.speed = speed;
+        });
+        // An automatic downgrade isn't a profile the user chose.
+        if !self.profile_downgraded_for_restricted_workspace {
+            self.save_default_profile(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn can_reset_to_defaults(&self, cx: &App) -> bool {
+        self.model_to_reset_to(cx).is_some()
+    }
+
+    pub fn reset_to_defaults(&mut self, cx: &mut Context<Self>) {
+        let Some(model) = self.model_to_reset_to(cx) else {
+            return;
+        };
+        let NewThreadSettings {
+            profile_id,
+            profile_downgraded_for_restricted_workspace,
+            thinking_enabled,
+            thinking_effort,
+            speed,
+        } = NewThreadSettings::get(&self.project, cx);
+        self.set_profile(profile_id, cx);
+        self.profile_downgraded_for_restricted_workspace =
+            profile_downgraded_for_restricted_workspace;
+        self.set_thinking_enabled(thinking_enabled, cx);
+        self.set_thinking_effort(thinking_effort, cx);
+        self.set_speed(speed, cx);
+        // Last, since a new thread doesn't start on its profile's preferred model.
+        self.set_model(model, cx);
+        self.thread_only = false;
+        cx.notify();
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -7490,30 +7646,29 @@ mod tests {
         });
 
         let fs = fs::FakeFs::new(cx.background_executor.clone());
-        let templates = Templates::new();
         let project = Project::test(fs.clone(), [], cx).await;
+        let thread = cx.update(|cx| new_thread_for_test(project, cx));
 
-        cx.update(|cx| {
-            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
-            let context_server_store = project.read(cx).context_server_store();
-            let context_server_registry =
-                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+        let (event_tx, _event_rx) = mpsc::unbounded();
+        let event_stream = ThreadEventStream::new(event_tx);
 
-            let thread = cx.new(|cx| {
-                Thread::new(
-                    project,
-                    project_context,
-                    context_server_registry,
-                    templates,
-                    None,
-                    cx,
-                )
-            });
+        (thread, event_stream, fake)
+    }
 
-            let (event_tx, _event_rx) = mpsc::unbounded();
-            let event_stream = ThreadEventStream::new(event_tx);
-
-            (thread, event_stream, fake)
+    fn new_thread_for_test(project: Entity<Project>, cx: &mut App) -> Entity<Thread> {
+        let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+        let context_server_store = project.read(cx).context_server_store();
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+        cx.new(|cx| {
+            Thread::new(
+                project,
+                project_context,
+                context_server_registry,
+                Templates::new(),
+                None,
+                cx,
+            )
         })
     }
 
@@ -8564,7 +8719,7 @@ mod tests {
                 thread.set_model(model.clone(), cx);
                 thread.set_thinking_enabled(true, cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
-                thread.set_speed(Speed::Fast, cx);
+                thread.set_speed(Some(Speed::Fast), cx);
                 assert_eq!(thread.enabled_tools(cx).len(), 1);
                 thread
                     .messages
@@ -8596,7 +8751,7 @@ mod tests {
                 thread.set_model(model.clone(), cx);
                 thread.set_thinking_enabled(true, cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
-                thread.set_speed(Speed::Ultrafast, cx);
+                thread.set_speed(Some(Speed::Ultrafast), cx);
             });
         });
 
@@ -8728,7 +8883,7 @@ mod tests {
                 thread.set_model(thread_model.clone(), cx);
                 thread.set_thinking_enabled(true, cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
-                thread.set_speed(Speed::Fast, cx);
+                thread.set_speed(Some(Speed::Fast), cx);
                 thread
                     .messages
                     .push(user_text_message(ClientUserMessageId::new(), "old user"));
@@ -10193,10 +10348,12 @@ mod tests {
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_speed(Speed::Fast, cx);
+                thread.set_speed(Some(Speed::Fast), cx);
                 thread.set_thinking_enabled(true, cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
+                assert!(!thread.is_thread_only());
                 thread.set_profile(AgentProfileId("custom-profile".into()), cx);
+                thread.mark_thread_only(cx);
             });
         });
 
@@ -10208,7 +10365,92 @@ mod tests {
             assert!(sub.thinking_enabled());
             assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
             assert_eq!(sub.profile(), &AgentProfileId("custom-profile".into()));
+            assert!(!sub.is_thread_only());
         });
+    }
+
+    #[gpui::test]
+    async fn test_subagents_and_thread_only_threads_save_no_defaults(cx: &mut TestAppContext) {
+        let (parent, _event_stream, _) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 1);
+        let fs = parent.read_with(cx, |thread, cx| thread.project().read(cx).fs().clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.write(paths::settings_file(), b"{}").await.unwrap();
+
+        subagents[0].update(cx, |thread, cx| thread.save_default_profile(cx));
+        cx.run_until_parked();
+        assert_eq!(fs.load(paths::settings_file()).await.unwrap(), "{}");
+
+        for (profile, thread_only) in [("ask", false), ("minimal", true)] {
+            parent.update(cx, |thread, cx| {
+                if thread_only {
+                    thread.mark_thread_only(cx);
+                }
+                thread.set_profile(AgentProfileId(profile.into()), cx);
+                thread.save_default_profile(cx);
+            });
+            cx.run_until_parked();
+            let settings: serde_json::Value =
+                serde_json::from_str(&fs.load(paths::settings_file()).await.unwrap()).unwrap();
+            assert_eq!(settings["agent"]["default_profile"], "ask");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reloaded_thread_keeps_automatic_profile_downgrade_out_of_defaults(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            LanguageModelRegistry::test(cx);
+            project::trusted_worktrees::init(HashMap::default(), cx);
+        });
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/a", json!({})).await;
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.write(paths::settings_file(), b"{}").await.unwrap();
+        let project = Project::test_with_worktree_trust(fs.clone(), ["/a".as_ref()], cx).await;
+
+        let thread = cx.update(|cx| new_thread_for_test(project, cx));
+        thread.update(cx, |thread, cx| {
+            assert!(thread.profile_was_downgraded());
+            thread.mark_thread_only(cx);
+        });
+
+        let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let reloaded = cx.update(|cx| {
+            let thread = thread.read(cx);
+            let project = thread.project.clone();
+            let project_context = thread.project_context.clone();
+            let context_server_registry = thread.context_server_registry.clone();
+            let templates = thread.templates.clone();
+            cx.new(|cx| {
+                Thread::from_db(
+                    acp_v2::SessionId::new("reloaded"),
+                    db_thread,
+                    project,
+                    project_context,
+                    context_server_registry,
+                    templates,
+                    cx,
+                )
+            })
+        });
+        reloaded.update(cx, |thread, cx| {
+            assert!(thread.profile_was_downgraded());
+            thread.save_as_defaults(cx);
+            assert!(!thread.is_thread_only());
+        });
+        cx.run_until_parked();
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs.load(paths::settings_file()).await.unwrap()).unwrap();
+        assert_eq!(settings["agent"]["default_model"]["model"], "fake");
+        assert_eq!(settings["agent"]["default_profile"], json!(null));
     }
 
     #[gpui::test]
@@ -10218,7 +10460,7 @@ mod tests {
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_speed(Speed::Fast, cx);
+                thread.set_speed(Some(Speed::Fast), cx);
             });
 
             for subagent in &subagents {
@@ -10243,7 +10485,7 @@ mod tests {
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
                 thread.set_thinking_enabled(true, cx);
-                thread.set_speed(Speed::Fast, cx);
+                thread.set_speed(Some(Speed::Fast), cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
             });
         });
