@@ -332,7 +332,7 @@ pub fn language_model_to_selection(
         None => LanguageModelSelection {
             provider,
             model: model_name,
-            enable_thinking: model.default_thinking_enabled(),
+            enable_thinking: model.supports_thinking(),
             effort: model
                 .default_effort_level()
                 .map(|effort| effort.value.to_string()),

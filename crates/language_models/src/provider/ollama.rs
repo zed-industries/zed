@@ -572,7 +572,6 @@ fn language_model(model: &ollama::Model) -> LanguageModel {
         supports_images: model.supports_vision.unwrap_or(false),
         supports_thinking: ollama_supports_thinking(model),
         supports_disabling_thinking: ollama_supports_disabling_thinking(model),
-        default_thinking_enabled: Some(ollama_default_thinking_enabled(model)),
         supported_effort_levels: ollama_effort_levels(model).into(),
         disabled_reason: model.disabled.as_ref().map(|d| DisabledReason::new(d)),
         ..LanguageModel::new(
@@ -1174,14 +1173,6 @@ fn ollama_supports_thinking(model: &ollama::Model) -> bool {
         })
 }
 
-fn ollama_default_thinking_enabled(model: &ollama::Model) -> bool {
-    ollama_supports_thinking(model)
-        && !matches!(
-            model.thinking.as_ref().map(|thinking| &thinking.default),
-            Some(ThinkingValue::Boolean(false))
-        )
-}
-
 fn ollama_effort_levels(model: &ollama::Model) -> Vec<LanguageModelEffortLevel> {
     if !ollama_supports_thinking(model) {
         return Vec::new();
@@ -1446,7 +1437,6 @@ mod tests {
         );
 
         assert!(ollama_supports_disabling_thinking(&model));
-        assert!(ollama_default_thinking_enabled(&model));
 
         let levels = ollama_effort_levels(&model);
         assert_eq!(
@@ -1473,14 +1463,7 @@ mod tests {
         );
 
         assert!(ollama_supports_disabling_thinking(&model));
-        assert!(!ollama_default_thinking_enabled(&model));
         assert!(ollama_effort_levels(&model).is_empty());
-
-        let model = thinking_model(
-            vec![ThinkingValue::Boolean(false), ThinkingValue::Boolean(true)],
-            ThinkingValue::Boolean(true),
-        );
-        assert!(ollama_default_thinking_enabled(&model));
     }
 
     #[test]
@@ -1610,7 +1593,6 @@ mod tests {
         );
 
         assert!(!ollama_supports_thinking(&model));
-        assert!(!ollama_default_thinking_enabled(&model));
         assert!(ollama_effort_levels(&model).is_empty());
 
         let request = LanguageModelRequest {
