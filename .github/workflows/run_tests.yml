@@ -616,6 +616,8 @@ jobs:
       run: cargo build -p collab
     - name: cargo build --workspace --bins --examples --features project_benchmarks/test-support
       run: cargo build --workspace --bins --examples --features project_benchmarks/test-support
+    - name: cargo test -p gpui --lib --no-run
+      run: cargo test -p gpui --lib --no-run
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -694,7 +696,7 @@ jobs:
     - name: run_tests::check_dependencies::install_cargo_shear
       uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
       with:
-        tool: cargo-shear@1.13.4
+        tool: cargo-shear@1.14.1
     - name: run_tests::check_dependencies::run_cargo_shear
       run: cargo shear --locked --deny-warnings --check-test-targets
     - name: run_tests::check_dependencies::check_cargo_lock

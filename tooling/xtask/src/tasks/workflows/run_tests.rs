@@ -464,7 +464,7 @@ fn check_style() -> NamedJob {
 
 fn check_dependencies() -> NamedJob {
     fn install_cargo_shear() -> Step<Use> {
-        steps::taiki_install_action("cargo-shear@1.13.4")
+        steps::taiki_install_action("cargo-shear@1.14.1")
     }
 
     fn run_cargo_shear() -> Step<Run> {
@@ -612,6 +612,8 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::script(
                 "cargo build --workspace --bins --examples --features project_benchmarks/test-support",
             ))
+            // Workspace builds enable gpui's `test-support`, which hides missing `cfg` gates.
+            .add_step(steps::script("cargo test -p gpui --lib --no-run"))
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     ))

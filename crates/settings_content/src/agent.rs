@@ -504,6 +504,19 @@ impl AgentSettingsContent {
         }
     }
 
+    pub fn update_default_model<F>(&mut self, provider: &str, model: &str, f: F)
+    where
+        F: FnOnce(&mut LanguageModelSelection),
+    {
+        if let Some(default_model) = self
+            .default_model
+            .as_mut()
+            .filter(|m| m.provider.0 == provider && m.model == model)
+        {
+            f(default_model);
+        }
+    }
+
     pub fn set_tool_default_permission(&mut self, tool_id: &str, mode: ToolPermissionMode) {
         let tool_permissions = self.tool_permissions.get_or_insert_default();
         let tool_rules = tool_permissions
@@ -932,10 +945,6 @@ pub struct GrantedWritePathContent {
     /// The canonical, symlink-resolved target established when the grant was
     /// approved. Absent for a bare-string entry.
     pub resolved: Option<PathBuf>,
-    /// Windows/WSL only: whether the canonical target lives on a Windows-hosted
-    /// (DrvFs) filesystem, whose sandbox-integrity guarantees are weaker. Absent
-    /// (false) on other platforms and for bare-string entries.
-    pub on_windows_fs: bool,
 }
 
 impl GrantedWritePathContent {
@@ -952,14 +961,9 @@ impl Serialize for GrantedWritePathContent {
             None => self.requested.serialize(serializer),
             Some(resolved) => {
                 use serde::ser::SerializeStruct as _;
-                let field_count = if self.on_windows_fs { 3 } else { 2 };
-                let mut state =
-                    serializer.serialize_struct("GrantedWritePathContent", field_count)?;
+                let mut state = serializer.serialize_struct("GrantedWritePathContent", 2)?;
                 state.serialize_field("requested", &self.requested)?;
                 state.serialize_field("resolved", resolved)?;
-                if self.on_windows_fs {
-                    state.serialize_field("on_windows_fs", &self.on_windows_fs)?;
-                }
                 state.end()
             }
         }
@@ -973,8 +977,6 @@ impl<'de> Deserialize<'de> for GrantedWritePathContent {
             requested: PathBuf,
             #[serde(default)]
             resolved: Option<PathBuf>,
-            #[serde(default)]
-            on_windows_fs: bool,
         }
 
         #[derive(Deserialize)]
@@ -988,16 +990,13 @@ impl<'de> Deserialize<'de> for GrantedWritePathContent {
             StringOrObject::String(requested) => Self {
                 requested,
                 resolved: None,
-                on_windows_fs: false,
             },
             StringOrObject::Object(Object {
                 requested,
                 resolved,
-                on_windows_fs,
             }) => Self {
                 requested,
                 resolved,
-                on_windows_fs,
             },
         })
     }
@@ -1016,8 +1015,7 @@ impl JsonSchema for GrantedWritePathContent {
                     "type": "object",
                         "properties": {
                         "requested": { "type": "string" },
-                        "resolved": { "type": ["string", "null"] },
-                        "on_windows_fs": { "type": "boolean" }
+                        "resolved": { "type": ["string", "null"] }
                     },
                     "required": ["requested"]
                 }
@@ -1048,9 +1046,9 @@ pub struct SandboxPermissionsContent {
     /// Whether to persistently run agent terminal commands outside the OS
     /// sandbox. This is the model-facing "off switch": when true, the sandboxed
     /// terminal tool is not exposed and the system prompt omits the sandbox
-    /// section, so the model uses the plain `terminal` tool. On Windows, WSL
-    /// sandbox setup is skipped. Distinct from the model-requested
-    /// `unsandboxed: true` escape approved "once" or "for this thread".
+    /// section, so the model uses the plain `terminal` tool. Distinct from the
+    /// model-requested `unsandboxed: true` escape approved "once" or "for this
+    /// thread".
     /// Default: false
     pub allow_unsandboxed: Option<bool>,
 
@@ -1070,14 +1068,6 @@ pub struct SandboxPermissionsContent {
     /// the request can be allowed.
     /// Default: true
     pub warn_confusable_unicode: Option<bool>,
-
-    /// Whether to warn (Windows/WSL only) when a sandbox grant targets a file on
-    /// a Windows-hosted (DrvFs) filesystem. Such grants are enforced inside WSL
-    /// via a translated path, and their sandbox-integrity guarantees are weaker
-    /// than a distro-native filesystem. When enabled, such grants show a warning
-    /// that must be acknowledged before the command runs.
-    /// Default: true
-    pub warn_ntfs_grants: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -1225,6 +1215,34 @@ mod tests {
         let tool_permissions = settings.tool_permissions.as_ref().unwrap();
         let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
         assert_eq!(terminal_rules.default, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_update_default_model_only_updates_matching_model() {
+        let mut settings = AgentSettingsContent::default();
+        settings.set_model(LanguageModelSelection {
+            provider: LanguageModelProviderSetting("anthropic".into()),
+            model: "model-a".into(),
+            enable_thinking: false,
+            effort: Some("low".into()),
+            speed: None,
+        });
+
+        settings.update_default_model("anthropic", "model-b", |default_model| {
+            default_model.effort = Some("high".into())
+        });
+        assert_eq!(
+            settings.default_model.as_ref().unwrap().effort.as_deref(),
+            Some("low")
+        );
+
+        settings.update_default_model("anthropic", "model-a", |default_model| {
+            default_model.effort = Some("high".into())
+        });
+        assert_eq!(
+            settings.default_model.as_ref().unwrap().effort.as_deref(),
+            Some("high")
+        );
     }
 
     #[test]
@@ -1406,7 +1424,6 @@ mod tests {
         settings.add_sandbox_write_path(GrantedWritePathContent {
             requested: PathBuf::from("/tmp/build"),
             resolved: None,
-            on_windows_fs: false,
         });
 
         let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
@@ -1432,7 +1449,6 @@ mod tests {
             &[GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/build"),
                 resolved: None,
-                on_windows_fs: false,
             }]
         );
     }
@@ -1444,17 +1460,14 @@ mod tests {
         settings.add_sandbox_write_path(GrantedWritePathContent {
             requested: PathBuf::from("/tmp/build/cache"),
             resolved: None,
-            on_windows_fs: false,
         });
         settings.add_sandbox_write_path(GrantedWritePathContent {
             requested: PathBuf::from("/tmp/build"),
             resolved: None,
-            on_windows_fs: false,
         });
         settings.add_sandbox_write_path(GrantedWritePathContent {
             requested: PathBuf::from("/tmp/build/output"),
             resolved: None,
-            on_windows_fs: false,
         });
 
         let write_paths = settings
@@ -1471,7 +1484,6 @@ mod tests {
             &[GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/build"),
                 resolved: None,
-                on_windows_fs: false,
             }]
         );
     }
@@ -1485,7 +1497,6 @@ mod tests {
             GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/x"),
                 resolved: None,
-                on_windows_fs: false,
             }
         );
 
@@ -1498,7 +1509,6 @@ mod tests {
             GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/x"),
                 resolved: Some(PathBuf::from("/tmp/real")),
-                on_windows_fs: false,
             }
         );
 
@@ -1510,7 +1520,6 @@ mod tests {
             GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/x"),
                 resolved: None,
-                on_windows_fs: false,
             }
         );
     }
@@ -1522,7 +1531,6 @@ mod tests {
         let bare = GrantedWritePathContent {
             requested: PathBuf::from("/tmp/x"),
             resolved: None,
-            on_windows_fs: false,
         };
         assert_eq!(
             serde_json::to_value(&bare).unwrap(),
@@ -1533,7 +1541,6 @@ mod tests {
         let resolved = GrantedWritePathContent {
             requested: PathBuf::from("/tmp/x"),
             resolved: Some(PathBuf::from("/tmp/real")),
-            on_windows_fs: false,
         };
         assert_eq!(
             serde_json::to_value(&resolved).unwrap(),
