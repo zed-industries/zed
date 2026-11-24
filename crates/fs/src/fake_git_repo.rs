@@ -59,7 +59,6 @@ pub enum FakeCommitDataEntry {
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
     pub commit_history: Vec<FakeCommitSnapshot>,
-    pub event_emitter: async_channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, Vec<u8>>,
     pub index_contents: HashMap<RepoPath, Vec<u8>>,
@@ -92,9 +91,8 @@ pub struct FakeGitRepositoryState {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(event_emitter: async_channel::Sender<PathBuf>) -> Self {
+    pub fn new() -> Self {
         FakeGitRepositoryState {
-            event_emitter,
             blob_read_gate: None,
             head_contents: Default::default(),
             index_contents: Default::default(),
@@ -717,7 +715,15 @@ impl GitRepository for FakeGitRepository {
             // compute snapshot expects these to be sorted by ref_name
             // because that's what git itself does
             branches.sort_by(|a, b| a.ref_name.cmp(&b.ref_name));
-            Ok(branches.into())
+            Ok(git::repository::BranchesScanResult {
+                branches,
+                error: None,
+                remote_default_branch: state
+                    .default_branch_ref
+                    .as_deref()
+                    .and_then(|branch| branch.strip_prefix("refs/remotes/"))
+                    .map(SharedString::from),
+            })
         })
     }
 
@@ -1560,7 +1566,7 @@ impl GitRepository for FakeGitRepository {
                         name.split_once('/').map_or(name, |(_, name)| name)
                     }
                 } else {
-                    branch.strip_prefix("refs/heads/").unwrap_or(branch)
+                    branch.trim_prefix("refs/heads/")
                 };
                 name.to_owned().into()
             }))

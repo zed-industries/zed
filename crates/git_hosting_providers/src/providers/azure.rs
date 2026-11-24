@@ -57,11 +57,6 @@ impl Azure {
 
     fn parse_visualstudio_com_url(&self, url: &RemoteUrl) -> Option<ParsedGitRemote> {
         let host = url.host_str()?;
-
-        if !host.ends_with(".visualstudio.com") {
-            return None;
-        }
-
         let organization = host.strip_suffix(".visualstudio.com")?;
 
         // HTTPS format: https://{organization}.visualstudio.com/{project}/_git/{repo}

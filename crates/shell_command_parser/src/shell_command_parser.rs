@@ -677,7 +677,7 @@ fn normalize_word_piece_into(
         WordPiece::SingleQuotedText(text) => result.push_str(text),
         WordPiece::AnsiCQuotedText(text) => result.push_str(text),
         WordPiece::EscapeSequence(text) => {
-            result.push_str(text.strip_prefix('\\').unwrap_or(text));
+            result.push_str(text.trim_prefix('\\'));
         }
         WordPiece::DoubleQuotedSequence(pieces)
         | WordPiece::GettextDoubleQuotedSequence(pieces) => {

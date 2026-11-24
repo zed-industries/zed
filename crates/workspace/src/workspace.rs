@@ -443,8 +443,6 @@ actions!(
         OpenInTerminal,
         /// Opens the component preview.
         OpenComponentPreview,
-        /// Reloads the active item.
-        ReloadActiveItem,
         /// Reopens the most recently dismissed picker in the current window.
         ReopenLastPicker,
         /// Resets the active dock to its default size.
@@ -4605,7 +4603,13 @@ impl Workspace {
         }
     }
 
-    /// Closes the active item across all panes.
+    /// Closes the active item, along with every other item for the same file,
+    /// across all panes.
+    ///
+    /// Items are matched across panes by `single_file_project_path`, so only
+    /// items that stand for a single file are closed together.
+    /// Any other item, such as a multibuffer, whose project path is just the
+    /// file under its cursor, is closed on its own in the active pane.
     pub fn close_item_in_all_panes(
         &mut self,
         action: &CloseItemInAllPanes,
@@ -4619,7 +4623,7 @@ impl Workspace {
         let save_intent = action.save_intent.unwrap_or(SaveIntent::Close);
         let close_pinned = action.close_pinned;
 
-        if let Some(project_path) = active_item.project_path(cx) {
+        if let Some(project_path) = active_item.single_file_project_path(cx) {
             self.close_items_with_project_path(
                 &project_path,
                 save_intent,
@@ -19015,6 +19019,67 @@ mod tests {
         let item_count_c = pane_c.read_with(cx, |pane, _| pane.items_len());
         assert_eq!(item_count_b, 0, "Pinned item in pane B should be closed");
         assert_eq!(item_count_c, 0, "Unpinned item in pane C should be closed");
+    }
+
+    #[gpui::test]
+    async fn test_close_item_in_all_panes_closes_invalid_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.bin": "" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane_b =
+            workspace.update_in(cx, |workspace, window, cx| workspace.add_pane(window, cx));
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 0);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 0);
+
+        let invalid_item_view = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let absolute_path = path!("/root/file.bin").as_ref();
+                let (worktree, path) = project.read(cx).find_worktree(absolute_path, cx).unwrap();
+                let worktree_id = worktree.read(cx).id();
+                let project_path = ProjectPath { worktree_id, path };
+
+                cx.new(|cx| {
+                    InvalidItemView::new(
+                        absolute_path,
+                        true,
+                        &anyhow::anyhow!("binary file"),
+                        window,
+                        cx,
+                    )
+                    .with_project_path(worktree, project_path)
+                })
+            })
+        };
+
+        let item = invalid_item_view(cx);
+        pane_a.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item), true, true, None, window, cx)
+        });
+
+        let item = invalid_item_view(cx);
+        pane_b.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item), true, true, None, window, cx)
+        });
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 1);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 1);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.close_item_in_all_panes(&CloseItemInAllPanes::default(), window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 0);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 0);
     }
 
     #[gpui::test]

@@ -1,5 +1,5 @@
 use acp_thread::{Elicitation, ElicitationEntryId, ElicitationStatus};
-use agent_client_protocol::v2::schema as acp;
+use agent_client_protocol::{schema::IndexMap, v2::schema as acp};
 use collections::{HashMap, HashSet};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use editor::Editor;
@@ -207,7 +207,7 @@ impl ElicitationFormState {
         &self,
         schema: &acp::ElicitationSchema,
         cx: &App,
-    ) -> Result<BTreeMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
+    ) -> Result<IndexMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
         self.snapshot(cx).validate(schema)
     }
 
@@ -256,9 +256,9 @@ impl ElicitationFormSubmission {
     pub(crate) fn validate(
         &self,
         schema: &acp::ElicitationSchema,
-    ) -> Result<BTreeMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
+    ) -> Result<IndexMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
         let required = schema.required.as_deref().unwrap_or_default();
-        let mut content = BTreeMap::new();
+        let mut content = IndexMap::new();
         let mut errors = HashMap::default();
 
         for (name, property) in &schema.properties {
@@ -935,7 +935,7 @@ mod tests {
         let pending_unknown = Elicitation {
             id: ElicitationEntryId("pending-unknown".into()),
             request: acp::CreateElicitationRequest::new(
-                acp::OtherElicitationMode::new("future", preview_request_scope(3), BTreeMap::new()),
+                acp::OtherElicitationMode::new("future", preview_request_scope(3), IndexMap::new()),
                 "Use a future input mode.",
             ),
             v1_string_patterns: BTreeMap::new(),
@@ -1103,7 +1103,7 @@ mod tests {
             "Provide a token and access choices",
         )
         .meta(metadata("request"));
-        let expected_content = BTreeMap::from([
+        let expected_content = IndexMap::from([
             (
                 "token".into(),
                 acp::ElicitationContentValue::from("  secret  "),
@@ -1144,6 +1144,10 @@ mod tests {
             let content = submission
                 .validate(&schema)
                 .expect("unknown format annotations should not reject valid existing fields");
+            assert_eq!(
+                content.keys().collect::<Vec<_>>(),
+                ["token", "environment", "scopes"]
+            );
             assert!(form_state.validation_matches_current_values(&submission, cx));
             assert_eq!(content, expected_content);
             store.update(cx, |store, cx| {
@@ -1430,7 +1434,6 @@ impl Component for ElicitationCardPreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
                 example_group_with_title(
                     "URL Requests",
@@ -1442,7 +1445,6 @@ impl Component for ElicitationCardPreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
                 example_group_with_title(
                     "Terminal States",
@@ -1459,7 +1461,6 @@ impl Component for ElicitationCardPreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
             ])
             .into_any_element()

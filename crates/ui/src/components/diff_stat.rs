@@ -86,8 +86,6 @@ impl Component for DiffStat {
                 .into_any_element(),
         )];
 
-        example_group(diff_stat_example)
-            .vertical()
-            .into_any_element()
+        example_group(diff_stat_example).into_any_element()
     }
 }

@@ -1,4 +1,4 @@
-use std::mem;
+use std::{mem, sync::Arc};
 
 use anyhow::{Result, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
@@ -62,6 +62,17 @@ pub(crate) fn uses_sibling_function_response_media(model_id: &str) -> bool {
     matches!(
         model_id,
         "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
+    )
+}
+
+/// Models that can keep generating past one response's output limit when the client resends the
+/// request with the `continuationToken` the previous response ended with.
+///
+/// See <https://ai.google.dev/gemini-api/docs/long-decode>.
+pub fn supports_long_decode(model_id: &str) -> bool {
+    matches!(
+        model_id,
+        "gemini-4-carbon" | "gemini-4-argon" | "gemini-4-neon" | "gemini-4-hydrogen"
     )
 }
 
@@ -204,7 +215,7 @@ pub async fn list_models(
 }
 
 pub async fn stream_generate_content(
-    client: &dyn HttpClient,
+    client: Arc<dyn HttpClient>,
     api_url: &str,
     api_key: &str,
     mut request: GenerateContentRequest,
@@ -222,12 +233,40 @@ pub async fn stream_generate_content(
     let uri =
         format!("{api_url}/v1beta/models/{model_id}:streamGenerateContent?alt=sse&key={api_key}",);
 
+    let first_hop = stream_hop(client.as_ref(), &uri, api_url, &request, extra_headers).await?;
+    if !supports_long_decode(&model_id) {
+        return Ok(first_hop);
+    }
+
+    Ok(LongDecodeRequest {
+        client,
+        uri,
+        api_url: api_url.to_string(),
+        extra_headers: extra_headers.clone(),
+        request,
+        hop: first_hop,
+        continuation_token: None,
+        continues: false,
+    }
+    .into_stream())
+}
+
+type ResponseStream =
+    BoxStream<'static, Result<GenerateContentResponse, LanguageModelCompletionError>>;
+
+async fn stream_hop(
+    client: &dyn HttpClient,
+    uri: &str,
+    api_url: &str,
+    request: &GenerateContentRequest,
+    extra_headers: &CustomHeaders,
+) -> Result<ResponseStream, LanguageModelCompletionError> {
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .extra_headers(extra_headers)
-        .body(AsyncBody::from(serde_json::to_string(&request).map_err(
+        .body(AsyncBody::from(serde_json::to_string(request).map_err(
             |error| LanguageModelCompletionError::SerializeRequest {
                 provider: GOOGLE_PROVIDER_NAME,
                 error,
@@ -296,6 +335,71 @@ pub async fn stream_generate_content(
                 error,
             })?;
         Err(completion_error_from_response(status, &headers, body))
+    }
+}
+
+/// Joins the hops of a long decode into one stream that ends when the last hop does.
+struct LongDecodeRequest {
+    client: Arc<dyn HttpClient>,
+    uri: String,
+    api_url: String,
+    extra_headers: CustomHeaders,
+    request: GenerateContentRequest,
+    hop: ResponseStream,
+    continuation_token: Option<String>,
+    continues: bool,
+}
+
+impl LongDecodeRequest {
+    fn into_stream(self) -> ResponseStream {
+        futures::stream::unfold(Some(self), |state| async move {
+            let mut state = state?;
+            let response = state.next_response().await?;
+            let state = response.is_ok().then_some(state);
+            Some((response, state))
+        })
+        .boxed()
+    }
+
+    async fn next_response(
+        &mut self,
+    ) -> Option<Result<GenerateContentResponse, LanguageModelCompletionError>> {
+        loop {
+            match self.hop.next().await {
+                Some(Ok(mut response)) => {
+                    for candidate in response.candidates.iter_mut().flatten() {
+                        // Streams also carry checkpoint tokens before the hop's last chunk.
+                        if let Some(continuation_token) = candidate.continuation_token.take() {
+                            self.continuation_token = Some(continuation_token);
+                        }
+                        if candidate.finish_reason.as_deref() == Some("CONTINUATION") {
+                            self.continues = true;
+                        }
+                    }
+                    return Some(Ok(response));
+                }
+                Some(Err(error)) => return Some(Err(error)),
+                None => {}
+            }
+
+            if !mem::take(&mut self.continues) {
+                return None;
+            }
+            let continuation_token = self.continuation_token.take()?;
+            self.request.continuation_token = Some(continuation_token);
+            match stream_hop(
+                self.client.as_ref(),
+                &self.uri,
+                &self.api_url,
+                &self.request,
+                &self.extra_headers,
+            )
+            .await
+            {
+                Ok(hop) => self.hop = hop,
+                Err(error) => return Some(Err(error)),
+            }
+        }
     }
 }
 
@@ -504,6 +608,9 @@ pub struct GenerateContentRequest {
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_config: Option<ToolConfig>,
+    /// Resumes a long decode from where a previous response stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -533,6 +640,8 @@ pub struct GenerateContentCandidate {
     pub safety_ratings: Option<Vec<SafetyRating>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citation_metadata: Option<CitationMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -646,7 +755,7 @@ pub struct PromptFeedback {
     pub block_reason_message: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1046,7 +1155,7 @@ mod tests {
             }))
             .unwrap();
             let responses = stream_generate_content(
-                client.as_ref(),
+                client,
                 API_URL,
                 "test-key",
                 request,
@@ -1063,6 +1172,93 @@ mod tests {
             assert!(events.next().await.is_none());
             error
         })
+    }
+
+    #[test]
+    fn long_decode_continues_until_a_hop_finishes() {
+        let request_bodies: Arc<std::sync::Mutex<Vec<serde_json::Value>>> = Arc::default();
+        let client = FakeHttpClient::create({
+            let request_bodies = request_bodies.clone();
+            move |mut request| {
+                let request_bodies = request_bodies.clone();
+                async move {
+                    let mut body = String::new();
+                    request.body_mut().read_to_string(&mut body).await?;
+                    let body: serde_json::Value = serde_json::from_str(&body)?;
+                    let chunks = if body.get("continuationToken").is_none() {
+                        [
+                            json!({
+                                "candidates": [{
+                                    "content": {"role": "model", "parts": [{"text": "Part one. "}]},
+                                    "continuationToken": "checkpoint"
+                                }]
+                            }),
+                            json!({
+                                "candidates": [{
+                                    "content": {"role": "model", "parts": []},
+                                    "finishReason": "CONTINUATION",
+                                    "continuationToken": "hop-1"
+                                }]
+                            }),
+                        ]
+                        .to_vec()
+                    } else {
+                        vec![json!({
+                            "candidates": [{
+                                "content": {"role": "model", "parts": [{"text": "Part two."}]},
+                                "finishReason": "STOP"
+                            }]
+                        })]
+                    };
+                    request_bodies.lock().unwrap().push(body);
+                    let sse = chunks
+                        .iter()
+                        .map(|chunk| format!("data: {chunk}\n\n"))
+                        .collect::<String>();
+                    Ok(Response::builder().body(AsyncBody::from(sse))?)
+                }
+            }
+        });
+        let request = serde_json::from_value(json!({
+            "model": "models/gemini-4-argon",
+            "contents": [{"role": "user", "parts": [{"text": "Prove it"}]}],
+            "generationConfig": {"maxOutputTokens": 1_048_576}
+        }))
+        .unwrap();
+
+        let events = futures::executor::block_on(async {
+            let responses = stream_generate_content(
+                client,
+                API_URL,
+                "test-key",
+                request,
+                &CustomHeaders::default(),
+            )
+            .await
+            .unwrap();
+            GoogleEventMapper::new()
+                .map_stream(responses)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap()
+        });
+
+        assert_eq!(
+            events,
+            [
+                LanguageModelCompletionEvent::Text("Part one. ".into()),
+                LanguageModelCompletionEvent::Text("Part two.".into()),
+                LanguageModelCompletionEvent::Stop(language_model_core::StopReason::EndTurn),
+            ]
+        );
+        let request_bodies = request_bodies.lock().unwrap();
+        assert_eq!(request_bodies.len(), 2);
+        assert_eq!(request_bodies[1]["continuationToken"], "hop-1");
+        assert_eq!(request_bodies[0]["contents"], request_bodies[1]["contents"]);
+        assert_eq!(
+            request_bodies[0]["generationConfig"],
+            request_bodies[1]["generationConfig"]
+        );
     }
 
     #[test]

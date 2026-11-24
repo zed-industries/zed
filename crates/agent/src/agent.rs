@@ -3091,36 +3091,22 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         } = agent_settings::language_model_to_selection(&model, favorite.as_ref());
 
         thread.update(cx, |thread, cx| {
-            thread.set_model(model.clone(), cx);
-            thread.set_thinking_effort(effort.clone(), cx);
+            thread.set_model(model, cx);
+            thread.set_thinking_effort(effort, cx);
             thread.set_thinking_enabled(enable_thinking, cx);
             if let Some(speed) = speed {
-                thread.set_speed(speed, cx);
+                thread.set_speed(Some(speed), cx);
             }
+            thread.save_default_model(cx);
         });
 
-        update_settings_file(
-            self.connection.0.read(cx).fs.clone(),
-            cx,
-            move |settings, cx| {
-                let provider = model.provider_id().0.to_string();
-                let model = model.id().0.to_string();
-                let enable_thinking = thread.read(cx).thinking_enabled();
-                let speed = thread.read(cx).speed();
-                settings
-                    .agent
-                    .get_or_insert_default()
-                    .set_model(LanguageModelSelection {
-                        provider: provider.into(),
-                        model,
-                        enable_thinking,
-                        effort,
-                        speed,
-                    });
-            },
-        );
-
         Task::ready(Ok(()))
+    }
+
+    fn mark_thread_only(&self, cx: &mut App) {
+        if let Some(thread) = self.connection.thread(&self.session_id, cx) {
+            thread.update(cx, |thread, cx| thread.mark_thread_only(cx));
+        }
     }
 
     fn selected_model(&self, cx: &mut App) -> Task<Result<acp_thread::AgentModelInfo>> {
@@ -3805,14 +3791,11 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         // scope) at a client-side path would leak client environment into the
         // remote terminal and reference a directory that doesn't exist there.
         //
-        // Linux and Windows are excluded: the bwrap sandbox (run directly on
-        // Linux, and via WSL on Windows) already mounts a fresh, writable
-        // `tmpfs` over `/tmp`, so the environment looks like a normal
-        // filesystem with no special `$TMPDIR` (which would only make the
-        // sandbox more obviously Zed-specific). On Windows a per-thread
-        // `$TMPDIR` would also be a Windows path that's meaningless inside
-        // WSL, and adding it to the writable scope would bind a stray
-        // `/mnt/<drive>/...` path.
+        // Linux and Windows are excluded: the bwrap sandbox on Linux mounts a
+        // fresh, writable `tmpfs` over `/tmp`, and the Windows sandbox gives
+        // each command its own writable `%TEMP%`, so the environment looks like
+        // a normal filesystem with no special `$TMPDIR` (which would only make
+        // the sandbox more obviously Zed-specific).
         #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
         let mut extra_env = extra_env;
         #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
@@ -3854,6 +3837,12 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 Err(error) => return Task::ready(Err(error)),
             };
         }
+        let shell = match self.thread.read_with(cx, |thread, cx| {
+            crate::sandboxing::terminal_shell(thread.project().read(cx), cx)
+        }) {
+            Ok(shell) => shell,
+            Err(error) => return Task::ready(Err(error)),
+        };
         let task = self.acp_thread.update(cx, |thread, cx| {
             thread.create_terminal(
                 command,
@@ -3862,6 +3851,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 cwd,
                 output_byte_limit,
                 sandbox_wrap,
+                shell,
                 cx,
             )
         });
@@ -5979,7 +5969,10 @@ mod internal_tests {
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let unknown = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
             "_future",
-            std::collections::BTreeMap::from([("payload".into(), json!("private-payload"))]),
+            agent_client_protocol::schema::IndexMap::from([(
+                "payload".into(),
+                json!("private-payload"),
+            )]),
         ));
 
         for text in ["ordinary prompt", "/compact"] {
@@ -8807,6 +8800,84 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_thread_only_model_selection_leaves_pending_default_save_intact(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(paths::settings_file(), b"{}".to_vec()).await;
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+        let connection = NativeAgentConnection(agent.clone());
+
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+
+        cx.update(|cx| {
+            let thinking_provider = Arc::new(FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            ));
+            thinking_provider.update_model("fake-thinking", |model| {
+                model.name = LanguageModelName::from("Fake Thinking".to_string());
+                model.supports_thinking = true;
+            });
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(thinking_provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        // The settings write for the first selection only runs once the file
+        // loads. Making the thread thread-only and switching away before then
+        // must not save the second model or leak its options into the first.
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| {
+            selector
+                .select_model(AgentModelId::new("fake-corp/fake-thinking"), cx)
+                .detach_and_log_err(cx);
+            selector.mark_thread_only(cx);
+            selector
+                .select_model(AgentModelId::new("fake/fake"), cx)
+                .detach_and_log_err(cx);
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _| {
+            let session = agent.sessions.get(&session_id).unwrap();
+            session.thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.model().unwrap().id().0, "fake");
+                assert!(!thread.thinking_enabled());
+            });
+        });
+        let settings_content = fs.load(paths::settings_file()).await.unwrap();
+        let settings_json: serde_json::Value = serde_json::from_str(&settings_content).unwrap();
+        assert_eq!(
+            settings_json["agent"]["default_model"]["model"],
+            json!("fake-thinking")
+        );
+        assert_eq!(
+            settings_json["agent"]["default_model"]["enable_thinking"],
+            json!(true)
+        );
+    }
+
+    #[gpui::test]
     async fn test_select_model_updates_thinking_enabled(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -9002,7 +9073,9 @@ mod internal_tests {
                 thread.thinking_enabled(),
                 "thinking should be enabled after selecting thinking model"
             );
+            assert!(!thread.is_thread_only());
         });
+        cx.update(|cx| selector.mark_thread_only(cx));
 
         // Send a message so the thread gets persisted.
         let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
@@ -9038,6 +9111,7 @@ mod internal_tests {
                 thread.thinking_enabled(),
                 "thinking_enabled should be preserved when reloading a thread with a thinking model"
             );
+            assert!(thread.is_thread_only());
         });
 
         drop(reloaded_acp_thread);
@@ -9332,6 +9406,387 @@ mod internal_tests {
         });
 
         drop(reloaded_acp_thread);
+    }
+
+    #[gpui::test]
+    async fn test_loaded_thread_can_continue_after_saved_model_is_removed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (agent, connection, project, session_id, original_provider) =
+            persist_thread_with_fake_corp_model(cx).await;
+        original_provider.forbid_requests();
+
+        // The same provider now offers Luna but no longer offers the saved model.
+        unregister_fake_corp(cx);
+        let provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
+        ));
+        let luna = provider.update_model("gpt-6-luna", |model| {
+            model.name = LanguageModelName::from("GPT-6 Luna".to_string());
+        });
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.model().is_none());
+        });
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        let models = cx.update(|cx| selector.list_models(cx)).await.unwrap();
+        let acp_thread::AgentModelList::Grouped(models) = models else {
+            panic!("Unexpected model group");
+        };
+        let luna_id = AgentModelId::new("fake-corp/gpt-6-luna");
+        assert!(models.values().flatten().any(|model| model.id == luna_id));
+        let removed_model_id = AgentModelId::new("fake-corp/custom-model-id");
+        assert!(
+            !models
+                .values()
+                .flatten()
+                .any(|model| model.id == removed_model_id)
+        );
+
+        cx.update(|cx| selector.select_model(luna_id, cx))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.model().unwrap().id(), luna.id());
+        });
+
+        let send =
+            reloaded_acp_thread.update(cx, |thread, cx| thread.send(vec!["Continue.".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        let requests = provider.pending_completions_for(&luna);
+        let [request] = requests.as_slice() else {
+            panic!("Expected one continuation request to Luna");
+        };
+        let history = request_texts_after_system(&request.messages);
+        let mut history = history.iter();
+        assert!(history.any(|message| message.contains("Hello")));
+        assert!(history.any(|message| message == "Response."));
+        assert!(history.any(|message| message.contains("Continue.")));
+
+        provider.send_last_text(&luna, "Continued with Luna.");
+        provider.end_last(&luna);
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(saved.model.unwrap().model, "gpt-6-luna");
+        assert!(
+            serde_json::to_string(&saved.messages)
+                .unwrap()
+                .contains("Continued with Luna.")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_open_thread_can_continue_after_hosted_catalog_changes(cx: &mut TestAppContext) {
+        use client::{Client, Credentials, RefreshLlmTokenListener, UserStore};
+        use futures::AsyncReadExt as _;
+        use http_client::{FakeHttpClient, Response};
+        use language_models::provider::cloud::{CloudLanguageModelProvider, test_support};
+
+        init_test(cx);
+        let requests = Arc::new(parking_lot::Mutex::new(Vec::<serde_json::Value>::new()));
+        let reject_claude = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let http = FakeHttpClient::create({
+            let requests = requests.clone();
+            let reject_claude = reject_claude.clone();
+            move |mut request| {
+                let requests = requests.clone();
+                let reject_claude = reject_claude.clone();
+                async move {
+                    let body = match request.uri().path() {
+                        "/client/users/me" => {
+                            let mut user = client::test::make_get_authenticated_user_response(
+                                42,
+                                "student".into(),
+                            );
+                            user.plan.plan = cloud_api_types::KnownOrUnknown::Known(
+                                cloud_api_types::Plan::ZedStudent,
+                            );
+                            let organization_id =
+                                cloud_api_types::OrganizationId("org_student".into());
+                            user.organizations.push(cloud_api_types::Organization {
+                                id: organization_id.clone(),
+                                name: "Student".into(),
+                                is_personal: true,
+                                ui_permissions: Default::default(),
+                            });
+                            user.default_organization_id = Some(organization_id);
+                            serde_json::to_string(&user)?
+                        }
+                        "/client/llm_tokens" => json!({"token": "test-token"}).to_string(),
+                        "/models" => json!({
+                            "models": [],
+                            "default_model": null,
+                            "default_fast_model": null,
+                            "recommended_models": [],
+                        })
+                        .to_string(),
+                        "/completions" => {
+                            let mut body = String::new();
+                            request.body_mut().read_to_string(&mut body).await?;
+                            let request: serde_json::Value = serde_json::from_str(&body)?;
+                            let anthropic = request["model"] == "claude-opus-4-6";
+                            requests.lock().push(request);
+                            if anthropic && reject_claude.load(std::sync::atomic::Ordering::SeqCst)
+                            {
+                                return Ok(Response::builder().status(403).body(
+                                    json!({"error": "This model is not available on your plan"})
+                                        .to_string()
+                                        .into(),
+                                )?);
+                            }
+                            if anthropic {
+                                [
+                                    json!({"type": "message_start", "message": {"id": "msg_test", "type": "message", "role": "assistant", "content": [], "model": "claude-opus-4-6", "stop_reason": null, "stop_sequence": null, "usage": {"input_tokens": 10, "output_tokens": 0}}}),
+                                    json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+                                    json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Response."}}),
+                                    json!({"type": "content_block_stop", "index": 0}),
+                                    json!({"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}, "usage": {"output_tokens": 1}}),
+                                    json!({"type": "message_stop"}),
+                                ].into_iter().map(|event| format!("{}\n", json!({"event": event})))
+                                    .chain(std::iter::once(format!("{}\n", json!({"status": "stream_ended"}))))
+                                    .collect()
+                            } else {
+                                format!(
+                                    "{}\n{}\n{}\n",
+                                    json!({"event": {"type": "response.output_text.delta", "item_id": "msg_luna", "output_index": 0, "delta": "Continued with Luna."}}),
+                                    json!({"event": {"type": "response.completed", "response": {"id": "resp_luna", "status": "completed", "output": []}}}),
+                                    json!({"status": "stream_ended"}),
+                                )
+                            }
+                        }
+                        "/count_tokens" => json!({"tokens": 10}).to_string(),
+                        _ => {
+                            return Ok(Response::builder()
+                                .status(404)
+                                .body("not mocked".into())?);
+                        }
+                    };
+                    Ok(Response::builder()
+                        .status(200)
+                        .header(
+                            cloud_llm_client::SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
+                            "true",
+                        )
+                        .body(body.into())?)
+                }
+            }
+        });
+        let (client, provider) = cx.update(|cx| {
+            cx.set_global(::db::AppDatabase::test_new());
+            gpui_tokio::init(cx);
+            let client = Client::new(Arc::new(clock::FakeSystemClock::new()), http, cx);
+            client.override_authenticate(|cx| {
+                cx.spawn(async |_| {
+                    Ok(Credentials {
+                        user_id: 42,
+                        access_token: "test".into(),
+                    })
+                })
+            });
+            let users = cx.new(|cx| UserStore::new(client.clone(), cx));
+            RefreshLlmTokenListener::register(client.clone(), users.clone(), cx);
+            let provider = Arc::new(CloudLanguageModelProvider::new(users, client.clone(), cx));
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+            (client, provider)
+        });
+        cx.update(|cx| cx.spawn(async move |cx| client.sign_in(false, cx).await))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert!(cx.read(|cx| provider.is_authenticated(cx)));
+
+        let config = |id: &str| cloud_llm_client::LanguageModel {
+            provider: if id == "claude-opus-4-6" {
+                cloud_llm_client::LanguageModelProvider::Anthropic
+            } else {
+                cloud_llm_client::LanguageModelProvider::OpenAi
+            },
+            id: cloud_llm_client::LanguageModelId(id.into()),
+            display_name: id.into(),
+            is_latest: true,
+            max_token_count: 200_000,
+            max_token_count_in_max_mode: None,
+            max_output_tokens: 8_192,
+            supports_tools: true,
+            supports_images: false,
+            supports_thinking: false,
+            supports_disabling_thinking: false,
+            supports_fast_mode: false,
+            supports_server_side_compaction: false,
+            supported_effort_levels: Vec::new(),
+            supports_streaming_tools: false,
+            supports_parallel_tool_calls: false,
+            is_disabled: false,
+            disabled_reason: None,
+        };
+        let catalog = |id: &str| cloud_llm_client::ListModelsResponse {
+            models: vec![config(id)],
+            default_model: Some(cloud_llm_client::LanguageModelId(id.into())),
+            default_fast_model: Some(cloud_llm_client::LanguageModelId(id.into())),
+            recommended_models: Vec::new(),
+        };
+        let mut initial_catalog = catalog("claude-opus-4-6");
+        initial_catalog.models.push(config("gpt-6-luna"));
+        cx.update(|cx| test_support::update_models(&provider, initial_catalog, cx));
+        cx.run_until_parked();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({"a": {}})).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let store = cx.new(ThreadStore::new);
+        let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project, PathList::new(&[Path::new("/a")]), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("zed.dev/claude-opus-4-6"), cx))
+            .await
+            .unwrap();
+        let profile_id = agent_settings::AgentProfileId("saved-claude".into());
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            let mut profile = settings.profiles.values().next().unwrap().clone();
+            profile.default_model = Some(LanguageModelSelection {
+                provider: "zed.dev".to_string().into(),
+                model: "claude-opus-4-6".into(),
+                enable_thinking: false,
+                effort: None,
+                speed: None,
+            });
+            settings.profiles.insert(profile_id.clone(), profile);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+        thread.update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx));
+        acp_thread
+            .update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(requests.lock().len(), 1);
+        assert!(!acp_thread.read_with(cx, |thread, _| thread.had_error()));
+
+        // A plain access rejection does not itself update the allowed-model list.
+        reject_claude.store(true, std::sync::atomic::Ordering::SeqCst);
+        acp_thread
+            .update(cx, |thread, cx| {
+                thread.send(vec!["Before catalog refresh".into()], cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert!(acp_thread.read_with(cx, |thread, _| thread.had_error()));
+        assert_eq!(requests.lock().len(), 2, "ordinary 403 must not retry");
+        assert!(cx.read(|cx| {
+            provider
+                .provided_models(cx)
+                .iter()
+                .any(|model| model.id().0.as_ref() == "claude-opus-4-6")
+        }));
+
+        // Exercise the observable cloud-provider path without closing the session.
+        cx.update(|cx| test_support::update_models(&provider, catalog("gpt-6-luna"), cx));
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.model().unwrap().id().0.as_ref(), "claude-opus-4-6");
+        });
+        acp_thread
+            .update(cx, |thread, cx| {
+                thread.send(vec!["Try old model".into()], cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert!(acp_thread.read_with(cx, |thread, _| thread.had_error()));
+        assert_eq!(
+            requests.lock().len(),
+            2,
+            "removed model must not reach HTTP"
+        );
+
+        let acp_thread::AgentModelList::Grouped(models) =
+            cx.update(|cx| selector.list_models(cx)).await.unwrap()
+        else {
+            panic!("Expected grouped models");
+        };
+        assert!(
+            models
+                .values()
+                .flatten()
+                .any(|model| model.id.as_ref() == "zed.dev/gpt-6-luna")
+        );
+        assert!(
+            !models
+                .values()
+                .flatten()
+                .any(|model| model.id.as_ref() == "zed.dev/claude-opus-4-6")
+        );
+        cx.update(|cx| selector.select_model(AgentModelId::new("zed.dev/gpt-6-luna"), cx))
+            .await
+            .unwrap();
+        thread.update(cx, |thread, cx| {
+            thread.set_profile(agent_settings::AgentProfileId::default(), cx);
+            thread.set_profile(profile_id, cx);
+            assert_eq!(thread.model().unwrap().id().0.as_ref(), "gpt-6-luna");
+        });
+        acp_thread
+            .update(cx, |thread, cx| thread.send(vec!["Continue".into()], cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert!(!acp_thread.read_with(cx, |thread, _| thread.had_error()));
+        {
+            let requests = requests.lock();
+            assert_eq!(requests.len(), 3);
+            let continuation = requests.last().unwrap();
+            assert_eq!(continuation["model"], "gpt-6-luna");
+            let history = continuation["provider_request"]["input"].to_string();
+            assert!(history.contains("Hello"));
+            assert!(history.contains("Response."));
+            assert!(history.contains("Continue"));
+            assert!(history.find("Hello").unwrap() < history.find("Response.").unwrap());
+            assert!(history.find("Response.").unwrap() < history.find("Continue").unwrap());
+        }
+        assert_eq!(
+            thread
+                .read_with(cx, |thread, _| thread.model().unwrap().id().0)
+                .as_ref(),
+            "gpt-6-luna"
+        );
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(saved.model.unwrap().model, "gpt-6-luna");
+        assert!(
+            serde_json::to_string(&saved.messages)
+                .unwrap()
+                .contains("Continued with Luna.")
+        );
     }
 
     #[gpui::test]
@@ -9935,6 +10390,11 @@ mod internal_tests {
             turn.saved_thread().await.thinking_effort.as_deref(),
             Some("high")
         );
+
+        turn.thread
+            .update(cx, |thread, cx| thread.mark_thread_only(cx));
+        cx.run_until_parked();
+        assert!(turn.saved_thread().await.thread_only);
 
         turn.thread
             .update(cx, |thread, cx| thread.set_title("Renamed".into(), cx));

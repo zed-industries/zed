@@ -192,6 +192,9 @@ http_client = { workspace = true, features = ["test-support"] }
 proptest.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2.workspace = true
+
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 gpui_web.workspace = true
 wasm-bindgen.workspace = true
@@ -207,6 +210,14 @@ ignored = [
     "objc2-metal",
 ]
 ignored-paths = ["src/_ownership_and_data_flow.rs", "benches/focus_cleanup.rs"]
+
+[[example]]
+name = "native_view"
+path = "examples/native_view.rs"
+
+[[example]]
+name = "native_view_appkit_field"
+path = "examples/native_view_appkit_field.rs"
 
 [[example]]
 name = "hello_world"

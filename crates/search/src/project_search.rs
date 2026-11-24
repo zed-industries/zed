@@ -69,8 +69,6 @@ actions!(
         SearchInNew,
         /// Toggles focus between the search bar and the search results.
         ToggleFocus,
-        /// Moves to the next input field.
-        NextField,
         /// Toggles the search filters panel.
         ToggleFilters,
         /// Toggles collapse/expand state of all search result excerpts.
