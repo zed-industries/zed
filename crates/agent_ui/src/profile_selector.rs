@@ -1023,7 +1023,7 @@ mod tests {
         );
 
         let last_profile_id = AgentProfileId("custom-099".into());
-        *provider.profile_id.borrow_mut() = last_profile_id.clone();
+        *provider.profile_id.lock() = last_profile_id.clone();
         window_handle
             .update(&mut cx, |_selector, _window, cx| cx.notify())
             .unwrap();
@@ -1035,14 +1035,14 @@ mod tests {
     }
 
     struct TestProfileProvider {
-        profile_id: std::cell::RefCell<AgentProfileId>,
+        profile_id: parking_lot::Mutex<AgentProfileId>,
         has_model: bool,
     }
 
     impl TestProfileProvider {
         fn new(profile_id: AgentProfileId) -> Self {
             Self {
-                profile_id: std::cell::RefCell::new(profile_id),
+                profile_id: parking_lot::Mutex::new(profile_id),
                 has_model: true,
             }
         }
@@ -1050,7 +1050,7 @@ mod tests {
 
     impl ProfileProvider for TestProfileProvider {
         fn profile_id(&self, _cx: &App) -> AgentProfileId {
-            self.profile_id.borrow().clone()
+            self.profile_id.lock().clone()
         }
 
         fn set_profile(&self, _profile_id: AgentProfileId, _cx: &mut App) {}
