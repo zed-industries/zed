@@ -1431,6 +1431,7 @@ fn resolve_restricted_network(
 fn resolve_restricted_network(
     _allowed_domains: &[String],
     _allowed_tcp_ports: &[u16],
+    _allow_system_network_services: bool,
 ) -> Result<NetSetup, SandboxError> {
     Err(unsupported_restricted_network_on_windows())
 }
