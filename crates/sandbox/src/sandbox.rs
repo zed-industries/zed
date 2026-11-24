@@ -40,8 +40,6 @@ pub use util::{
     HostFilesystemLocation, HostFilesystemLocationDisplay, normalize_host_filesystem_locations,
     resolve_canonical,
 };
-#[cfg(target_os = "windows")]
-pub use windows_psec::can_launch_packaged_apps;
 
 /// A path *inside the sandbox* — i.e. where a host location is exposed in the
 /// sandboxed process's view of the filesystem (for example, a bind-mount

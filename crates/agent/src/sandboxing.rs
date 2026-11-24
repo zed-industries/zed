@@ -226,8 +226,7 @@ pub(crate) fn terminal_shell(project: &Project, cx: &App) -> String {
         // So, we avoid selecting Git Bash or MSIX versions of PowerShell when the
         // native Windows sandbox is enabled.
         let shell = util::get_windows_system_shell();
-        let is_packaged = shell.to_ascii_lowercase().contains(r"\windowsapps\");
-        if !is_packaged || sandbox::can_launch_packaged_apps() {
+        if !shell.to_ascii_lowercase().contains(r"\windowsapps\") {
             return shell;
         }
         let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());

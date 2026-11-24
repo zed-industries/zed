@@ -372,6 +372,10 @@ actions!(
         ToggleFastMode,
         /// Switches between Fast and Ultrafast when faster responses are enabled.
         CycleResponseSpeed,
+        /// Resets a thread-only thread to your default profile, model, and model options.
+        ResetThreadToDefaults,
+        /// Saves a thread-only thread's profile, model, and model options as your defaults.
+        SaveThreadAsDefaults,
         /// Scroll the output by one page up.
         ScrollOutputPageUp,
         /// Scroll the output by one page down.
