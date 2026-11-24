@@ -9,8 +9,8 @@ use collections::{HashSet, IndexMap};
 use futures::FutureExt;
 use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
-    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Modifiers,
-    Subscription, Task, TaskExt, WeakEntity,
+    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Subscription,
+    Task, TaskExt, WeakEntity,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
@@ -282,21 +282,11 @@ impl PickerDelegate for ModelPickerDelegate {
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.confirm_with_modifiers(secondary, window.modifiers(), window, cx);
-    }
-
-    fn confirm_with_modifiers(
-        &mut self,
-        _secondary: bool,
-        modifiers: Modifiers,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
         if let Some(ModelPickerEntry::Model(model_info, _)) =
             self.filtered_entries.get(self.selected_index)
             && model_info.disabled.is_none()
         {
-            if modifiers.shift {
+            if secondary {
                 self.selector.mark_thread_only(cx);
             }
             self.selector
@@ -511,7 +501,7 @@ async fn fuzzy_search(
 
 #[cfg(test)]
 mod tests {
-    use gpui::{App, Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{App, TestAppContext, VisualTestContext};
     use std::cell::{Cell, RefCell};
 
     use super::*;
@@ -589,7 +579,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn confirming_model_selects_it_and_shift_makes_the_thread_thread_only(cx: &mut TestAppContext) {
+    fn confirming_model_selects_it_and_secondary_makes_the_thread_thread_only(
+        cx: &mut TestAppContext,
+    ) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -609,14 +601,11 @@ mod tests {
         cx.run_until_parked();
 
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
-        for (modifiers, expected_thread_only_marks) in
-            [(Modifiers::none(), 0), (Modifiers::shift(), 1)]
-        {
-            cx.simulate_modifiers_change(modifiers);
+        for (secondary, expected_thread_only_marks) in [(false, 0), (true, 1)] {
             window_handle
                 .update(&mut cx, |picker, window, cx| {
                     picker.delegate.set_selected_index(1, window, cx);
-                    picker.delegate.confirm(false, window, cx);
+                    picker.delegate.confirm(secondary, window, cx);
                 })
                 .unwrap();
 

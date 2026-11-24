@@ -4802,13 +4802,13 @@ pub(crate) mod tests {
         .await;
         let thread_view = active_thread(&conversation_view, cx);
 
-        for (effort, modifiers, expected_saved_effort, expected_thread_only) in [
-            ("high", gpui::Modifiers::none(), "high", false),
-            ("low", gpui::Modifiers::shift(), "high", true),
-            ("medium", gpui::Modifiers::none(), "high", true),
+        for (effort, thread_only, expected_saved_effort, expected_thread_only) in [
+            ("high", false, "high", false),
+            ("low", true, "high", true),
+            ("medium", false, "high", true),
         ] {
             thread_view.update(cx, |view, cx| {
-                view.pick_native_agent_thinking_effort(effort.to_string(), modifiers, cx);
+                view.pick_native_agent_thinking_effort(effort.to_string(), thread_only, cx);
             });
             cx.run_until_parked();
 
@@ -4842,7 +4842,7 @@ pub(crate) mod tests {
         let thread_view = active_thread(&conversation_view, cx);
 
         thread_view.update(cx, |view, cx| {
-            view.pick_native_agent_thinking_effort("high".to_string(), gpui::Modifiers::none(), cx);
+            view.pick_native_agent_thinking_effort("high".to_string(), false, cx);
         });
         cx.run_until_parked();
 
@@ -5026,7 +5026,7 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_shift_enter_in_selectors_makes_thread_thread_only(cx: &mut TestAppContext) {
+    async fn test_secondary_confirm_in_selectors_makes_thread_thread_only(cx: &mut TestAppContext) {
         use settings::KeybindSource;
 
         fn bind_keymap(path: &'static str, source: KeybindSource, cx: &mut App) {
@@ -5055,7 +5055,6 @@ pub(crate) mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let (server, model_selector_focus, context_menu_focus) = cx.update(|cx| {
-            bind_keymap("keymaps/default-linux.json", KeybindSource::Default, cx);
             let model_selector_focus = latest_focus_handle::<crate::ModelSelector>(cx);
             let context_menu_focus = latest_focus_handle::<ui::ContextMenu>(cx);
 
@@ -5088,7 +5087,7 @@ pub(crate) mod tests {
         let thread_view = active_thread(&conversation_view, cx);
         let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
 
-        // A pick without Shift would change every value saved here.
+        // A plain pick would change every value saved here.
         let saved_settings = json!({
             "agent": {
                 "default_profile": "write",
@@ -5107,13 +5106,28 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        // The JetBrains keymap needs its own binding, so try with and without it.
-        for jetbrains_keymap in [false, true] {
-            if jetbrains_keymap {
-                cx.update(|_window, cx| {
-                    bind_keymap("keymaps/linux/jetbrains.json", KeybindSource::Base, cx);
-                });
-            }
+        // The JetBrains keymap rebinds keys in editors, so try with and without it.
+        for (default_keymap, jetbrains_keymap, keystroke) in [
+            ("keymaps/default-linux.json", None, "ctrl-enter"),
+            (
+                "keymaps/default-linux.json",
+                Some("keymaps/linux/jetbrains.json"),
+                "ctrl-enter",
+            ),
+            ("keymaps/default-macos.json", None, "cmd-enter"),
+            (
+                "keymaps/default-macos.json",
+                Some("keymaps/macos/jetbrains.json"),
+                "cmd-enter",
+            ),
+        ] {
+            cx.update(|_window, cx| {
+                cx.clear_key_bindings();
+                bind_keymap(default_keymap, KeybindSource::Default, cx);
+                if let Some(jetbrains_keymap) = jetbrains_keymap {
+                    bind_keymap(jetbrains_keymap, KeybindSource::Base, cx);
+                }
+            });
             for selector in ["model", "profile", "thinking effort"] {
                 cx.focus(&message_editor);
                 let menu_focus = match selector {
@@ -5136,12 +5150,10 @@ pub(crate) mod tests {
                 .expect("menu should be built");
                 cx.update(|window, cx| window.focus(&menu_focus, cx));
                 cx.simulate_keystrokes("down");
-                cx.simulate_modifiers_change(gpui::Modifiers::shift());
-                cx.simulate_keystrokes("shift-enter");
-                cx.simulate_modifiers_change(gpui::Modifiers::none());
+                cx.simulate_keystrokes(keystroke);
                 cx.run_until_parked();
 
-                let case = format!("{selector} selector, JetBrains keymap: {jetbrains_keymap}");
+                let case = format!("{selector} selector, {default_keymap}, {jetbrains_keymap:?}");
                 let thread_only = native_thread.read_with(cx, |thread, _| thread.is_thread_only());
                 assert!(thread_only, "{case}");
                 let settings = settings_fs.load(paths::settings_file()).await.unwrap();

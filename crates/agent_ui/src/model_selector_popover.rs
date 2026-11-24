@@ -76,7 +76,7 @@ impl Render for ModelSelectorPopover {
             }
         });
 
-        let popover_menu = PickerPopoverMenu::new(
+        PickerPopoverMenu::new(
             self.selector.clone(),
             Button::new("active-model", model_name)
                 .label_size(LabelSize::Small)
@@ -97,9 +97,6 @@ impl Render for ModelSelectorPopover {
             cx,
         )
         .with_handle(self.menu_handle.clone())
-        .render(window, cx);
-
-        // The key context scopes the Shift+Enter binding to this picker.
-        div().key_context("ModelSelector").child(popover_menu)
+        .render(window, cx)
     }
 }

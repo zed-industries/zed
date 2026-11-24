@@ -6807,24 +6807,34 @@ impl ThreadView {
                         let entry = ContextMenuEntry::new(effort_level.name)
                             .toggleable(IconPosition::End, is_selected);
 
-                        menu.push_item(entry.handler({
-                            let effort = effort_level.value;
+                        let pick_effort = |thread_only: Option<bool>| {
+                            let effort = effort_level.value.clone();
                             let weak_self = weak_self.clone();
-                            move |window, cx| {
+                            move |window: &mut Window, cx: &mut App| {
                                 let effort = effort.to_string();
-                                let modifiers = window.modifiers();
+                                // A click has no secondary confirm of its own, so
+                                // it goes by the same modifier a picker row does.
+                                let thread_only = thread_only
+                                    .unwrap_or_else(|| window.modifiers().secondary(cx));
                                 weak_self
                                     .update(cx, |this, cx| {
                                         this.pick_native_agent_thinking_effort(
-                                            effort, modifiers, cx,
+                                            effort,
+                                            thread_only,
+                                            cx,
                                         );
                                     })
                                     .ok();
                             }
-                        }));
+                        };
+                        menu.push_item(
+                            entry
+                                .handler(pick_effort(None))
+                                .secondary_handler(pick_effort(Some(true))),
+                        );
                     }
 
-                    menu.key_context("menu ThinkingEffortSelector")
+                    menu
                 }))
             })
             .with_handle(self.thinking_effort_menu_handle.clone())
@@ -14069,14 +14079,14 @@ impl ThreadView {
     pub(super) fn pick_native_agent_thinking_effort(
         &mut self,
         effort: String,
-        modifiers: gpui::Modifiers,
+        thread_only: bool,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
         thread.update(cx, |thread, cx| {
-            if modifiers.shift {
+            if thread_only {
                 thread.mark_thread_only(cx);
             }
             thread.set_thinking_effort(Some(effort.clone()), cx);

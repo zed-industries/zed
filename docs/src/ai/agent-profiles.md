@@ -19,7 +19,7 @@ Zed includes three built-in profiles:
 
 ## Switch Profiles {#switch-profiles}
 
-Picking a profile in the [Agent Panel](./agent-panel.md) also saves it as `agent.default_profile`, so new threads start with it. To change it for the current thread only, hold Shift when you pick it; see [Changing Models](./agent-panel.md#changing-models).
+Picking a profile in the [Agent Panel](./agent-panel.md) also saves it as `agent.default_profile`, so new threads start with it. To change it for the current thread only, pick it with {#kb menu::SecondaryConfirm}; see [Changing Models](./agent-panel.md#changing-models).
 
 Cycling profiles with {#kb agent::CycleModeSelector} only changes the current thread.
 

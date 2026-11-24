@@ -7,8 +7,7 @@ use agent_settings::{
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, AnyView, App, BackgroundExecutor, Context, DismissEvent, Empty, Entity,
-    FocusHandle, Focusable, ForegroundExecutor, Modifiers, SharedString, Subscription, Task,
-    Window,
+    FocusHandle, Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{Settings as _, SettingsStore};
@@ -164,8 +163,8 @@ impl ProfileSelector {
 
         // The thread's profile can change without a pick, and the highlighted
         // row is what Enter picks when the picker opens, so it has to be in view.
-            let profile_id = self.provider.profile_id(cx);
         if !self.picker_handle.is_deployed() {
+            let profile_id = self.provider.profile_id(cx);
             picker.update(cx, |picker, cx| {
                 if let Some(index) = picker.delegate.index_of_profile(&profile_id)
                     && index != picker.delegate.selected_index
@@ -261,7 +260,7 @@ impl Render for ProfileSelector {
             }
         }));
 
-        let popover_menu = PickerPopoverMenu::new(
+        PickerPopoverMenu::new(
             picker,
             trigger_button,
             tooltip,
@@ -269,13 +268,8 @@ impl Render for ProfileSelector {
             cx,
         )
         .with_handle(self.picker_handle.clone())
-        .render(window, cx);
-
-        // The key context scopes the Shift+Enter binding to this picker.
-        div()
-            .key_context("ProfileSelector")
-            .child(popover_menu)
-            .into_any_element()
+        .render(window, cx)
+        .into_any_element()
     }
 }
 
@@ -587,23 +581,13 @@ impl PickerDelegate for ProfilePickerDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.confirm_with_modifiers(secondary, window.modifiers(), window, cx);
-    }
-
-    fn confirm_with_modifiers(
-        &mut self,
-        _secondary: bool,
-        modifiers: Modifiers,
-        _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         match self.filtered_entries.get(self.selected_index) {
             Some(ProfilePickerEntry::Profile(entry)) => {
                 if let Some(candidate) = self.candidates.get(entry.candidate_index) {
                     let profile_id = candidate.id.clone();
                     self.provider
-                        .pick_profile(profile_id.clone(), modifiers.shift, cx);
+                        .pick_profile(profile_id.clone(), secondary, cx);
 
                     telemetry::event!(
                         "Agent Profile Switched",
@@ -952,6 +936,22 @@ mod tests {
                         positions: Vec::new(),
                     }),
                     ProfilePickerEntry::Profile(ProfileMatchEntry {
+                        candidate_index: 1,
+                        positions: Vec::new(),
+                    }),
+                ],
+                selected_index: 0,
+                query: String::new(),
+                cancel: None,
+                focus_handle,
+            };
+
+            // Active profile should be found at index 0
+            let active_index = delegate.index_of_profile(&AgentProfileId("write".into()));
+            assert_eq!(active_index, Some(0));
+        });
+    }
+
     #[gpui::test]
     fn highlighted_row_is_revealed_when_the_profile_changes_outside_the_picker(
         cx: &mut TestAppContext,
@@ -1032,22 +1032,6 @@ mod tests {
         let (profile_id, scroll_top) = highlighted_profile_and_scroll_top(&mut cx);
         assert_eq!(profile_id, Some(last_profile_id));
         assert!(scroll_top > 0);
-    }
-
-                        candidate_index: 1,
-                        positions: Vec::new(),
-                    }),
-                ],
-                selected_index: 0,
-                query: String::new(),
-                cancel: None,
-                focus_handle,
-            };
-
-            // Active profile should be found at index 0
-            let active_index = delegate.index_of_profile(&AgentProfileId("write".into()));
-            assert_eq!(active_index, Some(0));
-        });
     }
 
     struct TestProfileProvider {

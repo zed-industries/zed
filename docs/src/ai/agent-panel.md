@@ -168,7 +168,7 @@ After you've configured your LLM providers—either via [API access](./use-api-a
 
 Picking a model in the Zed Agent also saves it as `agent.default_model`, so new threads start with it. Thinking, effort, and fast mode changes are saved too when the thread is on your default model.
 
-To change the model, profile, or thinking effort for the current thread only, hold Shift when you pick it (`Shift+Click` or `Shift+Enter`). The thread is then thread-only: nothing you change in it is saved as a default, and a dot appears next to the selectors. To leave thread-only mode, click the dot and choose Reset to Defaults ({#action agent::ResetThreadToDefaults}) to go back to your defaults, or Save as Default ({#action agent::SaveThreadAsDefaults}) to make what the thread is on your new defaults.
+To change the model, profile, or thinking effort for the current thread only, pick it with {#kb menu::SecondaryConfirm} instead of `Enter`, or hold `Cmd` on macOS (`Ctrl` on Linux and Windows) while you click it. The thread is then thread-only: nothing you change in it is saved as a default, and a dot appears next to the selectors. To leave thread-only mode, click the dot and choose Reset to Defaults ({#action agent::ResetThreadToDefaults}) to go back to your defaults, or Save as Default ({#action agent::SaveThreadAsDefaults}) to make what the thread is on your new defaults.
 
 > The same model can be offered via multiple providers - for example, Claude Sonnet 4.5 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
