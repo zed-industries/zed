@@ -5680,8 +5680,6 @@ impl MultiBufferSnapshot {
         static EXCERPT_BOUNDARY_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
-    /// Returns how many excerpts `excerpt_boundaries_in_range` has visited on this
-    /// thread since the last call, and resets the count.
     #[cfg(test)]
     pub(crate) fn take_excerpt_boundary_steps() -> usize {
         Self::EXCERPT_BOUNDARY_STEPS.replace(0)
@@ -5754,8 +5752,8 @@ impl MultiBufferSnapshot {
                 if is_past_end {
                     return None;
                 }
-                // The first excerpt can start before the range, when the range starts
-                // at a diff hunk in the middle of that excerpt.
+                // The walk begins one excerpt early when the range starts at a diff hunk
+                // mid-excerpt, so an excerpt before the range is not the end of the walk.
                 if !bounds.contains(&next_start) {
                     prev_excerpt = Some(next_excerpt);
                     continue;

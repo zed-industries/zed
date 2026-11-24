@@ -384,40 +384,13 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
 }
 
 #[gpui::test]
-async fn test_excerpt_boundaries_in_subranges_with_diff_hunks(cx: &mut TestAppContext) {
-    let buffer_1 = cx.new(|cx| Buffer::local("a1\na2", cx));
-    let buffer_2 = cx.new(|cx| Buffer::local("b1\nB2\nb3\nB4\nb5", cx));
-    let buffer_3 = cx.new(|cx| Buffer::local("c1\nc2", cx));
-    let buffer_4 = cx.new(|cx| Buffer::local("d1", cx));
-    let diff_2 = cx.new(|cx| {
-        BufferDiff::new_with_base_text("b1\nb2\nb3\nb4\nb5", &buffer_2.read(cx).text_snapshot(), cx)
-    });
-    cx.run_until_parked();
-
-    let multibuffer = cx.new(|cx| {
-        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-        for (index, buffer) in [&buffer_1, &buffer_2, &buffer_3, &buffer_4]
-            .into_iter()
-            .enumerate()
-        {
-            multibuffer.set_excerpts_for_path(
-                PathKey::sorted(index as u64),
-                buffer.clone(),
-                [Point::zero()..buffer.read(cx).max_point()],
-                0,
-                cx,
-            );
-        }
-        multibuffer.add_diff(diff_2.clone(), cx);
-        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
-        multibuffer
-    });
-    cx.run_until_parked();
-
+async fn test_excerpt_boundaries_in_range_starting_at_diff_hunk(cx: &mut TestAppContext) {
+    let (multibuffer, [_, buffer_2, buffer_3, _]) = multibuffer_with_expanded_diff_hunks(cx);
     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-    let all_rows = boundary_rows(&snapshot, MultiBufferOffset(0)..);
-    assert_eq!(all_rows.len(), 4, "text: {:?}", snapshot.text());
 
+    // Row 3 starts a diff hunk in the middle of buffer 2, so the walk begins at
+    // buffer 2, before the range. It has to skip buffer 2 without stopping, and
+    // still report it as `prev` at row 9.
     let boundaries = snapshot
         .excerpt_boundaries_in_range(Point::new(3, 0)..=Point::new(9, 0))
         .map(|boundary| {
@@ -431,6 +404,14 @@ async fn test_excerpt_boundaries_in_subranges_with_diff_hunks(cx: &mut TestAppCo
     let buffer_2_id = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
     let buffer_3_id = buffer_3.read_with(cx, |buffer, _| buffer.remote_id());
     assert_eq!(boundaries, [(9, Some(buffer_2_id), buffer_3_id)]);
+}
+
+#[gpui::test]
+async fn test_excerpt_boundaries_in_subranges_match_full_walk(cx: &mut TestAppContext) {
+    let (multibuffer, _buffers) = multibuffer_with_expanded_diff_hunks(cx);
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    let all_rows = boundary_rows(&snapshot, MultiBufferOffset(0)..);
+    assert_eq!(all_rows.len(), 4, "text: {:?}", snapshot.text());
 
     let max_row = snapshot.max_point().row;
     for start_row in 0..=max_row {
@@ -464,6 +445,63 @@ async fn test_excerpt_boundaries_in_subranges_with_diff_hunks(cx: &mut TestAppCo
     }
 }
 
+/// Four buffers, one excerpt each. The second has two expanded diff hunks.
+///
+/// ```text
+///  0   a1
+///  1   a2
+///  2   b1
+///  3 - b2
+///  4 + B2
+///  5   b3
+///  6 - b4
+///  7 + B4
+///  8   b5
+///  9   c1
+/// 10   c2
+/// 11   d1
+/// ```
+fn multibuffer_with_expanded_diff_hunks(
+    cx: &mut TestAppContext,
+) -> (Entity<MultiBuffer>, [Entity<Buffer>; 4]) {
+    let buffers = [
+        cx.new(|cx| Buffer::local("a1\na2", cx)),
+        cx.new(|cx| Buffer::local("b1\nB2\nb3\nB4\nb5", cx)),
+        cx.new(|cx| Buffer::local("c1\nc2", cx)),
+        cx.new(|cx| Buffer::local("d1", cx)),
+    ];
+    let diff = cx.new(|cx| {
+        BufferDiff::new_with_base_text(
+            "b1\nb2\nb3\nb4\nb5",
+            &buffers[1].read(cx).text_snapshot(),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        for (index, buffer) in buffers.iter().enumerate() {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(index as u64),
+                buffer.clone(),
+                [Point::zero()..buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+        }
+        multibuffer.add_diff(diff, cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
+        multibuffer
+    });
+    cx.run_until_parked();
+
+    let text = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx).text());
+    assert_eq!(text, "a1\na2\nb1\nb2\nB2\nb3\nb4\nB4\nb5\nc1\nc2\nd1");
+
+    (multibuffer, buffers)
+}
+
 #[gpui::test]
 fn test_excerpt_boundaries_in_range_stops_at_range_end(cx: &mut App) {
     let buffer_count = 200;
@@ -489,6 +527,8 @@ fn test_excerpt_boundaries_in_range_stops_at_range_end(cx: &mut App) {
     let steps = MultiBufferSnapshot::take_excerpt_boundary_steps();
 
     assert_eq!(rows, [10, 11, 12]);
+    // Allow one excerpt before the range and one after, which the walk reads to
+    // find the edges. The lower bound catches a counter the walk stopped incrementing.
     assert!(
         rows.len() <= steps && steps <= rows.len() + 2,
         "visited {steps} excerpts for a range that covers {} of {buffer_count}",
