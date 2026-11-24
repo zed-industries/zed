@@ -15,16 +15,17 @@ use crate::{
     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
     Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
     MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, PaintedPath, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style, SubpixelSprite, Subscription,
-    SystemWindowTab, SystemWindowTabController, TabStopMap, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
-    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    PathHash, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style,
+    SubpixelSprite, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -776,7 +777,7 @@ pub enum WindowControlArea {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 impl HitboxId {
     /// A placeholder HitboxId exclusively for integration testing API's that
     /// need a hitbox but where the value of the hitbox does not matter. The
@@ -993,12 +994,12 @@ pub(crate) struct TooltipRequest {
 #[derive(Clone, Default)]
 pub(crate) struct ElementIdStack {
     ids: SmallVec<[ElementId; 32]>,
-    hashes: SmallVec<[u64; 32]>,
+    hashes: SmallVec<[PathHash; 32]>,
 }
 
 impl ElementIdStack {
     pub(crate) fn push(&mut self, id: ElementId) {
-        self.hashes.push(crate::extend_path_hash(self.hash(), &id));
+        self.hashes.push(self.hash().extend(&id));
         self.ids.push(id);
     }
 
@@ -1013,11 +1014,8 @@ impl ElementIdStack {
     }
 
     /// The hash of the whole path on the stack.
-    fn hash(&self) -> u64 {
-        self.hashes
-            .last()
-            .copied()
-            .unwrap_or(crate::EMPTY_PATH_HASH)
+    fn hash(&self) -> PathHash {
+        self.hashes.last().copied().unwrap_or(PathHash::EMPTY)
     }
 
     pub(crate) fn global_id(&self) -> GlobalElementId {
@@ -2007,6 +2005,14 @@ impl Window {
                     // Deferred by throttling: ask demand-driven platforms to retry.
                     handle
                         .update(&mut cx, |_, window, _| {
+                            // Animation limits only apply without other demand,
+                            // so no input or invalidation waits on them.
+                            #[cfg(feature = "profiler")]
+                            if animation_frame_interval.is_none()
+                                || animation_frame_interval != min_frame_interval
+                            {
+                                window.window_profiler.record_frame_throttled();
+                            }
                             window.platform_window.schedule_frame();
                         })
                         .with_context(|| {
@@ -3160,7 +3166,13 @@ impl Window {
     /// the platform window, then notifies observers. Normally called automatically
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
     pub fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
+        let scale_factor = self.platform_window.scale_factor();
+        if self.scale_factor != scale_factor {
+            self.scale_factor = scale_factor;
+            if let Some(layout_engine) = self.layout_engine.as_mut() {
+                layout_engine.clear_layout_cache();
+            }
+        }
         self.viewport_size = self.platform_window.content_size();
         self.last_window_bounds = self.platform_window.window_bounds();
         cx.sync_window_update_entry(self);
@@ -3498,7 +3510,12 @@ impl Window {
     /// Overrides the display scale factor for tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_scale_factor(&mut self, scale_factor: f32) {
-        self.scale_factor = scale_factor;
+        if self.scale_factor != scale_factor {
+            self.scale_factor = scale_factor;
+            if let Some(layout_engine) = self.layout_engine.as_mut() {
+                layout_engine.clear_layout_cache();
+            }
+        }
         self.refresh();
     }
 
@@ -3873,6 +3890,10 @@ impl Window {
             }
         }
         if !cx.mode.skip_drawing() {
+            self.layout_engine
+                .as_mut()
+                .unwrap()
+                .clear_if_scale_factor_changed(self.scale_factor);
             self.draw_roots(cx);
             #[cfg(feature = "profiler")]
             {
@@ -4026,7 +4047,9 @@ impl Window {
             present_start,
             Instant::now(),
             self.active.get(),
-            !self.next_frame_callbacks.borrow().is_empty(),
+            !self.next_frame_callbacks.borrow().is_empty()
+                || self.scene_animation_interval.get().is_some(),
+            self.scene_animation_interval.get().is_some(),
         );
         self.needs_present.set(false);
         profiling::finish_frame!();
@@ -4328,11 +4351,15 @@ impl Window {
 
                 let prepaint_start = self.prepaint_index();
                 if let Some(mut element) = element {
+                    let content_mask =
+                        self.next_frame.deferred_draws[deferred_draw_ix].content_mask;
                     let ((), accessed_entities) = cx.detect_accessed_entities(|cx| {
                         self.with_rendered_view(current_view, |window| {
                             window.with_rem_size(Some(rem_size), |window| {
                                 window.with_absolute_element_offset(absolute_offset, |window| {
-                                    element.prepaint(window, cx);
+                                    window.with_content_mask(content_mask, |window| {
+                                        element.prepaint(window, cx);
+                                    });
                                 });
                             });
                         });
@@ -5713,8 +5740,10 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
 
+        let scope = self.element_id_stack.hash();
         self.layout_engine.as_mut().unwrap().request_layout(
-            style,
+            scope,
+            &style,
             rem_size,
             scale_factor,
             &cx.layout_id_buffer,
@@ -5723,10 +5752,11 @@ impl Window {
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
     /// this variant takes a function that is invoked during layout so you can use arbitrary logic to
-    /// determine the element's size. One place this is used internally is when measuring text.
+    /// determine the element's size.
     ///
     /// The given closure is invoked at layout time with the known dimensions and available space and
-    /// returns a `Size`.
+    /// returns a `Size`. It is invoked every frame; see [`Self::request_keyed_measured_layout`] to
+    /// keep the measured sizes while what they depend on is unchanged.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
     pub fn request_measured_layout<F>(&mut self, style: Style, measure: F) -> LayoutId
@@ -5734,14 +5764,94 @@ impl Window {
         F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     {
+        self.request_keyed_measure(
+            &style,
+            (),
+            |_, _| false,
+            move |_, known_dimensions, available_space, _, window, cx| {
+                measure(known_dimensions, available_space, window, cx)
+            },
+        )
+    }
+
+    /// Like [`Self::request_measured_layout`], but `key` must describe everything the size depends
+    /// on besides the known dimensions and available space: while it equals the key the element's
+    /// node was last measured with, the sizes measured then can be used without calling `measure`
+    /// again, and the node doesn't need to be laid out again.
+    ///
+    /// Do not pass a constant key such as `()` unless the measure function's result truly never
+    /// changes for a given available space; use [`Self::request_measured_layout`] instead.
+    ///
+    /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
+    pub fn request_keyed_measured_layout<K, F>(
+        &mut self,
+        style: Style,
+        key: K,
+        measure: F,
+    ) -> LayoutId
+    where
+        K: PartialEq + 'static,
+        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+            + 'static,
+    {
+        self.request_keyed_measure(
+            &style,
+            key,
+            |key, previous| key == previous,
+            move |_, known_dimensions, available_space, _, window, cx| {
+                measure(known_dimensions, available_space, window, cx)
+            },
+        )
+    }
+
+    /// Like [`Self::request_keyed_measured_layout`], but `reuse` decides whether a key measures
+    /// the same as the previous one, and `measure` is given the key and whether this is
+    /// the node's final measurement rather than a sizing probe.
+    pub(crate) fn request_keyed_measure<K, F>(
+        &mut self,
+        style: &Style,
+        key: K,
+        reuse: fn(&mut K, &mut K) -> bool,
+        measure: F,
+    ) -> LayoutId
+    where
+        K: 'static,
+        F: FnMut(
+                &K,
+                Size<Option<Pixels>>,
+                Size<AvailableSpace>,
+                bool,
+                &mut Window,
+                &mut App,
+            ) -> Size<Pixels>
+            + 'static,
+    {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+        let scope = self.element_id_stack.hash();
+        self.layout_engine.as_mut().unwrap().request_keyed_measure(
+            scope,
+            style,
+            rem_size,
+            scale_factor,
+            key,
+            reuse,
+            measure,
+        )
+    }
+
+    /// Drops the layout nodes kept from earlier frames, so the next frame builds its
+    /// layout tree from scratch.
+    #[cfg(test)]
+    pub(crate) fn clear_layout_cache(&mut self) {
+        self.layout_engine.as_mut().unwrap().clear_layout_cache();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn layout_node_count(&self) -> usize {
+        self.layout_engine.as_ref().unwrap().node_count()
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -8692,6 +8802,84 @@ mod tests {
                 .expect("inspect presented frame");
             assert_eq!(callback_ran.get(), schedule_callback);
         }
+    }
+
+    #[cfg(feature = "profiler")]
+    #[gpui::test]
+    fn test_throttled_input_records_no_input_latency(cx: &mut TestAppContext) {
+        struct NotifiesOnMouseMove;
+
+        impl Render for NotifiesOnMouseMove {
+            fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
+            }
+        }
+
+        // Test mode draws during effect flushing, bypassing platform frame throttling.
+        cx.app.borrow_mut().mode = crate::app::GpuiMode::Production;
+        let window = cx
+            .app
+            .borrow_mut()
+            .open_window(
+                WindowOptions {
+                    // Keep the throttle closed without depending on short
+                    // wall-clock deadlines.
+                    inactive_frame_interval: Some(Duration::from_secs(3600)),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|_| NotifiesOnMouseMove),
+            )
+            .expect("open test window");
+        let mut platform_window = cx.test_window(window.into());
+        let unthrottled_frame = RequestFrameOptions {
+            require_presentation: true,
+            ..Default::default()
+        };
+        let move_mouse = |platform_window: &mut crate::TestWindow, x| {
+            platform_window.simulate_input(PlatformInput::MouseMove(MouseMoveEvent {
+                position: point(px(x), px(10.)),
+                pressed_button: None,
+                modifiers: Default::default(),
+            }));
+        };
+        // Input latency, dirty-to-present and draw sample counts.
+        let samples = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |_, window, _| {
+                    let frames = window.frame_duration_snapshot();
+                    (
+                        window.input_latency_snapshot().latency_histogram.len(),
+                        frames.dirty_to_present_histogram.len(),
+                        frames.draw_duration_histogram.len(),
+                    )
+                })
+                .expect("read window profiler")
+        };
+
+        platform_window.simulate_active_status_change(false);
+        platform_window.simulate_frame_request(unthrottled_frame);
+        let (_, dirty_before, draws_before) = samples(cx);
+
+        move_mouse(&mut platform_window, 10.);
+        platform_window.simulate_frame_request(RequestFrameOptions::default());
+        assert_eq!(
+            samples(cx),
+            (0, dirty_before, draws_before),
+            "the inactive window's frame should be throttled"
+        );
+        move_mouse(&mut platform_window, 20.);
+        platform_window.simulate_frame_request(unthrottled_frame);
+        assert_eq!(samples(cx), (0, dirty_before, draws_before + 1));
+
+        platform_window.simulate_active_status_change(true);
+        platform_window.simulate_frame_request(unthrottled_frame);
+        move_mouse(&mut platform_window, 30.);
+        platform_window.simulate_frame_request(RequestFrameOptions::default());
+        let (input_samples, dirty_samples, _) = samples(cx);
+        assert_eq!(input_samples, 1);
+        assert!(dirty_samples > dirty_before);
     }
 
     /// A stale cache is only visible if the snapshot reports GPUI's cached
