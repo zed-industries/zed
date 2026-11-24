@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{v1::schema as acp_v1, v2::schema as acp_v2};
 use anyhow::{Result, bail};
 
 pub fn validate_prompt_content_for_v1(content: &[acp_v2::ContentBlock]) -> Result<()> {
@@ -43,7 +43,8 @@ pub fn from_v1(block: acp_v1::ContentBlock) -> Result<acp_v2::ContentBlock> {
                 .title(content.title)
                 .description(content.description)
                 .mime_type(content.mime_type.map(acp_v2::MediaType::new))
-                .size(content.size)
+                // v2 sizes are byte counts, so a negative v1 size is unknown.
+                .size(content.size.and_then(|size| u64::try_from(size).ok()))
                 .annotations(annotations_from_v1(content.annotations)?)
                 .meta(content.meta),
         ),
@@ -107,7 +108,7 @@ pub fn to_v1(block: acp_v2::ContentBlock) -> Result<acp_v1::ContentBlock> {
                     .title(content.title)
                     .description(content.description)
                     .mime_type(content.mime_type.map(|mime_type| mime_type.0.to_string()))
-                    .size(content.size)
+                    .size(content.size.and_then(|size| i64::try_from(size).ok()))
                     .annotations(annotations_to_v1(content.annotations)?)
                     .meta(content.meta),
             )
@@ -234,8 +235,8 @@ fn annotations_to_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_client_protocol::schema::IndexMap;
     use serde_json::{Value, json};
-    use std::collections::BTreeMap;
 
     fn meta() -> serde_json::Map<String, Value> {
         serde_json::Map::from_iter([("origin".to_owned(), json!({"nested": [0, null, "value"]}))])
@@ -297,7 +298,7 @@ mod tests {
                 "visible text".into(),
                 acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
                     "_future",
-                    BTreeMap::from([("payload".into(), json!("private-payload"))]),
+                    IndexMap::from([("payload".into(), json!("private-payload"))]),
                 )),
             ],
         );
@@ -427,7 +428,7 @@ mod tests {
     fn rejects_v2_only_content_and_annotations() {
         rejects(acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
             "_custom",
-            BTreeMap::from([("payload".to_owned(), json!({"opaque": [1, 2]}))]),
+            IndexMap::from([("payload".to_owned(), json!({"opaque": [1, 2]}))]),
         )));
         rejects(acp_v2::ContentBlock::Image(
             acp_v2::ImageContent::new("AAE=", "image/png").annotations(
@@ -445,6 +446,18 @@ mod tests {
         rejects(acp_v2::ContentBlock::ResourceLink(
             acp_v2::ResourceLink::new("name", "uri").icons(vec![acp_v2::Icon::new("file:///icon")]),
         ));
+    }
+
+    #[test]
+    fn negative_v1_resource_link_size_is_unknown_in_v2() {
+        let converted = from_v1(acp_v1::ContentBlock::ResourceLink(
+            acp_v1::ResourceLink::new("negative size", "file:///negative").size(-1),
+        ))
+        .expect("v1 resource link converts to v2");
+        let acp_v2::ContentBlock::ResourceLink(link) = converted else {
+            panic!("expected a resource link");
+        };
+        assert_eq!(link.size, None);
     }
 
     fn round_trip_from_v2(block: acp_v2::ContentBlock) {
@@ -559,11 +572,8 @@ mod tests {
             acp_v2::ContentBlock::Audio(acp_v2::AudioContent::new("", "")),
             acp_v2::ContentBlock::ResourceLink(
                 acp_v2::ResourceLink::new("", "")
-                    .size(i64::MAX)
+                    .size(i64::MAX.unsigned_abs())
                     .annotations(acp_v2::Annotations::new().priority(0.125)),
-            ),
-            acp_v2::ContentBlock::ResourceLink(
-                acp_v2::ResourceLink::new("negative size", "file:///negative").size(-1),
             ),
             acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
                 acp_v2::EmbeddedResourceResource::TextResourceContents(

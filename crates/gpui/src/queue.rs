@@ -1,3 +1,8 @@
+//! Provides a thread-safe queue with weighted random selection between priorities.
+//!
+//! Items within each priority are received in FIFO order. Receivers can be cloned
+//! to share work, and queued items remain available after the sender is dropped.
+
 use std::{
     collections::VecDeque,
     fmt,
@@ -145,11 +150,29 @@ impl<T> PriorityQueueSender<T> {
         Self { state }
     }
 
+    /// Enqueues an item at the given priority, waiting for the queue lock if necessary.
+    ///
+    /// # Errors
+    ///
+    /// Returns the item in a [`SendError<T>`] if all receivers have been dropped.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `priority` is [`Priority::RealtimeAudio`] and a receiver still exists.
     pub fn send(&self, priority: Priority, item: T) -> Result<(), SendError<T>> {
         self.state.send(priority, item)?;
         Ok(())
     }
 
+    /// Enqueues an item at the given priority, spinning until the queue lock is acquired.
+    ///
+    /// # Errors
+    ///
+    /// Returns the item in a [`SendError<T>`] if all receivers have been dropped.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `priority` is [`Priority::RealtimeAudio`] and a receiver still exists.
     pub fn spin_send(&self, priority: Priority, item: T) -> Result<(), SendError<T>> {
         self.state.spin_send(priority, item)?;
         Ok(())
@@ -214,6 +237,17 @@ pub struct RecvError;
 
 #[allow(dead_code)]
 impl<T> PriorityQueueReceiver<T> {
+    /// Creates an empty priority queue and returns its sender and receiver.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gpui::{Priority, queue::PriorityQueueReceiver};
+    ///
+    /// let (sender, mut receiver) = PriorityQueueReceiver::new();
+    /// sender.send(Priority::Medium, 42).unwrap();
+    /// assert_eq!(receiver.pop().unwrap(), 42);
+    /// ```
     pub fn new() -> (PriorityQueueSender<T>, Self) {
         let state = PriorityQueueState {
             queues: Mutex::new(PriorityQueues {
@@ -271,6 +305,14 @@ impl<T> PriorityQueueReceiver<T> {
         self.pop_inner(false)
     }
 
+    /// Pops an item if available, spinning until the queue lock is acquired.
+    ///
+    /// Returns `Ok(None)` if the queue is empty and the sender still exists.
+    /// Does not wait for new items to arrive.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RecvError`] if the queue is empty and the sender has been dropped.
     pub fn spin_try_pop(&mut self) -> Result<Option<T>, RecvError> {
         use Priority as P;
 
@@ -312,7 +354,7 @@ impl<T> PriorityQueueReceiver<T> {
     /// Pops an element from the priority queue blocking if necessary.
     ///
     /// This method is best suited if you only intend to pop one element, for better performance
-    /// on large queues see [`Self::iter``]
+    /// on large queues see [`Self::iter`].
     ///
     /// # Errors
     ///
@@ -469,7 +511,7 @@ mod tests {
 
     #[test]
     fn all_tasks_get_yielded() {
-        let (tx, mut rx) = PriorityQueueReceiver::new();
+        let (tx, rx) = PriorityQueueReceiver::new();
         tx.send(Priority::Medium, 20).unwrap();
         tx.send(Priority::High, 30).unwrap();
         tx.send(Priority::Low, 10).unwrap();

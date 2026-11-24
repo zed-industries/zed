@@ -247,6 +247,7 @@ impl BatchingLlmClient {
                 role: match msg.role {
                     Role::User => "user".to_string(),
                     Role::Assistant => "assistant".to_string(),
+                    Role::System => "system".to_string(),
                 },
                 content: message_content_to_string(&msg.content),
             })
@@ -351,11 +352,7 @@ impl BatchingLlmClient {
             let mut error_count = 0;
 
             for result in results {
-                let request_hash = result
-                    .custom_id
-                    .strip_prefix("req_hash_")
-                    .unwrap_or(&result.custom_id)
-                    .to_string();
+                let request_hash = result.custom_id.trim_prefix("req_hash_").to_string();
 
                 match result.result {
                     anthropic::batches::BatchResult::Succeeded { message } => {
@@ -457,11 +454,7 @@ impl BatchingLlmClient {
                 let mut updates: Vec<(String, String)> = Vec::new();
                 let mut success_count = 0;
                 for result in results {
-                    let request_hash = result
-                        .custom_id
-                        .strip_prefix("req_hash_")
-                        .unwrap_or(&result.custom_id)
-                        .to_string();
+                    let request_hash = result.custom_id.trim_prefix("req_hash_").to_string();
 
                     match result.result {
                         anthropic::batches::BatchResult::Succeeded { message } => {
@@ -571,8 +564,10 @@ impl BatchingLlmClient {
                         role: match msg.role.as_str() {
                             "user" => Role::User,
                             "assistant" => Role::Assistant,
+                            "system" => Role::System,
                             _ => Role::User,
                         },
+                        output_config: None,
                         content: vec![RequestContent::Text {
                             text: msg.content,
                             cache_control: None,

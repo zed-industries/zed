@@ -1,5 +1,5 @@
 use acp_thread::AgentSessionModes;
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use agent_servers::AgentServer;
 
 use fs::Fs;
@@ -112,7 +112,7 @@ impl ModeSelector {
                 };
 
                 menu.push_item(entry.handler({
-                    let mode_id = mode.value.clone();
+                    let mode_id = mode.value;
                     let weak_self = weak_self.clone();
                     move |_window, cx| {
                         weak_self

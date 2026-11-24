@@ -5,6 +5,9 @@ edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "etw_tracing.rs"
 test = false

@@ -624,11 +624,16 @@ impl DiffMultibuffer {
 
     #[instrument(skip(this, cx))]
     pub(crate) async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
-        let entries = this.update(cx, |this, cx| {
-            let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
-                let load_buffers = branch_diff.load_buffers(cx);
-                (branch_diff.repo().cloned(), load_buffers)
-            });
+        let (entries, list_was_loading) = this.update(cx, |this, cx| {
+            let (repo, buffers_to_load, list_was_loading) =
+                this.branch_diff.update(cx, |branch_diff, cx| {
+                    let load_buffers = branch_diff.load_buffers(cx);
+                    (
+                        branch_diff.repo().cloned(),
+                        load_buffers,
+                        branch_diff.is_awaiting_tree_diff(),
+                    )
+                });
             let mut previous_paths = this
                 .multibuffer
                 .read(cx)
@@ -679,7 +684,7 @@ impl DiffMultibuffer {
             this.buffer_subscriptions
                 .retain(|repo_path, _| live_repo_paths.contains(repo_path));
 
-            entries
+            (entries, list_was_loading)
         })?;
 
         let mut buffers_to_fold = Vec::new();
@@ -728,7 +733,11 @@ impl DiffMultibuffer {
                         .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
                 });
             }
-            this.pending_scroll.take();
+            // A list still loading had no files to scroll to, so the scroll
+            // waits for the refresh that brings them.
+            if !list_was_loading {
+                this.pending_scroll.take();
+            }
             cx.notify();
         })?;
 

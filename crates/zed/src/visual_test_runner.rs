@@ -25,10 +25,10 @@
 //! ## Usage
 //!
 //! Run the visual tests:
-//!   cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+//!   cargo run -p zed --bin zed-visual-test-runner --features visual-tests
 //!
 //! Update baseline images (when UI intentionally changes):
-//!   UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+//!   UPDATE_BASELINE=1 cargo run -p zed --bin zed-visual-test-runner --features visual-tests
 //!
 //! ## Environment Variables
 //!
@@ -95,7 +95,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 use {
     acp_thread::{AgentConnection, StubAgentConnection},
-    agent_client_protocol::schema::v2 as acp_v2,
+    agent_client_protocol::v2::schema as acp_v2,
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
@@ -2740,6 +2740,8 @@ fn run_multi_workspace_sidebar_visual_tests(
                             speed: None,
                             thinking_enabled: false,
                             thinking_effort: None,
+                            thread_only: false,
+                            profile_downgraded_for_restricted_workspace: false,
                             ui_scroll_position: None,
                             draft_prompt: None,
                             sandboxed_terminal_temp_dir: None,

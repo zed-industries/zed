@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::{HashMap, HashSet};
-use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
+use futures::{StreamExt as _, stream::FuturesUnordered};
 use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
@@ -13,7 +13,7 @@ use text::ToOffset as _;
 use ui::{Context, Window, div, prelude::*};
 
 use crate::{
-    Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, SelectionEffects,
+    Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, LspDataKind, SelectionEffects,
     actions::ToggleCodeLens,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     hover_links::HoverLink,
@@ -224,72 +224,54 @@ impl Editor {
             return;
         };
 
-        let buffers_to_query = self
-            .visible_buffers(cx)
-            .into_iter()
-            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
-            .chain(for_buffer.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
-            .filter(|editor_buffer| {
-                let editor_buffer_id = editor_buffer.read(cx).remote_id();
-                for_buffer.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
-                    && self.registered_buffers.contains_key(&editor_buffer_id)
-            })
-            .unique_by(|buffer| buffer.read(cx).remote_id())
-            .collect::<Vec<_>>();
-
+        let buffers_to_query = self.lsp_data_buffers(for_buffer, cx);
         if buffers_to_query.is_empty() {
             return;
         }
+        self.spawn_lsp_data_tasks(
+            LspDataKind::CodeLens,
+            for_buffer,
+            buffers_to_query,
+            cx,
+            |buffer, cx| {
+                let buffer_id = buffer.read(cx).remote_id();
+                let project = project.downgrade();
+                cx.spawn(async move |editor, cx| {
+                    cx.background_executor()
+                        .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
+                        .await;
 
-        let project = project.downgrade();
-        self.refresh_code_lens_task = cx.spawn(async move |editor, cx| {
-            cx.background_executor()
-                .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
-                .await;
-
-            let Some(tasks_per_buffer) = project
-                .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
-                        buffers_to_query
-                            .into_iter()
-                            .map(|buffer| {
-                                let buffer_id = buffer.read(cx).remote_id();
-                                let task = lsp_store.code_lens_actions(&buffer, cx);
-                                async move { (buffer_id, task.await) }
+                    let Some(task) = project
+                        .update(cx, |project, cx| {
+                            project.lsp_store().update(cx, |lsp_store, cx| {
+                                lsp_store.code_lens_actions(&buffer, cx)
                             })
-                            .collect::<Vec<_>>()
-                    })
-                })
-                .ok()
-            else {
-                return;
-            };
+                        })
+                        .ok()
+                    else {
+                        return;
+                    };
 
-            let code_lens_per_buffer = join_all(tasks_per_buffer).await;
-            if code_lens_per_buffer.is_empty() {
-                return;
-            }
-
-            editor
-                .update(cx, |editor, cx| {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for (buffer_id, result) in code_lens_per_buffer {
-                        let actions = match result {
-                            Ok(Some(actions)) => actions,
-                            Ok(None) => continue,
-                            Err(e) => {
-                                log::error!(
-                                    "Failed to fetch code lenses for buffer {buffer_id:?}: {e:#}"
-                                );
-                                continue;
-                            }
-                        };
-                        editor.apply_lens_actions_for_buffer(buffer_id, actions, &snapshot, cx);
-                    }
-                    editor.resolve_visible_code_lenses(cx);
+                    let actions = match task.await {
+                        Ok(Some(actions)) => actions,
+                        Ok(None) => return,
+                        Err(error) => {
+                            log::error!(
+                                "Failed to fetch code lenses for buffer {buffer_id:?}: {error:#}"
+                            );
+                            return;
+                        }
+                    };
+                    editor
+                        .update(cx, |editor, cx| {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            editor.apply_lens_actions_for_buffer(buffer_id, actions, &snapshot, cx);
+                            editor.resolve_visible_code_lenses(cx);
+                        })
+                        .ok();
                 })
-                .ok();
-        });
+            },
+        );
     }
 
     /// Reconcile blocks for `buffer_id` against the latest `actions`.
@@ -543,6 +525,46 @@ impl Editor {
         });
     }
 
+    pub(super) fn remove_invalid_code_lenses(
+        &mut self,
+        buffer_ids: &[BufferId],
+        buffers_removed: bool,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(code_lens) = self.code_lens.as_mut() else {
+            return;
+        };
+        let mut blocks_to_remove = HashSet::default();
+        for buffer_id in buffer_ids {
+            if snapshot.buffer_for_id(*buffer_id).is_none() {
+                code_lens.actions.remove(buffer_id);
+            }
+            let Some(blocks) = code_lens.blocks.get_mut(buffer_id) else {
+                continue;
+            };
+            blocks.retain(|block| {
+                let valid = !buffers_removed
+                    && block.anchor.raw_text_anchor().is_none_or(|text_anchor| {
+                        snapshot.anchor_in_excerpt(text_anchor).is_some()
+                    });
+                if !valid {
+                    blocks_to_remove.insert(block.block_id);
+                }
+                valid
+            });
+            if blocks.is_empty() {
+                code_lens.blocks.remove(buffer_id);
+            }
+        }
+        if code_lens.actions.is_empty() {
+            code_lens.resolve_task = Task::ready(());
+        }
+        if !blocks_to_remove.is_empty() {
+            self.remove_blocks(blocks_to_remove, None, cx);
+        }
+    }
+
     pub(super) fn clear_code_lenses(&mut self, cx: &mut Context<Self>) {
         if let Some(code_lens) = self.code_lens.take() {
             let all_blocks = code_lens
@@ -556,7 +578,7 @@ impl Editor {
             }
             cx.notify();
         }
-        self.refresh_code_lens_task = Task::ready(());
+        self.clear_lsp_data_tasks(LspDataKind::CodeLens);
     }
 }
 
@@ -723,20 +745,23 @@ mod tests {
     };
 
     use collections::HashSet;
-    use futures::StreamExt;
-    use gpui::TestAppContext;
+    use futures::{FutureExt as _, StreamExt, channel::oneshot};
+    use gpui::{AppContext as _, TestAppContext};
     use indoc::indoc;
+    use language::{Capability, FakeLspAdapter, rust_lang};
     use settings::CodeLens;
     use util::path;
 
-    use multi_buffer::{MultiBufferRow, ToPoint as _};
+    use multi_buffer::{MultiBuffer, MultiBufferRow, PathKey, ToPoint as _};
     use text::Point;
 
     use super::{CODE_LENS_SEPARATOR, displayed_title};
     use crate::{
-        Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
+        DisplayRow, Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
+        display_map::Block,
         editor_tests::{init_test, update_test_editor_settings},
-        test::editor_lsp_test_context::EditorLspTestContext,
+        scroll::ScrollAnchor,
+        test::{build_editor_with_project, editor_lsp_test_context::EditorLspTestContext},
     };
 
     #[gpui::test]
@@ -1836,6 +1861,279 @@ mod tests {
             after_scroll_resolved,
             HashSet::from_iter([70, 80, 90]),
             "Only newly visible lenses at the bottom should be resolved, not middle ones"
+        );
+
+        editor.update_in(cx, |editor, window, cx| {
+            let anchor = editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_before(Point::new(50, 0));
+            editor.set_scroll_anchor_remote(
+                ScrollAnchor {
+                    offset: gpui::Point::default(),
+                    anchor,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+
+        let after_remote_scroll_resolved = resolved_lines
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect::<HashSet<_>>();
+        assert_eq!(after_remote_scroll_resolved, HashSet::from_iter([50, 60]));
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_multibuffer_excerpt_changes(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_editor_settings(cx, &|settings| {
+            settings.code_lens = Some(CodeLens::On);
+        });
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            serde_json::json!({
+                "a.rs": "fn first() {}\nfn second() {}\nfn third() {}",
+                "b.rs": "fn first() {}\nfn second() {}\nfn third() {}",
+            }),
+        )
+        .await;
+        let project = project::Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        languages.add(rust_lang());
+        let (resolve_sender, resolve_receiver) = oneshot::channel::<()>();
+        let resolve_receiver = resolve_receiver.shared();
+        let mut servers = languages.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    code_lens_provider: Some(lsp::CodeLensOptions {
+                        resolve_provider: Some(true),
+                    }),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |server| {
+                    server.set_request_handler::<lsp::request::CodeLensRequest, _, _>(
+                        |_, _| async move {
+                            Ok(Some(
+                                (0..3)
+                                    .map(|row| lsp::CodeLens {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(row, 0),
+                                            lsp::Position::new(row, 10),
+                                        ),
+                                        command: (row != 1).then(|| lsp::Command {
+                                            title: format!("row {row} references"),
+                                            command: "references".to_owned(),
+                                            arguments: None,
+                                        }),
+                                        data: None,
+                                    })
+                                    .collect(),
+                            ))
+                        },
+                    );
+                    let resolve_receiver = resolve_receiver.clone();
+                    server.set_request_handler::<lsp::request::CodeLensResolve, _, _>(
+                        move |lens, _| {
+                            let resolve_receiver = resolve_receiver.clone();
+                            async move {
+                                resolve_receiver.await.unwrap();
+                                Ok(lens)
+                            }
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+        let first_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let second_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/b.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            build_editor_with_project(project, multibuffer.clone(), window, cx)
+        });
+        multibuffer.update(cx, |multibuffer, cx| {
+            for (index, buffer) in [&first_buffer, &second_buffer].into_iter().enumerate() {
+                multibuffer.set_excerpts_for_path(
+                    PathKey::sorted(index as u64),
+                    buffer.clone(),
+                    [Point::new(0, 0)..Point::new(2, 13)],
+                    0,
+                    cx,
+                );
+            }
+        });
+        let _server = servers.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                code_lens_assertion_text(editor, cx),
+                indoc! {"
+                    Lenses: row 0 references
+                    Line 1: fn first() {}
+
+                    Lenses: <placeholder>
+                    Line 2: fn second() {}
+
+                    Lenses: row 2 references
+                    Line 3: fn third() {}
+
+                    Lenses: row 0 references
+                    Line 4: fn first() {}
+
+                    Lenses: <placeholder>
+                    Line 5: fn second() {}
+
+                    Lenses: row 2 references
+                    Line 6: fn third() {}
+                "},
+            );
+            assert_code_lens_block_count(editor, 6, cx);
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                first_buffer.clone(),
+                [Point::new(2, 0)..Point::new(2, 13)],
+                0,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                code_lens_assertion_text(editor, cx),
+                indoc! {"
+                    Lenses: row 2 references
+                    Line 1: fn third() {}
+
+                    Lenses: row 0 references
+                    Line 2: fn first() {}
+
+                    Lenses: <placeholder>
+                    Line 3: fn second() {}
+
+                    Lenses: row 2 references
+                    Line 4: fn third() {}
+                "},
+            );
+            assert_code_lens_block_count(editor, 4, cx);
+        });
+
+        resolve_sender.send(()).unwrap();
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                code_lens_assertion_text(editor, cx),
+                indoc! {"
+                    Lenses: row 2 references
+                    Line 1: fn third() {}
+
+                    Lenses: row 0 references
+                    Line 2: fn first() {}
+
+                    Lenses: 0 references
+                    Line 3: fn second() {}
+
+                    Lenses: row 2 references
+                    Line 4: fn third() {}
+                "},
+            );
+            assert_code_lens_block_count(editor, 4, cx);
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(2),
+                second_buffer.clone(),
+                [Point::new(0, 0)..Point::new(2, 13)],
+                0,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_code_lens_block_count(editor, 1, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_code_lens_block_count(editor, 4, cx);
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(first_buffer.read(cx).remote_id(), cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_code_lens_block_count(editor, 3, cx);
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                first_buffer.clone(),
+                [Point::new(0, 0)..Point::new(2, 13)],
+                0,
+                cx,
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_code_lens_block_count(editor, 6, cx);
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| multibuffer.clear(cx));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_code_lens_block_count(editor, 0, cx);
+            assert_eq!(editor.code_lens.as_ref().unwrap().actions.len(), 0);
+        });
+    }
+
+    fn assert_code_lens_block_count(editor: &Editor, expected: usize, cx: &mut ui::App) {
+        assert_eq!(
+            editor
+                .code_lens
+                .as_ref()
+                .unwrap()
+                .blocks
+                .values()
+                .map(Vec::len)
+                .sum::<usize>(),
+            expected,
+        );
+        assert_eq!(
+            editor
+                .display_snapshot(cx)
+                .blocks_in_range(DisplayRow(0)..DisplayRow(u32::MAX))
+                .filter(|(_, block)| matches!(block, Block::Custom(_)))
+                .count(),
+            expected,
         );
     }
 

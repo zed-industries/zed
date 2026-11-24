@@ -167,6 +167,6 @@ impl Component for Chip {
             ),
         ];
 
-        example_group(chip_examples).vertical().into_any_element()
+        example_group(chip_examples).into_any_element()
     }
 }

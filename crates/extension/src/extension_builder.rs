@@ -309,6 +309,9 @@ impl ExtensionBuilder {
             let clang_output = util::command::new_command(&clang_path)
                 .args(["-fPIC", "-shared", "-Os"])
                 .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
+                // An explicit maximum lets a browser loader make this imported memory
+                // shared by changing only its flags, without altering its limits.
+                .arg("-Wl,--max-memory=4294967296")
                 .arg("-o")
                 .arg(&grammar_wasm_path)
                 .arg("-I")

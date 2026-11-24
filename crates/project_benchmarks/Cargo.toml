@@ -8,7 +8,7 @@ edition.workspace = true
 test-support = ["http_client/test-support"]
 
 [[bin]]
-name = "project_benchmarks"
+name = "project-benchmarks"
 path = "src/main.rs"
 required-features = ["test-support"]
 

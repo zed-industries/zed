@@ -136,7 +136,6 @@ pub struct LanguageServer {
     pending_respond_tasks: PendingRespondTasks,
     io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     executor: BackgroundExecutor,
-    #[allow(clippy::type_complexity)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
@@ -1319,11 +1318,6 @@ impl LanguageServer {
     /// Removes a notification handler registers via [`Self::on_notification`].
     pub fn remove_notification_handler<T: notification::Notification>(&self) {
         self.notification_handlers.lock().remove(T::METHOD);
-    }
-
-    /// Checks if a notification handler has been registered via [`Self::on_notification`].
-    pub fn has_notification_handler<T: notification::Notification>(&self) -> bool {
-        self.notification_handlers.lock().contains_key(T::METHOD)
     }
 
     #[must_use]

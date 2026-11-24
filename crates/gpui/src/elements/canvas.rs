@@ -1,8 +1,8 @@
 use refineable::Refineable as _;
 
 use crate::{
-    App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Pixels,
-    Style, StyleRefinement, Styled, Window,
+    App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, Pixels, Style,
+    StyleRefinement, Styled, Window,
 };
 
 /// Construct a canvas element with the given paint callback.
@@ -24,14 +24,6 @@ pub struct Canvas<T> {
     prepaint: Option<Box<dyn FnOnce(Bounds<Pixels>, &mut Window, &mut App) -> T>>,
     paint: Option<Box<dyn FnOnce(Bounds<Pixels>, T, &mut Window, &mut App)>>,
     style: StyleRefinement,
-}
-
-impl<T: 'static> IntoElement for Canvas<T> {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
 }
 
 impl<T: 'static> Element for Canvas<T> {

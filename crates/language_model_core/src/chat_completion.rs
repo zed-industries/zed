@@ -74,11 +74,22 @@ where
 /// `{"error": {...}}` envelope.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamError {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_error_code")]
     pub code: Option<String>,
     #[serde(default, rename = "type")]
     pub error_type: Option<String>,
     pub message: String,
+}
+
+fn deserialize_error_code<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Value::deserialize(deserializer)? {
+        Value::String(code) => Some(code),
+        Value::Number(code) => Some(code.to_string()),
+        _ => None,
+    })
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -112,6 +123,8 @@ where
 #[derive(Serialize, Deserialize, Debug, Default, Eq, PartialEq)]
 pub struct ResponseMessageDelta {
     pub content: Option<ResponseContent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
     /// Reasoning text as sent by OpenRouter and compatible providers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
@@ -464,6 +477,7 @@ impl ToolCallAccumulator {
 /// provider's own adapter before or after this mapping.
 pub struct ChatCompletionEventMapper {
     tool_calls: ToolCallAccumulator,
+    refused: bool,
     tool_call_accumulation_failed: bool,
     reasoning_details: ReasoningDetailsAccumulator,
 }
@@ -472,6 +486,7 @@ impl ChatCompletionEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls: ToolCallAccumulator::default(),
+            refused: false,
             tool_call_accumulation_failed: false,
             reasoning_details: ReasoningDetailsAccumulator::default(),
         }
@@ -506,6 +521,7 @@ impl ChatCompletionEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            self.refused |= delta.refusal.as_ref().is_some_and(|text| !text.is_empty());
             if let Some(reasoning_details) = delta.reasoning_details.clone()
                 && let Some(reasoning_details) = self.reasoning_details.push(reasoning_details)
             {
@@ -601,6 +617,20 @@ impl ChatCompletionEventMapper {
         }
 
         match choice.finish_reason.as_deref() {
+            Some(reason) if reason == "content_filter" || self.refused => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal(
+                    Some(crate::RefusalDetails {
+                        reason: if reason == "content_filter" {
+                            "content_filter"
+                        } else {
+                            "refusal"
+                        }
+                        .into(),
+                        categories: Vec::new(),
+                        stage: Some(crate::RefusalStage::Output),
+                    }),
+                ))));
+            }
             Some("stop") => {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
@@ -977,6 +1007,28 @@ mod tests {
     }
 
     #[test]
+    fn chat_refusals_preserve_reason_without_explanation() {
+        for (finish_reason, refusal, expected_reason) in [
+            ("content_filter", None, "content_filter"),
+            ("stop", Some("private user text"), "refusal"),
+        ] {
+            let events = map_completion_events(vec![serde_json::from_value(json!({
+                "choices": [{"index":0,"delta":{"refusal":refusal},"finish_reason":finish_reason}]
+            })).unwrap()]);
+            assert_eq!(
+                events,
+                vec![LanguageModelCompletionEvent::Stop(StopReason::Refusal(
+                    Some(crate::RefusalDetails {
+                        reason: expected_reason.into(),
+                        categories: Vec::new(),
+                        stage: Some(crate::RefusalStage::Output),
+                    })
+                )),]
+            );
+        }
+    }
+
+    #[test]
     fn chunk_without_choices_or_usage_maps_to_no_events() {
         let mut mapper = ChatCompletionEventMapper::new();
         assert!(mapper.map_event(ResponseStreamEvent::default()).is_empty());
@@ -1226,6 +1278,7 @@ mod tests {
                         }]),
                         reasoning_content: None,
                         reasoning_details: None,
+                        refusal: None,
                     }),
                     finish_reason: None,
                 }],
@@ -1249,6 +1302,7 @@ mod tests {
                         }]),
                         reasoning_content: None,
                         reasoning_details: None,
+                        refusal: None,
                     }),
                     finish_reason: None,
                 }],
@@ -1271,6 +1325,7 @@ mod tests {
                         }]),
                         reasoning_content: None,
                         reasoning_details: None,
+                        refusal: None,
                     }),
                     finish_reason: None,
                 }],

@@ -2,15 +2,17 @@ use super::*;
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use gpui::{App, Entity, TestAppContext};
 use indoc::indoc;
-use language::{Buffer, Rope};
+use language::{Buffer, DiskState, LocalFile, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
-use settings::SettingsStore;
+use settings::{SettingsStore, WorktreeId};
 use std::env;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use util::RandomCharIter;
-use util::rel_path::rel_path;
+use util::paths::PathStyle;
+use util::rel_path::{RelPath, rel_path};
 use util::test::sample_text;
 
 #[gpui::test]
@@ -854,6 +856,120 @@ fn test_excerpt_events(cx: &mut App) {
         follower_multibuffer.read(cx).snapshot(cx).text(),
     );
     assert_eq!(*follower_edit_event_count.read(), 5);
+}
+
+#[gpui::test]
+fn test_dirty_state_across_buffers(cx: &mut App) {
+    let buffers = (0..3)
+        .map(|_| cx.new(|cx| Buffer::local(sample_text(3, 3, 'a'), cx)))
+        .collect::<Vec<_>>();
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        for (ix, buffer) in buffers.iter().enumerate() {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(ix as u64),
+                buffer.clone(),
+                [Point::zero()..Point::new(1, 0)],
+                0,
+                cx,
+            );
+        }
+    });
+    let is_dirty = |cx: &App| multibuffer.read(cx).is_dirty(cx);
+    let edit = |buffer: &Entity<Buffer>, cx: &mut App| {
+        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "x")], None, cx));
+    };
+    assert!(!is_dirty(cx));
+
+    edit(&buffers[0], cx);
+    edit(&buffers[1], cx);
+    assert!(is_dirty(cx));
+    buffers[0].update(cx, |buffer, cx| buffer.did_save(buffer.version(), None, cx));
+    assert!(is_dirty(cx));
+    buffers[1].update(cx, |buffer, cx| buffer.did_save(buffer.version(), None, cx));
+    assert!(!is_dirty(cx));
+
+    edit(&buffers[2], cx);
+    assert!(is_dirty(cx));
+    buffers[2].update(cx, |buffer, cx| {
+        buffer.did_reload(buffer.version(), buffer.line_ending(), None, cx)
+    });
+    assert!(!is_dirty(cx));
+
+    edit(&buffers[1], cx);
+    assert!(is_dirty(cx));
+    buffers[1].update(cx, |buffer, cx| {
+        buffer.set_capability(Capability::ReadOnly, cx)
+    });
+    assert!(!is_dirty(cx));
+    buffers[1].update(cx, |buffer, cx| {
+        buffer.set_capability(Capability::ReadWrite, cx)
+    });
+    assert!(is_dirty(cx));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(1), cx);
+    });
+    assert!(!is_dirty(cx));
+}
+
+#[gpui::test]
+fn test_deleted_file_and_conflict_state_across_buffers(cx: &mut App) {
+    let buffers = (0..2)
+        .map(|_| cx.new(|cx| Buffer::local(sample_text(3, 3, 'a'), cx)))
+        .collect::<Vec<_>>();
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        for (ix, buffer) in buffers.iter().enumerate() {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(ix as u64),
+                buffer.clone(),
+                [Point::zero()..Point::new(1, 0)],
+                0,
+                cx,
+            );
+        }
+    });
+    let has_deleted_file = |cx: &App| multibuffer.read(cx).has_deleted_file(cx);
+    let has_conflict = |cx: &App| multibuffer.read(cx).has_conflict(cx);
+    let set_disk_state = |buffer: &Entity<Buffer>, disk_state: DiskState, cx: &mut App| {
+        let file = Arc::new(TestFile {
+            path: rel_path("file").into_arc(),
+            disk_state,
+        });
+        buffer.update(cx, |buffer, cx| buffer.file_updated(file, cx));
+    };
+
+    set_disk_state(&buffers[0], DiskState::Deleted, cx);
+    set_disk_state(&buffers[1], DiskState::Deleted, cx);
+    assert!(has_deleted_file(cx));
+    set_disk_state(&buffers[0], DiskState::New, cx);
+    assert!(has_deleted_file(cx));
+    set_disk_state(&buffers[1], DiskState::New, cx);
+    assert!(!has_deleted_file(cx));
+
+    buffers[0].update(cx, |buffer, _| buffer.set_conflict());
+    buffers[1].update(cx, |buffer, _| buffer.set_conflict());
+    assert!(has_conflict(cx));
+    buffers[0].update(cx, |buffer, cx| buffer.did_save(buffer.version(), None, cx));
+    assert!(has_conflict(cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(1), cx);
+    });
+    assert!(!has_conflict(cx));
+}
+
+#[gpui::test]
+fn test_clone_with_pending_changes(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("abc", cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "abc");
+
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "x")], None, cx));
+    let cloned_multibuffer =
+        multibuffer.update(cx, |multibuffer, cx| cx.new(|cx| multibuffer.clone(cx)));
+    assert_eq!(cloned_multibuffer.read(cx).snapshot(cx).text(), "xabc");
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "xabc");
 }
 
 #[gpui::test]
@@ -6247,9 +6363,7 @@ impl ReferenceMultibuffer {
                 let base_buffer = diff.base_text();
 
                 let mut offset = buffer_range.start;
-                let hunks = diff
-                    .hunks_intersecting_range(excerpt.range.clone(), buffer)
-                    .peekable();
+                let hunks = diff.hunks_intersecting_range(excerpt.range.clone(), buffer);
 
                 for hunk in hunks {
                     // Ignore hunks that are outside the excerpt range.
@@ -6876,7 +6990,7 @@ fn check_multibuffer_edits(
             .text_for_range(edit.new.start..edit.new.end)
             .collect();
         text.replace_range(
-            (edit.new.start.0..edit.new.start.0 + (edit.old.end.0 - edit.old.start.0)).clone(),
+            edit.new.start.0..edit.new.start.0 + (edit.old.end.0 - edit.old.start.0),
             &new_text,
         );
         pretty_assertions::assert_eq!(
@@ -7378,4 +7492,47 @@ enum AnchorContractOp {
         index: u16,
         right: bool,
     },
+}
+
+struct TestFile {
+    path: Arc<RelPath>,
+    disk_state: DiskState,
+}
+
+impl File for TestFile {
+    fn as_local(&self) -> Option<&dyn LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> DiskState {
+        self.disk_state
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
+        &self.path
+    }
+
+    fn full_path(&self, _: &App) -> PathBuf {
+        self.path.as_std_path().to_path_buf()
+    }
+
+    fn path_style(&self, _: &App) -> PathStyle {
+        PathStyle::local()
+    }
+
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
+        self.path.file_name().unwrap_or_default()
+    }
+
+    fn worktree_id(&self, _: &App) -> WorktreeId {
+        WorktreeId::from_usize(0)
+    }
+
+    fn to_proto(&self, _: &App) -> language::proto::File {
+        unimplemented!()
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
 }

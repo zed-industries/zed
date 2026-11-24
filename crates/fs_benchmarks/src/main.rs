@@ -8,7 +8,7 @@ fn main() {
         return;
     };
 
-    let _ = headless().run(|cx| {
+    headless().run(|cx| {
         let fs = fs::RealFs::new(None, cx.background_executor().clone());
         cx.background_spawn(async move {
             let timer = std::time::Instant::now();

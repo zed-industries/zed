@@ -80,7 +80,7 @@ fn test_query_text_inside_multibyte_character() -> anyhow::Result<()> {
             let mut cursor = QueryCursor::new();
             let mut matches = cursor.matches(&query, tree.root_node(), TextProvider(&text));
             let query_match = matches.next().expect("predicate matches the error node");
-            let node = query_match.captures.first().expect("error capture").node;
+            let node = query_match.captures().first().expect("error capture").node;
             assert_eq!(node.start_byte(), range.start_byte);
             assert!(!source.is_char_boundary(node.start_byte()));
             assert_eq!(
@@ -1383,6 +1383,34 @@ fn test_injection_grouped_by_host(cx: &mut App) {
 
         assert_eq!(sql_layers, *expected_layers, "buffer text:\n{text}");
     }
+}
+
+#[gpui::test]
+fn test_max_start_depth_does_not_carry_over_to_later_queries(cx: &mut App) {
+    fn highlights_query(grammar: &Grammar) -> Option<&Query> {
+        grammar
+            .highlights_config
+            .as_ref()
+            .map(|config| &config.query)
+    }
+
+    let (buffer, syntax_map) = test_edit_sequence("Rust", &["fn a() { b(c); }"], cx);
+    let capture_count = || {
+        syntax_map
+            .captures(0..buffer.len(), &buffer, highlights_query)
+            .count()
+    };
+
+    let expected_capture_count = capture_count();
+    assert!(expected_capture_count > 0);
+
+    drop(syntax_map.matches_with_options(
+        0..buffer.len(),
+        &buffer,
+        TreeSitterOptions::max_start_depth(1),
+        highlights_query,
+    ));
+    assert_eq!(capture_count(), expected_capture_count);
 }
 
 #[gpui::test]

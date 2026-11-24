@@ -491,12 +491,6 @@ impl KeymapFile {
         })
     }
 
-    pub fn parse_action(
-        action: &KeymapAction,
-    ) -> Result<Option<(&String, Option<&Value>)>, String> {
-        Self::parse_action_value(&action.0)
-    }
-
     fn parse_action_value(action: &Value) -> Result<Option<(&String, Option<&Value>)>, String> {
         let name_and_input = match action {
             Value::Array(items) => {
@@ -1493,7 +1487,7 @@ impl ActionSequence {
                             Ok((action, _)) => Ok(action),
                             Err(err) => {
                                 return Err(ActionBuildError::BuildError {
-                                    name: Self::name_for_type().to_string(),
+                                    name: Self::name_for_type().into(),
                                     error: anyhow::anyhow!(
                                         "error at sequence index {index}: {err}"
                                     ),
@@ -1510,7 +1504,7 @@ impl ActionSequence {
 
     fn expected_array_error() -> ActionBuildError {
         ActionBuildError::BuildError {
-            name: Self::name_for_type().to_string(),
+            name: Self::name_for_type().into(),
             error: anyhow::anyhow!("expected array of actions"),
         }
     }

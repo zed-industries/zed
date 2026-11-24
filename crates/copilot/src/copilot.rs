@@ -1151,36 +1151,23 @@ impl Copilot {
 
             futures::pin_mut!(nes_fut, inline_fut);
 
-            let mut nes_result: Option<Vec<CopilotEditPrediction>> = None;
-            let mut inline_result: Option<Vec<CopilotEditPrediction>> = None;
-
             loop {
                 select_biased! {
                     nes = nes_fut => {
                         if !nes.is_empty() {
                             return Ok(nes);
                         }
-                        nes_result = Some(nes);
                     }
                     inline = inline_fut => {
                         if !inline.is_empty() {
                             return Ok(inline);
                         }
-                        inline_result = Some(inline);
                     }
                     complete => break,
                 }
-
-                if let (Some(nes), Some(inline)) = (&nes_result, &inline_result) {
-                    return if !nes.is_empty() {
-                        Ok(nes.clone())
-                    } else {
-                        Ok(inline.clone())
-                    };
-                }
             }
 
-            Ok(nes_result.or(inline_result).unwrap_or_default())
+            Ok(Vec::new())
         })
     }
 

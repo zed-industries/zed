@@ -387,8 +387,6 @@ def staff_change_request_at(summary):
     """Return when staff requested changes, if that's still the latest staff
     verdict on the pull request."""
     reviews = summary["reviews"]["nodes"]
-    # Most pull requests have no change request at all, and ruling them out
-    # first saves the staff membership lookups below.
     if not any(review["state"] == "CHANGES_REQUESTED" for review in reviews):
         return None
     for review in reversed(reviews):

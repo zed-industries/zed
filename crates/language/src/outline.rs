@@ -1,5 +1,5 @@
 use crate::{BufferSnapshot, Language, Point, ToPoint, ToTreeSitterPoint};
-use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{MaxResults, StringMatch, StringMatchCandidate, StringMatchOptions};
 use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
 use std::{ops::Range, sync::Arc};
 use theme::SyntaxTheme;
@@ -215,10 +215,10 @@ impl<T> Outline<T> {
         let mut matches = fuzzy_nucleo::match_strings_async(
             &self.candidates,
             query,
-            Case::Smart,
-            LengthPenalty::On,
-            100,
-            &Default::default(),
+            StringMatchOptions {
+                max_results: MaxResults::limit::<100>(),
+                ..Default::default()
+            },
             executor,
         )
         .await;

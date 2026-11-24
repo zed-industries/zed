@@ -111,10 +111,6 @@ impl PromptId {
             Self::BuiltIn(builtin) => Some(*builtin),
         }
     }
-
-    pub fn is_built_in(&self) -> bool {
-        matches!(self, Self::BuiltIn { .. })
-    }
 }
 
 impl From<BuiltInPrompt> for PromptId {

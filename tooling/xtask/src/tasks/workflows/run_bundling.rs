@@ -93,7 +93,7 @@ pub(crate) fn bundle_mac(
     NamedJob {
         name: format!("bundle_mac_{arch}"),
         job: bundle_job(deps)
-            .runs_on(runners::MAC_DEFAULT)
+            .runs_on(runners::MAC_BUNDLER)
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
@@ -245,7 +245,10 @@ pub(crate) fn bundle_windows(
     }
 }
 
-fn set_release_channel(platform: Platform, release_channel: ReleaseChannel) -> Step<Run> {
+pub(crate) fn set_release_channel(
+    platform: Platform,
+    release_channel: ReleaseChannel,
+) -> Step<Run> {
     match release_channel {
         ReleaseChannel::Nightly => set_release_channel_to_nightly(platform),
     }

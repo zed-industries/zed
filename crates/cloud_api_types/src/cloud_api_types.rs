@@ -64,6 +64,11 @@ pub struct Organization {
 pub struct OrganizationUiPermissions {
     #[serde(default)]
     pub can_install_github_app: bool,
+    /// Whether the user is an owner or admin, who may update the organization.
+    ///
+    /// This is also true for the owner of a personal organization.
+    #[serde(default)]
+    pub can_manage_organization: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]

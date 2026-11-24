@@ -1,5 +1,6 @@
 pub mod platforms;
 mod system_window_tabs;
+mod title_bar_settings;
 
 use gpui::{
     Action, AnyElement, App, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
@@ -16,14 +17,13 @@ use ui::{
 };
 use workspace::{MultiWorkspace, SidebarRenderState, SidebarSide};
 
-use crate::{
-    platforms::{platform_linux, platform_windows},
-    system_window_tabs::SystemWindowTabs,
-};
+use crate::platforms::{platform_linux, platform_windows};
 
 pub use system_window_tabs::{
-    DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, ShowNextWindowTab, ShowPreviousWindowTab,
+    DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, ShowNextWindowTab,
+    ShowPreviousWindowTab, SystemWindowTabs,
 };
+pub use title_bar_settings::TitleBarSettings;
 
 /// With client-side decorations, the title bar is pulled over the window frame's
 /// border to avoid a transparent gap in the rounded corners, and a border in the
@@ -48,12 +48,34 @@ pub fn apply_title_bar_insets<E: Styled + FluentBuilder>(
         .when(right_window_controls, |header| header.pr(inset))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SidebarWindowControls {
+    pub traffic_lights: bool,
+    pub left: bool,
+    pub right: bool,
+}
+
+impl SidebarWindowControls {
+    pub fn new(sidebar_side: SidebarSide, window: &Window, cx: &App) -> Self {
+        let visible = !window.is_fullscreen()
+            && !window.is_simple_fullscreen()
+            && TitleBarSettings::is_title_bar_visible(window, cx);
+        let is_macos = cfg!(target_os = "macos");
+        let on_left = sidebar_side == SidebarSide::Left;
+        Self {
+            traffic_lights: visible && is_macos && on_left,
+            left: visible && !is_macos && on_left,
+            right: visible && !is_macos && !on_left,
+        }
+    }
+}
+
 pub struct PlatformTitleBar {
     id: ElementId,
     platform_style: PlatformStyle,
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
-    system_window_tabs: Entity<SystemWindowTabs>,
+    system_window_tabs: Option<Entity<SystemWindowTabs>>,
     button_layout: Option<WindowButtonLayout>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
 }
@@ -61,7 +83,7 @@ pub struct PlatformTitleBar {
 impl PlatformTitleBar {
     pub fn new(id: impl Into<ElementId>, cx: &mut Context<Self>) -> Self {
         let platform_style = PlatformStyle::platform();
-        let system_window_tabs = cx.new(|_cx| SystemWindowTabs::new());
+        let system_window_tabs = Some(cx.new(|_cx| SystemWindowTabs::new()));
 
         Self {
             id: id.into(),
@@ -72,6 +94,11 @@ impl PlatformTitleBar {
             button_layout: None,
             multi_workspace: None,
         }
+    }
+
+    pub fn without_system_window_tabs(mut self) -> Self {
+        self.system_window_tabs = None;
+        self
     }
 
     pub fn with_multi_workspace(mut self, multi_workspace: WeakEntity<MultiWorkspace>) -> Self {
@@ -353,7 +380,7 @@ impl Render for PlatformTitleBar {
         v_flex()
             .w_full()
             .child(title_bar)
-            .child(self.system_window_tabs.clone().into_any_element())
+            .children(self.system_window_tabs.clone())
     }
 }
 
