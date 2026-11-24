@@ -4411,9 +4411,9 @@ async fn read_head_tracking(
             })
             .map(|[.., track]| parse_upstream_track(&String::from_utf8_lossy(track)))
     };
-    if let Some((ref_name, read)) = guessed_read
+    if let Some((ref_name, Ok(read))) = guessed_read
         && ref_name == head.ref_name
-        && let Some(tracking) = tracking_in(&read?)
+        && let Some(tracking) = tracking_in(&read)
     {
         return tracking.map(Some);
     }
@@ -6446,13 +6446,13 @@ mod tests {
         let altered_read = async || {
             let read = read_upstream_tracking(&binary, b"refs/heads/main").await;
             let read = String::from_utf8(read.unwrap()).unwrap();
-            read.replace("[ahead 1]", "[ahead 5, behind 5]")
+            anyhow::Ok(read.replace("[ahead 1]", "[ahead 5, behind 5]"))
         };
-        let head_tracking = async |listing: String, guessed_read: Option<String>| {
+        let head_tracking = async |listing: String, guessed_read: Option<Result<String>>| {
             let refs = parse_listed_refs(listing.as_bytes());
             let head = refs.iter().find(|listed_ref| listed_ref.is_head).unwrap();
             let guessed_read =
-                guessed_read.map(|read| (b"refs/heads/main".to_vec(), Ok(read.into())));
+                guessed_read.map(|read| (b"refs/heads/main".to_vec(), read.map(Into::into)));
             read_head_tracking(&binary, head, guessed_read)
                 .await
                 .unwrap()
@@ -6479,6 +6479,10 @@ mod tests {
         git(path, "checkout other");
         assert_eq!(head_tracking(list(), Some(read)).await, Some(tracked(0, 1)));
         git(path, "checkout main");
+
+        // Nor one that failed, which may have been of the branch before a change.
+        let read = Err(anyhow!("failed"));
+        assert_eq!(head_tracking(list(), Some(read)).await, Some(tracked(1, 0)));
 
         // Nor git's read of a branch that changed after it was listed.
         let listing = list();
