@@ -224,16 +224,6 @@ function SignZedAndItsFriends {
     & "$innoDir\sign.ps1" $files
 }
 
-function DownloadAMDGpuServices {
-    # If you update the AGS SDK version, please also update the version in `crates/gpui/src/platform/windows/directx_renderer.rs`
-    $url = "https://codeload.github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/zip/refs/tags/v6.3.0"
-    $zipPath = ".\AGS_SDK_v6.3.0.zip"
-    # Download the AGS SDK zip file
-    Invoke-WebRequest -Uri $url -OutFile $zipPath
-    # Extract the AGS SDK zip file
-    Expand-Archive -Path $zipPath -DestinationPath "." -Force
-}
-
 function DownloadConpty {
     # TODO: Switch back to the stable channel once Microsoft finally decides to publish v1.26
     $url = "https://github.com/microsoft/terminal/releases/download/v1.25.1912.0/Microsoft.Windows.Console.ConPTY.1.25.260710002-preview.nupkg"
@@ -256,7 +246,6 @@ function CollectFiles {
     else {
         New-Item -Type Directory -Path "$innoDir\x64" -Force
         New-Item -Type Directory -Path "$innoDir\arm64" -Force
-        Move-Item -Path ".\AGS_SDK-6.3.0\ags_lib\lib\amd_ags_x64.dll" -Destination "$innoDir\amd_ags_x64.dll" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\x64\OpenConsole.exe" -Destination "$innoDir\x64\OpenConsole.exe" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\arm64\OpenConsole.exe" -Destination "$innoDir\arm64\OpenConsole.exe" -Force
         Move-Item -Path ".\conpty\runtimes\win-x64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
@@ -392,7 +381,6 @@ BuildRemoteServer
 MakeAppx
 SignZedAndItsFriends
 ZipZedAndItsFriendsDebug
-DownloadAMDGpuServices
 DownloadConpty
 CollectFiles
 BuildInstaller
