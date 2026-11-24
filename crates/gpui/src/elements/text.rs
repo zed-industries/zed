@@ -623,6 +623,40 @@ impl TextLayout {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {
+                // Wrapping text is as narrow as its widest word, like CSS min-content. Answered
+                // without the cache below, which holds the lines that get painted.
+                if text_style.white_space == WhiteSpace::Normal
+                    && known_dimensions.width.is_none()
+                    && available_space.width == crate::AvailableSpace::MinContent
+                {
+                    let text_system = window.text_system();
+                    let Some(lines) = text_system
+                        .shape_text(text.clone(), font_size, &runs, None, None)
+                        .log_err()
+                    else {
+                        return Size::default();
+                    };
+                    let width = lines
+                        .iter()
+                        .map(|line| line.unwrapped_layout.min_content_width(&line.text))
+                        .max()
+                        .unwrap_or_default()
+                        .ceil();
+                    let height = text_system
+                        .shape_text(
+                            text.clone(),
+                            font_size,
+                            &runs,
+                            Some(width),
+                            text_style.line_clamp,
+                        )
+                        .log_err()
+                        .map_or(Pixels::ZERO, |lines| {
+                            lines.iter().map(|line| line.size(line_height).height).sum()
+                        });
+                    return Size { width, height };
+                }
+
                 let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                     known_dimensions.width.or(match available_space.width {
                         crate::AvailableSpace::Definite(x) => Some(x),
@@ -1289,6 +1323,80 @@ mod tests {
         let _ = div().child("String".to_string());
         let _ = div().child(Cow::Borrowed("Cow"));
         let _ = div().child(SharedString::from("SharedString"));
+    }
+
+    #[crate::test]
+    fn wrapping_text_shrinks_in_a_flex_row_like_css_min_content(cx: &mut crate::TestAppContext) {
+        use crate::{
+            AppContext as _, Bounds, Context, IntoElement, ParentElement as _, Render, Styled as _,
+            Window, canvas, div, px, size,
+        };
+        use std::{cell::Cell, rc::Rc};
+
+        struct Row {
+            nowrap: bool,
+            text: Rc<Cell<Bounds<Pixels>>>,
+            button: Rc<Cell<Bounds<Pixels>>>,
+        }
+
+        fn probe(cell: &Rc<Cell<Bounds<Pixels>>>) -> impl IntoElement {
+            let cell = cell.clone();
+            canvas(move |bounds, _, _| cell.set(bounds), |_, _, _, _| {})
+                .absolute()
+                .size_full()
+        }
+
+        impl Render for Row {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                // No `min_w_0()`: the text column keeps the default automatic minimum width.
+                let text = div()
+                    .flex_1()
+                    .relative()
+                    .child(probe(&self.text))
+                    .child("A description long enough to wrap onto several lines");
+                div()
+                    .w(px(300.))
+                    .flex()
+                    .child(if self.nowrap {
+                        text.whitespace_nowrap()
+                    } else {
+                        text
+                    })
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .size(px(60.))
+                            .relative()
+                            .child(probe(&self.button)),
+                    )
+            }
+        }
+
+        for nowrap in [false, true] {
+            let text = Rc::new(Cell::new(Bounds::default()));
+            let button = Rc::new(Cell::new(Bounds::default()));
+            let window = cx.open_window(size(px(800.), px(600.)), {
+                let (text, button) = (text.clone(), button.clone());
+                move |_, _| Row {
+                    nowrap,
+                    text,
+                    button,
+                }
+            });
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+
+            let (text, button) = (text.get(), button.get());
+            if nowrap {
+                // Unbreakable text keeps its full width, as in CSS.
+                assert!(text.size.width > px(300.), "{text:?}");
+            } else {
+                // The text wraps beside the button instead of pushing it out of the row.
+                assert_eq!(text.size.width, px(240.));
+                assert_eq!(button.origin.x, px(240.));
+                assert!(text.size.height > button.size.height, "{text:?}");
+            }
+        }
     }
 
     #[test]

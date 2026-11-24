@@ -191,6 +191,60 @@ impl LineLayout {
         (left, right)
     }
 
+    /// The narrowest width this line can be wrapped to without breaking inside a word: its
+    /// widest line-break segment, with the spaces that follow it. This is the line's CSS
+    /// min-content width. The segments are found the same way as in
+    /// [`Self::compute_wrap_boundaries`], so wrapping at this width or wider only breaks between
+    /// segments.
+    pub(crate) fn min_content_width(&self, text: &str) -> Pixels {
+        let glyph_indices: FxHashSet<usize> = self
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
+            .collect();
+        let break_indices: Vec<usize> = LineWrapper::break_indices(text)
+            .filter(|index| glyph_indices.contains(index))
+            .collect();
+        let glyphs = self
+            .runs
+            .iter()
+            .flat_map(|run| {
+                run.glyphs
+                    .iter()
+                    .map(|glyph| (glyph.index, glyph.position.x))
+            })
+            .dedup_by(|(previous_index, _), (index, _)| previous_index == index);
+
+        let mut current_segment: Option<Range<usize>> = None;
+        let mut segment_x = px(0.);
+        let mut widest = px(0.);
+        for (index, x) in glyphs {
+            let byte = text.as_bytes()[index];
+            if byte == b'\n'
+                || byte == b' '
+                || current_segment
+                    .as_ref()
+                    .is_some_and(|segment| segment.contains(&index))
+            {
+                continue;
+            }
+            // A glyph that starts a new segment is where the wrapper may break the line.
+            if current_segment.is_some() {
+                widest = widest.max(x - segment_x);
+                segment_x = x;
+            }
+            let segment = break_indices.partition_point(|break_index| *break_index <= index);
+            let start = segment
+                .checked_sub(1)
+                .and_then(|previous| break_indices.get(previous))
+                .copied()
+                .unwrap_or(0);
+            let end = break_indices.get(segment).copied().unwrap_or(text.len());
+            current_segment = Some(start..end);
+        }
+        widest.max(self.width - segment_x)
+    }
+
     fn compute_wrap_boundaries(
         &self,
         text: &str,
@@ -987,6 +1041,58 @@ mod tests {
                 glyph_ix: 2
             }],
         );
+    }
+
+    #[test]
+    fn test_min_content_width_is_the_widest_unbreakable_segment() {
+        let wrap = |layout: &LineLayout, text, width| {
+            layout
+                .compute_wrap_boundaries(text, px(width), None, &mut WrapScratch::default())
+                .iter()
+                .map(|boundary| boundary.glyph_ix)
+                .collect::<Vec<_>>()
+        };
+
+        // "cdef " is the widest segment.
+        let text = "ab cdef g";
+        let mut layout = make_layout(
+            (0..text.len())
+                .map(|index| glyph_at(index as f32 * 10., index))
+                .collect(),
+        );
+        layout.width = px(90.);
+        layout.len = text.len();
+        assert_eq!(layout.min_content_width(text), px(50.));
+        // At that width the wrapper breaks only before words. Narrower, it splits "cdef" from
+        // its space, and then the word itself.
+        assert_eq!(wrap(&layout, text, 50.), [3, 8]);
+        assert_eq!(wrap(&layout, text, 49.), [3, 7]);
+        assert_eq!(wrap(&layout, text, 39.), [3, 6]);
+
+        // A shaped cluster ("a-b") hides the break after the hyphen, as when wrapping.
+        let text = "x a-bcde";
+        let mut layout = make_layout(
+            [0, 1, 2, 5, 6, 7]
+                .into_iter()
+                .map(|index| glyph_at(index as f32 * 10., index))
+                .collect(),
+        );
+        layout.width = px(80.);
+        layout.len = text.len();
+        assert_eq!(layout.min_content_width(text), px(60.));
+
+        // Right-to-left glyphs come in visual order.
+        let text = "אבג דהו";
+        let mut layout = make_layout(
+            [11, 9, 7, 6, 4, 2, 0]
+                .into_iter()
+                .enumerate()
+                .map(|(position, index)| glyph_at(position as f32 * 10., index))
+                .collect(),
+        );
+        layout.width = px(70.);
+        layout.len = text.len();
+        assert_eq!(layout.min_content_width(text), px(40.));
     }
 
     #[test]
