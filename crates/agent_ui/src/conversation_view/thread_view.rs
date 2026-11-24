@@ -5808,7 +5808,7 @@ impl ThreadView {
                                 move |_window, cx| {
                                     thread
                                         .update(cx, |thread, cx| thread.reset_to_defaults(cx))
-                                        .log_err();
+                                        .ok();
                                 },
                             )
                         })
@@ -5818,7 +5818,7 @@ impl ThreadView {
                             move |_window, cx| {
                                 thread
                                     .update(cx, |thread, cx| thread.save_as_defaults(cx))
-                                    .log_err();
+                                    .ok();
                             },
                         )
                     }))
