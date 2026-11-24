@@ -52,6 +52,7 @@ pub struct ModelPickerDelegate {
     selected_model: Option<AgentModelInfo>,
     favorites: HashSet<AgentModelId>,
     _refresh_models_task: Task<()>,
+    _refresh_selected_model_task: Task<()>,
     _settings_subscription: Subscription,
     focus_handle: FocusHandle,
 }
@@ -120,6 +121,7 @@ impl ModelPickerDelegate {
             selected_description: None,
             favorites,
             _refresh_models_task: refresh_models_task,
+            _refresh_selected_model_task: Task::ready(()),
             _settings_subscription: settings_subscription,
             focus_handle,
         }
@@ -131,7 +133,9 @@ impl ModelPickerDelegate {
 
     pub fn refresh_selected_model(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let selected_model = self.selector.selected_model(cx);
-        cx.spawn_in(window, async move |this, cx| {
+        // Replacing the task drops a refresh that is still waiting, so an older
+        // one can't land after a newer one.
+        self._refresh_selected_model_task = cx.spawn_in(window, async move |this, cx| {
             let selected_model = selected_model.await.ok();
             this.update_in(cx, |this, window, cx| {
                 let delegate = &mut this.delegate;
@@ -145,8 +149,8 @@ impl ModelPickerDelegate {
                 }
                 cx.notify();
             })
-        })
-        .detach_and_log_err(cx);
+            .ok();
+        });
     }
 
     fn selected_model_index(&self) -> Option<usize> {
