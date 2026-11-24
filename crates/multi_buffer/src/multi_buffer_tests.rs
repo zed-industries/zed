@@ -388,9 +388,9 @@ async fn test_excerpt_boundaries_in_range_starting_at_diff_hunk(cx: &mut TestApp
     let (multibuffer, [_, buffer_2, buffer_3, _]) = multibuffer_with_expanded_diff_hunks(cx);
     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
 
-    // Row 3 starts a diff hunk in the middle of buffer 2, so the walk begins at
-    // buffer 2, before the range. It has to skip buffer 2 without stopping, and
-    // still report it as `prev` at row 9.
+    // Row 3 starts a diff hunk in the middle of buffer 2. That is the start of a
+    // diff transform, not of an excerpt, so buffer 2 is the excerpt before the
+    // range and has to be `prev` at row 9.
     let boundaries = snapshot
         .excerpt_boundaries_in_range(Point::new(3, 0)..=Point::new(9, 0))
         .map(|boundary| {

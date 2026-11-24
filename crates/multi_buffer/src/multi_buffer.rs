@@ -5719,13 +5719,12 @@ impl MultiBufferSnapshot {
             value: None,
         });
 
+        cursor.seek_to_start_of_current_excerpt();
         if cursor
             .fetch_excerpt_with_range()
             .is_some_and(|(_, range)| bounds.contains(&range.start.key))
         {
             cursor.prev_excerpt();
-        } else {
-            cursor.seek_to_start_of_current_excerpt();
         }
         let mut prev_excerpt = cursor
             .fetch_excerpt_with_range()
@@ -5734,66 +5733,52 @@ impl MultiBufferSnapshot {
         cursor.next_excerpt_forwards();
 
         iter::from_fn(move || {
-            loop {
-                if self.singleton {
-                    return None;
-                }
-
-                let (next_excerpt, next_range) = cursor.fetch_excerpt_with_range()?;
-                cursor.next_excerpt_forwards();
-                #[cfg(test)]
-                Self::EXCERPT_BOUNDARY_STEPS.with(|steps| steps.set(steps.get() + 1));
-                let next_start = next_range.start.key;
-                let is_past_end = match bounds.1 {
-                    Bound::Included(end) => next_start > end,
-                    Bound::Excluded(end) => next_start >= end,
-                    Bound::Unbounded => false,
-                };
-                if is_past_end {
-                    return None;
-                }
-                // The walk begins one excerpt early when the range starts at a diff hunk
-                // mid-excerpt, so an excerpt before the range is not the end of the walk.
-                if !bounds.contains(&next_start) {
-                    prev_excerpt = Some(next_excerpt);
-                    continue;
-                }
-
-                let next_region_start = next_range.start.value.unwrap();
-                let next_region_end = if let Some((_, range)) = cursor.fetch_excerpt_with_range() {
-                    range.start.value.unwrap()
-                } else {
-                    self.max_point()
-                };
-
-                let prev = prev_excerpt.as_ref().map(|excerpt| ExcerptBoundaryInfo {
-                    start_anchor: Anchor::in_buffer(
-                        excerpt.path_key_index,
-                        excerpt.range.context.start,
-                    ),
-                    range: excerpt.range.clone(),
-                    end_row: MultiBufferRow(next_region_start.row),
-                });
-
-                let next = ExcerptBoundaryInfo {
-                    start_anchor: Anchor::in_buffer(
-                        next_excerpt.path_key_index,
-                        next_excerpt.range.context.start,
-                    ),
-                    range: next_excerpt.range.clone(),
-                    end_row: if next_excerpt.has_trailing_newline {
-                        MultiBufferRow(next_region_end.row - 1)
-                    } else {
-                        MultiBufferRow(next_region_end.row)
-                    },
-                };
-
-                let row = MultiBufferRow(next_region_start.row);
-
-                prev_excerpt = Some(next_excerpt);
-
-                return Some(ExcerptBoundary { row, prev, next });
+            if self.singleton {
+                return None;
             }
+
+            let (next_excerpt, next_range) = cursor.fetch_excerpt_with_range()?;
+            cursor.next_excerpt_forwards();
+            #[cfg(test)]
+            Self::EXCERPT_BOUNDARY_STEPS.with(|steps| steps.set(steps.get() + 1));
+            if !bounds.contains(&next_range.start.key) {
+                return None;
+            }
+
+            let next_region_start = next_range.start.value.unwrap();
+            let next_region_end = if let Some((_, range)) = cursor.fetch_excerpt_with_range() {
+                range.start.value.unwrap()
+            } else {
+                self.max_point()
+            };
+
+            let prev = prev_excerpt.as_ref().map(|excerpt| ExcerptBoundaryInfo {
+                start_anchor: Anchor::in_buffer(
+                    excerpt.path_key_index,
+                    excerpt.range.context.start,
+                ),
+                range: excerpt.range.clone(),
+                end_row: MultiBufferRow(next_region_start.row),
+            });
+
+            let next = ExcerptBoundaryInfo {
+                start_anchor: Anchor::in_buffer(
+                    next_excerpt.path_key_index,
+                    next_excerpt.range.context.start,
+                ),
+                range: next_excerpt.range.clone(),
+                end_row: if next_excerpt.has_trailing_newline {
+                    MultiBufferRow(next_region_end.row - 1)
+                } else {
+                    MultiBufferRow(next_region_end.row)
+                },
+            };
+
+            let row = MultiBufferRow(next_region_start.row);
+
+            prev_excerpt = Some(next_excerpt);
+
+            Some(ExcerptBoundary { row, prev, next })
         })
     }
 
