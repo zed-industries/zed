@@ -1,3 +1,5 @@
+mod remote_server_download;
+
 use anyhow::{Context as _, Result};
 use client::Client;
 use db::kvp::KeyValueStore;
@@ -6,8 +8,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Global,
     Task, TaskExt, Window, actions,
 };
-use http_client::{HttpClient, HttpClientWithUrl};
-use paths::remote_servers_dir;
+use http_client::{HttpClient, HttpClientWithUrl, Url};
 use release_channel::{AppCommitSha, ReleaseChannel};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use util::command::new_command;
+use util::size::format_file_size;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -47,6 +49,7 @@ impl std::error::Error for MissingDependencyError {}
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const NIGHTLY_POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
+const REMOTE_SERVER_DOWNLOAD_BASE_URL: &str = "ZED_REMOTE_SERVER_DOWNLOAD_BASE_URL";
 
 #[cfg(target_os = "linux")]
 fn linux_rsync_install_hint() -> &'static str {
@@ -604,41 +607,57 @@ impl AutoUpdater {
         set_status: impl Fn(&str, &mut AsyncApp) + Send + 'static,
         cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
-        let this = cx.update(|cx| {
-            cx.default_global::<GlobalAutoUpdate>()
-                .0
-                .clone()
-                .context("auto-update not initialized")
-        })?;
-
-        set_status("Fetching remote server release", cx);
-        let release = Self::get_release_asset(
-            &this,
-            release_channel,
-            version,
-            "zed-remote-server",
-            os,
-            arch,
-            cx,
-        )
-        .await?;
-
-        let servers_dir = paths::remote_servers_dir();
-        let channel_dir = servers_dir.join(release_channel.dev_name());
-        let platform_dir = channel_dir.join(format!("{}-{}", os, arch));
-        let version_path = platform_dir.join(format!("{}.gz", release.version));
-        smol::fs::create_dir_all(&platform_dir).await.ok();
-
-        let client = this.read_with(cx, |this, _| this.client.http_client());
-
-        if smol::fs::metadata(&version_path).await.is_err() {
-            log::info!(
-                "downloading zed-remote-server {os} {arch} version {}",
-                release.version
-            );
-            set_status("Downloading remote server", cx);
-            download_remote_server_binary(&version_path, release, client).await?;
-        }
+        let platform_dir = paths::remote_servers_dir()
+            .join(release_channel.dev_name())
+            .join(format!("{os}-{arch}"));
+        let cached_path = version
+            .as_ref()
+            .map(|version| platform_dir.join(format!("{}.gz", release_version(version.clone()))));
+        let version_path = if let Some(cached_path) = cached_path
+            && fs::metadata(&cached_path)
+                .await
+                .is_ok_and(|metadata| metadata.is_file())
+        {
+            cached_path
+        } else {
+            let this = cx.update(|cx| {
+                cx.default_global::<GlobalAutoUpdate>()
+                    .0
+                    .clone()
+                    .context("auto-update not initialized")
+            })?;
+            set_status("Fetching remote server release", cx);
+            let release =
+                Self::remote_server_release(&this, release_channel, version, os, arch, cx).await?;
+            let version_path = platform_dir.join(format!("{}.gz", release.version));
+            if !fs::metadata(&version_path)
+                .await
+                .is_ok_and(|metadata| metadata.is_file())
+            {
+                fs::create_dir_all(&platform_dir).await?;
+                let client = this.read_with(cx, |this, _| this.client.http_client());
+                let executor = cx.background_executor().clone();
+                set_status("Downloading remote server", cx);
+                remote_server_download::download(
+                    client.as_ref(),
+                    &release.url,
+                    &version_path,
+                    |delay| executor.timer(delay),
+                    |written, total| {
+                        let written = format_file_size(written, false);
+                        let progress = match total {
+                            Some(total) => {
+                                format!("{written} / {}", format_file_size(total, false))
+                            }
+                            None => written,
+                        };
+                        set_status(&format!("Downloading remote server ({progress})"), cx);
+                    },
+                )
+                .await?;
+            }
+            version_path
+        };
 
         if let Err(error) =
             cleanup_remote_server_cache(&platform_dir, &version_path, REMOTE_SERVER_CACHE_LIMIT)
@@ -667,11 +686,49 @@ impl AutoUpdater {
                 .context("auto-update not initialized")
         })?;
 
-        let release =
-            Self::get_release_asset(&this, channel, version, "zed-remote-server", os, arch, cx)
-                .await?;
+        let release = Self::remote_server_release(&this, channel, version, os, arch, cx).await?;
 
         Ok(Some(release.url))
+    }
+
+    async fn remote_server_release(
+        this: &Entity<Self>,
+        channel: ReleaseChannel,
+        version: Option<Version>,
+        os: &str,
+        arch: &str,
+        cx: &mut AsyncApp,
+    ) -> Result<ReleaseAsset> {
+        let mirror = match env::var(REMOTE_SERVER_DOWNLOAD_BASE_URL) {
+            Ok(mirror) => mirror,
+            Err(env::VarError::NotPresent) => {
+                return Self::get_release_asset(
+                    this,
+                    channel,
+                    version,
+                    "zed-remote-server",
+                    os,
+                    arch,
+                    cx,
+                )
+                .await;
+            }
+            Err(error) => return Err(error).context(REMOTE_SERVER_DOWNLOAD_BASE_URL),
+        };
+        let version = match version {
+            Some(version) => release_version(version).to_string(),
+            None => {
+                Self::get_release_asset(this, channel, None, "zed-remote-server", os, arch, cx)
+                    .await?
+                    .version
+            }
+        };
+        let url = remote_server_mirror_url(&mirror, channel, &version, os, arch)
+            .context(REMOTE_SERVER_DOWNLOAD_BASE_URL)?;
+        Ok(ReleaseAsset {
+            version,
+            url: url.into(),
+        })
     }
 
     async fn get_release_asset(
@@ -695,13 +752,9 @@ impl AutoUpdater {
             (None, None, None)
         };
 
-        let version = if let Some(mut version) = version {
-            version.pre = semver::Prerelease::EMPTY;
-            version.build = semver::BuildMetadata::EMPTY;
-            version.to_string()
-        } else {
-            "latest".to_string()
-        };
+        let version = version
+            .map(|version| release_version(version).to_string())
+            .unwrap_or_else(|| "latest".to_string());
         let http_client = client.http_client();
 
         let path = format!("/releases/{}/{}/asset", release_channel.dev_name(), version,);
@@ -996,24 +1049,39 @@ impl AutoUpdater {
     }
 }
 
-async fn download_remote_server_binary(
-    target_path: &PathBuf,
-    release: ReleaseAsset,
-    client: Arc<HttpClientWithUrl>,
-) -> Result<()> {
-    let temp = tempfile::Builder::new().tempfile_in(remote_servers_dir())?;
-    let mut temp_file = File::create(&temp).await?;
+fn release_version(mut version: Version) -> Version {
+    version.pre = semver::Prerelease::EMPTY;
+    version.build = semver::BuildMetadata::EMPTY;
+    version
+}
 
-    let mut response = client.get(&release.url, Default::default(), true).await?;
+fn remote_server_mirror_url(
+    base_url: &str,
+    channel: ReleaseChannel,
+    version: &str,
+    os: &str,
+    arch: &str,
+) -> Result<Url> {
+    let mut url = Url::parse(base_url)?;
     anyhow::ensure!(
-        response.status().is_success(),
-        "failed to download remote server release: {:?}",
-        response.status()
+        matches!(url.scheme(), "http" | "https")
+            && url.host().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "Expected an HTTP(S) base URL without credentials, query, or fragment"
     );
-    smol::io::copy(response.body_mut(), &mut temp_file).await?;
-    smol::fs::rename(&temp, &target_path).await?;
-
-    Ok(())
+    let extension = if os == "windows" { "zip" } else { "gz" };
+    url.path_segments_mut()
+        .map_err(|_| anyhow::anyhow!("Mirror URL does not support path segments"))?
+        .pop_if_empty()
+        .extend([
+            channel.dev_name(),
+            version,
+            &format!("zed-remote-server-{os}-{arch}.{extension}"),
+        ]);
+    Ok(url)
 }
 
 async fn cleanup_remote_server_cache(
@@ -1382,6 +1450,36 @@ mod tests {
 
     pub(super) struct InstallOverride(pub Rc<dyn Fn(&Path, &AsyncApp) -> Result<Option<PathBuf>>>);
     impl Global for InstallOverride {}
+
+    #[test]
+    fn test_remote_server_mirror_paths() {
+        let version = release_version("1.29.3-rc.1+stable.395".parse().unwrap()).to_string();
+        let linux = remote_server_mirror_url(
+            "https://mirror.example.com/zed/",
+            ReleaseChannel::Stable,
+            &version,
+            "linux",
+            "x86_64",
+        )
+        .unwrap();
+        assert_eq!(
+            linux.as_str(),
+            "https://mirror.example.com/zed/stable/1.29.3/zed-remote-server-linux-x86_64.gz"
+        );
+
+        let windows = remote_server_mirror_url(
+            "https://mirror.example.com/zed",
+            ReleaseChannel::Preview,
+            &version,
+            "windows",
+            "aarch64",
+        )
+        .unwrap();
+        assert_eq!(
+            windows.as_str(),
+            "https://mirror.example.com/zed/preview/1.29.3/zed-remote-server-windows-aarch64.zip"
+        );
+    }
 
     #[gpui::test]
     fn test_auto_update_defaults_to_true(cx: &mut TestAppContext) {

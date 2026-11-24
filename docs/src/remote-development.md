@@ -249,6 +249,22 @@ llvm-objcopy --strip-debug target/x86_64-unknown-linux-musl/release/remote-serve
 
 If you do this, you must upload it to `~/.zed_server/zed-remote-server-{RELEASE_CHANNEL}-{VERSION}` on the server, for example `~/.zed_server/zed-remote-server-stable-0.217.3+stable.105.80433cb239e868271457ac376673a5f75bc4adb1`. The version must exactly match the version of Zed itself you are using.
 
+### Downloading from a mirror
+
+Set `ZED_REMOTE_SERVER_DOWNLOAD_BASE_URL` in the environment that launches Zed to use a trusted mirror for remote server archives. For example, with the base URL `https://mirror.example.com/zed`, Zed Stable 1.29.3 downloads the Linux x86-64 archive from `https://mirror.example.com/zed/stable/1.29.3/zed-remote-server-linux-x86_64.gz`.
+
+Serve the original release archives under `<channel>/<version>/<archive-name>`. Windows server archives use `.zip`. Other server archives use `.gz`. To support resuming an interrupted local download, serve byte ranges and a strong ETag. Nightly builds still contact Zed's release service to resolve the latest version.
+
+### Using a local copy of the archive
+
+For WSL or SSH with `"upload_binary_over_ssh": true`, you can place the release archive in Zed's local cache ahead of time. For Stable and Preview, this works without access to the release service.
+
+1. Get the original server archive for your Zed release and the remote machine's operating system and architecture from [Zed's releases](https://github.com/zed-industries/zed/releases).
+2. Find Zed's local data folder. On Windows, this is `%LOCALAPPDATA%\Zed`. On macOS, it is `~/Library/Application Support/Zed`. On Linux and FreeBSD, it is `$XDG_DATA_HOME/zed` (default `~/.local/share/zed`).
+3. Save the archive in `remote_servers/<channel>/<os>-<arch>/<version>.gz` under that folder. Use the release number without build metadata and keep the cache filename's `.gz` suffix even for a Windows server's ZIP archive. For example, for Zed Stable 1.29.3 and x86-64 WSL, use `%LOCALAPPDATA%\Zed\remote_servers\stable\linux-x86_64\1.29.3.gz`.
+
+Zed uses this cache entry without checking a checksum or signature. Use an archive from a source you trust.
+
 ## Maintaining the SSH connection
 
 Once the server is initialized, Zed will create new SSH connections (reusing the existing ControlMaster) to run the remote development server.

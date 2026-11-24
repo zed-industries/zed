@@ -12,7 +12,7 @@ use gpui::{AppContext, AsyncApp, Entity, PromptLevel, WindowHandle};
 use project::{ProjectHost, trusted_worktrees};
 use remote::{
     ConnectionState, DockerConnectionOptions, Interactive, RemoteClient, RemoteConnection,
-    RemoteConnectionOptions, SshConnectionOptions,
+    RemoteConnectionOptions, RemoteServerDownloadError, SshConnectionOptions,
 };
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
@@ -328,17 +328,7 @@ pub async fn open_remote_project(
                     .update(cx, |_, window, cx| {
                         window.prompt(
                             PromptLevel::Critical,
-                            match connection_options {
-                                RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
-                                RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                RemoteConnectionOptions::Docker(_) => {
-                                    "Failed to connect to Dev Container"
-                                }
-                                #[cfg(any(test, feature = "test-support"))]
-                                RemoteConnectionOptions::Mock(_) => {
-                                    "Failed to connect to mock server"
-                                }
-                            },
+                            connection_error_title(&connection_options, &e),
                             Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],
                             cx,
@@ -389,17 +379,7 @@ pub async fn open_remote_project(
                     .update(cx, |_, window, cx| {
                         window.prompt(
                             PromptLevel::Critical,
-                            match connection_options {
-                                RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
-                                RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                RemoteConnectionOptions::Docker(_) => {
-                                    "Failed to connect to Dev Container"
-                                }
-                                #[cfg(any(test, feature = "test-support"))]
-                                RemoteConnectionOptions::Mock(_) => {
-                                    "Failed to connect to mock server"
-                                }
-                            },
+                            connection_error_title(&connection_options, &e),
                             Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],
                             cx,
@@ -435,6 +415,23 @@ pub async fn open_remote_project(
     }
 
     Ok(window)
+}
+
+fn connection_error_title(
+    options: &RemoteConnectionOptions,
+    error: &anyhow::Error,
+) -> &'static str {
+    if error.is::<RemoteServerDownloadError>() {
+        return "Failed to download remote server";
+    }
+
+    match options {
+        RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
+        RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+        RemoteConnectionOptions::Docker(_) => "Failed to connect to Dev Container",
+        #[cfg(any(test, feature = "test-support"))]
+        RemoteConnectionOptions::Mock(_) => "Failed to connect to mock server",
+    }
 }
 
 pub fn navigate_to_positions(

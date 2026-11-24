@@ -383,6 +383,23 @@ impl ConnectionIdentifier {
     }
 }
 
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("Failed to download remote server")]
+pub struct RemoteServerDownloadError(#[source] Arc<dyn std::error::Error + Send + Sync>);
+
+impl RemoteServerDownloadError {
+    pub fn wrap(error: anyhow::Error) -> anyhow::Error {
+        Self(Arc::from(error.into_boxed_dyn_error())).into()
+    }
+}
+
+fn clone_connection_error(error: &anyhow::Error) -> anyhow::Error {
+    if let Some(error) = error.downcast_ref::<RemoteServerDownloadError>() {
+        return error.clone().into();
+    }
+    error.cloned()
+}
+
 pub async fn connect(
     connection_options: RemoteConnectionOptions,
     delegate: Arc<dyn RemoteClientDelegate>,
@@ -394,7 +411,7 @@ pub async fn connect(
         })
     })
     .await
-    .map_err(|e| e.cloned())
+    .map_err(|error| clone_connection_error(&error))
 }
 
 /// Returns `true` if the global [`ConnectionPool`] already has a live
@@ -712,7 +729,7 @@ impl RemoteClient {
                         )
                     })
                     .await
-                    .map_err(|error| error.cloned())?;
+                    .map_err(|error| clone_connection_error(&error))?;
 
                 let io_task = remote_connection.start_proxy(
                     unique_identifier,
@@ -2065,6 +2082,20 @@ mod tests {
     use crate::transport::mock::{MockConnection, MockConnectionRegistry, MockDelegate};
     use gpui::TestAppContext;
     use rpc::{ErrorCodeExt, proto::ErrorCode};
+
+    #[test]
+    fn test_remote_server_download_error_survives_connection_pool() {
+        let detail = "Downloaded 3 of 6 bytes from https://example.com/zed-remote-server.gz";
+        let error = RemoteServerDownloadError::wrap(anyhow!("connection reset").context(detail))
+            .context("failed ensuring server binary");
+
+        let cloned = clone_connection_error(&error);
+        assert!(cloned.is::<RemoteServerDownloadError>());
+        assert_eq!(
+            format!("{cloned:#}"),
+            format!("Failed to download remote server: {detail}: connection reset")
+        );
+    }
 
     #[test]
     fn test_ssh_display_name_prefers_nickname() {
