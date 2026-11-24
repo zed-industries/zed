@@ -583,6 +583,40 @@ mod tests {
     }
 
     #[test]
+    fn displacement_map_with_layer_wider_than_filter_region_does_not_panic() -> Result<()> {
+        let renderer = SvgRenderer::new(Arc::new(()));
+        let image = renderer.render_single_frame(
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="800" height="533.333"><filter id="f" x="-5" y="-5" width="100%" height="100%" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-color="#808080" result="map"/><feDisplacementMap in="SourceGraphic" in2="map" scale="5" xChannelSelector="R" yChannelSelector="G"/></filter><rect width="8" height="8" transform="translate(557.05 436.333)" filter="url(#f)"/></svg>"##,
+            1.,
+        )?;
+
+        let size = image.size(0);
+        assert_eq!(size, Size::new(DevicePixels(1600), DevicePixels(1066)));
+        let rect_center_alpha = (880 * size.width.0 as usize + 1122) * 4 + 3;
+        assert_eq!(
+            image.as_bytes(0).map(|bytes| bytes[rect_center_alpha]),
+            Some(255)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn renders_gzip_compressed_svg() -> Result<()> {
+        let svgz = [
+            0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xb3, 0x29, 0x2e, 0x4b,
+            0x57, 0xa8, 0xc8, 0xcd, 0xc9, 0x2b, 0xb6, 0x55, 0xca, 0x28, 0x29, 0x29, 0xb0, 0xd2,
+            0xd7, 0x2f, 0x2f, 0x2f, 0xd7, 0x2b, 0x37, 0xd6, 0xcb, 0x2f, 0x4a, 0xd7, 0x37, 0x32,
+            0x30, 0x30, 0xd0, 0x07, 0xaa, 0x50, 0x52, 0x28, 0xcf, 0x4c, 0x29, 0xc9, 0xb0, 0x55,
+            0x32, 0x56, 0x52, 0xc8, 0x48, 0xcd, 0x4c, 0xcf, 0x28, 0xb1, 0x55, 0x32, 0x52, 0xd2,
+            0xb7, 0x03, 0x00, 0x25, 0x08, 0xdc, 0x66, 0x3e, 0x00, 0x00, 0x00,
+        ];
+        let image = SvgRenderer::new(Arc::new(())).render_single_frame(&svgz, 1.)?;
+
+        assert_eq!(image.size(0), Size::new(DevicePixels(6), DevicePixels(4)));
+        Ok(())
+    }
+
+    #[test]
     fn measured_text_width_matches_rasterized_advance() -> Result<()> {
         let renderer = SvgRenderer::new(Arc::new(BundledFonts));
         let font = SvgTextFont {
