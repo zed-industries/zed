@@ -70,6 +70,7 @@ fs = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+project = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
