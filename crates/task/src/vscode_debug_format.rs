@@ -3,10 +3,10 @@ use serde::Deserialize;
 use util::ResultExt as _;
 
 use crate::{
-    DebugScenario, DebugTaskFile, EnvVariableReplacer, TcpArgumentsTemplate, VariableName,
+    BuildTaskDefinition, DebugScenario, DebugTaskFile, EnvVariableReplacer, TcpArgumentsTemplate,
+    VariableName,
 };
 
-// TODO support preLaunchTask linkage with other tasks
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct VsCodeDebugTaskDefinition {
@@ -14,6 +14,8 @@ struct VsCodeDebugTaskDefinition {
     name: String,
     #[serde(default)]
     port: Option<u16>,
+    #[serde(default)]
+    pre_launch_task: Option<String>,
     #[serde(flatten)]
     other_attributes: serde_json::Value,
 }
@@ -31,9 +33,13 @@ impl VsCodeDebugTaskDefinition {
                 config.insert("port".to_owned(), port.into());
             }
         }
+        let build = self
+            .pre_launch_task
+            .filter(|task_name| !task_name.is_empty())
+            .map(|task_name| BuildTaskDefinition::ByName(task_name.into()));
         let definition = DebugScenario {
             label: label.into(),
-            build: None,
+            build,
             adapter: adapter.into(),
             tcp_connection: self.port.map(|port| TcpArgumentsTemplate {
                 port: Some(port),
@@ -100,7 +106,7 @@ fn task_type_to_adapter_name(task_type: &str) -> String {
 mod tests {
     use serde_json::json;
 
-    use crate::{DebugScenario, DebugTaskFile, VariableName};
+    use crate::{BuildTaskDefinition, DebugScenario, DebugTaskFile, VariableName};
 
     use super::VsCodeDebugTaskFile;
 
@@ -154,6 +160,59 @@ mod tests {
                 tcp_connection: None,
                 build: None
             }])
+        );
+    }
+
+    #[test]
+    fn test_pre_launch_task_maps_to_build() {
+        let raw = r#"
+            {
+                "version": "0.2.0",
+                "configurations": [
+                    {
+                        "name": "Debug with build",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/app.js",
+                        "preLaunchTask": "build"
+                    },
+                    {
+                        "name": "Debug with empty build",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/app.js",
+                        "preLaunchTask": ""
+                    }
+                ]
+            }
+        "#;
+        let parsed: VsCodeDebugTaskFile =
+            serde_json_lenient::from_str(raw).expect("deserializing launch.json");
+        let zed = DebugTaskFile::try_from(parsed).expect("converting to Zed debug templates");
+
+        let expected_config = json!({
+            "request": "launch",
+            "program": "${ZED_WORKTREE_ROOT}/app.js",
+            "type": "node",
+        });
+        pretty_assertions::assert_eq!(
+            zed,
+            DebugTaskFile(vec![
+                DebugScenario {
+                    label: "Debug with build".into(),
+                    adapter: "JavaScript".into(),
+                    config: expected_config.clone(),
+                    tcp_connection: None,
+                    build: Some(BuildTaskDefinition::ByName("build".into())),
+                },
+                DebugScenario {
+                    label: "Debug with empty build".into(),
+                    adapter: "JavaScript".into(),
+                    config: expected_config,
+                    tcp_connection: None,
+                    build: None,
+                },
+            ])
         );
     }
 
