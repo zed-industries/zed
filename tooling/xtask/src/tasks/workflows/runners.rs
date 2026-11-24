@@ -17,6 +17,9 @@ pub const MAC_DEFAULT: Runner = Runner("namespace-profile-mac-large");
 pub const MAC_BUNDLER: Runner = Runner("namespace-profile-mac-large-xcode26");
 pub const MAC_SMALL: Runner = Runner("namespace-profile-mac-small");
 pub const WINDOWS_DEFAULT: Runner = Runner("self-32vcpu-windows-2022");
+// GitHub-hosted. The only runner whose Windows build has the Process Security
+// Environment API that the Windows sandbox is built on.
+pub const WINDOWS_11_ARM: Runner = Runner("windows-11-arm");
 
 pub struct Runner(&'static str);
 

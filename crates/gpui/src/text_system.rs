@@ -652,6 +652,11 @@ impl WindowTextSystem {
         }
     }
 
+    /// Changes whenever fonts are added, which can change how any text is shaped.
+    pub(crate) fn font_generation(&self) -> usize {
+        self.text_system.font_generation.load(Ordering::Acquire)
+    }
+
     pub(crate) fn layout_index(&self) -> LineLayoutIndex {
         self.line_layout_cache.layout_index()
     }
@@ -662,6 +667,11 @@ impl WindowTextSystem {
 
     pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
         self.line_layout_cache.truncate_layouts(index)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_frame_wrapped_line_count(&self) -> usize {
+        self.line_layout_cache.last_frame_wrapped_line_count()
     }
 
     /// Shape the given line, at the given font_size, for painting to the screen.

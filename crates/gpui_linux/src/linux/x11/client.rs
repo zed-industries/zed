@@ -809,7 +809,7 @@ impl X11Client {
                     window.refresh(RequestFrameOptions {
                         require_presentation: true,
                         force_render: false,
-                        signal_at: None,
+                        signal_at: PlatformFrameSignal::capture(Instant::now),
                         signal_source: FrameRequestSource::NativeCallback,
                     });
                 }

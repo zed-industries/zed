@@ -16,11 +16,11 @@ Java language support in Zed is provided by:
 You will need to install a Java runtime (OpenJDK).
 
 - macOS: `brew install openjdk`
-- Ubuntu: `sudo add-apt-repository ppa:openjdk-23 && sudo apt-get install openjdk-23`
+- Ubuntu: `sudo apt-get install openjdk-25-jdk`
 - Windows: `choco install openjdk`
 - Arch Linux: `sudo pacman -S jre-openjdk-headless`
 
-Or manually download and install [OpenJDK 23](https://jdk.java.net/23/).
+Or manually download and install [OpenJDK 25](https://jdk.java.net/25/).
 
 ## Extension Install
 
@@ -32,7 +32,7 @@ For the majority of users, Java support should work out of the box.
 
 - It is generally recommended to open projects with the Zed-project root at the Java project root folder (where you would commonly have your `pom.xml` or `build.gradle` file).
 
-- By default the extension will download and run the latest official version of JDTLS for you, but this requires Java version 21 to be available on your system via either the `$JAVA_HOME` environment variable or as a `java(.exe)` executable on your `$PATH`. If your project requires a lower Java version in the environment, you can specify a different JDK to use for running JDTLS via the `java_home` configuration option.
+- By default the extension will download and run the latest official version of JDTLS for you, but this requires Java version 25 to be available on your system via either the `$JAVA_HOME` environment variable or as a `java(.exe)` executable on your `$PATH`. If your project requires a lower Java version in the environment, you can specify a different JDK to use for running JDTLS via the `java_home` configuration option.
 
 - You can provide a **custom launch script for JDTLS**, by adding an executable named `jdtls` (or `jdtls.bat` on Windows) to your `$PATH` environment variable. If this is present, the extension will skip downloading and launching a managed instance and use the one from the environment.
 
@@ -45,7 +45,7 @@ Here is a common `settings.json` including the above mentioned configurations:
   "lsp": {
     "jdtls": {
       "settings": {
-        "java_home": "/path/to/your/JDK21+",
+        "java_home": "/path/to/your/JDK25+",
         "lombok_support": true,
       },
     },

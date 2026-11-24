@@ -89,6 +89,7 @@ In particular, the kernel deals only with IP addresses, but we would like to be 
 - the supervisor records the mapping between `google.com` and the synthetic IP address
 - when the sandboxed process tries to connect to that synthetic IP address, the supervisor can convert it back to `google.com`, and look at the policy to understand how to react (allow, deny, ask)
   - the real DNS lookup also goes through a rebinding check, so I can't grant access to `attacker_controlled_domain.com` and have that grant access to `127.0.0.1` for example
+  - a rule for a host the user knows is on their network (`home.lan`) can opt out of the check for local-network addresses with `NetRule::reaching_local_network`; loopback addresses still need a rule of their own
 
 There is then a relay, that maps these synthetic IP addresses outside the sandbox. This lives in the supervisor. It creates real connections to the actual IP addresses for the domains (using the system DNS resolver). So when it succeeds, there are two legs:
 - sandbox <-> supervisor

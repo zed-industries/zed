@@ -77,6 +77,9 @@ pub(crate) fn run_tests() -> Workflow {
             .then(run_platform_tests(Platform::Mac)),
         should_run_tests
             .and_not_in_merge_queue()
+            .then(run_sandbox_tests_windows_arm()),
+        should_run_tests
+            .and_not_in_merge_queue()
             .then(miri_scheduler()),
         should_run_tests.and_not_in_merge_queue().then(doctests()),
         should_run_tests
@@ -464,7 +467,7 @@ fn check_style() -> NamedJob {
 
 fn check_dependencies() -> NamedJob {
     fn install_cargo_shear() -> Step<Use> {
-        steps::taiki_install_action("cargo-shear@1.13.4")
+        steps::taiki_install_action("cargo-shear@1.14.1")
     }
 
     fn run_cargo_shear() -> Step<Run> {
@@ -731,6 +734,46 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
             .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
     }
+}
+
+/// Runs the `sandbox` crate's tests on Windows 11, which the main Windows
+/// runner (Windows Server 2022) can't stand in for: the Process Security
+/// Environment API doesn't exist there, so tests that need it skip themselves.
+fn run_sandbox_tests_windows_arm() -> NamedJob {
+    // Fails the job if the runner image ever loses the API, rather than letting
+    // the tests go back to skipping themselves and reporting a pass.
+    fn require_process_security_environment() -> Step<Run> {
+        named::pwsh(indoc::indoc! {r#"
+            Add-Type -Namespace Zed -Name Kernel32 -MemberDefinition @'
+            [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+            public static extern IntPtr LoadLibraryExW(string name, IntPtr file, uint flags);
+            [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+            public static extern IntPtr GetProcAddress(IntPtr module, string name);
+            '@
+            $loadLibrarySearchSystem32 = 0x800
+            $module = [Zed.Kernel32]::LoadLibraryExW("processmodel.dll", [IntPtr]::Zero, $loadLibrarySearchSystem32)
+            if ($module -eq [IntPtr]::Zero) {
+                throw "processmodel.dll could not be loaded on Windows build $([System.Environment]::OSVersion.Version)"
+            }
+            if ([Zed.Kernel32]::GetProcAddress($module, "CreateProcessSecurityEnvironment") -eq [IntPtr]::Zero) {
+                throw "Windows build $([System.Environment]::OSVersion.Version) does not export CreateProcessSecurityEnvironment"
+            }
+        "#})
+    }
+
+    fn run_sandbox_tests() -> Step<Run> {
+        named::pwsh("cargo test --locked --package sandbox")
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::WINDOWS_11_ARM)
+            .add_step(steps::checkout_repo())
+            .add_step(require_process_security_environment())
+            .add_step(steps::setup_cargo_config(Platform::Windows))
+            .add_step(run_sandbox_tests())
+            .add_step(steps::cleanup_cargo_config(Platform::Windows)),
+    )
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
