@@ -1,12 +1,12 @@
 //! A seeded, mutable element tree for benchmarks and tests of GPUI rendering.
 use crate::{
-    AlignItems, AnimationExt as _, AnyElement, App, AppContext as _, AvailableSpace, Bounds,
-    Context, Element, ElementId, Entity, GlobalElementId, HighlightStyle, Hsla, InspectorElementId,
-    InteractiveElement, InteractiveText, IntoElement, JustifyContent, LayoutId, ListAlignment,
-    ListSizingBehavior, ListState, ParentElement, Pixels, Render, Size, StatefulInteractiveElement,
-    StrikethroughStyle, Style, Styled, StyledText, TextAlign, TextOverflow, UnderlineStyle,
-    WhiteSpace, Window, anchored, deferred, div, fill, list, point, px, relative, rems, size,
-    uniform_list, util::FluentBuilder,
+    AlignContent, AlignItems, AlignSelf, AnimationExt as _, AnyElement, App, AppContext as _,
+    AvailableSpace, Bounds, Context, Element, ElementId, Entity, GlobalElementId, HighlightStyle,
+    Hsla, InspectorElementId, InteractiveElement, InteractiveText, IntoElement, JustifyContent,
+    LayoutId, ListAlignment, ListOffset, ListSizingBehavior, ListState, ParentElement, Pixels,
+    Render, Size, StatefulInteractiveElement, StrikethroughStyle, Style, Styled, StyledText,
+    TextAlign, TextOverflow, UnderlineStyle, UniformListScrollHandle, WhiteSpace, Window, anchored,
+    deferred, div, fill, list, point, px, relative, rems, size, uniform_list, util::FluentBuilder,
 };
 use collections::{HashMap, HashSet};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -633,6 +633,7 @@ pub struct RandomizedElementTree {
     entities: Rc<RefCell<RandomizedElementEntities>>,
     scroll_handles: Rc<RefCell<HashMap<u64, crate::ScrollHandle>>>,
     list_states: Rc<RefCell<HashMap<u64, (ListState, u64)>>>,
+    uniform_list_scroll_handles: Rc<RefCell<HashMap<u64, (UniformListScrollHandle, u64)>>>,
     work_counters: Rc<RefCell<RandomizedElementTreeWorkCounters>>,
     config: RandomizedElementTreeConfig,
     rng: StdRng,
@@ -696,6 +697,7 @@ impl RandomizedElementTree {
             entities: Rc::new(RefCell::new(HashMap::default())),
             scroll_handles: Rc::default(),
             list_states: Rc::default(),
+            uniform_list_scroll_handles: Rc::default(),
             work_counters: Rc::new(RefCell::new(RandomizedElementTreeWorkCounters::default())),
             config,
             rng,
@@ -710,6 +712,7 @@ impl RandomizedElementTree {
             entities: Rc::new(RefCell::new(HashMap::default())),
             scroll_handles: Rc::default(),
             list_states: Rc::default(),
+            uniform_list_scroll_handles: Rc::default(),
             work_counters: Rc::new(RefCell::new(RandomizedElementTreeWorkCounters::default())),
             rng: StdRng::seed_from_u64(0),
         }
@@ -1250,6 +1253,7 @@ impl RandomizedElementTree {
                 entities: weak_entities.clone(),
                 scroll_handles: self.scroll_handles.clone(),
                 list_states: self.list_states.clone(),
+                uniform_list_scroll_handles: self.uniform_list_scroll_handles.clone(),
                 work_counters: self.work_counters.clone(),
             });
             self.entities.borrow_mut().insert(element_id, entity);
@@ -1281,6 +1285,7 @@ impl Render for RandomizedElementTree {
                 &entities,
                 &self.scroll_handles,
                 &self.list_states,
+                &self.uniform_list_scroll_handles,
                 &mut work_counters,
                 snapshot.render_options,
             )
@@ -1355,6 +1360,7 @@ struct RandomizedElementEntity {
     entities: Weak<RefCell<RandomizedElementEntities>>,
     scroll_handles: Rc<RefCell<HashMap<u64, crate::ScrollHandle>>>,
     list_states: Rc<RefCell<HashMap<u64, (ListState, u64)>>>,
+    uniform_list_scroll_handles: Rc<RefCell<HashMap<u64, (UniformListScrollHandle, u64)>>>,
     work_counters: Rc<RefCell<RandomizedElementTreeWorkCounters>>,
 }
 
@@ -1374,6 +1380,7 @@ impl Render for RandomizedElementEntity {
                     entities.as_deref(),
                     &self.scroll_handles,
                     &self.list_states,
+                    &self.uniform_list_scroll_handles,
                     &mut work_counters,
                     snapshot.render_options,
                 )
@@ -1491,13 +1498,25 @@ struct RandomizedElementStyle {
 #[derive(Clone, Debug, PartialEq)]
 struct RandomizedRichLayout {
     display_none: bool,
+    grid: Option<(u16, u16)>,
+    grid_span: Option<(u16, u16)>,
+    absolute_inset: Option<(f32, f32)>,
     auto_width: bool,
     auto_height: bool,
+    min_width: Option<f32>,
+    max_width: Option<f32>,
+    min_height: Option<f32>,
+    max_height: Option<f32>,
     rem_sized: bool,
+    rem_size_override: Option<f32>,
     margin: f32,
+    flex_basis: Option<f32>,
     flex_grow: f32,
     flex_shrink: f32,
+    scrollbar_width: Option<f32>,
     align_items: Option<AlignItems>,
+    align_self: Option<AlignSelf>,
+    align_content: Option<AlignContent>,
     justify_content: Option<JustifyContent>,
     aspect_ratio: Option<f32>,
     unkeyed: bool,
@@ -1512,13 +1531,25 @@ impl Default for RandomizedRichLayout {
     fn default() -> Self {
         Self {
             display_none: false,
+            grid: None,
+            grid_span: None,
+            absolute_inset: None,
             auto_width: false,
             auto_height: false,
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
             rem_sized: false,
+            rem_size_override: None,
             margin: 0.0,
+            flex_basis: None,
             flex_grow: 0.0,
             flex_shrink: 0.0,
+            scrollbar_width: None,
             align_items: None,
+            align_self: None,
+            align_content: None,
             justify_content: None,
             aspect_ratio: None,
             unkeyed: false,
@@ -1591,24 +1622,42 @@ impl RandomizedRichLayout {
     }
 
     fn randomize_layout(&mut self, rng: &mut StdRng) {
+        self.grid = rng
+            .random_bool(0.18)
+            .then(|| (rng.random_range(1..=3), rng.random_range(1..=3)));
+        self.grid_span = rng
+            .random_bool(0.15)
+            .then(|| (rng.random_range(1..=2), rng.random_range(1..=2)));
+        self.absolute_inset = rng
+            .random_bool(0.12)
+            .then(|| (rng.random_range(0.0..24.0), rng.random_range(0.0..24.0)));
         self.auto_width = rng.random_bool(0.45);
         self.auto_height = rng.random_bool(0.45);
+        self.min_width = rng.random_bool(0.2).then(|| rng.random_range(0.0..60.0));
+        self.max_width = rng.random_bool(0.2).then(|| rng.random_range(60.0..240.0));
+        self.min_height = rng.random_bool(0.2).then(|| rng.random_range(0.0..50.0));
+        self.max_height = rng.random_bool(0.2).then(|| rng.random_range(50.0..200.0));
         self.rem_sized = rng.random_bool(0.35);
+        self.rem_size_override = rng.random_bool(0.15).then(|| rng.random_range(10.0..22.0));
         self.margin = if rng.random_bool(0.4) {
             rng.random_range(0.0..8.0)
         } else {
             0.0
         };
+        self.flex_basis = rng.random_bool(0.2).then(|| rng.random_range(16.0..120.0));
         self.flex_grow = if rng.random_bool(0.25) { 1.0 } else { 0.0 };
         self.flex_shrink = if rng.random_bool(0.5) { 1.0 } else { 0.0 };
+        self.scrollbar_width = rng.random_bool(0.15).then(|| rng.random_range(0.0..12.0));
         self.align_items = random_align_items(rng);
+        self.align_self = random_align_self(rng);
+        self.align_content = random_align_content(rng);
         self.justify_content = random_justify_content(rng);
         self.aspect_ratio = rng.random_bool(0.15).then(|| rng.random_range(0.5..2.5));
         self.unkeyed = rng.random_bool(0.3);
     }
 
     fn mutate_one_layout_field(&mut self, rng: &mut StdRng) {
-        match rng.random_range(0..10) {
+        match rng.random_range(0..22) {
             0 => self.auto_width = !self.auto_width,
             1 => self.auto_height = !self.auto_height,
             2 => self.rem_sized = !self.rem_sized,
@@ -1630,7 +1679,80 @@ impl RandomizedRichLayout {
                     Some(rng.random_range(0.5..2.5))
                 };
             }
-            _ => self.unkeyed = !self.unkeyed,
+            9 => self.unkeyed = !self.unkeyed,
+            10 => {
+                self.grid = if self.grid.is_some() && rng.random_bool(0.5) {
+                    None
+                } else {
+                    Some((rng.random_range(1..=3), rng.random_range(1..=3)))
+                };
+            }
+            11 => {
+                self.grid_span = if self.grid_span.is_some() && rng.random_bool(0.5) {
+                    None
+                } else {
+                    Some((rng.random_range(1..=2), rng.random_range(1..=2)))
+                };
+            }
+            12 => {
+                self.absolute_inset = if self.absolute_inset.is_some() && rng.random_bool(0.5) {
+                    None
+                } else {
+                    Some((rng.random_range(0.0..24.0), rng.random_range(0.0..24.0)))
+                };
+            }
+            13 => {
+                self.min_width = if self.min_width.is_some() && rng.random_bool(0.5) {
+                    None
+                } else {
+                    Some(rng.random_range(0.0..60.0))
+                };
+            }
+            14 => {
+                self.max_width = if self.max_width.is_some() && rng.random_bool(0.5) {
+                    None
+                } else {
+                    Some(rng.random_range(60.0..240.0))
+                };
+            }
+            15 => {
+                self.min_height = if self.min_height.is_some() && rng.random_bool(0.5) {
+                    None
+                } else {
+                    Some(rng.random_range(0.0..50.0))
+                };
+            }
+            16 => {
+                self.max_height = if self.max_height.is_some() && rng.random_bool(0.5) {
+                    None
+                } else {
+                    Some(rng.random_range(50.0..200.0))
+                };
+            }
+            17 => {
+                self.rem_size_override = if self.rem_size_override.is_some() && rng.random_bool(0.5)
+                {
+                    None
+                } else {
+                    Some(rng.random_range(10.0..22.0))
+                };
+            }
+            18 => {
+                self.flex_basis = if self.flex_basis.is_some() && rng.random_bool(0.5) {
+                    None
+                } else {
+                    Some(rng.random_range(16.0..120.0))
+                };
+            }
+            19 => {
+                self.scrollbar_width = if self.scrollbar_width.is_some() && rng.random_bool(0.5) {
+                    None
+                } else {
+                    Some(rng.random_range(0.0..12.0))
+                };
+            }
+            20 => self.align_self = random_align_self(rng),
+            _ => self.align_content = random_align_content(rng),
         }
     }
 
@@ -1649,17 +1771,31 @@ impl RandomizedRichLayout {
                 color,
             },
             2 => RandomizedMeasuredContent::UniformList {
-                item_count: rng.random_range(0..=4),
+                item_count: rng.random_range(0..=6),
                 item_width: rng.random_range(24.0..80.0),
                 item_height: rng.random_range(10.0..24.0),
+                scroll_offset: if rng.random_bool(0.5) {
+                    rng.random_range(0.0..48.0)
+                } else {
+                    0.0
+                },
                 color,
             },
-            3 => RandomizedMeasuredContent::List {
-                item_count: rng.random_range(0..=4),
-                item_width: rng.random_range(24.0..80.0),
-                item_height: rng.random_range(10.0..24.0),
-                color,
-            },
+            3 => {
+                let item_count = rng.random_range(0..=6);
+                let scroll_index = if item_count > 0 && rng.random_bool(0.5) {
+                    rng.random_range(0..item_count)
+                } else {
+                    0
+                };
+                RandomizedMeasuredContent::List {
+                    item_count,
+                    item_width: rng.random_range(24.0..80.0),
+                    item_height: rng.random_range(10.0..24.0),
+                    scroll_index,
+                    color,
+                }
+            }
             _ => RandomizedMeasuredContent::None,
         };
     }
@@ -1690,21 +1826,28 @@ impl RandomizedRichLayout {
                 item_count,
                 item_width,
                 item_height,
+                scroll_offset,
                 color,
-            } => match rng.random_range(0..4) {
-                0 => *item_count = rng.random_range(0..=4),
+            } => match rng.random_range(0..5) {
+                0 => *item_count = rng.random_range(0..=6),
                 1 => *item_width = rng.random_range(24.0..80.0),
                 2 => *item_height = rng.random_range(10.0..24.0),
+                3 => {
+                    *scroll_offset = rng.random_range(0.0..48.0);
+                    self.list_version += 1;
+                }
                 _ => *color = random_color(rng),
             },
             RandomizedMeasuredContent::List {
                 item_count,
                 item_width,
                 item_height,
+                scroll_index,
                 color,
-            } => match rng.random_range(0..4) {
+            } => match rng.random_range(0..5) {
                 0 => {
-                    *item_count = rng.random_range(0..=4);
+                    *item_count = rng.random_range(0..=6);
+                    *scroll_index = (*scroll_index).min(item_count.saturating_sub(1));
                     self.list_version += 1;
                 }
                 1 => {
@@ -1713,6 +1856,14 @@ impl RandomizedRichLayout {
                 }
                 2 => {
                     *item_height = rng.random_range(10.0..24.0);
+                    self.list_version += 1;
+                }
+                3 => {
+                    *scroll_index = if *item_count > 0 {
+                        rng.random_range(0..*item_count)
+                    } else {
+                        0
+                    };
                     self.list_version += 1;
                 }
                 _ => *color = random_color(rng),
@@ -1745,6 +1896,26 @@ fn random_justify_content(rng: &mut StdRng) -> Option<JustifyContent> {
         1 => Some(JustifyContent::Center),
         2 => Some(JustifyContent::SpaceBetween),
         3 => Some(JustifyContent::FlexEnd),
+        _ => None,
+    }
+}
+
+fn random_align_self(rng: &mut StdRng) -> Option<AlignSelf> {
+    match rng.random_range(0..5) {
+        0 => Some(AlignSelf::FlexStart),
+        1 => Some(AlignSelf::Center),
+        2 => Some(AlignSelf::FlexEnd),
+        3 => Some(AlignSelf::Stretch),
+        _ => None,
+    }
+}
+
+fn random_align_content(rng: &mut StdRng) -> Option<AlignContent> {
+    match rng.random_range(0..5) {
+        0 => Some(AlignContent::FlexStart),
+        1 => Some(AlignContent::Center),
+        2 => Some(AlignContent::SpaceBetween),
+        3 => Some(AlignContent::FlexEnd),
         _ => None,
     }
 }
@@ -1929,14 +2100,76 @@ enum RandomizedMeasuredContent {
         item_count: usize,
         item_width: f32,
         item_height: f32,
+        scroll_offset: f32,
         color: Hsla,
     },
     List {
         item_count: usize,
         item_width: f32,
         item_height: f32,
+        scroll_index: usize,
         color: Hsla,
     },
+}
+
+struct RemSizeScope {
+    rem_size: Pixels,
+    child: AnyElement,
+}
+
+impl Element for RemSizeScope {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let layout_id = window.with_rem_size(Some(self.rem_size), |window| {
+            self.child.request_layout(window, cx)
+        });
+        (layout_id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.with_rem_size(Some(self.rem_size), |window| {
+            self.child.prepaint(window, cx);
+        });
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.with_rem_size(Some(self.rem_size), |window| {
+            self.child.paint(window, cx);
+        });
+    }
 }
 
 struct RandomizedMeasuredLeaf {
@@ -2020,9 +2253,10 @@ impl Element for RandomizedMeasuredLeaf {
 
 /// The texts an element can show. Elements whose number is 1 more than a multiple of 4
 /// show the first; others show text only once a mutation changes their label.
-const LABELS: [&str; 4] = [
+const LABELS: [&str; 5] = [
     "Retained glyphs: abc Ω",
     "Retained glyphs: abc Ω, now with enough words that narrow parents wrap them",
+    "Line one: abc Ω\nLine two wraps when narrow enough",
     "Ω",
     "",
 ];
@@ -2115,6 +2349,7 @@ fn render_node(
     entities: &RandomizedElementEntities,
     scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
     list_states: &RefCell<HashMap<u64, (ListState, u64)>>,
+    uniform_list_scroll_handles: &RefCell<HashMap<u64, (UniformListScrollHandle, u64)>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
     options: RenderOptions,
 ) -> AnyElement {
@@ -2136,6 +2371,7 @@ fn render_node(
         Some(entities),
         scroll_handles,
         list_states,
+        uniform_list_scroll_handles,
         work_counters,
         options,
     )
@@ -2192,6 +2428,7 @@ fn render_node_body(
     entities: Option<&RandomizedElementEntities>,
     scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
     list_states: &RefCell<HashMap<u64, (ListState, u64)>>,
+    uniform_list_scroll_handles: &RefCell<HashMap<u64, (UniformListScrollHandle, u64)>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
     options: RenderOptions,
 ) -> AnyElement {
@@ -2204,19 +2441,76 @@ fn render_node_body(
     let mut base = div();
     base = if rich.display_none {
         base.hidden()
+    } else if let Some((cols, rows)) = rich.grid {
+        base.grid().grid_cols(cols).grid_rows(rows)
     } else {
         base.flex()
     };
+    if let Some((col_span, row_span)) = rich.grid_span {
+        base = base.col_span(col_span).row_span(row_span);
+    }
+    if let Some((top, left)) = rich.absolute_inset {
+        base = base.absolute();
+        if rich.rem_sized {
+            base = base.top(rems(top / 16.0)).left(rems(left / 16.0));
+        } else {
+            base = base.top(px(top)).left(px(left));
+        }
+    }
     base.style().flex_grow = Some(rich.flex_grow);
     base.style().flex_shrink = Some(rich.flex_shrink);
+    if let Some(flex_basis) = rich.flex_basis {
+        if rich.rem_sized {
+            base = base.flex_basis(rems(flex_basis / 16.0));
+        } else {
+            base = base.flex_basis(px(flex_basis));
+        }
+    }
+    if let Some(scrollbar_width) = rich.scrollbar_width {
+        base = base.scrollbar_width(px(scrollbar_width));
+    }
     if let Some(align_items) = rich.align_items {
         base.style().align_items = Some(align_items);
+    }
+    if let Some(align_self) = rich.align_self {
+        base.style().align_self = Some(align_self);
+    }
+    if let Some(align_content) = rich.align_content {
+        base.style().align_content = Some(align_content);
     }
     if let Some(justify_content) = rich.justify_content {
         base.style().justify_content = Some(justify_content);
     }
     if let Some(aspect_ratio) = rich.aspect_ratio {
         base.style().aspect_ratio = Some(aspect_ratio);
+    }
+    if let Some(min_width) = rich.min_width {
+        if rich.rem_sized {
+            base = base.min_w(rems(min_width / 16.0));
+        } else {
+            base = base.min_w(px(min_width));
+        }
+    }
+    if let Some(max_width) = rich.max_width {
+        if rich.rem_sized {
+            base = base.max_w(rems(max_width / 16.0));
+        } else {
+            base = base.max_w(px(max_width));
+        }
+    }
+    if let Some(min_height) = rich.min_height {
+        if rich.rem_sized {
+            base = base.min_h(rems(min_height / 16.0));
+        } else {
+            base = base.min_h(px(min_height));
+        }
+    }
+    if let Some(max_height) = rich.max_height {
+        if rich.rem_sized {
+            base = base.max_h(rems(max_height / 16.0));
+        } else {
+            base = base.max_h(px(max_height));
+        }
     }
     if rich.margin > 0.0 {
         if rich.rem_sized {
@@ -2334,38 +2628,76 @@ fn render_node_body(
                 item_count,
                 item_width,
                 item_height,
+                scroll_offset,
                 color,
-            } => element.child(
-                uniform_list(
-                    ElementId::NamedInteger(
-                        "randomized-uniform-list".into(),
-                        node.id | options.id_generation << ID_GENERATION_SHIFT,
-                    ),
-                    item_count,
-                    move |range, _, _| {
-                        range
-                            .map(|_| div().w(px(item_width)).h(px(item_height)).bg(color))
-                            .collect()
-                    },
+            } => {
+                let scroll_handle = {
+                    let mut handles = uniform_list_scroll_handles.borrow_mut();
+                    let entry = handles.entry(node.id).or_insert_with(|| {
+                        let handle = UniformListScrollHandle::new();
+                        handle
+                            .0
+                            .borrow()
+                            .base_handle
+                            .set_offset(point(px(0.0), px(-scroll_offset)));
+                        (handle, rich.list_version)
+                    });
+                    if entry.1 != rich.list_version {
+                        entry
+                            .0
+                            .0
+                            .borrow()
+                            .base_handle
+                            .set_offset(point(px(0.0), px(-scroll_offset)));
+                        entry.1 = rich.list_version;
+                    }
+                    entry.0.clone()
+                };
+                element.child(
+                    uniform_list(
+                        ElementId::NamedInteger(
+                            "randomized-uniform-list".into(),
+                            node.id | options.id_generation << ID_GENERATION_SHIFT,
+                        ),
+                        item_count,
+                        move |range, _, _| {
+                            range
+                                .map(|_| div().w(px(item_width)).h(px(item_height)).bg(color))
+                                .collect()
+                        },
+                    )
+                    .with_sizing_behavior(ListSizingBehavior::Infer)
+                    .track_scroll(&scroll_handle)
+                    .when(scroll_offset > 0.0, |list| list.max_h(px(32.0))),
                 )
-                .with_sizing_behavior(ListSizingBehavior::Infer),
-            ),
+            }
             RandomizedMeasuredContent::List {
                 item_count,
                 item_width,
                 item_height,
+                scroll_index,
                 color,
             } => {
                 let list_state = {
                     let mut states = list_states.borrow_mut();
                     let entry = states.entry(node.id).or_insert_with(|| {
-                        (
-                            ListState::new(item_count, ListAlignment::Top, px(500.0)),
-                            rich.list_version,
-                        )
+                        let state = ListState::new(item_count, ListAlignment::Top, px(500.0));
+                        if scroll_index > 0 && item_count > 0 {
+                            state.scroll_to(ListOffset {
+                                item_ix: scroll_index.min(item_count - 1),
+                                offset_in_item: px(0.0),
+                            });
+                        }
+                        (state, rich.list_version)
                     });
                     if entry.1 != rich.list_version {
                         entry.0.reset(item_count);
+                        if scroll_index > 0 && item_count > 0 {
+                            entry.0.scroll_to(ListOffset {
+                                item_ix: scroll_index.min(item_count - 1),
+                                offset_in_item: px(0.0),
+                            });
+                        }
                         entry.1 = rich.list_version;
                     }
                     entry.0.clone()
@@ -2378,7 +2710,8 @@ fn render_node_body(
                             .bg(color)
                             .into_any_element()
                     })
-                    .with_sizing_behavior(ListSizingBehavior::Infer),
+                    .with_sizing_behavior(ListSizingBehavior::Infer)
+                    .when(scroll_index > 0, |list| list.max_h(px(32.0))),
                 )
             }
         })
@@ -2441,6 +2774,7 @@ fn render_node_body(
                     entities,
                     scroll_handles,
                     list_states,
+                    uniform_list_scroll_handles,
                     work_counters,
                     options,
                 )
@@ -2450,13 +2784,14 @@ fn render_node_body(
                     None,
                     scroll_handles,
                     list_states,
+                    uniform_list_scroll_handles,
                     work_counters,
                     options,
                 )
             }
         }));
 
-    if keyed {
+    let element = if keyed {
         base.id(ElementId::NamedInteger(
             "randomized-element".into(),
             node.id | options.id_generation << ID_GENERATION_SHIFT,
@@ -2474,6 +2809,16 @@ fn render_node_body(
         .into_any_element()
     } else {
         base.into_any_element()
+    };
+
+    if let Some(rem_size) = rich.rem_size_override {
+        RemSizeScope {
+            rem_size: px(rem_size),
+            child: element,
+        }
+        .into_any_element()
+    } else {
+        element
     }
 }
 
@@ -3043,6 +3388,10 @@ mod tests {
             );
             let rem_size = px(rng.random_range(8.0..24.0));
             let scale_factor = [1.0, 1.25, 1.5, 2.0, 2.5][rng.random_range(0..5)];
+            let mouse_position = point(
+                px(rng.random_range(0.0..WINDOW_SIZE.width.0)),
+                px(rng.random_range(0.0..WINDOW_SIZE.height.0)),
+            );
             for (window, root) in [&cached, &uncached] {
                 match change {
                     0..60 => {
@@ -3058,6 +3407,19 @@ mod tests {
                             window.set_scale_factor(scale_factor)
                         })
                         .expect("window should remain open"),
+                    88..94 => {
+                        cx.update_window(*window, |_, window, cx| {
+                            window.dispatch_event(
+                                crate::PlatformInput::MouseMove(crate::MouseMoveEvent {
+                                    position: mouse_position,
+                                    pressed_button: None,
+                                    modifiers: crate::Modifiers::default(),
+                                }),
+                                cx,
+                            );
+                        })
+                        .expect("window should remain open");
+                    }
                     _ => root.update(cx, |_, cx| cx.notify()),
                 }
             }
