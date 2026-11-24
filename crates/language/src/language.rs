@@ -2028,6 +2028,22 @@ mod tests {
     }
 
     #[test]
+    fn test_text_highlight_cache_does_not_keep_grammar_alive() {
+        let language = rust_lang();
+        let grammar = Arc::downgrade(language.grammar().unwrap());
+        let code = "fn main() {}";
+        let highlights = language.highlight_text_resolved(code, 0..code.len());
+        let memoized = language.highlight_text_resolved(code, 0..code.len());
+        assert!(Arc::ptr_eq(&highlights.runs, &memoized.runs));
+
+        drop((highlights, memoized, language));
+        assert!(
+            grammar.upgrade().is_none(),
+            "cached highlights must not keep their grammar alive"
+        );
+    }
+
+    #[test]
     fn test_with_parser_resets_after_cancellation() {
         use std::ops::ControlFlow;
         use tree_sitter::{Language as TsLanguage, ParseOptions};

@@ -8,7 +8,7 @@ use std::{
     fmt,
     hash::{Hash, Hasher as _},
     ops::Range,
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 pub const MAX_TEXT_HIGHLIGHT_ENTRY_BYTES: usize = MAX_TEXT_HIGHLIGHT_CACHE_BYTES / 8;
@@ -99,13 +99,14 @@ impl TextHighlightCache {
     ) -> Option<ResolvedHighlights> {
         let mut cache = self.0.lock();
         let entry = cache.get(key)?;
-        if !entry.highlights.is_current() {
+        let highlights = entry.highlights()?;
+        if !highlights.is_current() {
             return None;
         }
         if !chunks_match_text(&entry.text, text_chunks) {
             return None;
         }
-        Some(entry.highlights.clone())
+        Some(highlights)
     }
 
     pub fn insert(
@@ -119,7 +120,14 @@ impl TextHighlightCache {
             key,
             TextHighlightEntry {
                 text,
-                highlights: highlights.clone(),
+                sources: highlights
+                    .sources
+                    .iter()
+                    .map(|(grammar, highlight_map)| {
+                        (Arc::downgrade(grammar), highlight_map.clone())
+                    })
+                    .collect(),
+                runs: highlights.runs.clone(),
             },
             cost,
         );
@@ -214,7 +222,23 @@ impl<K: Hash + Eq, V> CostBudgetedLru<K, V> {
 
 struct TextHighlightEntry {
     text: String,
-    highlights: ResolvedHighlights,
+    // The grammar owns this cache, so a strong reference would form a cycle.
+    sources: SmallVec<[(Weak<Grammar>, HighlightMap); 2]>,
+    runs: Arc<[(Range<usize>, HighlightId)]>,
+}
+
+impl TextHighlightEntry {
+    fn highlights(&self) -> Option<ResolvedHighlights> {
+        let sources: SmallVec<[(Arc<Grammar>, HighlightMap); 2]> = self
+            .sources
+            .iter()
+            .map(|(grammar, highlight_map)| Some((grammar.upgrade()?, highlight_map.clone())))
+            .collect::<Option<_>>()?;
+        Some(ResolvedHighlights {
+            sources,
+            runs: self.runs.clone(),
+        })
+    }
 }
 
 fn chunks_match_text<'a>(text: &str, text_chunks: impl Iterator<Item = &'a str>) -> bool {
