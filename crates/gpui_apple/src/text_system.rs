@@ -161,7 +161,12 @@ impl PlatformTextSystem for AppleTextSystem {
 
             let candidate_properties = candidates
                 .iter()
-                .map(|font_id| lock.fonts[font_id.0].properties())
+                .map(|font_id| {
+                    let font = &lock.fonts[font_id.0];
+                    let mut properties = font.properties();
+                    properties.weight = css_weight(font);
+                    properties
+                })
                 .collect::<SmallVec<[_; 4]>>();
 
             let ix = font_kit::matching::find_best_match(
@@ -726,6 +731,40 @@ fn size_from_vector2f(vec: Vector2F) -> Size<f32> {
     size(vec.x(), vec.y())
 }
 
+/// A font's CSS weight, read from Core Text's weight trait on Apple's own
+/// scale: the `NSFontWeight` constants, as WebKit maps them, so Medium (0.23)
+/// is 500. font-kit's scale puts 0.23 at 530, and CSS matching for 500 then
+/// passes the system font's Medium over for its Regular.
+fn css_weight(font: &FontKitFont) -> FontkitWeight {
+    const SCALE: [(f32, f32); 11] = [
+        (-1.0, 1.0),
+        (-0.8, 100.0),
+        (-0.6, 200.0),
+        (-0.4, 300.0),
+        (0.0, 400.0),
+        (0.23, 500.0),
+        (0.3, 600.0),
+        (0.4, 700.0),
+        (0.56, 800.0),
+        (0.62, 900.0),
+        (1.0, 1000.0),
+    ];
+    let traits = font.native_font().all_traits();
+    let Some(weight) = (unsafe { traits.get(kCTFontWeightTrait).downcast::<CFNumber>() })
+        .and_then(|number| number.to_f64())
+    else {
+        return font.properties().weight;
+    };
+    let weight = (weight as f32).clamp(-1.0, 1.0);
+    let upper = SCALE
+        .iter()
+        .position(|&(trait_weight, _)| trait_weight >= weight)
+        .unwrap_or(SCALE.len() - 1)
+        .max(1);
+    let ((t0, w0), (t1, w1)) = (SCALE[upper - 1], SCALE[upper]);
+    FontkitWeight(w0 + (w1 - w0) * (weight - t0) / (t1 - t0))
+}
+
 fn fontkit_weight(value: FontWeight) -> FontkitWeight {
     FontkitWeight(value.0)
 }
@@ -786,6 +825,21 @@ mod tests {
         FontFallbacks, FontFeatures, FontId, FontRun, GlyphId, PlatformTextSystem, font, px,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn test_system_font_weights_pick_their_own_instances() {
+        let fonts = AppleTextSystem::new();
+        let postscript_name = |weight: f32| {
+            let mut font = font(".SystemUIFont");
+            font.weight = gpui::FontWeight(weight);
+            let font_id = fonts.font_id(&font).unwrap();
+            fonts.0.read().postscript_names_by_font_id[&font_id].clone()
+        };
+        assert!(postscript_name(400.).ends_with("-Regular"));
+        assert!(postscript_name(500.).ends_with("-Medium"));
+        assert!(postscript_name(600.).ends_with("-Semibold"));
+        assert!(postscript_name(700.).ends_with("-Bold"));
+    }
 
     #[test]
     fn test_reload_family_with_features_and_fallbacks() {
