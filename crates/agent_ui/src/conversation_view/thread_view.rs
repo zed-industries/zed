@@ -44,7 +44,7 @@ use language_model::{
 };
 use notifications::status_toast::StatusToast;
 use project::ResolvedPath;
-use settings::{update_settings_file, update_settings_file_with_completion};
+use settings::update_settings_file_with_completion;
 use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, Indicator, SpinnerLabel, SpinnerVariant,
     SplitButton, SplitButtonStyle, Tab, ToggleState,
