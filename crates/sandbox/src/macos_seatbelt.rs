@@ -21,6 +21,7 @@
 //! Unix domain sockets for local IPC; those do not permit sending packets to
 //! other machines.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::{io::Write, path::PathBuf};
 
@@ -232,7 +233,9 @@ pub fn wrap_invocation(
 /// any path whose final component matches one of `protected_file_names`.
 /// Paths in `paths_disallowing_reads` can be neither read nor written, except
 /// inside `paths_allowing_reads`, which behave as if none of those covered
-/// them. Unix
+/// them. The directories above a protected path or a path disallowing reads
+/// can't be renamed or removed, and a missing directory above a protected path
+/// can't be created. Unix
 /// domain socket paths in `allowed_unix_socket_paths` are reachable for local
 /// IPC even when IP network access is otherwise blocked. This does not permit
 /// sending packets to other machines. With [`NetworkAccess::LocalhostPort`],
@@ -462,6 +465,55 @@ fn generate_seatbelt_config(
 ; Block protected path writes
 (deny file-write*
     (subpath "{escaped_path}"))
+"#
+        ));
+    }
+
+    // Seatbelt checks the path at each access, so a rule for a path stops
+    // applying once a directory above it is renamed away: the content can be
+    // changed or read at its new location and the directory renamed back.
+    // Renaming a directory away, removing it, and renaming another directory
+    // over it all check `file-write-unlink` on its path, so denying that pins
+    // every directory above a protected path or a path disallowing reads.
+    // `literal` matches only the directory itself, so entries inside it stay
+    // creatable, renamable, and removable.
+    let directories_above = |paths: &mut dyn Iterator<Item = &Path>| -> Result<String> {
+        let directories: BTreeSet<&Path> =
+            paths.flat_map(|path| path.ancestors().skip(1)).collect();
+        let mut literals = String::new();
+        for directory in directories {
+            let escaped_path = escape_sandbox_path(directory)?;
+            literals.push_str(&format!("\n    (literal \"{escaped_path}\")"));
+        }
+        Ok(literals)
+    };
+    let pinned_directories = directories_above(
+        &mut canonical_protected_paths
+            .iter()
+            .map(PathBuf::as_path)
+            .chain(paths_disallowing_reads.iter().copied()),
+    )?;
+    if !pinned_directories.is_empty() {
+        config.push_str(&format!(
+            r#"
+; Block renaming or removing directories that contain restricted paths
+(deny file-write-unlink{pinned_directories})
+"#
+        ));
+    }
+    // Where a directory above a protected path is missing, the command could
+    // supply it as a symlink, or as a directory prepared elsewhere and renamed
+    // into place, with content of its own choosing already at the protected
+    // path. `file-write-create` can't tell those from a new empty directory,
+    // so such a directory can't be created at all. A path disallowing reads
+    // needs no such rule: content supplied that way is the command's own.
+    let directories_above_protected_paths =
+        directories_above(&mut canonical_protected_paths.iter().map(PathBuf::as_path))?;
+    if !directories_above_protected_paths.is_empty() {
+        config.push_str(&format!(
+            r#"
+; Block supplying missing directories that contain protected paths
+(deny file-write-create{directories_above_protected_paths})
 "#
         ));
     }
@@ -1004,6 +1056,294 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&protected_file).unwrap(),
             "target\n"
+        );
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_denies_unlinking_protected_path_ancestors() {
+        let config = generate_seatbelt_config(
+            &[Path::new("/work")],
+            &[
+                Path::new("/work/repo/.git/config"),
+                Path::new("/work/repo/.git/hooks"),
+            ],
+            &[],
+            &[Path::new("/work/secrets/key")],
+            &[],
+            &[],
+            &[],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
+
+        assert!(config.contains(
+            r#"(deny file-write-unlink
+    (literal "/")
+    (literal "/work")
+    (literal "/work/repo")
+    (literal "/work/repo/.git")
+    (literal "/work/secrets"))"#
+        ));
+        assert!(config.contains(
+            r#"(deny file-write-create
+    (literal "/")
+    (literal "/work")
+    (literal "/work/repo")
+    (literal "/work/repo/.git"))"#
+        ));
+    }
+
+    #[test]
+    fn test_sandbox_blocks_moving_protected_paths_by_renaming_an_ancestor() {
+        // Each case renames a directory above the protected paths, writes to
+        // them at the Git directory's moved location, and renames it back.
+        let cases = [
+            ("the Git directory", "repo/.git", "repo/moved", "repo/moved"),
+            ("the repository", "repo", "moved", "moved/.git"),
+            (
+                "the writable root",
+                "../work",
+                "../moved",
+                "../moved/repo/.git",
+            ),
+        ];
+
+        for allow_fs_write in [false, true] {
+            for (description, from, to, moved_git_dir) in cases {
+                let temp_dir = tempfile::tempdir().unwrap();
+                // Canonicalize so policy paths resolve the macOS `/var` ->
+                // `/private/var` symlink that Seatbelt matches against.
+                let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+                let git_dir = work.join("repo/.git");
+                std::fs::create_dir_all(git_dir.join("hooks")).unwrap();
+                std::fs::write(git_dir.join("config"), "original\n").unwrap();
+                std::fs::write(git_dir.join("hooks/pre-commit"), "original\n").unwrap();
+
+                let output = run_sandboxed_shell(
+                    &work,
+                    &[work.join("repo/.git/config"), work.join("repo/.git/hooks")],
+                    &[],
+                    allow_fs_write,
+                    &format!(
+                        "echo ok > ordinary; mv {from} {to}; \
+                         echo evil > {moved_git_dir}/config; \
+                         echo evil > {moved_git_dir}/hooks/pre-commit; \
+                         mv {to} {from}"
+                    ),
+                );
+
+                let context = format!(
+                    "renaming {description} (allow_fs_write: {allow_fs_write}): stderr={}",
+                    String::from_utf8_lossy(&output.stderr),
+                );
+                assert_eq!(
+                    std::fs::read_to_string(work.join("ordinary"))
+                        .ok()
+                        .as_deref(),
+                    Some("ok\n"),
+                    "ordinary file should stay writable: {context}"
+                );
+                for protected_file in ["config", "hooks/pre-commit"] {
+                    assert_eq!(
+                        std::fs::read_to_string(git_dir.join(protected_file))
+                            .ok()
+                            .as_deref(),
+                        Some("original\n"),
+                        "{protected_file} should be untouched: {context}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_sandbox_blocks_supplying_a_missing_directory_above_a_protected_path() {
+        // Nothing above the protected path exists yet. Each case tries to
+        // put content prepared elsewhere where the protected path will be
+        // looked up.
+        let prepare = "mkdir -p evil/b/hooks && echo evil > evil/b/hooks/pre-commit";
+        let cases = [
+            ("a symlink", "ln -s evil a"),
+            ("a renamed directory", "mv evil a"),
+            ("a renamed symlink", "ln -s evil link && mv link a"),
+            ("a symlink one level down", "mkdir a && ln -s ../evil/b a/b"),
+            (
+                "a renamed directory one level down",
+                "mkdir a && mv evil/b a/b",
+            ),
+        ];
+
+        for allow_fs_write in [false, true] {
+            for (description, attempt) in cases {
+                let temp_dir = tempfile::tempdir().unwrap();
+                let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+                std::fs::create_dir(&work).unwrap();
+
+                let output = run_sandboxed_shell(
+                    &work,
+                    &[work.join("a/b/hooks")],
+                    &[],
+                    allow_fs_write,
+                    &format!("{prepare}; {attempt}"),
+                );
+
+                assert!(
+                    !work.join("a/b/hooks/pre-commit").exists(),
+                    "supplying {description} (allow_fs_write: {allow_fs_write}) should not \
+                     put a hook at the protected path: stderr={}",
+                    String::from_utf8_lossy(&output.stderr),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_sandbox_blocks_reading_a_hidden_path_by_renaming_an_ancestor() {
+        for allow_fs_write in [false, true] {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+            std::fs::create_dir_all(work.join("private")).unwrap();
+            std::fs::write(work.join("private/secret"), "secret\n").unwrap();
+
+            let output = run_sandboxed_shell(
+                &work,
+                &[],
+                &[work.join("private/secret")],
+                allow_fs_write,
+                "echo ok > private/ordinary; mv private moved; cat moved/secret > leaked",
+            );
+
+            let context = format!(
+                "allow_fs_write: {allow_fs_write}: stderr={}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+            assert_eq!(
+                std::fs::read_to_string(work.join("private/ordinary"))
+                    .ok()
+                    .as_deref(),
+                Some("ok\n"),
+                "a sibling of the hidden path should stay writable: {context}"
+            );
+            assert_ne!(
+                std::fs::read_to_string(work.join("leaked")).ok().as_deref(),
+                Some("secret\n"),
+                "the hidden file should not be readable: {context}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sandbox_blocks_creating_protected_path_whose_parents_are_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+        std::fs::create_dir(&work).unwrap();
+        // Name the protected path through a symlink, so it only matches the path
+        // the command writes if its missing components are resolved through the
+        // nearest existing ancestor.
+        let link = work.with_file_name("link");
+        std::os::unix::fs::symlink(&work, &link).unwrap();
+        let protected =
+            crate::HostFilesystemLocation::capture(link.join("a/b/c")).expect("capture a/b/c");
+
+        let output = run_sandboxed_shell(
+            &work,
+            &[protected.macos_canonical_path().to_path_buf()],
+            &[],
+            false,
+            "echo ok > sibling; mkdir -p a/b && echo x > a/b/c",
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            std::fs::read_to_string(work.join("sibling"))
+                .ok()
+                .as_deref(),
+            Some("ok\n"),
+            "sibling should stay writable: stderr={stderr}"
+        );
+        assert!(
+            !work.join("a/b/c").exists(),
+            "protected path should not be created: stderr={stderr}"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_allows_git_operations_with_protected_git_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let work = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let repo = work.join("repo");
+        let linked = work.join("linked");
+        let git = |directory: &Path, arguments: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(arguments)
+                .current_dir(directory)
+                .envs(GIT_TEST_ENVIRONMENT)
+                .output()
+                .expect("failed to run git");
+            assert!(
+                output.status.success(),
+                "git {arguments:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "--quiet", "--initial-branch=main"]);
+        std::fs::write(repo.join("file.txt"), "one\n").unwrap();
+        git(&repo, &["add", "file.txt"]);
+        git(&repo, &["commit", "--quiet", "-m", "initial"]);
+
+        let main_protected_paths = [repo.join(".git/config"), repo.join(".git/hooks")];
+        let output = run_sandboxed_shell(
+            &work,
+            &main_protected_paths,
+            &[],
+            false,
+            "git init --quiet --initial-branch=main nested \
+             && cd repo \
+             && echo two >> file.txt \
+             && git add file.txt \
+             && git commit --quiet -m second \
+             && git branch feature \
+             && git pack-refs --all \
+             && git gc --quiet \
+             && git worktree add --quiet ../linked feature",
+        );
+        assert!(
+            output.status.success(),
+            "git should work in a checkout with protected metadata: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(work.join("nested/.git/HEAD").exists());
+        assert!(repo.join(".git/packed-refs").exists());
+        assert!(linked.join("file.txt").exists());
+
+        let linked_git_dir = repo.join(".git/worktrees/linked");
+        let mut linked_protected_paths = main_protected_paths.to_vec();
+        linked_protected_paths.extend([
+            linked.join(".git"),
+            linked_git_dir.join("commondir"),
+            linked_git_dir.join("gitdir"),
+            linked_git_dir.join("config"),
+            linked_git_dir.join("hooks"),
+        ]);
+        let output = run_sandboxed_shell(
+            &work,
+            &linked_protected_paths,
+            &[],
+            false,
+            "cd linked \
+             && echo three >> file.txt \
+             && git commit --quiet -am third \
+             && git worktree add --quiet -b another ../another",
+        );
+        assert!(
+            output.status.success(),
+            "git should work in a linked worktree with protected metadata: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(linked.join("file.txt")).unwrap(),
+            "one\ntwo\nthree\n"
         );
     }
 
@@ -1631,5 +1971,52 @@ mod tests {
             !forbidden_file.exists(),
             "file should not have been created"
         );
+    }
+
+    /// Isolates `git` from the user's global and system configuration, which
+    /// could enable commit signing or hooks that need access outside the test.
+    const GIT_TEST_ENVIRONMENT: [(&str, &str); 6] = [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_AUTHOR_NAME", "Test"),
+        ("GIT_AUTHOR_EMAIL", "test@example.com"),
+        ("GIT_COMMITTER_NAME", "Test"),
+        ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ];
+
+    fn run_sandboxed_shell(
+        writable_directory: &Path,
+        protected_paths: &[PathBuf],
+        paths_disallowing_reads: &[PathBuf],
+        allow_fs_write: bool,
+        script: &str,
+    ) -> std::process::Output {
+        let protected_paths: Vec<&Path> = protected_paths.iter().map(PathBuf::as_path).collect();
+        let paths_disallowing_reads: Vec<&Path> = paths_disallowing_reads
+            .iter()
+            .map(PathBuf::as_path)
+            .collect();
+        let (program, args, _config_file) = wrap_invocation(
+            "/bin/sh",
+            &["-c".to_string(), script.to_string()],
+            &[writable_directory],
+            &protected_paths,
+            &[],
+            &paths_disallowing_reads,
+            &[],
+            &[],
+            &[],
+            SandboxPermissions {
+                network: NetworkAccess::None,
+                allow_fs_write,
+            },
+        )
+        .unwrap();
+        std::process::Command::new(&program)
+            .args(&args)
+            .current_dir(writable_directory)
+            .envs(GIT_TEST_ENVIRONMENT)
+            .output()
+            .expect("failed to execute sandbox-exec")
     }
 }

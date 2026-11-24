@@ -44,10 +44,10 @@ use language_model::{
 };
 use notifications::status_toast::StatusToast;
 use project::ResolvedPath;
-use settings::{update_settings_file, update_settings_file_with_completion};
+use settings::update_settings_file_with_completion;
 use ui::{
-    ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
-    SplitButtonStyle, Tab, ToggleState,
+    ButtonLike, CalloutBorderPosition, Checkbox, Indicator, SpinnerLabel, SpinnerVariant,
+    SplitButton, SplitButtonStyle, Tab, ToggleState,
 };
 use url::Url;
 use util::markdown::source_position_from_fragment;
@@ -1222,14 +1222,22 @@ impl ThreadView {
             // usable model
             if let Some(native_thread) = native_connection.thread(thread.read(cx).session_id(), cx)
             {
-                subscriptions.push(cx.subscribe(
+                subscriptions.push(cx.subscribe_in(
                     &native_thread,
-                    |this: &mut Self, _thread, _event: &agent::ModelChanged, cx| {
+                    window,
+                    |this: &mut Self, _thread, _event: &agent::ModelChanged, window, cx| {
                         if matches!(this.thread_error, Some(ThreadError::NoModelSelected)) {
                             this.clear_thread_error(cx);
                         }
+                        if let Some(model_selector) = &this.model_selector {
+                            model_selector.update(cx, |model_selector, cx| {
+                                model_selector.refresh_selected_model(window, cx);
+                            });
+                        }
                     },
                 ));
+                // The thread-only indicator follows the thread's mark.
+                subscriptions.push(cx.observe(&native_thread, |_, _, cx| cx.notify()));
             }
         }
 
@@ -5743,6 +5751,7 @@ impl ThreadView {
                                     .children(self.render_activity_status_label(cx))
                                     .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
+                                    .children(self.render_thread_only_indicator(cx))
                                     .children(self.profile_selector.clone())
                                     .map(|this| match self.config_options_view.clone() {
                                         Some(config_view) => this.child(config_view),
@@ -5755,6 +5764,67 @@ impl ThreadView {
                     ),
             )
             .into_any()
+    }
+
+    fn render_thread_only_indicator(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let thread = self.as_native_thread(cx)?;
+        if !thread.read(cx).is_thread_only() {
+            return None;
+        }
+
+        let can_reset = thread.read(cx).can_reset_to_defaults(cx);
+        let thread = thread.downgrade();
+        let trigger = ButtonLike::new("thread-only-indicator")
+            .width(px(24.))
+            .aria_label("Thread-Only Mode")
+            .child(Indicator::dot().color(Color::Accent));
+        Some(
+            PopoverMenu::new("thread-only-menu")
+                .trigger_with_tooltip(trigger, Tooltip::text("Thread-Only Mode"))
+                .anchor(gpui::Anchor::BottomRight)
+                .offset(gpui::point(px(0.), px(-2.)))
+                .menu(move |window, cx| {
+                    let thread = thread.clone();
+                    Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                        menu.custom_row(|_window, _cx| {
+                            div()
+                                .max_w_72()
+                                .child(Label::new("Thread-Only Mode"))
+                                .child(
+                                    Label::new(
+                                        "Changes to the model, profile and other options in \
+                                         this thread aren't saved as your defaults.",
+                                    )
+                                    .color(Color::Muted),
+                                )
+                                .into_any_element()
+                        })
+                        .separator()
+                        .when(can_reset, |menu| {
+                            let thread = thread.clone();
+                            menu.entry(
+                                "Reset to Defaults",
+                                Some(Box::new(ResetThreadToDefaults)),
+                                move |_window, cx| {
+                                    thread
+                                        .update(cx, |thread, cx| thread.reset_to_defaults(cx))
+                                        .ok();
+                                },
+                            )
+                        })
+                        .entry(
+                            "Save as Default",
+                            Some(Box::new(SaveThreadAsDefaults)),
+                            move |_window, cx| {
+                                thread
+                                    .update(cx, |thread, cx| thread.save_as_defaults(cx))
+                                    .ok();
+                            },
+                        )
+                    }))
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_activity_status_label(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
@@ -6625,24 +6695,8 @@ impl ThreadView {
                     thread.update(cx, |thread, cx| {
                         let enable_thinking = !thread.thinking_enabled();
                         thread.set_thinking_enabled(enable_thinking, cx);
-
-                        let favorite_key = thread
-                            .model()
-                            .map(|model| (model.provider_id.0.to_string(), model.id.0.to_string()));
-                        let fs = thread.project().read(cx).fs().clone();
-                        update_settings_file(fs, cx, move |settings, _| {
-                            if let Some(agent) = settings.agent.as_mut() {
-                                if let Some(default_model) = agent.default_model.as_mut() {
-                                    default_model.enable_thinking = enable_thinking;
-                                }
-                                if let Some((provider_id, model_id)) = &favorite_key {
-                                    agent.update_favorite_model(
-                                        provider_id,
-                                        model_id,
-                                        |favorite| favorite.enable_thinking = enable_thinking,
-                                    );
-                                }
-                            }
+                        thread.save_model_options(cx, move |model| {
+                            model.enable_thinking = enable_thinking
                         });
                     });
                 }
@@ -6753,55 +6807,31 @@ impl ThreadView {
                         let entry = ContextMenuEntry::new(effort_level.name)
                             .toggleable(IconPosition::End, is_selected);
 
-                        menu.push_item(entry.handler({
-                            let effort = effort_level.value;
+                        let pick_effort = |thread_only: Option<bool>| {
+                            let effort = effort_level.value.clone();
                             let weak_self = weak_self.clone();
-                            move |_window, cx| {
-                                let effort = effort.clone();
+                            move |window: &mut Window, cx: &mut App| {
+                                let effort = effort.to_string();
+                                // A click has no secondary confirm of its own, so
+                                // it goes by the same modifier a picker row does.
+                                let thread_only =
+                                    thread_only.unwrap_or_else(|| window.modifiers().secondary(cx));
                                 weak_self
                                     .update(cx, |this, cx| {
-                                        if let Some(thread) = this.as_native_thread(cx) {
-                                            thread.update(cx, |thread, cx| {
-                                                thread.set_thinking_effort(
-                                                    Some(effort.to_string()),
-                                                    cx,
-                                                );
-
-                                                let favorite_key = thread.model().map(|model| {
-                                                    (
-                                                        model.provider_id().0.to_string(),
-                                                        model.id().0.to_string(),
-                                                    )
-                                                });
-                                                let fs = thread.project().read(cx).fs().clone();
-                                                update_settings_file(fs, cx, move |settings, _| {
-                                                    if let Some(agent) = settings.agent.as_mut() {
-                                                        if let Some(default_model) =
-                                                            agent.default_model.as_mut()
-                                                        {
-                                                            default_model.effort =
-                                                                Some(effort.to_string());
-                                                        }
-                                                        if let Some((provider_id, model_id)) =
-                                                            &favorite_key
-                                                        {
-                                                            agent.update_favorite_model(
-                                                                provider_id,
-                                                                model_id,
-                                                                |favorite| {
-                                                                    favorite.effort =
-                                                                        Some(effort.to_string())
-                                                                },
-                                                            );
-                                                        }
-                                                    }
-                                                });
-                                            });
-                                        }
+                                        this.pick_native_agent_thinking_effort(
+                                            effort,
+                                            thread_only,
+                                            cx,
+                                        );
                                     })
                                     .ok();
                             }
-                        }));
+                        };
+                        menu.push_item(
+                            entry
+                                .handler(pick_effort(None))
+                                .secondary_handler(pick_effort(Some(true))),
+                        );
                     }
 
                     menu
@@ -9737,7 +9767,7 @@ impl ThreadView {
         // (title, detail line, docs section slug)
         let (title, detail, docs_section): (SharedString, SharedString, Option<&'static str>) =
             match reason {
-                SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
+                SandboxNotAppliedReason::CreationFailed(error) => (
                     "Couldn't create a sandbox".into(),
                     error.user_facing_message().into(),
                     Some(error.docs_section()),
@@ -9772,10 +9802,10 @@ impl ThreadView {
     /// Find the first terminal tool call in the thread whose sandbox couldn't be
     /// created, so a later "disabled for this thread" warning can reuse the same
     /// explanation of *why* the sandbox failed.
-    fn find_thread_sandbox_error(&self, cx: &App) -> Option<acp_thread::LinuxWslSandboxError> {
+    fn find_thread_sandbox_error(&self, cx: &App) -> Option<acp_thread::SandboxCreationError> {
         self.thread.read(cx).entries().iter().find_map(|entry| {
             if let AgentThreadEntry::ToolCall(tool_call) = entry
-                && let Some(SandboxNotAppliedReason::ErrorLinuxWsl(error)) =
+                && let Some(SandboxNotAppliedReason::CreationFailed(error)) =
                     &tool_call.sandbox_not_applied
             {
                 return Some(error.clone());
@@ -10465,17 +10495,7 @@ impl ThreadView {
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
         let has_write = details.allow_fs_write_all || !details.write_paths.is_empty();
-        // The dedicated Windows-drive warning prompt is only ever sent while the
-        // warning is enabled, so key the banner on the prompt itself. Keeping it
-        // visible even after the "Don't show again" checkbox flips the setting
-        // avoids the card disappearing out from under the user mid-decision.
-        let has_windows_fs_warning = details.warn_windows_fs;
-        if !has_network
-            && !has_write
-            && !details.unsandboxed
-            && details.reason.is_empty()
-            && !has_windows_fs_warning
-        {
+        if !has_network && !has_write && !details.unsandboxed && details.reason.is_empty() {
             return Empty.into_any_element();
         }
 
@@ -10707,9 +10727,6 @@ impl ThreadView {
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .when(has_windows_fs_warning, |this| {
-                this.child(self.render_sandbox_windows_fs_warning(cx))
-            })
             .when(!confusable_findings.is_empty(), |this| {
                 this.child(self.render_sandbox_confusable_warning(
                     tool_call_id,
@@ -10722,20 +10739,16 @@ impl ThreadView {
             .children(write_section)
             .children(unsandboxed_section)
             .children(reason_section)
-            .when(!has_windows_fs_warning, |this| {
-                // The Windows-drive warning banner carries its own docs link, so
-                // skip the default one that every other sandbox prompt appends.
-                this.child(
-                    h_flex()
-                        .px_1()
-                        .py_0p5()
-                        .child(self.render_sandbox_docs_link(
-                            "sandbox-authorization-docs-link",
-                            None,
-                            cx,
-                        )),
-                )
-            })
+            .child(
+                h_flex()
+                    .px_1()
+                    .py_0p5()
+                    .child(self.render_sandbox_docs_link(
+                        "sandbox-authorization-docs-link",
+                        None,
+                        cx,
+                    )),
+            )
             .into_any_element()
     }
 
@@ -10906,107 +10919,6 @@ impl ThreadView {
             .into_any_element()
     }
 
-    /// Whether the Windows-drive (DrvFs) weaker-guarantee warning is enabled in
-    /// settings (on by default). Windows-only in effect: `warn_windows_fs` is
-    /// never set on other platforms.
-    fn ntfs_warning_enabled(cx: &App) -> bool {
-        AgentSettings::get_global(cx)
-            .sandbox_permissions
-            .warn_ntfs_grants
-    }
-
-    /// Informational banner shown on a sandbox approval prompt when the command
-    /// will write to a file on a Windows drive (reached inside WSL via DrvFs),
-    /// whose sandbox-integrity guarantees are weaker than the distro's native
-    /// filesystem. Unlike the confusable-Unicode banner this does not gate the
-    /// allow buttons: the approval itself is the acknowledgement. A settings gear
-    /// links to where the warning can be suppressed.
-    fn render_sandbox_windows_fs_warning(&self, cx: &Context<Self>) -> AnyElement {
-        v_flex()
-            .w_full()
-            .p_2()
-            .gap_1()
-            .border_t_1()
-            .border_color(cx.theme().status().warning_border)
-            .bg(cx.theme().status().warning_background.opacity(0.15))
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1p5()
-                    .items_start()
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Warning),
-                    )
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .flex_1()
-                            .gap_0p5()
-                            .child(
-                                Label::new("This command can write to a file on a Windows drive")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Warning),
-                            )
-                            .child(
-                                Label::new(
-                                    "Sandboxes with write access to a location on a Windows \
-                                     drive may not provide full filesystem isolation.",
-                                )
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                            )
-                            .child(h_flex().child(self.render_sandbox_docs_link(
-                                "sandbox-windows-fs-docs-link",
-                                Some("windows"),
-                                cx,
-                            ))),
-                    )
-                    .child(
-                        IconButton::new("configure-ntfs-warning", IconName::Settings)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Configure Windows-drive warning"))
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(zed_actions::OpenSettingsAt {
-                                        path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
-                                        target: None,
-                                    }),
-                                    cx,
-                                );
-                            }),
-                    ),
-            )
-            .child(
-                Checkbox::new(
-                    "sandbox-windows-fs-dont-warn",
-                    if Self::ntfs_warning_enabled(cx) {
-                        ToggleState::Unselected
-                    } else {
-                        ToggleState::Selected
-                    },
-                )
-                .label("Don't show this warning again")
-                .label_size(LabelSize::Small)
-                .on_click(cx.listener(|this, state: &ToggleState, _window, cx| {
-                    let disable = *state == ToggleState::Selected;
-                    let fs = this.thread.read(cx).project().read(cx).fs().clone();
-                    update_settings_file(fs, cx, move |settings, _| {
-                        settings
-                            .agent
-                            .get_or_insert_default()
-                            .sandbox_permissions
-                            .get_or_insert_default()
-                            .warn_ntfs_grants = Some(!disable);
-                    });
-                    cx.notify();
-                })),
-            )
-            .into_any_element()
-    }
-
     fn render_sandbox_fallback_authorization_details(
         &self,
         details: &SandboxFallbackAuthorizationDetails,
@@ -11063,10 +10975,8 @@ impl ThreadView {
         // to.
         let granted_path = granted.canonical_or_requested();
         let requested_path = granted.requested.clone();
-        // Grants are stored in the request's own namespace (a Windows path stays
-        // `C:\...`, a WSL path stays `/...`), so a genuine symlink/junction
-        // redirect is just a plain inequality between the request and its
-        // resolved canonical.
+        // A genuine symlink/junction redirect is just a plain inequality between
+        // the request and its resolved canonical.
         let is_redirected = granted
             .resolved
             .as_deref()
@@ -14139,24 +14049,48 @@ impl ThreadView {
             return;
         }
         thread.update(cx, |thread, cx| {
-            thread.set_speed(speed, cx);
+            thread.set_speed(Some(speed), cx);
+            thread.save_model_options(cx, move |model| model.speed = Some(speed));
+        });
+    }
 
-            let favorite_key = thread
-                .model()
-                .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
-            let fs = thread.project().read(cx).fs().clone();
-            update_settings_file(fs, cx, move |settings, _| {
-                if let Some(agent) = settings.agent.as_mut() {
-                    if let Some(default_model) = agent.default_model.as_mut() {
-                        default_model.speed = Some(speed);
-                    }
-                    if let Some((provider_id, model_id)) = &favorite_key {
-                        agent.update_favorite_model(provider_id, model_id, |favorite| {
-                            favorite.speed = Some(speed)
-                        });
-                    }
-                }
-            });
+    fn reset_thread_to_defaults(
+        &mut self,
+        _: &ResetThreadToDefaults,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.as_native_thread(cx) {
+            thread.update(cx, |thread, cx| thread.reset_to_defaults(cx));
+        }
+    }
+
+    fn save_thread_as_defaults(
+        &mut self,
+        _: &SaveThreadAsDefaults,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.as_native_thread(cx) {
+            thread.update(cx, |thread, cx| thread.save_as_defaults(cx));
+        }
+    }
+
+    pub(super) fn pick_native_agent_thinking_effort(
+        &mut self,
+        effort: String,
+        thread_only: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+        thread.update(cx, |thread, cx| {
+            if thread_only {
+                thread.mark_thread_only(cx);
+            }
+            thread.set_thinking_effort(Some(effort.clone()), cx);
+            thread.save_model_options(cx, move |model| model.effort = Some(effort.clone()));
         });
     }
 
@@ -14198,23 +14132,7 @@ impl ThreadView {
 
         thread.update(cx, |thread, cx| {
             thread.set_thinking_effort(Some(next_effort.clone()), cx);
-
-            let favorite_key = thread
-                .model()
-                .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
-            let fs = thread.project().read(cx).fs().clone();
-            update_settings_file(fs, cx, move |settings, _| {
-                if let Some(agent) = settings.agent.as_mut() {
-                    if let Some(default_model) = agent.default_model.as_mut() {
-                        default_model.effort = Some(next_effort.clone());
-                    }
-                    if let Some((provider_id, model_id)) = &favorite_key {
-                        agent.update_favorite_model(provider_id, model_id, |favorite| {
-                            favorite.effort = Some(next_effort)
-                        });
-                    }
-                }
-            });
+            thread.save_model_options(cx, move |model| model.effort = Some(next_effort.clone()));
         });
     }
 }
@@ -14371,6 +14289,8 @@ impl Render for ThreadView {
             .on_action(cx.listener(|this, _: &CycleResponseSpeed, _, cx| {
                 this.cycle_response_speed(cx);
             }))
+            .on_action(cx.listener(Self::reset_thread_to_defaults))
+            .on_action(cx.listener(Self::save_thread_as_defaults))
             .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;
@@ -14383,7 +14303,11 @@ impl Render for ThreadView {
                             )
                         });
                         if model_allows_disabling {
-                            thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                            let enable_thinking = !thread.thinking_enabled();
+                            thread.set_thinking_enabled(enable_thinking, cx);
+                            thread.save_model_options(cx, move |model| {
+                                model.enable_thinking = enable_thinking
+                            });
                         }
                     });
                 }

@@ -723,6 +723,11 @@ pub trait AgentModelSelector: 'static {
     /// A task resolving to `Ok(())` on success or an error.
     fn select_model(&self, model_id: AgentModelId, cx: &mut App) -> Task<Result<()>>;
 
+    /// Makes the session thread-only: from then on, the models selected in it
+    /// are no longer saved as the user's default. Agents that never save one
+    /// have nothing to do.
+    fn mark_thread_only(&self, _cx: &mut App) {}
+
     /// Retrieves the currently selected model for a specific session (thread).
     ///
     /// # Parameters

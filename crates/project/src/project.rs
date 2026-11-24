@@ -4808,14 +4808,14 @@ impl Project {
         })
     }
 
-    pub fn completions<T: ToOffset + ToPointUtf16>(
+    pub fn completions<T: ToOffset>(
         &self,
         buffer: &Entity<Buffer>,
         position: T,
         context: CompletionContext,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
+        let position = buffer.read(cx).anchor_after(position);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.completions(buffer, position, context, cx)
         })

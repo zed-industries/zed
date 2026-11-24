@@ -905,7 +905,8 @@ fn upstream_addresses(host: &NetHost, port: u16) -> io::Result<Vec<SocketAddr>> 
 }
 
 /// A name that resolves to a loopback or local-network address (e.g. by DNS
-/// rebinding) only reaches it if the address is allowed too.
+/// rebinding) only reaches it if the address is allowed too, or, for a
+/// local-network address, the rule allowing the name says it may.
 fn may_reach(
     shared: &Shared,
     sandbox: &SandboxState,
@@ -915,6 +916,14 @@ fn may_reach(
     caller: &Caller<'_>,
 ) -> bool {
     if matches!(host, NetHost::Ip(_)) || AddressClass::of(address.ip()) == AddressClass::Public {
+        return true;
+    }
+    if let NetHost::Domain(name) = host
+        && AddressClass::of(address.ip()) == AddressClass::LocalNetwork
+        && sandbox
+            .policy()
+            .name_reaches_local_network(name, address.port(), protocol)
+    {
         return true;
     }
     let request = RequestedAccess::Net {

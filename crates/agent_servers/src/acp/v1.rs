@@ -4966,7 +4966,7 @@ mod tests {
         assert_eq!(harness.terminal("terminal-1", cx), terminal);
         terminal.read_with(cx, |terminal, cx| {
             assert_eq!(terminal.inner(), &renderer);
-            assert_eq!(renderer.read(cx).get_content().trim_end(), "new\n¢\n Z");
+            assert_eq!(renderer.read(cx).get_content().trim_end(), "new\n¢\nZ");
             let display = terminal.display_state().expect("display state");
             assert_eq!(display.command(), Some("wire command"));
             assert_eq!(display.meta, Some(v2_terminal_meta("terminal")));
@@ -4976,7 +4976,7 @@ mod tests {
                 .expect("omitted exit preserves completion");
             assert_eq!(output.ended_at, ended_at);
             assert_eq!(output.exit_status.meta, Some(v2_terminal_meta("exit")));
-            assert_eq!(output.content.trim_end(), "new\n¢\n Z");
+            assert_eq!(output.content.trim_end(), "new\n¢\nZ");
         });
         {
             let received = harness.received.lock().expect("receive mutex");
