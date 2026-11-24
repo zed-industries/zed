@@ -2486,17 +2486,8 @@ fn comment_delimiter_for_newline(
         .iter()
         .filter_map(|delimiter| {
             let prefix = delimiter.trim_end();
-            if comment_candidate.starts_with(prefix) {
-                let is_repl = if let Some(stripped_comment) = comment_candidate.strip_prefix(prefix)
-                {
-                    stripped_comment.starts_with(" %%")
-                } else {
-                    false
-                };
-                Some((delimiter, prefix.len(), is_repl))
-            } else {
-                None
-            }
+            let stripped_comment = comment_candidate.strip_prefix(prefix)?;
+            Some((delimiter, prefix.len(), stripped_comment.starts_with(" %%")))
         })
         .max_by_key(|(_, len, _)| *len)?;
 

@@ -125,8 +125,8 @@ impl Drop for Responder {
             return;
         }
         let is_bug = !self.is_cancelled() && !std::thread::panicking();
-        // Deny before panicking, so the syscall isn't left blocked until the
-        // prompt times out.
+        // Deny before panicking, so the syscall isn't left blocked: prompts
+        // have no time limit.
         self.send(Decision::deny());
         if is_bug {
             if cfg!(debug_assertions) {

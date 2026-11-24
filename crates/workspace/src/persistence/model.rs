@@ -45,13 +45,6 @@ pub enum SerializedWorkspaceLocation {
     Remote(RemoteConnectionOptions),
 }
 
-impl SerializedWorkspaceLocation {
-    /// Get sorted paths
-    pub fn sorted_paths(&self) -> Arc<Vec<PathBuf>> {
-        unimplemented!()
-    }
-}
-
 /// A workspace entry from a previous session, containing all the info needed
 /// to restore it including which window it belonged to (for MultiWorkspace grouping).
 #[derive(Debug, PartialEq, Clone)]

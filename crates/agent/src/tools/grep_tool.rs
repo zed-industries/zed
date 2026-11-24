@@ -1583,13 +1583,8 @@ mod tests {
     fn extract_paths_from_results(results: &str) -> Vec<String> {
         results
             .lines()
-            .filter(|line| line.starts_with("## Matches in "))
-            .map(|line| {
-                line.strip_prefix("## Matches in ")
-                    .unwrap()
-                    .trim()
-                    .to_string()
-            })
+            .filter_map(|line| line.strip_prefix("## Matches in "))
+            .map(|path| path.trim().to_string())
             .collect()
     }
 }

@@ -94,7 +94,7 @@ impl DebugPanel {
         let running_state = running_state?;
 
         let mut session_entries = Vec::with_capacity(self.sessions_with_children.len() * 3);
-        let mut sessions_with_children = self.sessions_with_children.iter().peekable();
+        let mut sessions_with_children = self.sessions_with_children.iter();
 
         while let Some((root, children)) = sessions_with_children.next() {
             let root_entry = if let Ok([single_child]) = <&[_; 1]>::try_from(children.as_slice())

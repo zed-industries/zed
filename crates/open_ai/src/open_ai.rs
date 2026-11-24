@@ -481,6 +481,15 @@ impl Model {
         }
     }
 
+    /// Whether the OpenAI Responses API offers Ultrafast for this model.
+    pub fn supports_ultrafast(&self) -> bool {
+        self.uses_responses_api()
+            && matches!(
+                self.id(),
+                "gpt-6.2-astra" | "gpt-6.2-sol" | "gpt-6-astra" | "gpt-6.1-sol"
+            )
+    }
+
     /// Whether OpenAI's Priority processing tier is available for this model.
     /// Sourced from <https://openai.com/api-priority-processing/>. The `*-pro`,
     /// `*-nano`, and legacy `gpt-4` variants are not eligible.
@@ -790,6 +799,7 @@ pub enum ServiceTier {
     Scale,
     #[serde(alias = "fast")]
     Priority,
+    Ultrafast,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -805,7 +815,6 @@ pub enum ToolChoice {
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
-    #[allow(dead_code)]
     Function { function: FunctionDefinition },
 }
 

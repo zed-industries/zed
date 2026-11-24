@@ -1920,6 +1920,7 @@ unsafe fn username_and_password(credential: &CREDENTIALW) -> Result<(String, Vec
 mod tests {
     use std::ffi::{OsStr, OsString};
 
+    use crate::clipboard::read_raw_clipboard_text;
     use crate::{read_from_clipboard, write_to_clipboard};
     use gpui::ClipboardItem;
     use windows::Win32::Security::Credentials::{
@@ -2021,6 +2022,23 @@ mod tests {
             Some(ClipboardItem::new_string_with_json_metadata(
                 "before after".to_string(),
                 vec![12],
+            )),
+        );
+
+        let item = ClipboardItem::new_string_with_json_metadata("a\nb\nc".to_string(), vec![5]);
+        write_to_clipboard(item.clone());
+        assert_eq!(read_raw_clipboard_text().as_deref(), Some("a\r\nb\r\nc"));
+        assert_eq!(read_from_clipboard(), Some(item));
+
+        let item =
+            ClipboardItem::new_string_with_json_metadata("a\r\nb\nc\rd".to_string(), vec![6]);
+        write_to_clipboard(item);
+        assert_eq!(read_raw_clipboard_text().as_deref(), Some("a\r\nb\r\nc\rd"));
+        assert_eq!(
+            read_from_clipboard(),
+            Some(ClipboardItem::new_string_with_json_metadata(
+                "a\nb\nc\rd".to_string(),
+                vec![6],
             )),
         );
     }

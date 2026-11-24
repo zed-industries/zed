@@ -352,6 +352,8 @@ fn anthropic_request(
         } else {
             AnthropicModelMode::Default
         },
+        None,
+        true,
         AnthropicPromptCacheMode::Automatic,
         &ANTHROPIC_PROVIDER_ID,
     )?;
@@ -529,6 +531,7 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
         supports_thinking: model.supports_thinking,
         supports_disabling_thinking: model.supports_disabling_thinking,
         supports_fast_mode: model.supports_fast_mode,
+        supports_ultrafast_mode: false,
         supports_system_prompt_updates: match model.provider {
             Anthropic => anthropic::supports_mid_conversation_system_messages(&model.id.0),
             OpenAi => true,
@@ -735,21 +738,10 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let app_version = self.app_version.clone();
-        let mut request = match into_anthropic(
-            request,
-            config.id.to_string(),
-            1.0,
-            config.max_output_tokens as u64,
-            AnthropicModelMode::Default,
-            AnthropicPromptCacheMode::Automatic,
-            &ANTHROPIC_PROVIDER_ID,
-        ) {
+        let request = match anthropic_request(config, request) {
             Ok(request) => request.into_compact_request(),
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
-        if !config.supports_fast_mode {
-            request.speed = None;
-        }
 
         let http_client = self.http_client.clone();
         let token_provider = self.token_provider.clone();
@@ -1630,7 +1622,18 @@ mod tests {
                 }
             });
             let (provider, model) = cloud_test_model(http_client);
-            let request = compact_test_request();
+            let mut request = compact_test_request();
+            request.messages.insert(
+                0,
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text(
+                        "Preserve implementation details.".into(),
+                    )],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            );
 
             let result = cx
                 .update(|cx| provider.compact(&model, request, cx))
@@ -1673,14 +1676,18 @@ mod tests {
                 body["provider_request"],
                 json!({
                     "model": "gpt-5.4",
-                    "input": [{
-                        "type": "message",
-                        "role": "user",
-                        "content": [{
-                            "type": "input_text",
-                            "text": "Retain this context."
-                        }]
-                    }],
+                    "input": [
+                        {
+                            "type": "message",
+                            "role": "developer",
+                            "content": [{"type": "input_text", "text": "Preserve implementation details."}]
+                        },
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "Retain this context."}]
+                        }
+                    ],
                     "prompt_cache_key": "thread-123",
                     "service_tier": "priority"
                 })

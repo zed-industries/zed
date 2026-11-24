@@ -960,7 +960,7 @@ impl Item for Editor {
             self.report_editor_event(ReportEditorEvent::Saved { auto_saved: false }, None, cx);
         }
 
-        let buffers = self.buffer().clone().read(cx).all_buffers();
+        let buffers = self.buffer().read(cx).all_buffers();
         let buffers = buffers
             .into_iter()
             .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))

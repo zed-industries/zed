@@ -399,13 +399,18 @@ impl LanguageModelClient for AnthropicLanguageModelProvider {
         };
         let request_limiter = self.request_limiters.for_model(&model.id);
         let has_tools = !request.tools.is_empty();
-        let request_id = config.request_id(has_tools).to_string();
+        let request_id = config.request_id(has_tools);
         let mut request = match into_anthropic(
             request,
-            request_id,
+            request_id.to_string(),
             config.default_temperature,
             config.max_output_tokens,
             config.mode.clone(),
+            config
+                .thinking_types
+                .as_ref()
+                .filter(|_| request_id == config.id),
+            anthropic::supports_per_message_effort(&config.id),
             AnthropicPromptCacheMode::Automatic,
             &PROVIDER_ID,
         ) {
@@ -439,13 +444,18 @@ impl LanguageModelClient for AnthropicLanguageModelProvider {
             Err(error) => return async move { Err(error) }.boxed(),
         };
         let request_limiter = self.request_limiters.for_model(&model.id);
-        let request_id = config.request_id(!request.tools.is_empty()).to_string();
+        let request_id = config.request_id(!request.tools.is_empty());
         let request = into_anthropic(
             request,
-            request_id,
+            request_id.to_string(),
             config.default_temperature,
             config.max_output_tokens,
             config.mode.clone(),
+            config
+                .thinking_types
+                .as_ref()
+                .filter(|_| request_id == config.id),
+            anthropic::supports_per_message_effort(&config.id),
             AnthropicPromptCacheMode::Automatic,
             &PROVIDER_ID,
         );
@@ -505,6 +515,8 @@ impl LanguageModelClient for AnthropicLanguageModelProvider {
             config.default_temperature,
             config.max_output_tokens,
             config.mode.clone(),
+            config.thinking_types.as_ref(),
+            anthropic::supports_per_message_effort(&config.id),
             AnthropicPromptCacheMode::Automatic,
             &PROVIDER_ID,
         ) {
@@ -597,6 +609,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         max_output_tokens: available.max_output_tokens.unwrap_or(4_096),
         default_temperature: available.default_temperature.unwrap_or(1.0),
         mode,
+        thinking_types: None,
         supports_thinking,
         supports_adaptive_thinking,
         supports_images: true,
@@ -965,7 +978,13 @@ mod tests {
             display_name: "Claude Opus 4.6".to_string(),
             max_input_tokens: 1_000_000,
             max_tokens: 128_000,
-            capabilities: None,
+            capabilities: Some(anthropic::ModelCapabilities {
+                context_management: Some(anthropic::ContextManagementCapability {
+                    supported: true,
+                    compact_20260112: Some(anthropic::SupportedCapability { supported: true }),
+                }),
+                ..Default::default()
+            }),
         });
         provider
             .state
@@ -1019,6 +1038,7 @@ fn language_model(model: &anthropic::Model) -> LanguageModel {
         },
         supports_thinking: model.supports_thinking,
         supports_fast_mode: model.supports_speed,
+        supports_ultrafast_mode: false,
         refusal_fallback_model_id: model
             .id
             .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)

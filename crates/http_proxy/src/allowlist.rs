@@ -94,7 +94,7 @@ impl HostPattern {
         // Strip a single trailing dot — `example.com.` and `example.com` are
         // the same host. Comment per project convention: hostnames are
         // case-insensitive (RFC 1035 §2.3.3) and trailing-dot tolerant.
-        let without_trailing_dot = rest.strip_suffix('.').unwrap_or(rest);
+        let without_trailing_dot = rest.trim_suffix('.');
         if without_trailing_dot.is_empty() {
             return Err(HostPatternError::Empty);
         }
@@ -160,7 +160,7 @@ impl HostPattern {
     pub fn matches(&self, host: &str) -> bool {
         // Hostnames are case-insensitive (RFC 1035 §2.3.3) and trailing-dot
         // tolerant.
-        let canonical = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+        let canonical = host.trim_suffix('.').to_ascii_lowercase();
         match self {
             HostPattern::Exact(pattern) => canonical == *pattern,
             HostPattern::Subdomain(parent) => {

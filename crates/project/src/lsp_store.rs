@@ -3703,7 +3703,6 @@ impl LocalLspStore {
         Ok(transaction)
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn edits_from_lsp(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -7955,7 +7954,7 @@ impl LspStore {
     pub fn completions(
         &self,
         buffer: &Entity<Buffer>,
-        position: PointUtf16,
+        position: Anchor,
         context: CompletionContext,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
@@ -7984,6 +7983,7 @@ impl LspStore {
                 return Task::ready(Ok(Vec::new()));
             }
 
+            let requested_token = RequestedCompletionToken::new(position, &snapshot);
             let language = buffer.read(cx).language().cloned();
 
             let buffer = buffer.clone();
@@ -8039,7 +8039,11 @@ impl LspStore {
                         })
                         .collect::<Vec<_>>(),
                 );
-                Ok(requests.await.into_iter().flatten().collect::<Vec<_>>())
+                let mut responses = requests.await.into_iter().flatten().collect::<Vec<_>>();
+                buffer.read_with(cx, |buffer, _| {
+                    requested_token.retain_valid_completions(&mut responses, &buffer.snapshot())
+                });
+                Ok(responses)
             })
         } else if let Some(local) = self.as_local() {
             let snapshot = buffer.read(cx).snapshot();
@@ -8058,6 +8062,7 @@ impl LspStore {
                 context: context.clone(),
                 server_id: None,
             };
+            let requested_token = RequestedCompletionToken::new(position, &snapshot);
             let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
                 local
                     .language_servers_for_buffer(buffer, cx)
@@ -8148,7 +8153,11 @@ impl LspStore {
 
                 let responses: Vec<Option<CompletionResponse>> = join_all(futures).await;
 
-                Ok(responses.into_iter().flatten().collect())
+                let mut responses = responses.into_iter().flatten().collect::<Vec<_>>();
+                buffer.read_with(cx, |buffer, _| {
+                    requested_token.retain_valid_completions(&mut responses, &buffer.snapshot())
+                });
+                Ok(responses)
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))
@@ -10999,7 +11008,7 @@ impl LspStore {
         let buffer_handle = this.update(&mut cx, |this, cx| {
             this.buffer_store.read(cx).get_existing(buffer_id)
         })?;
-        let request = GetCompletions::from_proto(
+        let mut request = GetCompletions::from_proto(
             envelope.payload,
             this.clone(),
             buffer_handle.clone(),
@@ -11007,14 +11016,21 @@ impl LspStore {
         )
         .await?;
 
-        let server_to_query = match request.server_id {
-            Some(server_id) => LanguageServerToQuery::Other(server_id),
-            None => LanguageServerToQuery::FirstCapable,
-        };
-
         let response = this
-            .update(&mut cx, |this, cx| {
-                this.request_lsp(buffer_handle.clone(), server_to_query, request, cx)
+            .update(&mut cx, |lsp_store, cx| {
+                let server_to_query = match request.server_id {
+                    Some(server_id) => {
+                        request.context = lsp_store.completion_context_for_server(
+                            buffer_handle.read(cx),
+                            server_id,
+                            request.context.clone(),
+                            cx,
+                        );
+                        LanguageServerToQuery::Other(server_id)
+                    }
+                    None => LanguageServerToQuery::FirstCapable,
+                };
+                lsp_store.request_lsp(buffer_handle.clone(), server_to_query, request, cx)
             })
             .await?;
         this.update(&mut cx, |this, cx| {
@@ -12473,9 +12489,7 @@ impl LspStore {
                         if progress.percentage.is_some() {
                             entry.percentage = progress.percentage;
                         }
-                        if progress.is_cancellable != entry.is_cancellable {
-                            entry.is_cancellable = progress.is_cancellable;
-                        }
+                        entry.is_cancellable = progress.is_cancellable;
                         did_update = true;
                     }
                 }
@@ -17073,6 +17087,8 @@ pub enum CompletionDocumentation {
     MultiLinePlainText(SharedString),
     /// Markdown documentation.
     MultiLineMarkdown(SharedString),
+    /// Markdown displayed as a noninteractive label.
+    NonInteractiveMarkdown(SharedString),
     /// Both single line and multiple lines of plain text documentation.
     SingleLineAndMultiLinePlainText {
         single_line: SharedString,
@@ -17087,7 +17103,8 @@ impl CompletionDocumentation {
             CompletionDocumentation::Undocumented => "".into(),
             CompletionDocumentation::SingleLine(s) => s.clone(),
             CompletionDocumentation::MultiLinePlainText(s) => s.clone(),
-            CompletionDocumentation::MultiLineMarkdown(s) => s.clone(),
+            CompletionDocumentation::MultiLineMarkdown(s)
+            | CompletionDocumentation::NonInteractiveMarkdown(s) => s.clone(),
             CompletionDocumentation::SingleLineAndMultiLinePlainText { single_line, .. } => {
                 single_line.clone()
             }
@@ -17428,14 +17445,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {
         let dir = self.language_registry.language_server_download_dir(name)?;
-
-        if !dir.exists() {
-            smol::fs::create_dir_all(&dir)
-                .await
-                .context("failed to create container directory")
-                .log_err()?;
-        }
-
+        smol::fs::create_dir_all(&dir)
+            .await
+            .context("failed to create container directory")
+            .log_err()?;
         Some(dir)
     }
 

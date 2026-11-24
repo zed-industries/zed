@@ -75,10 +75,6 @@ struct Number(usize);
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
-struct SelectRegister(String);
-
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
-#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushObject {
     around: bool,
@@ -188,8 +184,6 @@ actions!(
         Tab,
         /// Inserts a newline.
         Enter,
-        /// Selects inner text object.
-        InnerObject,
         /// Maximizes the current pane.
         MaximizePane,
         /// Resets all pane sizes to default.

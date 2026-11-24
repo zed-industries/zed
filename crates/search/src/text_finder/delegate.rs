@@ -615,6 +615,14 @@ impl Delegate {
             query_buffer.set_language(language, cx);
         });
     }
+
+    fn clear_results(&mut self) {
+        self.matches.clear();
+        self.entries.clear();
+        self.unique_files.clear();
+        self.collapsed_paths.clear();
+        self.selected_index = 0;
+    }
 }
 
 pub(crate) fn toggle_search_option(
@@ -869,11 +877,8 @@ impl PickerDelegate for Delegate {
             if query.is_empty() && imported_from_project_search {
                 return Task::ready(());
             }
-            self.matches.clear();
-            self.entries.clear();
-            self.unique_files.clear();
-            self.collapsed_paths.clear();
-            self.selected_index = 0;
+
+            self.clear_results();
             self.active_query = None;
             self.prepend_selected_matches();
             self.rebuild_entries();
@@ -1279,11 +1284,7 @@ async fn stream_results_to_picker(
                 let delegate = &mut picker.delegate;
 
                 if clear_existing {
-                    delegate.matches.clear();
-                    delegate.entries.clear();
-                    delegate.unique_files.clear();
-                    delegate.collapsed_paths.clear();
-                    delegate.selected_index = 0;
+                    delegate.clear_results();
                     clear_existing = false;
                 }
 
@@ -1313,6 +1314,20 @@ async fn stream_results_to_picker(
 
         smol::future::yield_now().await;
     }
+
+    // An empty stream never enters the loop above, leaving the previous results
+    // visible. Clear them unless this search was cancelled.
+    if clear_existing && !cancel_flag.load(Ordering::SeqCst) {
+        picker
+            .update(cx, |picker, cx| {
+                picker.delegate.clear_results();
+                picker.delegate.prepend_selected_matches();
+                picker.delegate.rebuild_entries();
+                cx.notify();
+            })
+            .log_err();
+    }
+
     None
 }
 
@@ -1501,13 +1516,14 @@ impl Delegate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{AppContext, TestAppContext, VisualTestContext};
     use project::search::{SearchQuery, SearchResult};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
     use util::paths::PathMatcher;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1528,8 +1544,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_finder_caps_matches_on_long_line(cx: &mut TestAppContext) {
-        use workspace::MultiWorkspace;
-
         init_test(cx);
 
         let line = "return ".repeat(Search::MAX_SEARCH_RESULT_RANGES * 2);
@@ -1541,23 +1555,17 @@ mod tests {
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
 
-        let delegate = window
-            .update(cx, |_mw, window, cx| {
-                workspace.update(cx, |workspace, cx| Delegate::new(workspace, window, cx))
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let delegate = workspace
+            .update_in(cx, |workspace, window, cx| {
+                Delegate::new(workspace, window, cx)
             })
-            .unwrap()
             .await;
-        let picker = window
-            .update(cx, |_mw, window, cx| {
-                cx.new(|cx| Picker::list(delegate, window, cx))
-            })
-            .unwrap();
+        let picker = cx.new_window_entity(|window, cx| Picker::list(delegate, window, cx));
 
-        window
-            .update(cx, |_mw, window, cx| {
-                picker.update(cx, |picker, cx| picker.set_query("return", window, cx))
-            })
-            .unwrap();
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("return", window, cx)
+        });
 
         // Search is debounced; advance past the debounce and let results stream in.
         cx.executor()
@@ -1628,6 +1636,53 @@ mod tests {
             let match_range = 8..11; // "foo"
             let window = matched_line_window(&snapshot, &match_range, match_range.start as u32);
             assert_eq!(window, 0..snapshot.len());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_no_matches_clears_previous_results(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let project = project_with_file(cx, "Fruits – Banana, Apple, Mango".to_string()).await;
+        let duration = SEARCH_DEBOUNCE + Duration::from_millis(50);
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let delegate = workspace
+            .update_in(cx, |workspace, window, cx| {
+                Delegate::new(workspace, window, cx)
+            })
+            .await;
+        let picker = cx.new_window_entity(|window, cx| Picker::list(delegate, window, cx));
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("Banana", window, cx);
+        });
+
+        // Since search is debounced, we need to advance the clock and let the
+        // results stream in.
+        cx.executor().advance_clock(duration);
+        cx.run_until_parked();
+        picker.read_with(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.matches.len(), 1);
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("Pear", window, cx);
+        });
+
+        // Since search is debounced, we need to advance the clock and let the
+        // results stream in.
+        cx.executor().advance_clock(duration);
+        cx.run_until_parked();
+        picker.read_with(cx, |picker, _cx| {
+            assert!(picker.delegate.matches.is_empty());
+            assert!(picker.delegate.entries.is_empty());
+            assert!(picker.delegate.unique_files.is_empty());
         });
     }
 }

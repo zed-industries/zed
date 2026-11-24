@@ -206,7 +206,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
                         && chars.next().is_some_and(|c| c == '\\' || c == '/')
                     {
                         // looks like a windows path with a leading slash, so strip it
-                        command.strip_prefix('/').unwrap().as_ref()
+                        command.trim_prefix('/').as_ref()
                     } else {
                         command.as_ref()
                     }
@@ -234,7 +234,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
                                     && chars.next().is_some_and(|c| c == '\\' || c == '/')
                                 {
                                     // looks like a windows path with a leading slash, so strip it
-                                    arg.strip_prefix('/').unwrap().into()
+                                    arg.trim_prefix('/').into()
                                 } else {
                                     arg.into()
                                 }

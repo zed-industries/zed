@@ -360,7 +360,6 @@ pub struct ImageStore {
     state: Box<dyn ImageStoreImpl>,
     opened_images: HashMap<ImageId, WeakEntity<ImageItem>>,
     worktree_store: Entity<WorktreeStore>,
-    #[allow(clippy::type_complexity)]
     loading_images_by_path: HashMap<
         ProjectPath,
         postage::watch::Receiver<Option<Result<Entity<ImageItem>, Arc<anyhow::Error>>>>,

@@ -48,6 +48,16 @@ impl Arch {
             Arch::AARCH64 => LINUX_ARM_BUNDLER,
         }
     }
+
+    // Snapcraft can only build a snap for the architecture of its host. These
+    // are GitHub-hosted because snapd needs systemd, which the Namespace runner
+    // images don't run.
+    pub fn linux_snap_builder(&self) -> Runner {
+        match self {
+            Arch::X86_64 => Runner("ubuntu-24.04"),
+            Arch::AARCH64 => Runner("ubuntu-24.04-arm"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

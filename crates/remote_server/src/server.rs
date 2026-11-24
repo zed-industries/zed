@@ -1,3 +1,4 @@
+mod global_skills;
 mod headless_project;
 
 #[cfg(test)]

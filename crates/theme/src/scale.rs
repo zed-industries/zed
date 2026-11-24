@@ -288,11 +288,4 @@ impl ColorScaleSet {
             Appearance::Dark => self.dark().step(step),
         }
     }
-
-    pub fn step_alpha(&self, cx: &App, step: ColorScaleStep) -> Hsla {
-        match cx.theme().appearance {
-            Appearance::Light => self.light_alpha.step(step),
-            Appearance::Dark => self.dark_alpha.step(step),
-        }
-    }
 }

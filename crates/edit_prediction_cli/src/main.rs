@@ -1247,10 +1247,8 @@ fn main() {
                 // For --markdown mode, create the output directory if it doesn't exist
                 if args.markdown {
                     let dir = output.as_ref().expect("--markdown requires -o");
-                    if !dir.exists() {
-                        std::fs::create_dir_all(dir)
-                            .expect("Failed to create markdown output directory");
-                    }
+                    std::fs::create_dir_all(dir)
+                        .expect("Failed to create markdown output directory");
                 }
 
                 // Set up JSONL output writer (not used in markdown mode)
@@ -1583,7 +1581,7 @@ fn main() {
                 panic!("Fatal error: {:?}", e);
             }
 
-            let _ = cx.update(|cx| cx.quit());
+            cx.update(|cx| cx.quit());
         })
         .detach();
     });
