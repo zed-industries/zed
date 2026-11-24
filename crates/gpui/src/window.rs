@@ -3158,7 +3158,13 @@ impl Window {
     /// the platform window, then notifies observers. Normally called automatically
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
     pub fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
+        let scale_factor = self.platform_window.scale_factor();
+        if self.scale_factor != scale_factor {
+            self.scale_factor = scale_factor;
+            if let Some(layout_engine) = self.layout_engine.as_mut() {
+                layout_engine.clear_layout_cache();
+            }
+        }
         self.viewport_size = self.platform_window.content_size();
         self.last_window_bounds = self.platform_window.window_bounds();
         cx.sync_window_update_entry(self);
@@ -3496,7 +3502,12 @@ impl Window {
     /// Overrides the display scale factor for tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_scale_factor(&mut self, scale_factor: f32) {
-        self.scale_factor = scale_factor;
+        if self.scale_factor != scale_factor {
+            self.scale_factor = scale_factor;
+            if let Some(layout_engine) = self.layout_engine.as_mut() {
+                layout_engine.clear_layout_cache();
+            }
+        }
         self.refresh();
     }
 
@@ -3871,6 +3882,10 @@ impl Window {
             }
         }
         if !cx.mode.skip_drawing() {
+            self.layout_engine
+                .as_mut()
+                .unwrap()
+                .clear_if_scale_factor_changed(self.scale_factor);
             self.draw_roots(cx);
             #[cfg(feature = "profiler")]
             {
@@ -5749,6 +5764,9 @@ impl Window {
     /// on besides the known dimensions and available space: while it equals the key the element's
     /// node was last measured with, the sizes measured then can be used without calling `measure`
     /// again, and the node doesn't need to be laid out again.
+    ///
+    /// Do not pass a constant key such as `()` unless the measure function's result truly never
+    /// changes for a given available space; use [`Self::request_measured_layout`] instead.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
     pub fn request_keyed_measured_layout<K, F>(

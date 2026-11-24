@@ -634,6 +634,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width,
+            max_lines,
             force_width: None,
         } as &dyn AsCacheKeyRef;
 
@@ -676,6 +677,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
+                max_lines,
                 force_width: None,
             });
 
@@ -707,6 +709,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width: None,
+            max_lines: None,
             force_width,
         } as &dyn AsCacheKeyRef;
 
@@ -740,6 +743,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width: None,
+                max_lines: None,
                 force_width,
             });
             let layout = Arc::new(layout);
@@ -815,6 +819,7 @@ struct CacheKey {
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,
+    max_lines: Option<usize>,
     force_width: Option<Pixels>,
 }
 
@@ -824,6 +829,7 @@ struct CacheKeyRef<'a> {
     font_size: Pixels,
     runs: &'a [FontRun],
     wrap_width: Option<Pixels>,
+    max_lines: Option<usize>,
     force_width: Option<Pixels>,
 }
 
@@ -848,6 +854,7 @@ impl AsCacheKeyRef for CacheKey {
             font_size: self.font_size,
             runs: self.runs.as_slice(),
             wrap_width: self.wrap_width,
+            max_lines: self.max_lines,
             force_width: self.force_width,
         }
     }
@@ -1137,5 +1144,21 @@ mod tests {
         let warm = warm_cache.layout_wrapped_line("ab", px(0.), &runs, Some(px(0.)), None);
 
         assert_eq!(warm.wrap_boundaries, cold.wrap_boundaries);
+    }
+
+    #[test]
+    fn test_wrap_cache_distinguishes_max_lines() {
+        let text = "one two three four five six";
+        let runs = [FontRun {
+            len: text.len(),
+            font_id: FontId(1),
+        }];
+        let cache = LineLayoutCache::new(Arc::new(NoopTextSystem::new()), Arc::default());
+
+        let unclamped = cache.layout_wrapped_line(text, px(14.), &runs, Some(px(50.)), None);
+        assert!(unclamped.wrap_boundaries.len() > 1);
+
+        let clamped = cache.layout_wrapped_line(text, px(14.), &runs, Some(px(50.)), Some(1));
+        assert!(clamped.wrap_boundaries.is_empty());
     }
 }
