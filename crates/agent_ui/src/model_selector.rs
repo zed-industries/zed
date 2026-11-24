@@ -9,8 +9,8 @@ use collections::{HashSet, IndexMap};
 use futures::FutureExt;
 use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
-    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Subscription,
-    Task, TaskExt, WeakEntity,
+    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
+    TaskExt, WeakEntity,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};

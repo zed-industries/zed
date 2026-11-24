@@ -6814,8 +6814,8 @@ impl ThreadView {
                                 let effort = effort.to_string();
                                 // A click has no secondary confirm of its own, so
                                 // it goes by the same modifier a picker row does.
-                                let thread_only = thread_only
-                                    .unwrap_or_else(|| window.modifiers().secondary(cx));
+                                let thread_only =
+                                    thread_only.unwrap_or_else(|| window.modifiers().secondary(cx));
                                 weak_self
                                     .update(cx, |this, cx| {
                                         this.pick_native_agent_thinking_effort(
