@@ -2820,6 +2820,9 @@ impl GitPanel {
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
+        if self.active_repository.is_none() {
+            return;
+        }
         self.set_active_tab(GitPanelTab::Changes, window, cx);
         if self.commit_editor_collapsed {
             self.toggle_commit_editor(&ToggleCommitEditor, window, cx);
@@ -10246,6 +10249,7 @@ impl editor::Addon for GitPanelAddon {
 impl Panel for GitPanel {
     fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
         if self.active_tab == GitPanelTab::Changes
+            && self.active_repository.is_some()
             && !self.commit_editor_collapsed
             && (self.entries.is_empty() || self.commit_editor_expanded)
         {
@@ -15812,6 +15816,32 @@ mod tests {
         panel.update_in(&mut cx, |panel, window, cx| {
             assert!(panel.commit_editor.focus_handle(cx).is_focused(window));
         });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_without_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_, _project, workspace, panel, mut cx) =
+            setup_git_panel_with_changes(cx, json!({ "file": "" }), &[]).await;
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+        });
+
+        cx.dispatch_action(super::Toggle);
+        cx.run_until_parked();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.active_repository.is_none());
+            assert!(panel.focus_handle.is_focused(window));
+            panel.focus_editor(&FocusEditor, window, cx);
+            assert!(panel.focus_handle.is_focused(window));
+        });
+        let right_dock = workspace.read_with(&cx, |workspace, _| workspace.right_dock().clone());
+        assert!(right_dock.read_with(&cx, |dock, _| dock.is_open()));
+
+        cx.dispatch_action(super::Toggle);
+        cx.run_until_parked();
+        assert!(!right_dock.read_with(&cx, |dock, _| dock.is_open()));
     }
 
     #[gpui::test]
