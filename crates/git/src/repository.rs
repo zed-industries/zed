@@ -7,7 +7,6 @@ use crate::{Oid, RunHook, SHA256_HEX_LENGTH, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
 use collections::HashMap;
-use encoding_rs::Encoding;
 use file_content::{ByteContent, decode_byte_header};
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
@@ -825,6 +824,8 @@ pub trait GitRepository: Send + Sync {
     fn load_revisions(&self, revisions: Vec<String>)
     -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>>;
 
+    fn load_textconv_revision(&self, revision: String) -> BoxFuture<'_, Result<Vec<u8>>>;
+
     fn head_sha(&self) -> BoxFuture<'_, Option<String>> {
         async move {
             self.revparse_batch(vec!["HEAD".into()])
@@ -931,8 +932,6 @@ pub trait GitRepository: Send + Sync {
         path: RepoPath,
         content: Rope,
         line_ending: LineEnding,
-        encoding: &'static Encoding,
-        has_bom: bool,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
     fn blame_at_revision(
@@ -1807,6 +1806,26 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn load_textconv_revision(&self, revision: String) -> BoxFuture<'_, Result<Vec<u8>>> {
+        let git = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                let output = git?
+                    .build_command(&["cat-file", "--textconv"])
+                    .arg(&revision)
+                    .kill_on_drop(true)
+                    .output()
+                    .await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    "git cat-file --textconv failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(output.stdout)
+            })
+            .boxed()
+    }
+
     fn load_revisions(
         &self,
         revisions: Vec<String>,
@@ -2514,16 +2533,13 @@ impl GitRepository for RealGitRepository {
         path: RepoPath,
         content: Rope,
         line_ending: LineEnding,
-        encoding: &'static Encoding,
-        has_bom: bool,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let git = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
                 let git = git?;
-                crate::blame::Blame::for_path(&git, &path, &content, line_ending, encoding, has_bom)
-                    .await
+                crate::blame::Blame::for_path(&git, &path, &content, line_ending).await
             })
             .boxed()
     }
@@ -6001,8 +6017,6 @@ mod tests {
                 repo_path("untracked.txt"),
                 Rope::from("line\n".repeat(1 << 20)),
                 LineEnding::Unix,
-                encoding_rs::UTF_8,
-                false,
             )
             .await
             .unwrap();

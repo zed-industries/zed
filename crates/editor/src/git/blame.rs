@@ -650,27 +650,40 @@ impl GitBlame {
                             let snapshot = buffer.read(cx).snapshot();
                             let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
 
-                            let repository = project
-                                .read(cx)
-                                .git_store()
-                                .read(cx)
-                                .repository_and_path_for_buffer_id(id, cx);
+                            let git_store = project.read(cx).git_store().clone();
+                            let repository =
+                                git_store.read(cx).repository_and_path_for_buffer_id(id, cx);
 
                             let remote_url = repository
                                 .as_ref()
                                 .and_then(|(repo, _)| repo.read(cx).default_remote_url());
 
-                            let blame_buffer = if repository.is_some() {
-                                project.update(cx, |project, cx| {
-                                    project.blame_buffer(&buffer, None, cx)
+                            let head_blame = repository.is_some().then(|| {
+                                git_store.update(cx, |git_store, cx| {
+                                    git_store.blame_buffer_at_head(&buffer, cx)
                                 })
-                            } else {
-                                Task::ready(Ok(None))
-                            };
+                            });
 
-                            Ok(async move {
-                                (id, snapshot, buffer_edits, blame_buffer.await, remote_url)
-                            })
+                            Ok(cx.spawn(async move |cx| {
+                                let Some(head_blame) = head_blame else {
+                                    return (id, snapshot, buffer_edits, Ok(None), remote_url);
+                                };
+                                match head_blame.await {
+                                    Ok(None) => {
+                                        let (snapshot, buffer_edits, blame) = cx.update(|cx| {
+                                            (
+                                                buffer.read(cx).snapshot(),
+                                                buffer.update(cx, |buffer, _| buffer.subscribe()),
+                                                project.update(cx, |project, cx| {
+                                                    project.blame_buffer(&buffer, None, cx)
+                                                }),
+                                            )
+                                        });
+                                        (id, snapshot, buffer_edits, blame.await, remote_url)
+                                    }
+                                    blame => (id, snapshot, buffer_edits, blame, remote_url),
+                                }
+                            }))
                         })
                         .collect::<Result<Vec<_>>>()
                 })?;
@@ -1468,6 +1481,84 @@ mod tests {
                 buffer_id,
                 2..4,
                 vec![None, Some(blame_entry("1b1b1b", 0..4))],
+                cx,
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_blame_for_rows_with_edit_during_generation(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let text = "a\nb\nc\n";
+        fs.insert_tree(path!("/my-repo"), json!({ ".git": {}, "file.txt": text }))
+            .await;
+        let dot_git = Path::new(path!("/my-repo/.git"));
+        let head_sha = "a".repeat(40);
+        fs.set_head_for_repo(dot_git, &[("file.txt", text.into())], &head_sha);
+        fs.set_index_for_repo(dot_git, &[("file.txt", text.into())]);
+        fs.with_git_state(dot_git, true, |state| {
+            state.blames_at_revision.insert(
+                (repo_path("file.txt"), head_sha.parse().unwrap()),
+                Blame {
+                    entries: vec![
+                        blame_entry("1b1b1b", 0..1),
+                        blame_entry("0d0d0d", 1..2),
+                        blame_entry("3a3a3a", 2..3),
+                    ],
+                    ..Default::default()
+                },
+            );
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/my-repo").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/my-repo/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        cx.executor().run_until_parked();
+        let head_content_loads = || {
+            fs.with_git_state(dot_git, false, |state| {
+                std::mem::take(&mut state.load_revisions_calls)
+            })
+            .unwrap()
+        };
+        head_content_loads();
+
+        let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
+        let mut loads = head_content_loads();
+        while loads.is_empty() {
+            assert!(cx.executor().tick());
+            loads = head_content_loads();
+        }
+        assert_eq!(loads, [[format!("{head_sha}:file.txt")]]);
+        git_blame.read_with(cx, |blame, _| assert!(blame.buffers.is_empty()));
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(1, 0)..Point::new(1, 0), "new\n")], None, cx);
+        });
+        while git_blame.read_with(cx, |blame, _| blame.buffers.is_empty()) {
+            assert!(cx.executor().tick());
+        }
+        assert_eq!(head_content_loads(), [[format!("{head_sha}:file.txt")]]);
+
+        git_blame.update(cx, |blame, cx| {
+            assert_blame_rows(
+                blame,
+                buffer_id,
+                0..4,
+                vec![
+                    Some(blame_entry("1b1b1b", 0..1)),
+                    None,
+                    Some(blame_entry("0d0d0d", 1..2)),
+                    Some(blame_entry("3a3a3a", 2..3)),
+                ],
                 cx,
             );
         });

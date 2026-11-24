@@ -22,7 +22,8 @@ use buffer_diff::{
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
-use file_content::{decode_text, encode_text};
+use encoding_rs::{ISO_2022_JP, UTF_16BE, UTF_16LE};
+use file_content::{ByteContent, decode_byte_header, decode_text, encode_text};
 use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, SinkExt, Stream, StreamExt,
@@ -2345,8 +2346,6 @@ impl GitStore {
             None => buffer.as_rope().clone(),
         };
         let line_ending = buffer.line_ending();
-        let encoding = buffer.encoding();
-        let has_bom = buffer.has_bom();
         let version = version.unwrap_or(buffer.version());
         let buffer_id = buffer.remote_id();
 
@@ -2358,7 +2357,7 @@ impl GitStore {
                 .map_err(|err| anyhow::anyhow!(err))?;
             match repository_state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .blame(repo_path.clone(), content, line_ending, encoding, has_bom)
+                    .blame(repo_path.clone(), content, line_ending)
                     .await
                     .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                     .map(Some),
@@ -2373,6 +2372,97 @@ impl GitStore {
                     Ok(deserialize_blame_buffer_response(response))
                 }
             }
+        })
+    }
+
+    pub fn blame_buffer_at_head(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Blame>>> {
+        let buffer_snapshot = buffer.read(cx).text_snapshot();
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_buffer_id(buffer_snapshot.remote_id(), cx)
+        else {
+            return Task::ready(Err(anyhow!("failed to find a git repository for buffer")));
+        };
+        let repo = repo.read(cx);
+        let is_untracked = repo
+            .status_for_path(&repo_path)
+            .is_some_and(|entry| entry.status.is_untracked());
+        let Some(head_sha) = repo
+            .head_commit
+            .as_ref()
+            .map(|commit| commit.sha.clone())
+            .filter(|_| !is_untracked && !repo_path.as_unix_str().contains('\n'))
+        else {
+            return Task::ready(Ok(None));
+        };
+        let repository_state = repo.repository_state.clone();
+
+        cx.spawn(async move |_, cx| {
+            let revision: Oid = head_sha.parse()?;
+            let RepositoryState::Local(LocalRepositoryState { backend, .. }) =
+                repository_state.await.map_err(|err| anyhow!(err))?
+            else {
+                return Ok(None);
+            };
+            let head_path = format!("{revision}:{}", repo_path.as_unix_str());
+            let (contents, blame) = futures::join!(
+                backend.load_revisions(vec![head_path.clone()]),
+                backend.blame_at_revision(repo_path.clone(), revision),
+            );
+            let Some(content) = contents?.pop().flatten() else {
+                return Ok(None);
+            };
+            let Blame {
+                entries,
+                messages,
+                tag_names,
+            } = blame.with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))?;
+
+            let head = cx
+                .background_spawn(async move {
+                    if decode_byte_header(&content).1 == ByteContent::Binary {
+                        return Ok(None);
+                    }
+                    if backend.load_textconv_revision(head_path).await? != content {
+                        return Ok(None);
+                    }
+                    let mut decoded = decode_text(content)?;
+                    if is_binary_content(decoded.text.as_bytes())
+                        || [ISO_2022_JP, UTF_16LE, UTF_16BE].contains(&decoded.encoding)
+                    {
+                        return Ok(None);
+                    }
+                    let Some(head_row_count) = entries.iter().map(|entry| entry.range.end).max()
+                    else {
+                        return Ok(None);
+                    };
+                    text::LineEnding::normalize(&mut decoded.text);
+                    anyhow::Ok(Some((decoded.text, entries, head_row_count)))
+                })
+                .await?;
+            let Some((head_text, entries, head_row_count)) = head else {
+                return Ok(None);
+            };
+
+            let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, None, None, cx));
+            diff.update(cx, |diff, cx| {
+                diff.set_base_text(Some(head_text.into()), buffer_snapshot, cx)
+            })
+            .await;
+            let diff = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
+            let entries = cx
+                .background_spawn(async move {
+                    map_head_blame_through_diff(&entries, head_row_count, &diff)
+                })
+                .await;
+            Ok(entries.map(|entries| Blame {
+                entries,
+                messages,
+                tag_names,
+            }))
         })
     }
 
@@ -11649,6 +11739,57 @@ impl Repository {
     }
 }
 
+fn map_head_blame_through_diff(
+    head_entries: &[git::blame::BlameEntry],
+    head_row_count: u32,
+    diff: &buffer_diff::BufferDiffSnapshot,
+) -> Option<Vec<git::blame::BlameEntry>> {
+    if !diff.base_text_exists() {
+        return None;
+    }
+    let end_row = |point: text::Point| point.row + (point.column > 0) as u32;
+    let base_text = diff.base_text();
+    let buffer = diff.buffer_snapshot();
+    let base_row_count = end_row(base_text.max_point());
+    if head_row_count != base_row_count {
+        return None;
+    }
+
+    let mut mapped = Vec::new();
+    let mut entry_ix = 0;
+    let mut base_row = 0;
+    let mut buffer_row = 0;
+    let mut keep_rows = |base_rows: Range<u32>, buffer_start: u32| {
+        while let Some(entry) = head_entries.get(entry_ix) {
+            let start = entry.range.start.max(base_rows.start);
+            let end = entry.range.end.min(base_rows.end);
+            if start < end {
+                mapped.push(git::blame::BlameEntry {
+                    range: start - base_rows.start + buffer_start
+                        ..end - base_rows.start + buffer_start,
+                    ..entry.clone()
+                });
+            }
+            if entry.range.end > base_rows.end {
+                break;
+            }
+            entry_ix += 1;
+        }
+    };
+    for hunk in diff.hunks(buffer) {
+        let base_start = base_text.offset_to_point(hunk.diff_base_byte_range.start);
+        let base_end = base_text.offset_to_point(hunk.diff_base_byte_range.end);
+        if base_start.row.checked_sub(base_row)? != hunk.range.start.row.checked_sub(buffer_row)? {
+            return None;
+        }
+        keep_rows(base_row..base_start.row, buffer_row);
+        base_row = end_row(base_end);
+        buffer_row = end_row(hunk.range.end);
+    }
+    keep_rows(base_row..base_row_count, buffer_row);
+    Some(mapped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -11667,6 +11808,119 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    fn head_blame(ranges: &[(u8, std::ops::Range<u32>)]) -> Vec<git::blame::BlameEntry> {
+        ranges
+            .iter()
+            .map(|(commit, range)| git::blame::BlameEntry {
+                sha: Oid::from_bytes(&[*commit; 20]).unwrap(),
+                range: range.clone(),
+                original_line_number: range.start + 1,
+                author: None,
+                author_mail: None,
+                author_time: None,
+                author_tz: None,
+                committer_name: None,
+                committer_email: None,
+                committer_time: None,
+                committer_tz: None,
+                summary: None,
+                previous: None,
+                filename: String::new(),
+                boundary: false,
+            })
+            .collect()
+    }
+
+    fn map_blame(
+        head_text: &str,
+        buffer_text: &str,
+        blame: &[(u8, std::ops::Range<u32>)],
+        cx: &mut TestAppContext,
+    ) -> Option<Vec<(u8, std::ops::Range<u32>)>> {
+        let buffer = text::Buffer::new(
+            text::ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text.to_string(),
+        );
+        let diff = cx.new(|cx| BufferDiff::new_with_base_text(head_text, &buffer.snapshot(), cx));
+        let diff = diff.update(cx, |diff, cx| diff.snapshot(cx));
+        let head_blame = head_blame(blame);
+        let head_row_count = head_blame.iter().map(|entry| entry.range.end).max()?;
+        map_head_blame_through_diff(&head_blame, head_row_count, &diff).map(commit_rows)
+    }
+
+    fn commit_rows(entries: Vec<git::blame::BlameEntry>) -> Vec<(u8, std::ops::Range<u32>)> {
+        entries
+            .into_iter()
+            .map(|entry| (entry.sha.as_bytes()[0], entry.range))
+            .collect()
+    }
+
+    #[gpui::test]
+    fn test_map_head_blame_through_diff(cx: &mut TestAppContext) {
+        let head = "a\nb\nc\nd\n";
+        let blame = [(1, 0..2), (2, 2..3), (3, 3..4)];
+
+        assert_eq!(
+            map_blame(head, head, &blame, cx),
+            Some(vec![(1, 0..2), (2, 2..3), (3, 3..4)])
+        );
+        assert_eq!(
+            map_blame(head, "a\nB\nc\nd\n", &blame, cx),
+            Some(vec![(1, 0..1), (2, 2..3), (3, 3..4)])
+        );
+        assert_eq!(
+            map_blame(head, "a\nb\nx\ny\nc\nd\n", &blame, cx),
+            Some(vec![(1, 0..2), (2, 4..5), (3, 5..6)])
+        );
+        assert_eq!(
+            map_blame(head, "a\nd\n", &blame, cx),
+            Some(vec![(1, 0..1), (3, 1..2)])
+        );
+        assert_eq!(
+            map_blame(head, "A\nb\nc\nd\n", &blame, cx),
+            Some(vec![(1, 1..2), (2, 2..3), (3, 3..4)])
+        );
+        assert_eq!(
+            map_blame(head, "x\na\nb\nc\nd\n", &blame, cx),
+            Some(vec![(1, 1..3), (2, 3..4), (3, 4..5)])
+        );
+        assert_eq!(
+            map_blame(head, "a\nb\nc\nD\n", &blame, cx),
+            Some(vec![(1, 0..2), (2, 2..3)])
+        );
+        assert_eq!(
+            map_blame(head, "a\nb\nc\n", &blame, cx),
+            Some(vec![(1, 0..2), (2, 2..3)])
+        );
+        assert_eq!(
+            map_blame(head, "a\nb\nc\nd\ne\n", &blame, cx),
+            Some(vec![(1, 0..2), (2, 2..3), (3, 3..4)])
+        );
+        assert_eq!(
+            map_blame(head, "a\nb\nc\nd", &blame, cx),
+            Some(vec![(1, 0..2), (2, 2..3)])
+        );
+        assert_eq!(
+            map_blame("a\nb\nc\nd", head, &blame, cx),
+            Some(vec![(1, 0..2), (2, 2..3)])
+        );
+        assert_eq!(
+            map_blame("a\nb\nc\nd", "a\nb\nc\nd", &blame, cx),
+            Some(vec![(1, 0..2), (2, 2..3), (3, 3..4)])
+        );
+        assert_eq!(
+            map_blame("a\nb\nc\nd", "a\nb\nc\nd\ne", &blame, cx),
+            Some(vec![(1, 0..2), (2, 2..3)])
+        );
+        assert_eq!(map_blame(head, "\n", &blame, cx), Some(vec![]));
+        assert_eq!(map_blame(head, "", &blame, cx), Some(vec![]));
+
+        assert_eq!(map_blame(head, head, &[(1, 0..5)], cx), None);
+        assert_eq!(map_blame(head, head, &[(1, 0..3)], cx), None);
+        assert_eq!(map_blame(head, head, &[], cx), None);
     }
 
     #[gpui::test]
