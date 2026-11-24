@@ -163,10 +163,15 @@ impl ProfileSelector {
         }
 
         // The thread's profile can change without a pick, and the highlighted
-        // row is what Enter picks when the picker opens.
+        // row is what Enter picks when the picker opens, so it has to be in view.
+            let profile_id = self.provider.profile_id(cx);
         if !self.picker_handle.is_deployed() {
             picker.update(cx, |picker, cx| {
-                picker.delegate.highlight_current_profile(cx);
+                if let Some(index) = picker.delegate.index_of_profile(&profile_id)
+                    && index != picker.delegate.selected_index
+                {
+                    picker.set_selected_index(index, None, true, window, cx);
+                }
             });
         }
 
@@ -338,15 +343,6 @@ impl ProfilePickerDelegate {
             .unwrap_or_else(|| this.first_selectable_index().unwrap_or(0));
 
         this
-    }
-
-    fn highlight_current_profile(&mut self, cx: &mut Context<Picker<Self>>) {
-        if let Some(index) = self.index_of_profile(&self.provider.profile_id(cx))
-            && index != self.selected_index
-        {
-            self.selected_index = index;
-            cx.notify();
-        }
     }
 
     fn refresh_profiles(
@@ -865,7 +861,7 @@ impl PickerDelegate for ProfilePickerDelegate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal as _};
 
     #[gpui::test]
     fn entries_include_custom_profiles(_cx: &mut TestAppContext) {
@@ -956,6 +952,88 @@ mod tests {
                         positions: Vec::new(),
                     }),
                     ProfilePickerEntry::Profile(ProfileMatchEntry {
+    #[gpui::test]
+    fn highlighted_row_is_revealed_when_the_profile_changes_outside_the_picker(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            // Enough profiles that the list has to scroll to show the last one.
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.agent.get_or_insert_default().profiles = Some(
+                        (0..100)
+                            .map(|index| {
+                                (
+                                    format!("custom-{index:03}").into(),
+                                    settings::AgentProfileContent {
+                                        name: format!("Custom {index:03}").into(),
+                                        tools: Default::default(),
+                                        enable_all_context_servers: None,
+                                        context_servers: Default::default(),
+                                        default_model: None,
+                                    },
+                                )
+                            })
+                            .collect(),
+                    );
+                });
+            });
+        });
+
+        let provider = Arc::new(TestProfileProvider::new(AgentProfileId("write".into())));
+        let window_handle = cx.add_window({
+            let provider = provider.clone();
+            move |_window, cx| ProfileSelector::new(provider, cx.focus_handle(), cx)
+        });
+        let mut cx = gpui::VisualTestContext::from_window(window_handle.into(), cx);
+        let open_and_close = |cx: &mut gpui::VisualTestContext| {
+            for _ in 0..2 {
+                window_handle
+                    .update(cx, |selector, window, cx| {
+                        selector.menu_handle().toggle(window, cx);
+                    })
+                    .unwrap();
+                cx.run_until_parked();
+            }
+        };
+        let highlighted_profile_and_scroll_top = |cx: &mut gpui::VisualTestContext| {
+            window_handle
+                .update(cx, |selector, _window, cx| {
+                    let picker = selector.picker.as_ref().unwrap().read(cx);
+                    let delegate = &picker.delegate;
+                    let profile_id = match delegate.filtered_entries.get(delegate.selected_index) {
+                        Some(ProfilePickerEntry::Profile(entry)) => {
+                            Some(delegate.candidates[entry.candidate_index].id.clone())
+                        }
+                        _ => None,
+                    };
+                    (profile_id, picker.logical_scroll_top_index())
+                })
+                .unwrap()
+        };
+
+        open_and_close(&mut cx);
+        assert_eq!(
+            highlighted_profile_and_scroll_top(&mut cx),
+            (Some(AgentProfileId("write".into())), 0)
+        );
+
+        let last_profile_id = AgentProfileId("custom-099".into());
+        *provider.profile_id.borrow_mut() = last_profile_id.clone();
+        window_handle
+            .update(&mut cx, |_selector, _window, cx| cx.notify())
+            .unwrap();
+        cx.run_until_parked();
+
+        let (profile_id, scroll_top) = highlighted_profile_and_scroll_top(&mut cx);
+        assert_eq!(profile_id, Some(last_profile_id));
+        assert!(scroll_top > 0);
+    }
+
                         candidate_index: 1,
                         positions: Vec::new(),
                     }),
@@ -973,14 +1051,14 @@ mod tests {
     }
 
     struct TestProfileProvider {
-        profile_id: AgentProfileId,
+        profile_id: std::cell::RefCell<AgentProfileId>,
         has_model: bool,
     }
 
     impl TestProfileProvider {
         fn new(profile_id: AgentProfileId) -> Self {
             Self {
-                profile_id,
+                profile_id: std::cell::RefCell::new(profile_id),
                 has_model: true,
             }
         }
@@ -988,7 +1066,7 @@ mod tests {
 
     impl ProfileProvider for TestProfileProvider {
         fn profile_id(&self, _cx: &App) -> AgentProfileId {
-            self.profile_id.clone()
+            self.profile_id.borrow().clone()
         }
 
         fn set_profile(&self, _profile_id: AgentProfileId, _cx: &mut App) {}
