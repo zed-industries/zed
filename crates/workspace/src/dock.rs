@@ -1,7 +1,7 @@
 use crate::focus_follows_mouse::FocusFollowsMouse as _;
 use crate::persistence::model::DockData;
 use crate::status_bar::HideStatusItem;
-use crate::{DraggedDock, Event, FocusFollowsMouse, ModalLayer, Pane, WorkspaceSettings};
+use crate::{DraggedDock, Event, ModalLayer, Pane, WorkspaceSettings};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
@@ -92,9 +92,6 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn enabled(&self, _cx: &App) -> bool {
         true
     }
-    fn is_agent_panel(&self) -> bool {
-        false
-    }
     /// Returns metadata describing how to hide this panel's button from the
     /// status bar by writing to user settings. Implementors should return
     /// `None` if the panel button cannot be hidden through settings.
@@ -132,7 +129,6 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
-    fn is_agent_panel(&self, cx: &App) -> bool;
     fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
@@ -263,10 +259,6 @@ where
         self.read(cx).enabled(cx)
     }
 
-    fn is_agent_panel(&self, cx: &App) -> bool {
-        self.read(cx).is_agent_panel()
-    }
-
     fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem> {
         self.read(cx).hide_button_setting(cx)
     }
@@ -287,7 +279,6 @@ pub struct Dock {
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
-    focus_follows_mouse: FocusFollowsMouse,
     restoration: DockRestoreState,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
@@ -454,7 +445,6 @@ impl Dock {
                 active_panel_index: None,
                 is_open: false,
                 focus_handle: focus_handle.clone(),
-                focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
                 _subscriptions: [focus_subscription, zoom_subscription],
                 restoration: DockRestoreState::Restoring { pending: None },
                 zoom_layer_open: false,
@@ -764,8 +754,8 @@ impl Dock {
                             .iter()
                             .position(|entry| entry.panel.panel_id() == Entity::entity_id(panel))
                         {
-                            this.set_open(true, window, cx);
                             this.activate_panel(ix, window, cx);
+                            this.set_open(true, window, cx);
                             window.focus(&panel.read(cx).activation_focus_handle(cx), cx);
                         }
                     }
@@ -929,12 +919,6 @@ impl Dock {
         self.panel_entries.len()
     }
 
-    pub fn has_agent_panel(&self, cx: &App) -> bool {
-        self.panel_entries
-            .iter()
-            .any(|entry| entry.panel.is_agent_panel(cx))
-    }
-
     pub fn activate_panel(&mut self, panel_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if Some(panel_ix) != self.active_panel_index {
             self.restoration.discard_pending();
@@ -987,6 +971,14 @@ impl Dock {
         } else {
             None
         }
+    }
+
+    /// Panel buttons focus this before dispatching their action. A zoomed panel isn't rendered
+    /// inside its dock, so the dock's own handle would be outside the frame and the action dropped.
+    pub(crate) fn panel_button_focus_handle(&self, window: &Window, cx: &App) -> FocusHandle {
+        self.zoomed_panel(window, cx)
+            .map(|panel| panel.panel_focus_handle(cx))
+            .unwrap_or_else(|| self.focus_handle.clone())
     }
 
     pub fn active_panel_size(&self) -> Option<PanelSizeState> {
@@ -1217,8 +1209,8 @@ impl Dock {
         }
     }
 
-    fn dispatch_context() -> KeyContext {
-        let mut dispatch_context = KeyContext::new_with_defaults();
+    fn dispatch_context(cx: &App) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("Dock");
 
         dispatch_context
@@ -1269,7 +1261,7 @@ impl Dock {
 
 impl Render for Dock {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dispatch_context = Self::dispatch_context();
+        let dispatch_context = Self::dispatch_context(cx);
         if let Some(entry) = self.visible_entry() {
             let position = self.position;
             let create_resize_handle = || {
@@ -1335,7 +1327,7 @@ impl Render for Dock {
                 .id("dock-panel")
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
-                .focus_follows_mouse(self.focus_follows_mouse, cx)
+                .focus_follows_mouse(WorkspaceSettings::get_global(cx).focus_follows_mouse, cx)
                 .flex()
                 .bg(cx.theme().colors().panel_background)
                 .border_color(cx.theme().colors().border)
@@ -1435,7 +1427,7 @@ impl Render for PanelButtons {
                     (action, icon_tooltip.into())
                 };
 
-                let focus_handle = dock.focus_handle(cx);
+                let focus_handle = dock.panel_button_focus_handle(window, cx);
                 let icon_label = entry.panel.icon_label(window, cx);
 
                 Some(
@@ -1610,6 +1602,9 @@ pub mod test {
         pub position: DockPosition,
         pub zoomed: bool,
         pub active: bool,
+        /// Keeps track of the values provided to [`Self::set_active`], to allow
+        /// inspecting whether the panel was activated or deactivated.
+        pub activation_history: Vec<bool>,
         pub focus_handle: FocusHandle,
         pub activation_focus_handle: Option<FocusHandle>,
         pub default_size: Pixels,
@@ -1626,6 +1621,7 @@ pub mod test {
                 position,
                 zoomed: false,
                 active: false,
+                activation_history: Vec::new(),
                 focus_handle: cx.focus_handle(),
                 activation_focus_handle: None,
                 default_size: px(300.),
@@ -1746,6 +1742,7 @@ pub mod test {
 
         fn set_active(&mut self, active: bool, _window: &mut Window, _cx: &mut Context<Self>) {
             self.active = active;
+            self.activation_history.push(active);
         }
 
         fn activation_priority(&self) -> u32 {

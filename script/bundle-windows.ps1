@@ -115,11 +115,11 @@ function GenerateLicenses {
 
 function BuildZedAndItsFriends {
     Write-Output "Building Zed and its friends, for channel: $channel"
-    # Build zed.exe, cli.exe and auto_update_helper.exe
+    # Build zed.exe, cli.exe and auto-update-helper.exe
     cargo --config .cargo/bundle-config.toml build --release --package zed --package cli --package auto_update_helper --target $target
     Copy-Item -Path ".\$CargoOutDir\zed.exe" -Destination "$innoDir\Zed.exe" -Force
     Copy-Item -Path ".\$CargoOutDir\cli.exe" -Destination "$innoDir\cli.exe" -Force
-    Copy-Item -Path ".\$CargoOutDir\auto_update_helper.exe" -Destination "$innoDir\auto_update_helper.exe" -Force
+    Copy-Item -Path ".\$CargoOutDir\auto-update-helper.exe" -Destination "$innoDir\auto_update_helper.exe" -Force
     # Build explorer_command_injector.dll
     switch ($channel) {
         "stable" {
@@ -139,8 +139,9 @@ function BuildRemoteServer {
     Write-Output "Building remote_server for $target"
     cargo --config .cargo/bundle-config.toml build --release --package remote_server --target $target
 
-    # Create zipped remote server binary
-    $remoteServerSrc = (Resolve-Path ".\$CargoOutDir\remote_server.exe").Path
+    # SSH clients expect remote_server.exe inside the archive.
+    Copy-Item -Path ".\$CargoOutDir\remote-server.exe" -Destination "$innoDir\remote_server.exe" -Force
+    $remoteServerSrc = (Resolve-Path "$innoDir\remote_server.exe").Path
 
     if ($canCodeSign) {
         Write-Output "Code signing remote_server.exe"
@@ -150,6 +151,7 @@ function BuildRemoteServer {
     $remoteServerDst = "$env:ZED_WORKSPACE\target\zed-remote-server-windows-$Architecture.zip"
     Write-Output "Compressing remote_server to $remoteServerDst"
     Compress-Archive -Path $remoteServerSrc -DestinationPath $remoteServerDst -Force
+    Remove-Item -Path $remoteServerSrc -Force
 
     Write-Output "Remote server compressed successfully"
 }
@@ -222,16 +224,6 @@ function SignZedAndItsFriends {
     & "$innoDir\sign.ps1" $files
 }
 
-function DownloadAMDGpuServices {
-    # If you update the AGS SDK version, please also update the version in `crates/gpui/src/platform/windows/directx_renderer.rs`
-    $url = "https://codeload.github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/zip/refs/tags/v6.3.0"
-    $zipPath = ".\AGS_SDK_v6.3.0.zip"
-    # Download the AGS SDK zip file
-    Invoke-WebRequest -Uri $url -OutFile $zipPath
-    # Extract the AGS SDK zip file
-    Expand-Archive -Path $zipPath -DestinationPath "." -Force
-}
-
 function DownloadConpty {
     # TODO: Switch back to the stable channel once Microsoft finally decides to publish v1.26
     $url = "https://github.com/microsoft/terminal/releases/download/v1.25.1912.0/Microsoft.Windows.Console.ConPTY.1.25.260710002-preview.nupkg"
@@ -254,7 +246,6 @@ function CollectFiles {
     else {
         New-Item -Type Directory -Path "$innoDir\x64" -Force
         New-Item -Type Directory -Path "$innoDir\arm64" -Force
-        Move-Item -Path ".\AGS_SDK-6.3.0\ags_lib\lib\amd_ags_x64.dll" -Destination "$innoDir\amd_ags_x64.dll" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\x64\OpenConsole.exe" -Destination "$innoDir\x64\OpenConsole.exe" -Force
         Move-Item -Path ".\conpty\build\native\runtimes\arm64\OpenConsole.exe" -Destination "$innoDir\arm64\OpenConsole.exe" -Force
         Move-Item -Path ".\conpty\runtimes\win-x64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
@@ -390,7 +381,6 @@ BuildRemoteServer
 MakeAppx
 SignZedAndItsFriends
 ZipZedAndItsFriendsDebug
-DownloadAMDGpuServices
 DownloadConpty
 CollectFiles
 BuildInstaller

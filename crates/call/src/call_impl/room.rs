@@ -502,6 +502,7 @@ impl Room {
             id: self.id,
             reshared_projects,
             rejoined_projects,
+            resends_worktree_settings: true,
         });
 
         cx.spawn(async move |this, cx| {
@@ -612,18 +613,6 @@ impl Room {
             .map(|participant| participant.role)
     }
 
-    pub fn contains_guests(&self) -> bool {
-        self.local_participant.role == proto::ChannelRole::Guest
-            || self
-                .remote_participants
-                .values()
-                .any(|p| p.role == proto::ChannelRole::Guest)
-    }
-
-    pub fn local_participant_is_admin(&self) -> bool {
-        self.local_participant.role == proto::ChannelRole::Admin
-    }
-
     pub fn local_participant_is_guest(&self) -> bool {
         self.local_participant.role == proto::ChannelRole::Guest
     }
@@ -651,10 +640,6 @@ impl Room {
 
     pub fn pending_participants(&self) -> &[Arc<User>] {
         &self.pending_participants
-    }
-
-    pub fn contains_participant(&self, user_id: u64) -> bool {
-        self.participant_user_ids.contains(&user_id)
     }
 
     pub fn followers_for(&self, leader_id: PeerId, project_id: u64) -> &[PeerId] {
@@ -1348,12 +1333,6 @@ impl Room {
             }
             _ => None,
         })
-    }
-
-    pub fn is_sharing_mic(&self) -> bool {
-        self.live_kit
-            .as_ref()
-            .is_some_and(|live_kit| !matches!(live_kit.microphone_track, LocalTrack::None))
     }
 
     pub fn is_muted(&self) -> bool {

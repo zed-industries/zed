@@ -128,12 +128,6 @@ pub struct UserStore {
     weak_self: WeakEntity<Self>,
 }
 
-#[derive(Clone)]
-pub struct InviteInfo {
-    pub count: u32,
-    pub url: Arc<str>,
-}
-
 pub enum Event {
     Contact {
         user: Arc<User>,
@@ -157,7 +151,6 @@ impl EventEmitter<Event> for UserStore {}
 
 enum UpdateContacts {
     Update(proto::UpdateContacts),
-    Wait(postage::barrier::Sender),
     Clear(postage::barrier::Sender),
 }
 
@@ -339,10 +332,6 @@ impl UserStore {
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {
         match message {
-            UpdateContacts::Wait(barrier) => {
-                drop(barrier);
-                Task::ready(Ok(()))
-            }
             UpdateContacts::Clear(barrier) => {
                 self.contacts.clear();
                 self.incoming_contact_requests.clear();
@@ -515,12 +504,6 @@ impl UserStore {
         self.perform_contact_request(user_id, proto::RemoveContact { user_id }, cx)
     }
 
-    pub fn has_incoming_contact_request(&self, user_id: u64) -> bool {
-        self.incoming_contact_requests
-            .iter()
-            .any(|user| user.legacy_id == user_id)
-    }
-
     pub fn respond_to_contact_request(
         &mut self,
         requester_id: u64,
@@ -539,24 +522,6 @@ impl UserStore {
             },
             cx,
         )
-    }
-
-    pub fn dismiss_contact_request(
-        &self,
-        requester_id: u64,
-        cx: &Context<Self>,
-    ) -> Task<Result<()>> {
-        let client = self.client.upgrade();
-        cx.spawn(async move |_, _| {
-            client
-                .context("can't upgrade client reference")?
-                .request(proto::RespondToContactRequest {
-                    requester_id,
-                    response: proto::ContactRequestResponse::Dismiss as i32,
-                })
-                .await?;
-            Ok(())
-        })
     }
 
     fn perform_contact_request<T: RequestMessage>(
@@ -594,16 +559,6 @@ impl UserStore {
         let (tx, mut rx) = postage::barrier::channel();
         self.update_contacts_tx
             .unbounded_send(UpdateContacts::Clear(tx))
-            .unwrap();
-        async move {
-            rx.next().await;
-        }
-    }
-
-    pub fn contact_updates_done(&self) -> impl Future<Output = ()> {
-        let (tx, mut rx) = postage::barrier::channel();
-        self.update_contacts_tx
-            .unbounded_send(UpdateContacts::Wait(tx))
             .unwrap();
         async move {
             rx.next().await;
@@ -655,15 +610,6 @@ impl UserStore {
 
     pub fn get_cached_user(&self, user_id: u64) -> Option<Arc<User>> {
         self.users.get(&user_id).cloned()
-    }
-
-    pub fn get_user_optimistic(&self, user_id: u64, cx: &Context<Self>) -> Option<Arc<User>> {
-        if let Some(user) = self.users.get(&user_id).cloned() {
-            return Some(user);
-        }
-
-        self.get_user(user_id, cx).detach_and_log_err(cx);
-        None
     }
 
     pub fn get_user(&self, user_id: u64, cx: &Context<Self>) -> Task<Result<Arc<User>>> {
@@ -891,6 +837,10 @@ impl UserStore {
                 .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
         }
 
+        let previous_organization_id = self
+            .current_organization
+            .as_ref()
+            .map(|organization| organization.id.clone());
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
 
         self.current_organization = response
@@ -926,6 +876,16 @@ impl UserStore {
         }));
         self.plan_info = Some(response.plan);
         cx.emit(Event::PrivateUserInfoUpdated);
+        // A reload replaces the selection when the user loses access to it, for example after
+        // being removed from that organization. Listeners such as the LLM token must follow it.
+        // The first load after sign-in is not a change, so it does not announce one.
+        if previous_organization_id.is_some_and(|previous_organization_id| {
+            self.current_organization
+                .as_ref()
+                .is_none_or(|organization| organization.id != previous_organization_id)
+        }) {
+            cx.emit(Event::OrganizationChanged);
+        }
     }
 
     fn handle_message_to_client(this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
@@ -1119,6 +1079,8 @@ mod tests {
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use settings::SettingsStore;
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     #[gpui::test]
     async fn test_current_organization_has_no_active_subscription(cx: &mut TestAppContext) {
@@ -1139,6 +1101,7 @@ mod tests {
             id: OrganizationId(id.into()),
             name: id.into(),
             is_personal,
+            ui_permissions: Default::default(),
         };
 
         assert!(!user_store.read_with(cx, |store, _| {
@@ -1178,5 +1141,62 @@ mod tests {
                 store.current_organization_has_no_active_subscription()
             }));
         }
+    }
+
+    #[gpui::test]
+    async fn test_reload_announces_a_changed_current_organization(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::new()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
+        let user_store = cx.new(|cx| UserStore::new(client, cx));
+        let organization_changes = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|cx| {
+            let organization_changes = organization_changes.clone();
+            cx.subscribe(&user_store, move |_, event, _| {
+                if matches!(event, Event::OrganizationChanged) {
+                    organization_changes.set(organization_changes.get() + 1);
+                }
+            })
+        });
+        let reload = |organization_ids: &[&str], default_id: &str, cx: &mut TestAppContext| {
+            let mut response = make_get_authenticated_user_response(1, "user".into());
+            response.organizations = organization_ids
+                .iter()
+                .map(|id| Organization {
+                    id: OrganizationId((*id).into()),
+                    name: (*id).into(),
+                    is_personal: *id == "personal",
+                    ui_permissions: Default::default(),
+                })
+                .collect();
+            response.default_organization_id = Some(OrganizationId(default_id.into()));
+            user_store.update(cx, |store, cx| {
+                store.update_authenticated_user(response, cx)
+            });
+        };
+
+        reload(&["personal", "team"], "team", cx);
+        organization_changes.set(0);
+
+        reload(&["personal", "team"], "team", cx);
+        assert_eq!(organization_changes.get(), 0);
+
+        // Removed from the selected organization.
+        reload(&["personal"], "personal", cx);
+        assert_eq!(organization_changes.get(), 1);
+        assert_eq!(
+            user_store.read_with(cx, |store, _| store
+                .current_organization()
+                .map(|organization| organization.id.clone())),
+            Some(OrganizationId("personal".into()))
+        );
     }
 }

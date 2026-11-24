@@ -14,17 +14,18 @@ use gpui::{
     Subscription, TextStyle, TextStyleRefinement, WeakEntity, Window, actions,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
+use language_model_selector::{LanguageModelSelector, language_model_picker, toggle_in_settings};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
-use settings::Settings;
+use settings::{Settings, update_settings_file};
 use std::cmp;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use ui::utils::WithRemSize;
-use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*};
 use uuid::Uuid;
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
@@ -33,7 +34,6 @@ use zed_actions::{
     editor::{MoveDown, MoveUp},
 };
 
-use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative};
 use crate::completion_provider::{
     PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
@@ -41,9 +41,7 @@ use crate::completion_provider::{
 use crate::mention_set::paste_images_as_context;
 use crate::mention_set::{MentionSet, crease_for_mention};
 use crate::terminal_codegen::TerminalCodegen;
-use crate::{
-    CycleFavoriteModels, CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext,
-};
+use crate::{CycleFavoriteModels, CycleNextInlineAssist, CyclePreviousInlineAssist};
 
 actions!(inline_assistant, [ThumbsUpResult, ThumbsDownResult]);
 
@@ -63,7 +61,7 @@ pub struct PromptEditor<T> {
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
     workspace: WeakEntity<Workspace>,
-    model_selector: Entity<AgentModelSelector>,
+    model_selector: Entity<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -301,6 +299,47 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     }
 }
 
+fn inline_assistant_model_selector(
+    fs: Arc<dyn Fs>,
+    focus_handle: FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<LanguageModelSelector> {
+    let picker = cx.new(|cx| {
+        language_model_picker(
+            |cx| LanguageModelRegistry::read_global(cx).inline_assistant_model(),
+            {
+                let fs = fs.clone();
+
+                move |model, cx| {
+                    let provider = model.provider_id().0.to_string();
+                    let model_id = model.id().0.to_string();
+
+                    update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .set_inline_assistant_model(provider, model_id);
+                    });
+                }
+            },
+            {
+                let fs = fs.clone();
+
+                move |model, should_be_favorite, cx| {
+                    toggle_in_settings(model, should_be_favorite, fs.clone(), cx)
+                }
+            },
+            true,
+            focus_handle,
+            window,
+            cx,
+        )
+    });
+
+    cx.new(|_cx| LanguageModelSelector::new(picker))
+}
+
 impl<T: 'static> Focusable for PromptEditor<T> {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.editor.focus_handle(cx)
@@ -420,6 +459,9 @@ impl<T: 'static> PromptEditor<T> {
                 cx,
             )
         {
+            // Capture-phase actions propagate by default, so stop the editor from also
+            // pasting the clipboard's file paths as text.
+            cx.stop_propagation();
             task.detach();
         }
     }
@@ -1269,23 +1311,14 @@ impl PromptEditor<BufferCodegen> {
         });
 
         let mention_set = cx.new(|_cx| MentionSet::new(project, Some(thread_store.clone())));
-
-        let model_selector_menu_handle = PopoverMenuHandle::default();
+        let model_selector =
+            inline_assistant_model_selector(fs.clone(), prompt_editor.focus_handle(cx), window, cx);
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
-            editor: prompt_editor.clone(),
+            editor: prompt_editor,
             mention_set,
             workspace,
-            model_selector: cx.new(|cx| {
-                AgentModelSelector::new(
-                    fs,
-                    model_selector_menu_handle,
-                    prompt_editor.focus_handle(cx),
-                    ModelUsageContext::InlineAssistant,
-                    window,
-                    cx,
-                )
-            }),
+            model_selector,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -1418,23 +1451,14 @@ impl PromptEditor<TerminalCodegen> {
         });
 
         let mention_set = cx.new(|_cx| MentionSet::new(project, Some(thread_store.clone())));
-
-        let model_selector_menu_handle = PopoverMenuHandle::default();
+        let model_selector =
+            inline_assistant_model_selector(fs.clone(), prompt_editor.focus_handle(cx), window, cx);
 
         let mut this = Self {
-            editor: prompt_editor.clone(),
+            editor: prompt_editor,
             mention_set,
             workspace,
-            model_selector: cx.new(|cx| {
-                AgentModelSelector::new(
-                    fs,
-                    model_selector_menu_handle.clone(),
-                    prompt_editor.focus_handle(cx),
-                    ModelUsageContext::InlineAssistant,
-                    window,
-                    cx,
-                )
-            }),
+            model_selector,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -1633,7 +1657,7 @@ mod tests {
     use project::Project;
     use settings::SettingsStore;
     use std::cell::RefCell;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use terminal::TerminalBuilder;
     use terminal::terminal_settings::CursorShape;
@@ -1818,5 +1842,106 @@ mod tests {
             ),
             "Expected ConfirmRequested with execute: false"
         );
+    }
+
+    #[gpui::test]
+    async fn test_paste_image_does_not_paste_file_paths_as_text(cx: &mut TestAppContext) {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encode png");
+        let prompt = paste_into_prompt_editor(
+            vec![
+                gpui::ClipboardEntry::Image(gpui::Image::from_bytes(
+                    gpui::ImageFormat::Png,
+                    png.into_inner(),
+                )),
+                gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                    vec![PathBuf::from(path!("/tmp/screenshot.png"))].into(),
+                )),
+            ],
+            cx,
+        )
+        .await;
+
+        let image_uri = acp_thread::MentionUri::PastedImage {
+            name: "Image".into(),
+        };
+        assert_eq!(prompt, format!("{} ", image_uri.as_link()));
+    }
+
+    #[gpui::test]
+    async fn test_paste_non_image_file_pastes_path_as_text(cx: &mut TestAppContext) {
+        let path = PathBuf::from(path!("/tmp/notes.txt"));
+        let prompt = paste_into_prompt_editor(
+            vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                vec![path.clone()].into(),
+            ))],
+            cx,
+        )
+        .await;
+
+        assert_eq!(prompt, path.display().to_string());
+    }
+
+    async fn paste_into_prompt_editor(
+        entries: Vec<gpui::ClipboardEntry>,
+        cx: &mut TestAppContext,
+    ) -> String {
+        init_test(cx);
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                let mut model = registry.default_model().expect("fake default model");
+                model.supports_images = true;
+                registry.set_inline_assistant_model(Some(model), cx);
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({"file": ""}))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let (workspace, _) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace.downgrade();
+        let (prompt_editor, cx) = cx.add_window_view(|window, cx| {
+            let terminal = cx.new(|cx| {
+                TerminalBuilder::new_display_only(
+                    CursorShape::default(),
+                    settings::AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    PathStyle::local(),
+                )
+                .subscribe(cx)
+            });
+            let session_id = Uuid::new_v4();
+            let codegen = cx.new(|_| TerminalCodegen::new(terminal, session_id));
+            let prompt_buffer =
+                cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local("", cx)), cx));
+            PromptEditor::new_terminal(
+                TerminalInlineAssistId::default(),
+                VecDeque::new(),
+                prompt_buffer,
+                codegen,
+                session_id,
+                fs,
+                cx.new(|cx| ThreadStore::new(cx)),
+                project.downgrade(),
+                workspace,
+                window,
+                cx,
+            )
+        });
+
+        cx.write_to_clipboard(ClipboardItem { entries });
+        prompt_editor.update_in(cx, |prompt_editor, window, cx| {
+            prompt_editor.editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.dispatch_action(Paste);
+        cx.run_until_parked();
+
+        prompt_editor.read_with(cx, |prompt_editor, cx| prompt_editor.prompt(cx))
     }
 }

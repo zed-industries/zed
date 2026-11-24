@@ -13,7 +13,7 @@ pub use language::*;
 
 use crate::{
     json::JsonTaskProvider,
-    python::{BasedPyrightLspAdapter, RuffLspAdapter},
+    python::{BasedPyrightLspAdapter, PyreflyLspAdapter, RuffLspAdapter},
 };
 
 mod bash;
@@ -34,27 +34,6 @@ mod yaml;
 
 pub(crate) use package_json::{PackageJson, PackageJsonData};
 
-/// A shared grammar for plain text, exposed for reuse by downstream crates.
-#[cfg(feature = "tree-sitter-gitcommit")]
-pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
-    std::sync::LazyLock::new(|| {
-        Arc::new(Language::new(
-            LanguageConfig {
-                name: "Git Commit".into(),
-                soft_wrap: Some(language::SoftWrap::EditorWidth),
-                matcher: (LanguageMatcher {
-                    path_suffixes: vec!["COMMIT_EDITMSG".into()],
-                    first_line_pattern: None,
-                    ..LanguageMatcher::default()
-                })
-                .into(),
-                line_comments: vec![Arc::from("#")],
-                ..LanguageConfig::default()
-            },
-            Some(tree_sitter_gitcommit::LANGUAGE.into()),
-        ))
-    });
-
 pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars(grammars::native_grammars());
@@ -74,6 +53,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let python_lsp_adapter = Arc::new(python::PyrightLspAdapter::new(node.clone()));
     let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new(node.clone()));
     let ruff_lsp_adapter = Arc::new(RuffLspAdapter::new(fs.clone()));
+    let pyrefly_lsp_adapter = Arc::new(PyreflyLspAdapter::new(fs.clone()));
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider::new(fs.clone()));
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
@@ -169,6 +149,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
                 ty_lsp_adapter,
                 py_lsp_adapter,
                 python_lsp_adapter,
+                pyrefly_lsp_adapter,
             ],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),

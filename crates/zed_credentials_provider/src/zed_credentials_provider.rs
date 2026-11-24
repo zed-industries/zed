@@ -29,9 +29,6 @@ impl Global for ZedCredentialsProvider {}
 
 /// Returns the global [`CredentialsProvider`].
 pub fn init_global(cx: &mut App) {
-    // The `CredentialsProvider` trait has `Send + Sync` bounds on it, so it
-    // seems like this is a false positive from Clippy.
-    #[allow(clippy::arc_with_non_send_sync)]
     let provider = new(cx);
     cx.set_global(ZedCredentialsProvider(provider));
 }
@@ -86,6 +83,21 @@ impl CredentialsProvider for KeychainCredentialsProvider {
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
             cx.update(move |cx| cx.write_credentials(url, username, password))
+                .await
+        }
+        .boxed_local()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn write_credentials_if_not_exists<'a>(
+        &'a self,
+        url: &'a str,
+        username: &'a str,
+        password: &'a [u8],
+        cx: &'a AsyncApp,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + 'a>> {
+        async move {
+            cx.update(move |cx| cx.write_credentials_if_not_exists(url, username, password))
                 .await
         }
         .boxed_local()

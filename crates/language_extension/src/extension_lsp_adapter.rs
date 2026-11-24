@@ -206,7 +206,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
                         && chars.next().is_some_and(|c| c == '\\' || c == '/')
                     {
                         // looks like a windows path with a leading slash, so strip it
-                        command.strip_prefix('/').unwrap().as_ref()
+                        command.trim_prefix('/').as_ref()
                     } else {
                         command.as_ref()
                     }
@@ -234,7 +234,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
                                     && chars.next().is_some_and(|c| c == '\\' || c == '/')
                                 {
                                     // looks like a windows path with a leading slash, so strip it
-                                    arg.strip_prefix('/').unwrap().into()
+                                    arg.trim_prefix('/').into()
                                 } else {
                                     arg.into()
                                 }
@@ -511,9 +511,11 @@ fn labels_from_extension(
         .map(|label| {
             let label = label?;
             let runs = if label.code.is_empty() {
-                Vec::new()
+                Arc::default()
             } else {
-                language.highlight_text(&label.code.as_str().into(), 0..label.code.len())
+                language
+                    .highlight_text_resolved(label.code.as_str(), 0..label.code.len())
+                    .runs
             };
             build_code_label(&label, &runs, language)
         })

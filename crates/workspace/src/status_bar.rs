@@ -7,7 +7,7 @@ use gpui::{
     ParentElement, Render, Role, SharedString, Styled, Subscription, WeakEntity, Window,
 };
 use settings::{SettingsContent, update_settings_file};
-use std::{any::TypeId, sync::Arc};
+use std::sync::Arc;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
 use ui::{ContextMenu, Divider, IconPosition, Indicator, Tooltip, prelude::*, right_click_menu};
 
@@ -66,7 +66,6 @@ trait StatusItemViewHandle: Send {
         window: &mut Window,
         cx: &mut App,
     );
-    fn item_type(&self) -> TypeId;
     fn hide_setting(&self, cx: &App) -> Option<HideStatusItem>;
 }
 
@@ -371,53 +370,6 @@ impl StatusBar {
             .find_map(|item| item.to_any().downcast().ok())
     }
 
-    pub fn position_of_item<T>(&self) -> Option<usize>
-    where
-        T: StatusItemView,
-    {
-        for (index, item) in self.left_items.iter().enumerate() {
-            if item.item_type() == TypeId::of::<T>() {
-                return Some(index);
-            }
-        }
-        for (index, item) in self.right_items.iter().enumerate() {
-            if item.item_type() == TypeId::of::<T>() {
-                return Some(index + self.left_items.len());
-            }
-        }
-        None
-    }
-
-    pub fn insert_item_after<T>(
-        &mut self,
-        position: usize,
-        item: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) where
-        T: 'static + StatusItemView,
-    {
-        let active_pane_item = self.active_pane.read(cx).active_item();
-        item.set_active_pane_item(active_pane_item.as_deref(), window, cx);
-
-        if position < self.left_items.len() {
-            self.left_items.insert(position + 1, Box::new(item))
-        } else {
-            self.right_items
-                .insert(position + 1 - self.left_items.len(), Box::new(item))
-        }
-        cx.notify()
-    }
-
-    pub fn remove_item_at(&mut self, position: usize, cx: &mut Context<Self>) {
-        if position < self.left_items.len() {
-            self.left_items.remove(position);
-        } else {
-            self.right_items.remove(position - self.left_items.len());
-        }
-        cx.notify();
-    }
-
     pub fn add_right_item<T>(
         &mut self,
         item: Entity<T>,
@@ -488,10 +440,6 @@ impl<T: StatusItemView> StatusItemViewHandle for Entity<T> {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, window, cx)
         });
-    }
-
-    fn item_type(&self) -> TypeId {
-        TypeId::of::<T>()
     }
 
     fn hide_setting(&self, cx: &App) -> Option<HideStatusItem> {

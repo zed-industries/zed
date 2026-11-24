@@ -33,6 +33,6 @@ task.workspace = true
 theme_settings.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "parking_lot", "process", "sync", "time"] }
-toml = { workspace = true, features = ["display"] }
+toml.workspace = true
 tree-sitter = { workspace = true, features = ["wasm"] }
 wasmtime.workspace = true

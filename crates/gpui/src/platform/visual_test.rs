@@ -65,6 +65,10 @@ impl VisualTestPlatform {
 }
 
 impl Platform for VisualTestPlatform {
+    fn platform_info(&self) -> crate::PlatformInfo {
+        self.platform.platform_info()
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }

@@ -142,6 +142,7 @@ To disable this behavior use:
 ```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
+    "show": "always",                // When to show: always | never | hide_in_full_screen
     "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,         // Show/hide branch name
     "show_worktree_name": true,       // Show/hide worktree name
@@ -515,6 +516,7 @@ TBD: Centered layout related settings
     // "upper":   Uppercase names grouped before lowercase, natural sort within.
     // "lower":   Lowercase names grouped before uppercase, natural sort within.
     // "unicode":  Pure Unicode codepoint comparison, no case folding.
+    // "extension": Files grouped by extension, extensionless files (including dotfiles like ".gitignore") first.
     "sort_order": "default",
     // Whether to hide the root entry when only one folder is open in the window;
     // this also affects how file paths appear in the file finder history.

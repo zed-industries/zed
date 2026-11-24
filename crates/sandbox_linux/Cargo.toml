@@ -1,0 +1,36 @@
+[package]
+name = "sandbox_linux"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/sandbox_linux.rs"
+doctest = false
+
+# The end-to-end harness is an example, not a test target: CI runs the suite
+# with `cargo nextest run --workspace`, which skips targets whose
+# required-features are unset. The NixOS VM tests build it explicitly
+# (nix/tests/sandboxing/helper.nix).
+[features]
+__end_to_end_harness = []
+
+[[example]]
+name = "end_to_end"
+path = "examples/end_to_end.rs"
+required-features = ["__end_to_end_harness"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+anyhow.workspace = true
+libc.workspace = true
+log.workspace = true
+nix = { workspace = true, features = ["net", "socket", "uio"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tempfile.workspace = true

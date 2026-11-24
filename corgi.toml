@@ -1,4 +1,4 @@
-corgi_version = "0.1.43"
+corgi_version = "0.1.107"
 
 # corgi build configuration for Zed.
 # Corgi source and documentation: https://github.com/ConradIrwin/corgi
@@ -15,8 +15,9 @@ corgi_version = "0.1.43"
 # build path into the binary.
 
 # sha256-pinned tools, fetched into the corgi store and exposed to the named
-# packages' build scripts via the given environment variable. URLs and hashes
-# are for the macOS arm64 build host.
+# packages' build scripts via the given environment variable. Each download is
+# built for one platform, so `targets` limits a tool to builds for that
+# platform.
 #
 # Note: no protoc tool is needed. `proto` and `livekit_api` compile their
 # protobufs with `protox` (a pure-Rust protoc) and `prost_build::compile_fds`,
@@ -29,6 +30,17 @@ sha256 = "3be85f5b999e327b1ac7d804cbc9acd767059e9f603c42ec2765f6ab68fbd367"
 bin = "cmake-4.1.2-macos-universal/CMake.app/Contents/bin/cmake"
 env = "CMAKE"
 packages = ["webrtc-sys", "wasmtime-c-api-impl"]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+
+[tools.cmake-linux-x86_64]
+version = "4.1.2"
+url = "https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-linux-x86_64.tar.gz"
+sha256 = "773cc679c3a7395413bd096523f8e5d6c39f8718af4e12eb4e4195f72f35e4ab"
+bin = "cmake-4.1.2-linux-x86_64/bin/cmake"
+command = "cmake"
+env = "CMAKE"
+packages = ["webrtc-sys", "wasmtime-c-api-impl"]
+targets = ["x86_64-unknown-linux-gnu"]
 
 # Prebuilt libwebrtc, so webrtc-sys-build does not have to download it over the
 # network (which the sandbox forbids). The tag must match WEBRTC_TAG in the
@@ -41,6 +53,145 @@ sha256 = "09ba71bfbc15c6aacced7fe20451a9648dfe648c24295f28d75fc386dbd7281a"
 path = "mac-arm64-release"
 env = "LK_CUSTOM_WEBRTC"
 packages = ["webrtc-sys"]
+targets = ["aarch64-apple-darwin"]
+
+[tools.webrtc-prebuilt-linux-x86_64]
+version = "0001d84-4"
+url = "https://github.com/zed-industries/livekit-rust-sdks/releases/download/webrtc-0001d84-4/webrtc-linux-x64-release.zip"
+sha256 = "23dd88d485b85e709b3fa37d7afed5ca7a3dd05febd3d9383ebeb793bcd1039e"
+path = "linux-x64-release"
+env = "LK_CUSTOM_WEBRTC"
+packages = ["webrtc-sys"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+# Shared libraries the Linux build links against when corgi supplies its own
+# Zig toolchain, as on FHS Linux. Corgi unpacks them into a per-target sysroot
+# that its pkg-config and linker read from; nothing comes from the host, so
+# installing distribution -dev packages does not help. Each library needs its
+# -dev package (the .so link, headers and .pc file) and its runtime package
+# (the real .so). They come from Debian bullseye, whose glibc 2.31 is older
+# than Corgi's default glibc 2.35 target. A Nix dev shell supplies its own
+# compiler and pkg-config, so these are not used there.
+#
+# alsa: alsa-sys; fontconfig: yeslogic-fontconfig-sys; freetype: required by
+# fontconfig.pc; x11 (and x11proto for xproto.pc and kbproto.pc): x11;
+# x11-xcb: the x11 crate's xlib_xcb feature;
+# glib (glib, gobject, gio): glib-sys, gobject-sys, gio-sys and webrtc-sys;
+# xkbcommon, xkbcommon-x11: xkbcommon; xcb: x11rb.
+
+[libraries.libasound2-dev-amd64]
+# libasound2-dev 1.2.4-1.1 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/a/alsa-lib/libasound2-dev_1.2.4-1.1_amd64.deb"
+sha256 = "73d8b3fa8d161c7a9f3dcb38718925eaf8dbd9d94c1d687087b23aa0719f53e5"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libasound2-amd64]
+# libasound2 1.2.4-1.1 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/a/alsa-lib/libasound2_1.2.4-1.1_amd64.deb"
+sha256 = "d8c9b5182768db2a7c5c73f1eed0b1be1431ae4f41084d502b325d06d5b0f648"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libfontconfig-dev-amd64]
+# libfontconfig-dev 2.13.1-4.2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/f/fontconfig/libfontconfig-dev_2.13.1-4.2_amd64.deb"
+sha256 = "7655d4238ee7e6ced13501006d20986cbf9ff08454a4e502d5aa399f83e28876"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libfontconfig1-amd64]
+# libfontconfig1 2.13.1-4.2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/f/fontconfig/libfontconfig1_2.13.1-4.2_amd64.deb"
+sha256 = "b92861827627a76e74d6f447a5577d039ef2f95da18af1f29aa98fb96baea4c1"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libfreetype-dev-amd64]
+# libfreetype-dev 2.10.4+dfsg-1+deb11u1 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/f/freetype/libfreetype-dev_2.10.4+dfsg-1+deb11u1_amd64.deb"
+sha256 = "f0f5ece4c70fad68c8bdbe3cd09a5c9fb7d6112766f0d96439a45a9ae1aaf363"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libfreetype6-amd64]
+# libfreetype6 2.10.4+dfsg-1+deb11u1 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/f/freetype/libfreetype6_2.10.4+dfsg-1+deb11u1_amd64.deb"
+sha256 = "b21cfdd12adf6cac4af320c2485fb62a8a5edc6f9768bc2288fd686f4fa6dfdf"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libx11-dev-amd64]
+# libx11-dev 2:1.7.2-1+deb11u2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libx11/libx11-dev_1.7.2-1+deb11u2_amd64.deb"
+sha256 = "9fbcda6af06d8db9cd8a48b581570aa8fee862bfc43b6f569a66503ae7d83211"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libx11-6-amd64]
+# libx11-6 2:1.7.2-1+deb11u2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libx11/libx11-6_1.7.2-1+deb11u2_amd64.deb"
+sha256 = "2b3b959cb10c07be065eb638a8577fe20f282045aaef76425dbd7310d1244b8c"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libx11-xcb-dev-amd64]
+# libx11-xcb-dev 2:1.7.2-1+deb11u2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libx11/libx11-xcb-dev_1.7.2-1+deb11u2_amd64.deb"
+sha256 = "cadd9279292904194469d366d42c3a2555050ac7c3767e30523128e394811cc3"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libx11-xcb1-amd64]
+# libx11-xcb1 2:1.7.2-1+deb11u2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libx11/libx11-xcb1_1.7.2-1+deb11u2_amd64.deb"
+sha256 = "1ac662dec0b4db1c65668a2c62f0063f4c9cc0d9c8df15ffe735bd2d84b8ee95"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.x11proto-dev-amd64]
+# x11proto-dev 2020.1-1 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/x/xorgproto/x11proto-dev_2020.1-1_all.deb"
+sha256 = "d5568d587d9ad2664c34c14b0ac538ccb3c567e126ee5291085a8de704a565f5"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries."libglib2.0-dev-amd64"]
+# libglib2.0-dev 2.66.8-1+deb11u4 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/g/glib2.0/libglib2.0-dev_2.66.8-1+deb11u4_amd64.deb"
+sha256 = "6aee47dab59b9adf5a01988bdfced79a629478eeff4902d8de73a93f23b5398f"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries."libglib2.0-0-amd64"]
+# libglib2.0-0 2.66.8-1+deb11u4 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/g/glib2.0/libglib2.0-0_2.66.8-1+deb11u4_amd64.deb"
+sha256 = "7aff8c1338b58a6fa2b3a914724040a2b7f6e8dc2333f30c98834f7948f1884f"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libxkbcommon-dev-amd64]
+# libxkbcommon-dev 1.0.3-2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libxkbcommon/libxkbcommon-dev_1.0.3-2_amd64.deb"
+sha256 = "1202d8c64e670876b58f5b3d3f797b1848ec462f7caeef8b1e597ecea18570b6"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libxkbcommon0-amd64]
+# libxkbcommon0 1.0.3-2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libxkbcommon/libxkbcommon0_1.0.3-2_amd64.deb"
+sha256 = "d74d0b9f0a6641b44c279644c7ac627fa7a9b92350b7c6ff37da94352885bcfc"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libxkbcommon-x11-dev-amd64]
+# libxkbcommon-x11-dev 1.0.3-2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libxkbcommon/libxkbcommon-x11-dev_1.0.3-2_amd64.deb"
+sha256 = "e6a6eecf10c2c43c3dbb8703ae6b748d9721ac19878bdadecdc6ebfadd9c7b83"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libxkbcommon-x11-0-amd64]
+# libxkbcommon-x11-0 1.0.3-2 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libxkbcommon/libxkbcommon-x11-0_1.0.3-2_amd64.deb"
+sha256 = "c786f80d1a5405e96167ebbebdd7d100b356c0a3ae0f87fb6f65f05f2e723f72"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libxcb1-dev-amd64]
+# libxcb1-dev 1.14-3 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libxcb/libxcb1-dev_1.14-3_amd64.deb"
+sha256 = "b75544f334c8963b8b7b0e8a88f8a7cde95a714dddbcda076d4beb669a961b58"
+targets = ["x86_64-unknown-linux-gnu"]
+
+[libraries.libxcb1-amd64]
+# libxcb1 1.14-3 (Debian bullseye)
+url = "https://snapshot.debian.org/archive/debian/20250601T000000Z/pool/main/libx/libxcb/libxcb1_1.14-3_amd64.deb"
+sha256 = "d5e0f047ed766f45eb7473947b70f9e8fddbe45ef22ecfd92ab712c0671a93ac"
+targets = ["x86_64-unknown-linux-gnu"]
 
 # Plan-time probe: the git SHA is read here (outside the sandbox) and frozen
 # into the keyed value. zed/build.rs prefers $ZED_COMMIT_SHA over running git,
@@ -51,6 +202,39 @@ packages = ["webrtc-sys"]
 command = "git rev-parse HEAD"
 packages = ["zed"]
 profiles = ["release"]
+
+# Forwarded from the invoking environment when set. A Nix dev shell supplies
+# pkg-config and the libraries it finds this way, since the sandbox passes no
+# ambient environment to build scripts.
+[env.PKG_CONFIG]
+inherit = true
+packages = [
+    "alsa-sys",
+    "gio-sys",
+    "glib-sys",
+    "gobject-sys",
+    "webrtc-sys",
+    "x11",
+    "yeslogic-fontconfig-sys",
+]
+
+[env.PKG_CONFIG_PATH]
+inherit = true
+packages = [
+    "alsa-sys",
+    "gio-sys",
+    "glib-sys",
+    "gobject-sys",
+    "webrtc-sys",
+    "x11",
+    "yeslogic-fontconfig-sys",
+]
+
+# Lets a Nix dev shell supply its own cmake: the downloaded Linux cmake expects
+# a standard dynamic loader, which NixOS does not have.
+[env.CMAKE]
+inherit = true
+packages = ["webrtc-sys", "wasmtime-c-api-impl"]
 
 # Reads a package's actions perform that corgi's sandbox does not grant by
 # default. By default only a package's own `.rs` files (plus its manifest) are
@@ -69,7 +253,6 @@ gpui = [
     "../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
     "../../assets/fonts/lilex/Lilex-Regular.ttf",
 ]
-git = ["src/checkpoint.gitignore"]
 git_ui = ["src/commit_message_prompt.txt"]
 editor = ["../grammars/src/**"]
 edit_prediction = ["license_patterns/**"]

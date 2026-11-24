@@ -14,7 +14,6 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fs::TrashId;
-use git;
 use git::status::GitSummary;
 use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
@@ -88,7 +87,7 @@ use zed_actions::{
 
 use crate::{
     project_panel_settings::ProjectPanelScrollbarProxy,
-    undo::{Change, UndoManager},
+    undo::{Change, UndoManager, already_exists_error, project_path_display},
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
@@ -107,6 +106,9 @@ struct State {
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
     visible_entries: Vec<VisibleEntriesForWorktree>,
+    /// Directories known to show no rows when expanded, from the same snapshot as
+    /// `visible_entries`.
+    empty_dir_ids: HashSet<ProjectEntryId>,
     max_width_item_index: Option<usize>,
     edit_state: Option<EditState>,
     temporarily_unfolded_pending_state: Option<TemporaryUnfoldedPendingState>,
@@ -127,6 +129,7 @@ impl State {
             last_worktree_root_id: None,
             ancestors: Default::default(),
             visible_entries: Default::default(),
+            empty_dir_ids: Default::default(),
             max_width_item_index: None,
             edit_state: old.edit_state.clone(),
             temporarily_unfolded_pending_state: None,
@@ -261,6 +264,12 @@ impl EditState {
 enum ClipboardEntry {
     Copied(BTreeSet<SelectedEntry>),
     Cut(BTreeSet<SelectedEntry>),
+}
+
+#[derive(Clone, Copy)]
+enum EntryTransferOperation {
+    Copy,
+    Move,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
@@ -911,6 +920,7 @@ impl ProjectPanel {
                     temporarily_unfolded_pending_state: None,
                     last_worktree_root_id: Default::default(),
                     visible_entries: Default::default(),
+                    empty_dir_ids: Default::default(),
                     ancestors: Default::default(),
                     expanded_dir_ids: Default::default(),
                     unfolded_dir_ids: Default::default(),
@@ -2067,14 +2077,14 @@ impl ProjectPanel {
         };
         let filename = self.filename_editor.read(cx).text(cx);
         if !filename.is_empty() {
-            if filename.is_empty() {
+            let trimmed_filename = filename.trim();
+            if trimmed_filename.is_empty() {
                 edit_state.validation_state =
                     ValidationState::Error("File or directory name cannot be empty.".to_string());
                 cx.notify();
                 return;
             }
 
-            let trimmed_filename = filename.trim();
             if trimmed_filename != filename {
                 edit_state.validation_state = ValidationState::Warning(
                     "File or directory name contains leading or trailing whitespace.".to_string(),
@@ -2103,7 +2113,7 @@ impl ProjectPanel {
                         already_exists = true;
                     }
                 } else {
-                    let new_path = match entry.path.clone().parent() {
+                    let new_path = match entry.path.parent() {
                         Some(parent) => parent.join(&filename),
                         None => filename.to_owned(),
                     };
@@ -2149,9 +2159,7 @@ impl ProjectPanel {
             // on windows, trailing dots are ignored in paths
             // this can cause project panel to create a new entry with a trailing dot
             // while the actual one without the dot gets populated by the file watcher
-            while let Some(trimmed) = filename.strip_suffix('.') {
-                filename = trimmed.to_string();
-            }
+            filename.truncate(filename.trim_end_matches('.').len());
         }
         if filename.trim().is_empty() {
             return None;
@@ -2676,7 +2684,7 @@ impl ProjectPanel {
 
                 let task = panel.update(cx, |_panel, cx| {
                     repository.update(cx, |repo, cx| {
-                        repo.checkout_files("HEAD", vec![repo_path], cx)
+                        repo.checkout_files(Some("HEAD"), vec![repo_path], cx)
                     })
                 })?;
 
@@ -3615,8 +3623,8 @@ impl ProjectPanel {
             .worktree_for_entry(source.entry_id, cx)?;
         let source_entry = source_worktree.read(cx).entry_for_id(source.entry_id)?;
 
-        let clipboard_entry_file_name = source_entry.path.file_name()?.to_string();
-        new_path.push(RelPath::from_unix_str(&clipboard_entry_file_name).unwrap());
+        let source_file_name = source_entry.path.file_name()?.to_string();
+        new_path.push(RelPath::from_unix_str(&source_file_name).unwrap());
 
         let (extension, file_name_without_extension) = if source_entry.is_file() {
             (
@@ -3624,7 +3632,7 @@ impl ProjectPanel {
                 new_path.file_stem()?.to_string(),
             )
         } else {
-            (None, clipboard_entry_file_name.clone())
+            (None, source_file_name)
         };
 
         let file_name_len = file_name_without_extension.len();
@@ -3673,16 +3681,45 @@ impl ProjectPanel {
             return;
         }
 
+        self.paste_from_internal_clipboard(window, cx);
+    }
+
+    fn paste_from_internal_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(clipboard_entry) = self
+            .clipboard
+            .clone()
+            .filter(|clipboard_entry| !clipboard_entry.items().is_empty())
+        else {
+            return;
+        };
+
+        let (entries, operation) = match clipboard_entry {
+            ClipboardEntry::Copied(entries) => (entries, EntryTransferOperation::Copy),
+            ClipboardEntry::Cut(entries) => (entries, EntryTransferOperation::Move),
+        };
+        if self
+            .transfer_entries(entries, operation, window, cx)
+            .is_some()
+            && matches!(operation, EntryTransferOperation::Move)
+        {
+            // Convert the clipboard cut entry to a copy entry after the first paste.
+            self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
+        }
+    }
+
+    fn transfer_entries(
+        &mut self,
+        entries: BTreeSet<SelectedEntry>,
+        operation: EntryTransferOperation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
             let worktree_id = worktree.read(cx).id();
-            let clipboard_entries = self
-                .clipboard
-                .as_ref()
-                .filter(|clipboard| !clipboard.items().is_empty())?;
 
-            enum PasteTask {
+            enum EntryTransferTask {
                 Rename {
                     task: Task<Result<CreatedEntry>>,
                     from: ProjectPath,
@@ -3694,44 +3731,47 @@ impl ProjectPanel {
                 },
             }
 
-            let mut paste_tasks = Vec::new();
+            let mut transfer_tasks = Vec::new();
             let mut disambiguation_range = None;
-            let clip_is_cut = clipboard_entries.is_cut();
-            for clipboard_entry in clipboard_entries.items() {
+            for source_entry in &entries {
                 let (new_path, new_disambiguation_range) =
-                    self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
-                let clip_entry_id = clipboard_entry.entry_id;
+                    self.create_paste_path(source_entry, self.selected_sub_entry(cx)?, cx)?;
+                let source_entry_id = source_entry.entry_id;
                 let destination: ProjectPath = (worktree_id, new_path).into();
-                let task = if clipboard_entries.is_cut() {
-                    let original_path = self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
-                    let task = self.project.update(cx, |project, cx| {
-                        project.rename_entry(clip_entry_id, destination.clone(), cx)
-                    });
-                    PasteTask::Rename {
-                        task,
-                        from: original_path,
-                        to: destination,
+                let task = match operation {
+                    EntryTransferOperation::Copy => {
+                        let task = self.project.update(cx, |project, cx| {
+                            project.copy_entry(source_entry_id, destination.clone(), cx)
+                        });
+                        EntryTransferTask::Copy { task, destination }
                     }
-                } else {
-                    let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(clip_entry_id, destination.clone(), cx)
-                    });
-                    PasteTask::Copy { task, destination }
+                    EntryTransferOperation::Move => {
+                        let original_path =
+                            self.project.read(cx).path_for_entry(source_entry_id, cx)?;
+                        let task = self.project.update(cx, |project, cx| {
+                            project.rename_entry(source_entry_id, destination.clone(), cx)
+                        });
+                        EntryTransferTask::Rename {
+                            task,
+                            from: original_path,
+                            to: destination,
+                        }
+                    }
                 };
-                paste_tasks.push(task);
+                transfer_tasks.push(task);
                 disambiguation_range = new_disambiguation_range.or(disambiguation_range);
             }
 
-            let item_count = paste_tasks.len();
+            let item_count = transfer_tasks.len();
             let workspace = self.workspace.clone();
 
             cx.spawn_in(window, async move |project_panel, mut cx| {
                 let mut last_succeed = None;
                 let mut changes = Vec::new();
 
-                for task in paste_tasks {
+                for task in transfer_tasks {
                     match task {
-                        PasteTask::Rename { task, from, to } => {
+                        EntryTransferTask::Rename { task, from, to } => {
                             if let Some(CreatedEntry::Included(entry)) = task
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
@@ -3740,7 +3780,7 @@ impl ProjectPanel {
                                 last_succeed = Some(entry);
                             }
                         }
-                        PasteTask::Copy { task, destination } => {
+                        EntryTransferTask::Copy { task, destination } => {
                             if let Some(Some(entry)) = task
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
@@ -3781,7 +3821,6 @@ impl ProjectPanel {
                                     }
                                 }
 
-                                // if only one entry was pasted and it was disambiguated, open the rename editor
                                 if disambiguation_range.is_some() {
                                     cx.defer_in(window, |this, window, cx| {
                                         this.rename_impl(disambiguation_range, window, cx);
@@ -3796,14 +3835,9 @@ impl ProjectPanel {
             })
             .detach_and_log_err(cx);
 
-            if clip_is_cut {
-                // Convert the clipboard cut entry to a copy entry after the first paste.
-                self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
-            }
-
             self.expand_entry(worktree_id, entry.id, cx);
             Some(())
-        });
+        })
     }
 
     fn download_from_remote(
@@ -3944,9 +3978,7 @@ impl ProjectPanel {
 
                         // Create parent directories if needed
                         if let Some(parent) = destination_path.parent() {
-                            if !parent.exists() {
-                                fs.create_dir(parent).await.log_err();
-                            }
+                            fs.create_dir(parent).await.log_err();
                         }
 
                         let download_task = this.update(cx, |this, cx| {
@@ -3979,8 +4011,12 @@ impl ProjectPanel {
     }
 
     fn duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut Context<Self>) {
-        self.copy(&Copy {}, window, cx);
-        self.paste(&Paste {}, window, cx);
+        let entries = self.disjoint_effective_entries_excluding_roots(cx);
+        if entries.is_empty() {
+            return;
+        }
+
+        self.transfer_entries(entries, EntryTransferOperation::Copy, window, cx);
     }
 
     fn copy_path(
@@ -4267,12 +4303,12 @@ impl ProjectPanel {
         destination_entry: ProjectEntryId,
         destination_is_file: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<CreatedEntry>>> {
+    ) -> Option<(ProjectPath, Task<Result<CreatedEntry>>)> {
         if entry_to_move == destination_entry {
             return None;
         }
 
-        let (destination_worktree, rename_task) = self.project.update(cx, |project, cx| {
+        let (destination_worktree, rename) = self.project.update(cx, |project, cx| {
             let Some(source_path) = project.path_for_entry(entry_to_move, cx) else {
                 return (None, None);
             };
@@ -4296,24 +4332,20 @@ impl ProjectPanel {
 
             let mut new_path = destination_dir.to_rel_path_buf();
             new_path.push(source_name);
-            let rename_task = (new_path.as_rel_path() != source_path.path.as_ref()).then(|| {
-                project.rename_entry(
-                    entry_to_move,
-                    (destination_worktree_id, new_path).into(),
-                    cx,
-                )
+
+            let new_project_path: ProjectPath = (destination_worktree_id, new_path).into();
+            let rename = (new_project_path.path.as_ref() != source_path.path.as_ref()).then(|| {
+                let task = project.rename_entry(entry_to_move, new_project_path.clone(), cx);
+                (new_project_path, task)
             });
 
-            (
-                project.worktree_id_for_entry(destination_entry, cx),
-                rename_task,
-            )
+            (project.worktree_id_for_entry(destination_entry, cx), rename)
         });
 
         if let Some(destination_worktree) = destination_worktree {
             self.expand_entry(destination_worktree, destination_entry, cx);
         }
-        rename_task
+        rename
     }
 
     fn index_for_selection(&self, selection: SelectedEntry) -> Option<(usize, usize, usize)> {
@@ -4599,7 +4631,10 @@ impl ProjectPanel {
 
         let visible_worktrees: Vec<_> = project
             .visible_worktrees(cx)
-            .map(|worktree| worktree.read(cx).snapshot())
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (worktree.snapshot(), worktree.is_local())
+            })
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
@@ -4607,7 +4642,7 @@ impl ProjectPanel {
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
-                    for worktree_snapshot in visible_worktrees {
+                    for (worktree_snapshot, is_local) in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
                         let mut new_entry_parent_id = None;
@@ -4699,11 +4734,6 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if (!hide_gitignore || !entry.is_ignored)
-                                && (!hide_hidden || !entry.is_hidden)
-                            {
-                                visible_worktree_entries.push(entry.to_owned());
-                            }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
                             {
                                 entry.id == new_entry_id || {
@@ -4714,9 +4744,24 @@ impl ProjectPanel {
                             } else {
                                 false
                             };
+                            if is_entry_shown(&entry, hide_gitignore, hide_hidden) {
+                                // A remote host sends a directory it has not loaded yet as `Dir`,
+                                // so only a local one counts.
+                                let is_loaded = is_local && entry.kind == EntryKind::Dir;
+                                // A missing chevron reads as "empty", so a directory keeps it until
+                                // it is loaded.
+                                if is_loaded
+                                    && !precedes_new_entry
+                                    && !worktree_snapshot.child_entries(&entry.path).any(|child| {
+                                        is_entry_shown(child, hide_gitignore, hide_hidden)
+                                    })
+                                {
+                                    new_state.empty_dir_ids.insert(entry.id);
+                                }
+                                visible_worktree_entries.push(entry.to_owned());
+                            }
                             if precedes_new_entry
-                                && (!hide_gitignore || !entry.is_ignored)
-                                && (!hide_hidden || !entry.is_hidden)
+                                && is_entry_shown(&entry, hide_gitignore, hide_hidden)
                             {
                                 visible_worktree_entries.push(Self::create_new_git_entry(
                                     entry.entry,
@@ -5357,14 +5402,25 @@ impl ProjectPanel {
                 .worktree_for_entry(target_entry_id, cx)
                 .map(|wt| wt.read(cx).id());
 
-            // Collect move tasks paired with their source entry ID so we can correlate
-            // results with folded selections that need refreshing.
-            let mut move_tasks: Vec<(ProjectEntryId, Task<Result<CreatedEntry>>)> = Vec::new();
+            let path_style = self.project.read(cx).path_style(cx);
+
+            let mut move_tasks: Vec<(
+                ProjectEntryId,
+                Option<(String, String)>,
+                Task<Result<CreatedEntry>>,
+            )> = Vec::new();
             for entry in entries {
-                if let Some(task) =
+                if let Some((destination, task)) =
                     self.move_worktree_entry(entry.entry_id, target_entry_id, is_file, cx)
                 {
-                    move_tasks.push((entry.entry_id, task));
+                    let names = old_paths.get(&entry.entry_id).map(|from| {
+                        let project = self.project.read(cx);
+                        (
+                            project_path_display(project, from, path_style, cx),
+                            project_path_display(project, &destination, path_style, cx),
+                        )
+                    });
+                    move_tasks.push((entry.entry_id, names, task));
                 }
             }
 
@@ -5376,9 +5432,10 @@ impl ProjectPanel {
             if folded_selection_info.is_empty() {
                 cx.spawn_in(window, async move |project_panel, mut cx| {
                     let mut changes = Vec::new();
-                    for (entry_id, task) in move_tasks {
+                    for (entry_id, names, task) in move_tasks {
                         if let Some(CreatedEntry::Included(new_entry)) = task
                             .await
+                            .map_err(|err| explain_move_error(err, names.as_ref()))
                             .notify_workspace_async_err(workspace.clone(), &mut cx)
                         {
                             if let (Some(old_path), Some(worktree_id)) =
@@ -5403,9 +5460,10 @@ impl ProjectPanel {
                     // Await all move tasks and collect successful results
                     let mut move_results: Vec<(ProjectEntryId, Entry)> = Vec::new();
                     let mut operations = Vec::new();
-                    for (entry_id, task) in move_tasks {
+                    for (entry_id, names, task) in move_tasks {
                         if let Some(CreatedEntry::Included(new_entry)) = task
                             .await
+                            .map_err(|err| explain_move_error(err, names.as_ref()))
                             .notify_workspace_async_err(workspace.clone(), &mut cx)
                         {
                             if let (Some(old_path), Some(worktree_id)) =
@@ -6513,7 +6571,7 @@ impl ProjectPanel {
                                 project_panel.marked_entries.push(clicked_entry);
                             }
                         }
-                    } else if event.modifiers().secondary() {
+                    } else if event.modifiers().secondary(cx) {
                         if event.click_count() > 1 {
                             project_panel.split_entry(entry_id, false, None, cx);
                         } else {
@@ -7096,6 +7154,10 @@ impl ProjectPanel {
         let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
         let (chevron, icon) = Self::entry_icons(entry, is_expanded, cx);
+        // Without a folder icon, the chevron is all that tells a folder from a file.
+        let hide_chevron =
+            folder_indicator.shows_icon() && self.state.empty_dir_ids.contains(&entry.id);
+        let chevron = if hide_chevron { None } else { chevron };
 
         let path_style = self.project.read(cx).path_style(cx);
         let (depth, difference) =
@@ -7190,7 +7252,7 @@ impl ProjectPanel {
     }
 
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::new_with_defaults();
+        let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
 
@@ -7471,6 +7533,10 @@ fn entry_file_name<'a>(entry: &'a Entry, root_name: &'a RelPath) -> &'a str {
         .unwrap_or_else(|| root_name.as_unix_str())
 }
 
+fn is_entry_shown(entry: &Entry, hide_gitignore: bool, hide_hidden: bool) -> bool {
+    (!hide_gitignore || !entry.is_ignored) && (!hide_hidden || !entry.is_hidden)
+}
+
 fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
     const ICON_SIZE_FACTOR: usize = 2;
     let mut item_width = depth * ICON_SIZE_FACTOR + item_text_chars;
@@ -7738,7 +7804,7 @@ impl Render for ProjectPanel {
                                          active_indent_guide: &IndentGuideLayout,
                                          window,
                                          cx| {
-                                            if window.modifiers().secondary() {
+                                            if window.modifiers().secondary(cx) {
                                                 let ix = active_indent_guide.offset.y;
                                                 let Some((target_entry, worktree)) = maybe!({
                                                     let (worktree_id, entry) =
@@ -7923,7 +7989,7 @@ impl Render for ProjectPanel {
                                     cx,
                                 )
                                 .flex_grow_1()
-                                .on_scroll_wheel({
+                                .on_scroll({
                                     let scroll_handle = self.scroll_handle.clone();
                                     let entity_id = cx.entity().entity_id();
                                     move |event, window, cx| {
@@ -8379,6 +8445,15 @@ fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)>
         return Some(("A", Color::Created));
     }
     None
+}
+
+fn explain_move_error(err: anyhow::Error, names: Option<&(String, String)>) -> anyhow::Error {
+    match names {
+        Some((from, to)) if already_exists_error(&err) => err.context(format!(
+            "Failed to move `{from}` to `{to}`. A file or folder already exists there."
+        )),
+        _ => err,
+    }
 }
 
 #[cfg(test)]

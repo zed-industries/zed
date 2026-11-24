@@ -157,14 +157,6 @@ impl Tooltip {
         }
     }
 
-    pub fn new_element(title: impl Fn(&mut Window, &mut App) -> AnyElement + 'static) -> Self {
-        Self {
-            title: Title::Callback(Rc::new(title)),
-            meta: None,
-            key_binding: None,
-        }
-    }
-
     pub fn element(
         title: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
     ) -> impl Fn(&mut Window, &mut App) -> AnyView {

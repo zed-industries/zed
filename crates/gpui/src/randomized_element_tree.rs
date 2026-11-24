@@ -1,7 +1,8 @@
+//! A seeded, mutable element tree for benchmarks and tests of GPUI rendering.
 use crate::{
-    AnyElement, AppContext as _, Context, ElementId, Entity, Hsla, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
-    util::FluentBuilder,
+    AnimationExt as _, AnyElement, AppContext as _, Context, ElementId, Entity, Hsla,
+    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Window, div, px, util::FluentBuilder,
 };
 use collections::{HashMap, HashSet};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -61,6 +62,10 @@ pub struct RandomizedElementTreeConfig {
     topology: RandomizedElementTreeTopology,
     entity_density: f64,
     handler_density: f64,
+    animation_density: f64,
+    cached_views: bool,
+    hover_styles: bool,
+    paths: bool,
 }
 
 impl RandomizedElementTreeConfig {
@@ -72,7 +77,39 @@ impl RandomizedElementTreeConfig {
             topology: RandomizedElementTreeTopology::from_seed(seed),
             entity_density: 0.0,
             handler_density: 0.0,
+            animation_density: 0.0,
+            cached_views: false,
+            hover_styles: false,
+            paths: true,
         }
+    }
+
+    /// Use definite-size cached entity boundaries in this separate workload variant.
+    pub fn with_cached_views(mut self, cached: bool) -> Self {
+        self.cached_views = cached;
+        self
+    }
+
+    /// Sets the probability that each entity-backed element shows a looping animation, like
+    /// a spinner, so its entity re-renders on every frame while the window is open.
+    pub fn with_animation_density(mut self, density: f64) -> Self {
+        self.animation_density = normalized_density(density);
+        self
+    }
+
+    /// Gives every element a hover style and a group-hover style keyed to the tree's root.
+    /// Off by default, so workloads that never move the pointer don't pay for them.
+    pub fn with_hover_styles(mut self, hover_styles: bool) -> Self {
+        self.hover_styles = hover_styles;
+        self
+    }
+
+    /// Whether elements paint vector paths. Path tessellation dominates the cost of
+    /// frames that draw them, so turning them off isolates layout and the rest of the
+    /// frame; elements keep the canvas that would have painted them, so layout is the same.
+    pub fn with_paths(mut self, paths: bool) -> Self {
+        self.paths = paths;
+        self
     }
 
     /// Selects the initial tree topology independently of the RNG seed.
@@ -191,15 +228,49 @@ fn sample_range(range: &RangeInclusive<f64>, rng: &mut StdRng) -> f64 {
 }
 
 /// Work performed while converting randomized entities and elements into an element tree.
+///
+/// Recorded only in tests: benchmarks must not pay for bookkeeping, and the rendered-ID
+/// history would otherwise grow for as long as a benchmark draws without resetting it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RandomizedElementTreeWorkCounters {
+    #[cfg(test)]
     root_render_count: usize,
+    #[cfg(test)]
     entity_render_count: usize,
+    #[cfg(test)]
     element_render_count: usize,
+    #[cfg(test)]
     handler_registration_count: usize,
+    #[cfg(test)]
     rendered_entity_ids: Vec<u64>,
 }
 
+impl RandomizedElementTreeWorkCounters {
+    fn record_root_render(&mut self) {
+        #[cfg(test)]
+        {
+            self.root_render_count += 1;
+        }
+    }
+
+    fn record_entity_render(&mut self, _element_id: u64) {
+        #[cfg(test)]
+        {
+            self.entity_render_count += 1;
+            self.rendered_entity_ids.push(_element_id);
+        }
+    }
+
+    fn record_element_render(&mut self, _handler_count: usize) {
+        #[cfg(test)]
+        {
+            self.element_render_count += 1;
+            self.handler_registration_count += _handler_count;
+        }
+    }
+}
+
+#[cfg(test)]
 impl RandomizedElementTreeWorkCounters {
     /// Returns how many times the persistent root's `Render` implementation ran.
     pub fn root_render_count(&self) -> usize {
@@ -241,6 +312,7 @@ pub struct RandomizedElementTreeSnapshot {
     root: RandomizedElementStyle,
     children: Vec<RandomizedElementNode>,
     next_element_id: u64,
+    render_options: RenderOptions,
     paths_by_element_id: HashMap<u64, Vec<usize>>,
 }
 
@@ -342,6 +414,9 @@ pub enum RandomizedElementTreeMutationKind {
     ChildClipping,
     /// Toggle visibility on a seeded random descendant.
     ChildVisibility,
+    /// Change a seeded random descendant's text, adding text to one that had none or
+    /// removing it from one that didn't always have it.
+    ChildText,
     /// Reorder a seeded random descendant among its siblings.
     Reorder,
     /// Insert a generated descendant below a seeded random parent.
@@ -356,7 +431,7 @@ pub enum RandomizedElementTreeMutationKind {
 
 impl RandomizedElementTreeMutationKind {
     /// Every supported mutation kind, suitable for parameterized tests and benchmarks.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::RootColor,
         Self::RootOpacity,
         Self::RootBorder,
@@ -369,6 +444,7 @@ impl RandomizedElementTreeMutationKind {
         Self::ChildBounds,
         Self::ChildClipping,
         Self::ChildVisibility,
+        Self::ChildText,
         Self::Reorder,
         Self::Insert,
         Self::Remove,
@@ -418,6 +494,11 @@ pub enum RandomizedElementTreeMutation {
     },
     /// Toggled a descendant's visibility.
     ChildVisibility {
+        /// The stable ID of the mutated element.
+        element_id: u64,
+    },
+    /// Changed a descendant's text.
+    ChildText {
         /// The stable ID of the mutated element.
         element_id: u64,
     },
@@ -479,6 +560,7 @@ pub struct RecoloredChildren {
 pub struct RandomizedElementTree {
     snapshot: Rc<RefCell<RandomizedElementTreeSnapshot>>,
     entities: Rc<RefCell<RandomizedElementEntities>>,
+    scroll_handles: Rc<RefCell<HashMap<u64, crate::ScrollHandle>>>,
     work_counters: Rc<RefCell<RandomizedElementTreeWorkCounters>>,
     config: RandomizedElementTreeConfig,
     rng: StdRng,
@@ -517,12 +599,7 @@ impl RandomizedElementTree {
                     }
                 }
             };
-            let node = RandomizedElementNode::random(
-                element_index as u64,
-                config.entity_density,
-                config.handler_density,
-                &mut rng,
-            );
+            let node = RandomizedElementNode::random(element_index as u64, &config, &mut rng);
             let (_, inserted_path) = insert_node(&mut children, &mut parent_path, node);
             deepest_path = inserted_path;
         }
@@ -531,6 +608,12 @@ impl RandomizedElementTree {
             root: RandomizedElementStyle::random_root(&mut rng),
             children,
             next_element_id: config.element_count as u64,
+            render_options: RenderOptions {
+                cached_views: config.cached_views,
+                hover_styles: config.hover_styles,
+                paths: config.paths,
+                id_generation: 0,
+            },
             paths_by_element_id: HashMap::default(),
         };
         snapshot.rebuild_element_paths();
@@ -538,6 +621,7 @@ impl RandomizedElementTree {
         Self {
             snapshot: Rc::new(RefCell::new(snapshot)),
             entities: Rc::new(RefCell::new(HashMap::default())),
+            scroll_handles: Rc::default(),
             work_counters: Rc::new(RefCell::new(RandomizedElementTreeWorkCounters::default())),
             config,
             rng,
@@ -550,6 +634,7 @@ impl RandomizedElementTree {
             config: RandomizedElementTreeConfig::new(0, snapshot.descendant_count()),
             snapshot: Rc::new(RefCell::new(snapshot)),
             entities: Rc::new(RefCell::new(HashMap::default())),
+            scroll_handles: Rc::default(),
             work_counters: Rc::new(RefCell::new(RandomizedElementTreeWorkCounters::default())),
             rng: StdRng::seed_from_u64(0),
         }
@@ -571,11 +656,13 @@ impl RandomizedElementTree {
     }
 
     /// Clears render work accumulated since construction or the previous reset.
+    #[cfg(test)]
     pub fn reset_work_counters(&mut self) {
         self.work_counters.borrow_mut().reset();
     }
 
     /// Returns work accumulated since construction or the previous reset.
+    #[cfg(test)]
     pub fn work_counters(&self) -> RandomizedElementTreeWorkCounters {
         self.work_counters.borrow().clone()
     }
@@ -614,6 +701,47 @@ impl RandomizedElementTree {
         }
         self.notify_owner(applied.owner_entity_id, cx);
         applied.mutation
+    }
+
+    /// Picks a seeded random element, at any depth, or `None` if the tree is empty.
+    pub fn random_element_id(&mut self) -> Option<u64> {
+        let snapshot = self.snapshot.borrow();
+        let path = random_node_path(&snapshot.children, &mut self.rng)?;
+        node_at_path(&snapshot.children, &path).map(|node| node.id)
+    }
+
+    /// Alternates an element's background between two colors without changing the tree's
+    /// shape, notifying its nearest persistent entity boundary. Returns `false` if the
+    /// element is no longer in the tree.
+    pub fn alternate_element_color(&mut self, element_id: u64, cx: &mut Context<Self>) -> bool {
+        let owner = {
+            let mut snapshot = self.snapshot.borrow_mut();
+            let Some(path) = snapshot.paths_by_element_id.get(&element_id).cloned() else {
+                return false;
+            };
+            let owner = nearest_entity_id(&snapshot.children, &path);
+            let Some(node) = node_at_path_mut(&mut snapshot.children, &path) else {
+                return false;
+            };
+            let first = crate::hsla(0., 1., 0.5, 1.);
+            let second = crate::hsla(0.5, 1., 0.5, 1.);
+            node.style.background = if node.style.background == first {
+                second
+            } else {
+                first
+            };
+            owner
+        };
+        self.notify_owner(owner, cx);
+        true
+    }
+
+    /// Gives every element a new ID, as when a list's items are keyed by data that
+    /// changes every frame, and re-renders the whole tree. Nothing else changes, so each
+    /// element's state is lost but its layout and paint are as before.
+    pub fn churn_element_ids(&mut self, cx: &mut Context<Self>) {
+        self.snapshot.borrow_mut().render_options.id_generation += 1;
+        cx.notify();
     }
 
     /// Generates and inserts an element below a seeded random parent.
@@ -697,6 +825,9 @@ impl RandomizedElementTree {
             RandomizedElementTreeMutationKind::ChildVisibility => {
                 self.mutate_random_child(RandomizedChildMutation::Visibility)
             }
+            RandomizedElementTreeMutationKind::ChildText => {
+                self.mutate_random_child(RandomizedChildMutation::Text)
+            }
             RandomizedElementTreeMutationKind::Reorder => self.reorder_child(),
             RandomizedElementTreeMutationKind::Insert => self.insert_child_internal(),
             RandomizedElementTreeMutationKind::Remove => self
@@ -715,12 +846,7 @@ impl RandomizedElementTree {
         let mut parent_path = random_parent_path(&snapshot.children, &mut self.rng);
         let parent_id = node_at_path(&snapshot.children, &parent_path).map(|node| node.id);
         let owner_entity_id = nearest_entity_id(&snapshot.children, &parent_path);
-        let node = RandomizedElementNode::random(
-            element_id,
-            self.config.entity_density,
-            self.config.handler_density,
-            &mut self.rng,
-        );
+        let node = RandomizedElementNode::random(element_id, &self.config, &mut self.rng);
         let (index, _) = insert_node(&mut snapshot.children, &mut parent_path, node);
         snapshot.rebuild_element_paths();
 
@@ -757,6 +883,13 @@ impl RandomizedElementTree {
         let removed_element_count = removed.element_count();
         let element_id = removed.id;
         snapshot.rebuild_element_paths();
+        let mut scroll_handles = self.scroll_handles.borrow_mut();
+        let mut removed_nodes = vec![&removed];
+        while let Some(node) = removed_nodes.pop() {
+            scroll_handles.remove(&node.id);
+            removed_nodes.extend(node.children.iter());
+        }
+        drop(scroll_handles);
         Some(AppliedRandomizedElementTreeMutation {
             mutation: RandomizedElementTreeMutation::Removed {
                 element_id,
@@ -782,7 +915,7 @@ impl RandomizedElementTree {
         locality: ChangeLocality,
         cx: &mut Context<Self>,
     ) -> RecoloredChildren {
-        let owners = {
+        let (owners, recolored) = {
             let mut snapshot = self.snapshot.borrow_mut();
             let mut paths = node_paths(&snapshot.children);
             let count = count.min(paths.len());
@@ -825,10 +958,9 @@ impl RandomizedElementTree {
                     node.style.background = random_color(&mut self.rng);
                 }
             }
-            owners
+            (owners, count)
         };
         let notified = owners.len();
-        let recolored = count.min(self.snapshot.borrow().descendant_count());
         for owner in owners {
             self.notify_owner(owner, cx);
         }
@@ -847,6 +979,8 @@ impl RandomizedElementTree {
             drop(snapshot);
             return self.insert_child_internal();
         };
+        // Notifying a view also re-renders its ancestors, so this reaches the view that
+        // passes a cached entity's size to `.cached(style)` too.
         let owner_entity_id = nearest_entity_id(&snapshot.children, &path);
         let Some(node) = node_at_path_mut(&mut snapshot.children, &path) else {
             drop(snapshot);
@@ -868,8 +1002,17 @@ impl RandomizedElementTree {
                 RandomizedElementTreeMutation::ChildBorder { element_id }
             }
             RandomizedChildMutation::Bounds => {
-                node.style.width = self.rng.random_range(36.0..220.0);
-                node.style.height = self.rng.random_range(28.0..180.0);
+                // Occasionally collapse an axis to exercise empty bounds.
+                node.style.width = if self.rng.random_bool(0.02) {
+                    0.0
+                } else {
+                    self.rng.random_range(36.0..220.0)
+                };
+                node.style.height = if self.rng.random_bool(0.02) {
+                    0.0
+                } else {
+                    self.rng.random_range(28.0..180.0)
+                };
                 RandomizedElementTreeMutation::ChildBounds { element_id }
             }
             RandomizedChildMutation::Clipping => {
@@ -879,6 +1022,11 @@ impl RandomizedElementTree {
             RandomizedChildMutation::Visibility => {
                 node.style.visible = !node.style.visible;
                 RandomizedElementTreeMutation::ChildVisibility { element_id }
+            }
+            RandomizedChildMutation::Text => {
+                node.style.label =
+                    (node.style.label + self.rng.random_range(1..LABELS.len())) % LABELS.len();
+                RandomizedElementTreeMutation::ChildText { element_id }
             }
         };
         AppliedRandomizedElementTreeMutation {
@@ -973,18 +1121,11 @@ impl RandomizedElementTree {
                 element_id,
                 snapshot: self.snapshot.clone(),
                 entities: weak_entities.clone(),
+                scroll_handles: self.scroll_handles.clone(),
                 work_counters: self.work_counters.clone(),
             });
             self.entities.borrow_mut().insert(element_id, entity);
         }
-
-        let entity_count = self.entities.borrow().len();
-        let mut work_counters = self.work_counters.borrow_mut();
-        let additional_capacity =
-            entity_count.saturating_sub(work_counters.rendered_entity_ids.len());
-        work_counters
-            .rendered_entity_ids
-            .reserve(additional_capacity);
     }
 
     fn notify_owner(&self, owner_entity_id: Option<u64>, cx: &mut Context<Self>) {
@@ -1004,16 +1145,22 @@ impl Render for RandomizedElementTree {
         let root = &snapshot.root;
         let entities = self.entities.borrow();
         let mut work_counters = self.work_counters.borrow_mut();
-        work_counters.root_render_count += 1;
+        work_counters.record_root_render();
 
         div()
             .flex()
+            .when(snapshot.render_options.hover_styles, |element| {
+                element.group("randomized-tree-root")
+            })
             .when(root.vertical, |element| element.flex_col())
             .when(root.wrap, |element| element.flex_wrap())
             .gap(px(root.gap))
             .p(px(root.padding))
             .w(px(root.width))
             .h(px(root.height))
+            // Shrinks with a window smaller than the root, so resizing it changes layout.
+            .max_w_full()
+            .max_h_full()
             .bg(root.background)
             .border(px(root.border_width))
             .border_color(root.border_color)
@@ -1021,21 +1168,37 @@ impl Render for RandomizedElementTree {
             .opacity(root.opacity)
             .when(root.clipped, |element| element.overflow_hidden())
             .when(!root.visible, |element| element.invisible())
-            .children(
-                snapshot
-                    .children
-                    .iter()
-                    .map(|node| render_node(node, &entities, &mut work_counters)),
-            )
+            .children(snapshot.children.iter().map(|node| {
+                render_node(
+                    node,
+                    &entities,
+                    &self.scroll_handles,
+                    &mut work_counters,
+                    snapshot.render_options,
+                )
+            }))
     }
 }
 
 type RandomizedElementEntities = HashMap<u64, Entity<RandomizedElementEntity>>;
 
+/// Element IDs carry the tree's ID generation above this bit, so churning IDs never
+/// changes the element number the low bits identify.
+const ID_GENERATION_SHIFT: u32 = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RenderOptions {
+    cached_views: bool,
+    hover_styles: bool,
+    paths: bool,
+    id_generation: u64,
+}
+
 struct RandomizedElementEntity {
     element_id: u64,
     snapshot: Rc<RefCell<RandomizedElementTreeSnapshot>>,
     entities: Weak<RefCell<RandomizedElementEntities>>,
+    scroll_handles: Rc<RefCell<HashMap<u64, crate::ScrollHandle>>>,
     work_counters: Rc<RefCell<RandomizedElementTreeWorkCounters>>,
 }
 
@@ -1045,12 +1208,19 @@ impl Render for RandomizedElementEntity {
         let entities = self.entities.upgrade();
         let entities = entities.as_ref().map(|entities| entities.borrow());
         let mut work_counters = self.work_counters.borrow_mut();
-        work_counters.entity_render_count += 1;
-        work_counters.rendered_entity_ids.push(self.element_id);
+        work_counters.record_entity_render(self.element_id);
 
         snapshot
             .node(self.element_id)
-            .map(|node| render_node_body(node, entities.as_deref(), &mut work_counters))
+            .map(|node| {
+                render_node_body(
+                    node,
+                    entities.as_deref(),
+                    &self.scroll_handles,
+                    &mut work_counters,
+                    snapshot.render_options,
+                )
+            })
             .unwrap_or_else(|| div().into_any_element())
     }
 }
@@ -1081,12 +1251,19 @@ struct RandomizedElementNode {
 }
 
 impl RandomizedElementNode {
-    fn random(id: u64, entity_density: f64, handler_density: f64, rng: &mut StdRng) -> Self {
+    fn random(id: u64, config: &RandomizedElementTreeConfig, rng: &mut StdRng) -> Self {
+        let style = RandomizedElementStyle::random_child(rng);
+        let is_entity = rng.random_bool(config.entity_density);
+        let mut features = RandomizedElementFeatures::random(config.handler_density, rng);
+        // Drawn only when enabled, so trees without animations keep the same RNG stream.
+        features.animated = is_entity
+            && config.animation_density > 0.0
+            && rng.random_bool(config.animation_density);
         Self {
             id,
-            style: RandomizedElementStyle::random_child(rng),
-            is_entity: rng.random_bool(entity_density),
-            features: RandomizedElementFeatures::random(handler_density, rng),
+            style,
+            is_entity,
+            features,
             children: Vec::new(),
         }
     }
@@ -1107,6 +1284,7 @@ struct RandomizedElementFeatures {
     action_handler: bool,
     click_handler: bool,
     key_context: bool,
+    animated: bool,
 }
 
 impl RandomizedElementFeatures {
@@ -1115,6 +1293,7 @@ impl RandomizedElementFeatures {
             action_handler: rng.random_bool(handler_density),
             click_handler: rng.random_bool(handler_density),
             key_context: rng.random_bool(handler_density),
+            animated: false,
         }
     }
 
@@ -1138,7 +1317,19 @@ struct RandomizedElementStyle {
     visible: bool,
     vertical: bool,
     wrap: bool,
+    /// Index into [`LABELS`] of the element's text. Not drawn when generating a tree, so
+    /// adding it left every seed's tree as it was.
+    label: usize,
 }
+
+/// The texts an element can show. Elements whose number is 1 more than a multiple of 4
+/// show the first; others show text only once a mutation changes their label.
+const LABELS: [&str; 4] = [
+    "Retained glyphs: abc Ω",
+    "Retained glyphs: abc Ω, now with enough words that narrow parents wrap them",
+    "Ω",
+    "",
+];
 
 impl RandomizedElementStyle {
     fn random_root(rng: &mut StdRng) -> Self {
@@ -1156,6 +1347,7 @@ impl RandomizedElementStyle {
             visible: true,
             vertical: rng.random_bool(0.5),
             wrap: rng.random_bool(0.7),
+            label: 0,
         }
     }
 
@@ -1174,6 +1366,7 @@ impl RandomizedElementStyle {
             visible: rng.random_bool(0.9),
             vertical: rng.random_bool(0.5),
             wrap: rng.random_bool(0.4),
+            label: 0,
         }
     }
 
@@ -1192,38 +1385,50 @@ enum RandomizedChildMutation {
     Bounds,
     Clipping,
     Visibility,
+    Text,
 }
 
 #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
 fn render_node(
     node: &RandomizedElementNode,
     entities: &RandomizedElementEntities,
+    scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
+    options: RenderOptions,
 ) -> AnyElement {
     if node.is_entity
         && let Some(entity) = entities.get(&node.id)
     {
+        if options.cached_views {
+            let mut style = crate::StyleRefinement::default();
+            style.size.width = Some(px(node.style.width).into());
+            style.size.height = Some(px(node.style.height).into());
+            style.flex_shrink = Some(0.0);
+            return entity.clone().cached(style).into_any_element();
+        }
         return entity.clone().into_any_element();
     }
 
-    render_node_body(node, Some(entities), work_counters)
+    render_node_body(node, Some(entities), scroll_handles, work_counters, options)
 }
 
 #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
 fn render_node_body(
     node: &RandomizedElementNode,
     entities: Option<&RandomizedElementEntities>,
+    scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
+    options: RenderOptions,
 ) -> AnyElement {
-    work_counters.element_render_count += 1;
-    work_counters.handler_registration_count += node.features.handler_count();
+    work_counters.record_element_render(node.features.handler_count());
     let style = &node.style;
     div()
         .id(ElementId::NamedInteger(
             "randomized-element".into(),
-            node.id,
+            node.id | options.id_generation << ID_GENERATION_SHIFT,
         ))
         .flex()
+        .flex_shrink_0()
         .when(style.vertical, |element| element.flex_col())
         .when(style.wrap, |element| element.flex_wrap())
         .gap(px(style.gap))
@@ -1231,26 +1436,106 @@ fn render_node_body(
         .w(px(style.width))
         .h(px(style.height))
         .bg(style.background)
+        .when(options.hover_styles, |element| {
+            element
+                .hover(|element| {
+                    element
+                        .bg(style.border_color)
+                        .border(px(style.border_width + 1.0))
+                })
+                .group_hover("randomized-tree-root", |element| element.opacity(0.65))
+        })
         .border(px(style.border_width))
         .border_color(style.border_color)
         .rounded(px(style.corner_radius))
+        .when(node.id.is_multiple_of(2), |element| {
+            element.shadow(vec![
+                crate::BoxShadow::new(px(-style.gap), px(style.gap), style.border_color)
+                    .blur_radius(px(style.corner_radius)),
+            ])
+        })
         .opacity(style.opacity)
         .when(style.clipped, |element| element.overflow_hidden())
+        .when(node.id.is_multiple_of(3), |element| {
+            let mut handles = scroll_handles.borrow_mut();
+            let handle = handles
+                .entry(node.id)
+                .or_insert_with(crate::ScrollHandle::new);
+            element.overflow_scroll().track_scroll(handle)
+        })
         .when(!style.visible, |element| element.invisible())
         .when(node.features.action_handler, |element| {
             element.on_action(|_: &RandomizedElementTreeAction, _window, _cx| {})
         })
         .when(node.features.click_handler, |element| {
-            element.on_click(|_event, _window, _cx| {})
+            element.cursor_pointer().on_click(|_event, _window, _cx| {})
         })
         .when(node.features.key_context, |element| {
-            element.key_context("RandomizedElementTree")
+            element
+                .key_context("RandomizedElementTree")
+                .tab_index((node.id % 5) as isize)
+                .tab_stop(!node.id.is_multiple_of(7))
+        })
+        .when(node.id.is_multiple_of(5), |element| element.tab_group())
+        .when(node.features.animated, |element| {
+            element.child(
+                div()
+                    .size(px(10.))
+                    .flex_shrink_0()
+                    .rounded_full()
+                    .bg(style.border_color)
+                    .with_animation(
+                        ElementId::NamedInteger("randomized-spinner".into(), node.id),
+                        crate::Animation::new(std::time::Duration::from_millis(800)).repeat(),
+                        |element, delta| element.opacity(0.25 + 0.75 * delta),
+                    ),
+            )
+        })
+        .when(node.id % 4 == 1 || style.label != 0, |element| {
+            element
+                .underline()
+                .child(LABELS[style.label % LABELS.len()])
+        })
+        .child({
+            let color = style.border_color;
+            let width = style.border_width;
+            let bend = style.corner_radius;
+            crate::canvas(
+                |_, _, _| (),
+                move |bounds, (), window, _| {
+                    if !options.paths {
+                        return;
+                    }
+                    for index in 0..6 {
+                        let mut path = if index % 2 == 0 {
+                            crate::PathBuilder::fill()
+                        } else {
+                            crate::PathBuilder::stroke(px(width + 0.5))
+                        };
+                        let origin =
+                            bounds.origin + crate::point(px(index as f32 * 3.0 - 8.0), px(-4.0));
+                        path.move_to(origin);
+                        path.curve_to(
+                            origin + crate::point(bounds.size.width, bounds.size.height),
+                            origin + crate::point(px(bend), px(-bend)),
+                        );
+                        path.line_to(origin + crate::point(px(-bend), bounds.size.height));
+                        path.close();
+                        window.paint_path(
+                            path.build().expect("generated path must tessellate"),
+                            color,
+                        );
+                    }
+                },
+            )
+            .absolute()
+            .size_full()
         })
         .children(node.children.iter().map(|child| {
             if let Some(entities) = entities {
-                render_node(child, entities, work_counters)
+                render_node(child, entities, scroll_handles, work_counters, options)
             } else {
-                render_node_body(child, None, work_counters)
+                render_node_body(child, None, scroll_handles, work_counters, options)
             }
         }))
         .into_any_element()
@@ -1428,19 +1713,60 @@ mod tests {
     #[derive(Debug, PartialEq)]
     struct SceneSnapshot {
         quads: Vec<QuadSnapshot>,
+        /// Every other primitive kind, formatted without the per-window atlas tile
+        /// IDs, which differ between two windows drawing the same scene.
+        other_primitives: Vec<String>,
         element_ids: BTreeSet<u64>,
     }
 
     impl SceneSnapshot {
         fn from_window(window: &Window) -> Self {
+            let scene = &window.rendered_frame.scene;
+            let other_primitives = scene
+                .shadows
+                .iter()
+                .map(|shadow| format!("{shadow:?}"))
+                .chain(
+                    scene
+                        .underlines
+                        .iter()
+                        .map(|underline| format!("{underline:?}")),
+                )
+                .chain(scene.paths.iter().map(|path| format!("{path:?}")))
+                .chain(scene.monochrome_sprites.iter().map(|sprite| {
+                    format!(
+                        "monochrome {} {:?} {:?} {:?} {:?}",
+                        sprite.order,
+                        sprite.bounds,
+                        sprite.content_mask,
+                        sprite.color,
+                        sprite.transformation
+                    )
+                }))
+                .chain(scene.subpixel_sprites.iter().map(|sprite| {
+                    format!(
+                        "subpixel {} {:?} {:?} {:?} {:?}",
+                        sprite.order,
+                        sprite.bounds,
+                        sprite.content_mask,
+                        sprite.color,
+                        sprite.transformation
+                    )
+                }))
+                .chain(scene.polychrome_sprites.iter().map(|sprite| {
+                    format!(
+                        "polychrome {} {:?} {:?} {:?} {}",
+                        sprite.order,
+                        sprite.bounds,
+                        sprite.content_mask,
+                        sprite.grayscale,
+                        sprite.opacity
+                    )
+                }))
+                .collect();
             Self {
-                quads: window
-                    .rendered_frame
-                    .scene
-                    .quads
-                    .iter()
-                    .map(QuadSnapshot::from)
-                    .collect(),
+                quads: scene.quads.iter().map(QuadSnapshot::from).collect(),
+                other_primitives,
                 element_ids: window
                     .rendered_frame
                     .element_states
@@ -1449,7 +1775,8 @@ mod tests {
                         let ElementId::NamedInteger(name, element_id) = global_id.last()? else {
                             return None;
                         };
-                        (name.as_ref() == "randomized-element").then_some(*element_id)
+                        (name.as_ref() == "randomized-element")
+                            .then_some(element_id & ((1 << ID_GENERATION_SHIFT) - 1))
                     })
                     .collect(),
             }
@@ -1571,6 +1898,7 @@ mod tests {
             RandomizedChildMutation::Bounds,
             RandomizedChildMutation::Clipping,
             RandomizedChildMutation::Visibility,
+            RandomizedChildMutation::Text,
         ] {
             tree.mutate_random_child(mutation);
             assert_eq!(tree.snapshot().element_ids(), initial_ids);
@@ -1731,6 +2059,101 @@ mod tests {
         cx.update_window(reference_window, |_, window, _| window.remove_window())
             .expect("reference window should remain open until its frame is captured");
         scene
+    }
+
+    /// Applies the same random changes to two windows, one keeping its layout nodes
+    /// between frames and one rebuilding them every frame, and checks they draw the same
+    /// scene and hitboxes after every change.
+    #[gpui::test(iterations = 16)]
+    fn layout_cache_matches_rebuilding_every_frame(mut rng: StdRng, cx: &mut TestAppContext) {
+        let seed = rng.random();
+        let element_count = rng.random_range(0..ELEMENT_COUNT);
+        let config = RandomizedElementTreeConfig::new(seed, element_count)
+            .with_entity_density(rng.random_range(0.0..0.5))
+            .with_handler_density(0.2)
+            .with_cached_views(rng.random_bool(0.3));
+        let [cached, uncached] = [(); 2].map(|()| {
+            let window = cx.open_window(WINDOW_SIZE, move |_, cx| {
+                RandomizedElementTree::new_with_config(config, cx)
+            });
+            let root = window
+                .root(cx)
+                .expect("randomized tree window should have a root");
+            (AnyWindowHandle::from(window), root)
+        });
+
+        // Hiding an ancestor of `.cached()` views can panic on `main` today, with or
+        // without the layout cache, so cached-view trees leave it out.
+        let mutations = RandomizedElementTreeMutationKind::ALL
+            .into_iter()
+            .filter(|kind| {
+                !config.cached_views
+                    || !matches!(
+                        kind,
+                        RandomizedElementTreeMutationKind::RootVisibility
+                            | RandomizedElementTreeMutationKind::ChildVisibility
+                    )
+            })
+            .collect::<Vec<_>>();
+        for step in 0..48 {
+            let change = rng.random_range(0..100);
+            let mutation = mutations[rng.random_range(0..mutations.len())];
+            let window_size = size(
+                px(rng.random_range(200.0..1400.0)),
+                px(rng.random_range(150.0..1000.0)),
+            );
+            let rem_size = px(rng.random_range(8.0..24.0));
+            let scale_factor = [1.0, 1.25, 1.5, 2.0, 2.5][rng.random_range(0..5)];
+            for (window, root) in [&cached, &uncached] {
+                match change {
+                    0..60 => {
+                        root.update(cx, |tree, cx| tree.apply_mutation(mutation, cx));
+                    }
+                    60..68 => root.update(cx, |tree, cx| tree.churn_element_ids(cx)),
+                    68..76 => cx.simulate_window_resize(*window, window_size),
+                    76..82 => cx
+                        .update_window(*window, |_, window, _| window.set_rem_size(rem_size))
+                        .expect("window should remain open"),
+                    82..88 => cx
+                        .update_window(*window, |_, window, _| {
+                            window.set_scale_factor(scale_factor)
+                        })
+                        .expect("window should remain open"),
+                    _ => root.update(cx, |_, cx| cx.notify()),
+                }
+            }
+            cx.update_window(uncached.0, |_, window, _| window.clear_layout_cache())
+                .expect("window should remain open");
+            let [cached_frame, uncached_frame] =
+                [&cached, &uncached].map(|(window, _)| draw_window_with_hitboxes(*window, cx));
+            assert_eq!(
+                cached_frame, uncached_frame,
+                "cached layout diverged at step {step} (change {change}) for {config:?}"
+            );
+        }
+
+        for (window, _) in [cached, uncached] {
+            cx.update_window(window, |_, window, _| window.remove_window())
+                .expect("window should remain open until the case completes");
+        }
+    }
+
+    fn draw_window_with_hitboxes(
+        window: AnyWindowHandle,
+        cx: &mut TestAppContext,
+    ) -> (SceneSnapshot, Vec<Bounds<Pixels>>) {
+        let scene = draw_window(window, cx);
+        let hitboxes = cx
+            .update_window(window, |_, window, _| {
+                window
+                    .rendered_frame
+                    .hitboxes
+                    .iter()
+                    .map(|hitbox| hitbox.bounds)
+                    .collect()
+            })
+            .expect("window should remain open");
+        (scene, hitboxes)
     }
 
     fn draw_window(window: AnyWindowHandle, cx: &mut TestAppContext) -> SceneSnapshot {

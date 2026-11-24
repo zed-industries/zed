@@ -26,7 +26,6 @@ pub fn register_fake_definition_server(
             initialization_options: None,
             additional_initialization_options: HashMap::default(),
             additional_workspace_configuration: HashMap::default(),
-            prettier_plugins: Vec::new(),
             disk_based_diagnostics_progress_token: None,
             disk_based_diagnostics_sources: Vec::new(),
             language_server_binary: LanguageServerBinary {
@@ -44,6 +43,7 @@ pub fn register_fake_definition_server(
                 ..Default::default()
             },
             label_for_completion: None,
+            label_for_symbol: None,
             initializer: Some(Box::new({
                 move |server| {
                     server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
@@ -442,7 +442,7 @@ fn extract_declarations_from_tree(
         let mut name_range: Option<Range<usize>> = None;
         let mut has_item_range = false;
 
-        for capture in query_match.captures {
+        for capture in query_match.captures() {
             let range = capture.node.byte_range();
             if capture.index == outline_config.name_capture_ix {
                 name_range = Some(range);

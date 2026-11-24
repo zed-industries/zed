@@ -9,11 +9,6 @@ pub use zeta_prompt::udiff::{
 
 use crate::data_collection::format_cursor_excerpt;
 
-/// Maximum cursor file size to capture (64KB).
-/// Files larger than this will not have their content captured,
-/// falling back to git-based loading.
-pub const MAX_CURSOR_FILE_SIZE: usize = 64 * 1024;
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RecentFile {
     pub path: Arc<Path>,

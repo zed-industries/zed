@@ -955,3 +955,121 @@ async fn test_invisible_worktree_stores_do_not_affect_trust(cx: &mut TestAppCont
         "only visible worktrees should be restricted"
     );
 }
+
+#[gpui::test]
+async fn test_windows_style_abs_path_trust_from_unix_client(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use project::worktree_store::WorktreeIdCounter;
+    use rpc::{AnyProtoClient, NoopProtoClient, proto};
+    use util::paths::PathStyle;
+    use worktree::Worktree;
+
+    init_test(cx);
+
+    let client = AnyProtoClient::new(NoopProtoClient::new());
+    let worktree_store = cx.update(|cx| {
+        cx.new(|_| {
+            WorktreeStore::remote(
+                true,
+                client.clone(),
+                1,
+                PathStyle::Windows,
+                WorktreeIdCounter::default(),
+            )
+        })
+    });
+
+    let make_worktree = |id: u64, name: &str, abs_path: &str, cx: &mut TestAppContext| {
+        let metadata = proto::WorktreeMetadata {
+            id,
+            root_name: name.to_string(),
+            visible: true,
+            abs_path: abs_path.to_string(),
+            root_repo_common_dir: None,
+            root_repo_is_linked_worktree: false,
+        };
+        let worktree = cx.update(|cx| {
+            Worktree::remote(
+                1,
+                clock::ReplicaId::new(1),
+                metadata,
+                client.clone(),
+                PathStyle::Windows,
+                cx,
+            )
+        });
+        worktree.update(cx, |worktree, _| {
+            worktree
+                .as_remote()
+                .unwrap()
+                .update_from_remote(proto::UpdateWorktree {
+                    project_id: 1,
+                    worktree_id: id,
+                    abs_path: abs_path.to_string(),
+                    root_name: name.to_string(),
+                    updated_entries: vec![proto::Entry {
+                        id: 1,
+                        is_dir: true,
+                        path: "".to_string(),
+                        inode: 1,
+                        mtime: Some(proto::Timestamp {
+                            seconds: 0,
+                            nanos: 0,
+                        }),
+                        is_ignored: false,
+                        is_hidden: false,
+                        is_external: false,
+                        is_fifo: false,
+                        size: None,
+                        canonical_path: None,
+                        is_unloaded: false,
+                    }],
+                    removed_entries: vec![],
+                    scan_id: 1,
+                    is_last_update: true,
+                    updated_repositories: vec![],
+                    removed_repositories: vec![],
+                    root_repo_common_dir: None,
+                    root_repo_is_linked_worktree: false,
+                });
+        });
+        cx.run_until_parked();
+        worktree
+    };
+
+    let worktree_t1 = make_worktree(1, "t1", r"C:\Users\me\dev\wt\t1", cx);
+    let worktree_t2 = make_worktree(2, "t2", r"C:\Users\me\dev\wt\t2", cx);
+    let t1_id = worktree_t1.read_with(cx, |worktree, _| worktree.id());
+    let t2_id = worktree_t2.read_with(cx, |worktree, _| worktree.id());
+    worktree_store.update(cx, |store, cx| {
+        store.add(&worktree_t1, cx);
+        store.add(&worktree_t2, cx);
+    });
+    assert!(
+        !worktree_t1.read_with(cx, |worktree, _| worktree.is_single_file()),
+        "t1 must be a folder worktree for this test to be meaningful"
+    );
+
+    let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
+
+    assert!(
+        !trusted_worktrees.update(cx, |store, cx| store.can_trust(&worktree_store, t1_id, cx)),
+        "t1 should be restricted by default"
+    );
+
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([
+                PathTrust::Worktree(t1_id),
+                PathTrust::AbsPath(PathBuf::from(r"C:\Users\me\dev\wt")),
+            ]),
+            cx,
+        );
+    });
+
+    assert!(
+        trusted_worktrees.update(cx, |store, cx| store.can_trust(&worktree_store, t2_id, cx)),
+        "t2 should be auto-trusted by the trusted parent scope C:\\Users\\me\\dev\\wt"
+    );
+}

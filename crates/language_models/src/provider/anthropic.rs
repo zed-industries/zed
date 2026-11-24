@@ -19,6 +19,7 @@ use language_model::{
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
+use util::ResultExt;
 
 use anthropic::completion::collect_compaction_result;
 pub use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
@@ -53,7 +54,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<anthropic::Model>,
-    fetch_models_task: Option<Task<Result<()>>>,
+    fetch_models_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
 }
 
 impl State {
@@ -133,7 +135,16 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
+        let fetch_task = self.fetch_models(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_task.await;
+            this.update(cx, |this, _cx| {
+                this.last_fetch_models_error =
+                    result.as_ref().err().map(|error| format!("{error:#}"));
+            })
+            .ok();
+            result.log_err();
+        });
         self.fetch_models_task.replace(task);
     }
 }
@@ -172,6 +183,7 @@ impl AnthropicLanguageModelProvider {
                 http_client: http_client.clone(),
                 fetched_models: Vec::new(),
                 fetch_models_task: None,
+                last_fetch_models_error: None,
             }
         });
 
@@ -338,6 +350,14 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
+    fn refresh_models(&self, cx: &mut App) {
+        self.state.update(cx, |state, cx| {
+            if state.is_authenticated() {
+                state.restart_fetch_models_task(cx);
+            }
+        });
+    }
+
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.read(cx);
         Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
@@ -379,13 +399,18 @@ impl LanguageModelClient for AnthropicLanguageModelProvider {
         };
         let request_limiter = self.request_limiters.for_model(&model.id);
         let has_tools = !request.tools.is_empty();
-        let request_id = config.request_id(has_tools).to_string();
+        let request_id = config.request_id(has_tools);
         let mut request = match into_anthropic(
             request,
-            request_id,
+            request_id.to_string(),
             config.default_temperature,
             config.max_output_tokens,
             config.mode.clone(),
+            config
+                .thinking_types
+                .as_ref()
+                .filter(|_| request_id == config.id),
+            anthropic::supports_per_message_effort(&config.id),
             AnthropicPromptCacheMode::Automatic,
             &PROVIDER_ID,
         ) {
@@ -419,13 +444,18 @@ impl LanguageModelClient for AnthropicLanguageModelProvider {
             Err(error) => return async move { Err(error) }.boxed(),
         };
         let request_limiter = self.request_limiters.for_model(&model.id);
-        let request_id = config.request_id(!request.tools.is_empty()).to_string();
+        let request_id = config.request_id(!request.tools.is_empty());
         let request = into_anthropic(
             request,
-            request_id,
+            request_id.to_string(),
             config.default_temperature,
             config.max_output_tokens,
             config.mode.clone(),
+            config
+                .thinking_types
+                .as_ref()
+                .filter(|_| request_id == config.id),
+            anthropic::supports_per_message_effort(&config.id),
             AnthropicPromptCacheMode::Automatic,
             &PROVIDER_ID,
         );
@@ -485,6 +515,8 @@ impl LanguageModelClient for AnthropicLanguageModelProvider {
             config.default_temperature,
             config.max_output_tokens,
             config.mode.clone(),
+            config.thinking_types.as_ref(),
+            anthropic::supports_per_message_effort(&config.id),
             AnthropicPromptCacheMode::Automatic,
             &PROVIDER_ID,
         ) {
@@ -577,6 +609,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         max_output_tokens: available.max_output_tokens.unwrap_or(4_096),
         default_temperature: available.default_temperature.unwrap_or(1.0),
         mode,
+        thinking_types: None,
         supports_thinking,
         supports_adaptive_thinking,
         supports_images: true,
@@ -847,6 +880,82 @@ mod tests {
         assert!(body["tools"].is_null());
     }
 
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut gpui::TestAppContext) {
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(401)
+                .body(AsyncBody::from(
+                    r#"{"error":{"message":"invalid x-api-key"}}"#,
+                ))?)
+        });
+        let provider = direct_anthropic_test_provider(http_client, cx);
+
+        cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
+        );
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_cancels_the_previous_fetch(cx: &mut gpui::TestAppContext) {
+        let (release_tx, release_rx) = futures::channel::oneshot::channel();
+        let release_rx = Arc::new(Mutex::new(Some(release_rx)));
+        let call_count = Arc::new(Mutex::new(0));
+        let call_count_for_handler = call_count.clone();
+        let http_client = FakeHttpClient::create(move |_request| {
+            let release_rx = release_rx.clone();
+            let call_count = call_count_for_handler.clone();
+            async move {
+                let call_index = {
+                    let mut call_count = call_count.lock().unwrap();
+                    *call_count += 1;
+                    *call_count
+                };
+                if call_index == 1 {
+                    let release_rx = release_rx.lock().unwrap().take();
+                    if let Some(release_rx) = release_rx {
+                        release_rx.await.ok();
+                    }
+                    Ok(http_client::Response::builder()
+                        .status(401)
+                        .body(AsyncBody::from(r#"{"error":{"message":"stale"}}"#))?)
+                } else {
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(r#"{"data":[]}"#))?)
+                }
+            }
+        });
+        let provider = direct_anthropic_test_provider(http_client, cx);
+
+        cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+        assert_eq!(*call_count.lock().unwrap(), 1);
+
+        cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        release_tx.send(()).ok();
+        cx.executor().run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_none(),
+            "the cancelled first fetch's stale 401 must not overwrite the second fetch's success"
+        );
+    }
+
     fn direct_anthropic_test_provider(
         http_client: Arc<dyn HttpClient>,
         cx: &mut gpui::TestAppContext,
@@ -869,7 +978,13 @@ mod tests {
             display_name: "Claude Opus 4.6".to_string(),
             max_input_tokens: 1_000_000,
             max_tokens: 128_000,
-            capabilities: None,
+            capabilities: Some(anthropic::ModelCapabilities {
+                context_management: Some(anthropic::ContextManagementCapability {
+                    supported: true,
+                    compact_20260112: Some(anthropic::SupportedCapability { supported: true }),
+                }),
+                ..Default::default()
+            }),
         });
         provider
             .state
@@ -923,6 +1038,7 @@ fn language_model(model: &anthropic::Model) -> LanguageModel {
         },
         supports_thinking: model.supports_thinking,
         supports_fast_mode: model.supports_speed,
+        supports_ultrafast_mode: false,
         refusal_fallback_model_id: model
             .id
             .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
@@ -948,6 +1064,7 @@ fn language_model(model: &anthropic::Model) -> LanguageModel {
                     name,
                     value,
                     is_default,
+                    supports_disabling_thinking: None,
                 }
             })
             .collect(),

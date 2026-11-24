@@ -23,10 +23,6 @@ sandbox?](#trust) for more details.
 Sandboxing applies only to Zed Agent. It does not sandbox Zed itself, language servers, extensions, tasks, your normal
 terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./terminal-threads.md).
 
-> **Note**: Under some conditions, sandboxes on Windows are weaker than those on
-> Linux and MacOS, and may not prevent all escape attempts. See
-> [Windows](#windows) for more detail.
-
 ## Sandboxed Tools {#sandboxed-tools}
 
 Zed Agent sandboxing currently applies to the `terminal` and `fetch` tools.
@@ -46,7 +42,7 @@ Sandboxing is supported, in some form, on all platforms. In order to sandbox a
 `terminal` tool call, the following is required:
 
 - On Linux, a runnable, non-setuid `bwrap` binary must be on the `$PATH`. See [Installing Bubblewrap](#installing-bubblewrap).
-- On Windows, WSL must be available.
+- On Windows, Windows 11 with Process Security Environment support: version 24H2, 25H2, or 26H1 with the August 2026 update or later, or 26H2 with the September 2026 update or later. See [Windows](#windows).
 
 There are no extra requirements on MacOS.
 
@@ -63,7 +59,7 @@ By default, sandboxed Zed Agent tool actions have these restrictions:
 | Git metadata        | `.git` directories and linked worktree Git metadata remain readable but are not writable while sandboxed.                                                                              |
 | Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.                                                                                       |
 | Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.                                                                                |
-| Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request. Host-specific enforcement is not available on every platform.                    |
+| Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request.                                                                                  |
 | Local IPC sockets   | Sandboxed commands cannot open Unix-domain sockets (for example, to the desktop session bus or a container daemon), which could otherwise be used to run commands outside the sandbox. |
 
 ## How much can I trust the sandbox? {#trust}
@@ -232,7 +228,7 @@ after host-specific network access is approved.
 If Bubblewrap is unavailable or cannot create a sandbox in the current environment, Zed may run the command without the OS
 sandbox and show a warning in the tool output.
 
-> **Warning**: On Linux and WSL, restrictions on filesystem objects are
+> **Warning**: On Linux and Windows, restrictions on filesystem objects are
 > determined at _sandbox creation time_. Among other things, this means that an
 > agent given access to a non-Git-repo directory `/foo` could create
 > `/foo/.git`. See [How much can I trust the sandbox?](#trust) for more
@@ -255,8 +251,6 @@ being phased out for security concerns, and so Zed's sandbox _explicitly rejects
 setuid `bwrap` binaries_.
 
 ##### Ubuntu-specific requirements {#installing-bubblewrap-ubuntu}
-
-> **Note:** The following does not affect Ubuntu on WSL.
 
 Bubblewrap relies on a Linux kernel feature known as "namespaces". Unprivileged
 users on many systems can create namespaces, but historically, this feature has
@@ -288,99 +282,26 @@ sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
 
 ### Windows {#windows}
 
-On Windows, Zed Agent sandboxing is supported only when the agent action runs inside WSL.
+On Windows, Zed runs sandboxed terminal commands in a Windows AppContainer.
+Windows 10 isn't supported; see [Requirements](#requirements). If the sandbox can't be created, Zed asks whether to run
+the command without it.
 
-> **Warning**: Due to limitations in WSL's implementation, it is possible that a
-> terminal command may write outside sandbox grants when the user has given
-> write access to any path that resides on the NTFS drive. This includes the
-> current-project grant for projects stored on NTFS. Zed will show a warning
-> when this happens. In practice, we believe this is difficult to exploit, but
-> security cannot be guaranteed. See [below](#why-ntfs-compromise) for a more
-> technical explanation.
+Sandboxed terminal commands:
 
-Zed uses the Linux Bubblewrap sandbox inside WSL because WSL provides the Linux process and filesystem primitives that
-Bubblewrap needs. Native Windows processes do not currently have the same sandbox integration in Zed, so a native Windows
-command cannot be confined by Zed Agent's OS sandbox in the same way.
+- run in PowerShell rather than Git Bash, and so do commands you approve to run unsandboxed
+- can read the filesystem on local drives
+- can write inside open project directories, except protected Git metadata
+- can write to a per-command temporary directory exposed through `%TEMP%` and `%TMP%`, which is removed when the command finishes
+- can read protected Git metadata
+- cannot write protected Git metadata, even if you approve broader write access
+- cannot write elsewhere unless you approve additional paths or broader write access
+- cannot reach the network unless you approve network access
 
-When running inside WSL, the Linux sandboxing behavior applies, including the requirement that `bwrap` not be setuid-root:
+When host-specific network access is approved on Windows, Zed uses an HTTP/HTTPS proxy so access can be limited to
+approved hosts. The proxy is set through the proxy environment variables and as the command's WinHTTP proxy. Tools that
+honor neither may need the proxy configured explicitly.
 
-- filesystem isolation is provided by Bubblewrap
-- protected Git metadata contents remain readable, but writes are blocked
-- `/tmp` is temporary for sandboxed terminal calls
-- network access is all-or-nothing rather than host-specific, so host-specific network requests are rejected and the agent must request unrestricted network access when network access is needed
-
-If WSL is not installed, or if you choose to run a command without the sandbox, Zed falls back to the standard terminal
-behavior of running in your native shell. It selects the shell using the usual preference order: a bash (scoop's bash or
-Git Bash) when one is installed, otherwise PowerShell, and finally `cmd.exe`. Because the command then runs against native
-Windows paths instead of WSL's Linux filesystem, path conventions change accordingly (for example `C:\...` or `/c/...`
-rather than WSL's `/mnt/c/...`), so a command written for the sandboxed WSL shell may behave differently.
-
-#### Why do NTFS objects compromise the sandbox? {#why-ntfs-compromise}
-
-In general, the security of the filesystem sandbox relies on two things
-matching:
-
-- The path that the user was presented when they approved
-- The filesystem object to which access was granted
-
-If a user believes they granted access to `/foo/hello`, but they actually granted
-access to `/bar/world`, then the sandbox has failed.
-
-On Linux, this "filesystem object" is called an **inode**.
-
-But `/foo/hello` doesn't refer to an inode. Loosely, it refers to a location
-where an inode might exist. It may refer to one inode at one point in time,
-and another inode later.
-
-And because of symlinks, it's possible for an agent with write access to `/foo`
-to change `/foo/bar` to point to `/secret`, even if they have no write access to
-`/secret`. If this happens, even though the agent has access to `/foo`, we
-cannot also grant access to `/foo/bar`, since that would grant access to
-`/secret`.
-
-This means that we must only refer to paths which are:
-
-- canonical (i.e. contain no symlinks)
-- absolute
-- unchanged since we validated the above
-
-On non-WSL-Linux, we can do this by simply opening the path to get a "file
-descriptor", which identifies the **inode** directly, so holding the file
-descriptor allows us to "pin" the correct inode. This also works just fine on
-WSL when the path in question refers to an object in the Linux filesystem.
-
-However, WSL allows accessing files stored in the Windows drive. For example,
-the file `C:\foo\bar.txt` can be accessed from Linux at `/mnt/c/foo/bar.txt`,
-using a mechanism similar to a network drive. Unfortunately, inode pinning is
-not guaranteed to work for these. While we can still pin the inode for
-`/mnt/c/foo/bar.txt`, this doesn't pin the underlying Windows filesystem object,
-and so it's possible for this to change during the lifetime of a sandbox, which
-could potentially allow writes outside the confines of the sandbox.
-
-#### How big a risk is this in practice? {#how-big-a-risk}
-
-**In our testing, we have not been able to exploit this issue to escape the
-sandbox.**
-
-In practice, the mapping tends to be quite stable. This is because the inode
-that gets generated in the Linux filesystem is derived from the _file reference_
-(very loosely, a "Windows inode"), which has similar stability to a Linux inode.
-The standard "rename a subcomponent" attack seems to produce a different inode
-number, and so the in-sandbox check would fail-closed.
-
-But, crucially, _it is not guaranteed_. This is the behaviour we observed in
-testing, but could not find documentation guaranteeing this behaviour in all
-circumstances, for all Windows/WSL versions past and present, regardless of
-configuration options.
-
-Zed's sandbox has been designed with the aim of being totally unbreakable, even
-in the presence of a motivated attacker with full control over the files in your
-project running as a standard user. It does _not_ assume a
-mostly-benevolent-but-sometimes-careless agent.
-
-Given this, we cannot give the same guarantees about sandbox security as we do
-for more standard cases. However, even with this weakened guarantee, the sandbox
-still helps keep you much safer than without it, so it's worth keeping enabled.
+Some programs aren't yet compatible with AppContainer and have to run without the sandbox.
 
 ## Choosing What to Approve {#choosing-what-to-approve}
 

@@ -777,7 +777,7 @@ impl Component for KeyBinding {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        fn keybinding(input: &str) -> KeyBinding {
+        fn keybinding(input: &'static str) -> KeyBinding {
             let keystrokes: Rc<[KeybindingKeystroke]> = input
                 .split_whitespace()
                 .filter_map(|chunk| Keystroke::parse(chunk).ok())

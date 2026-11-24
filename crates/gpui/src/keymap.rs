@@ -199,10 +199,10 @@ impl Keymap {
         let mut pending_bindings = SmallVec::<[(BindingIndex, &KeyBinding); 1]>::new();
 
         for (ix, binding) in keymap_bindings {
-            let Some(depth) = self.binding_enabled(binding, context_stack) else {
+            let Some(pending) = binding.match_keystrokes(input) else {
                 continue;
             };
-            let Some(pending) = binding.match_keystrokes(input) else {
+            let Some(depth) = self.binding_enabled(binding, context_stack) else {
                 continue;
             };
 
@@ -868,7 +868,11 @@ mod tests {
         fn assert_bindings(keymap: &Keymap, action: &dyn Action, expected: &[&str]) {
             let actual = keymap
                 .bindings_for_action(action)
-                .map(|binding| binding.keystrokes[0].inner().unparse())
+                .map(|binding| {
+                    binding.keystrokes[0]
+                        .inner()
+                        .unparse(crate::OperatingSystem::Mac)
+                })
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "{:?}", action);
         }
@@ -921,7 +925,11 @@ mod tests {
         fn assert_bindings(keymap: &Keymap, action: &dyn Action, expected: &[&str]) {
             let actual = keymap
                 .bindings_for_action(action)
-                .map(|binding| binding.keystrokes[0].inner().unparse())
+                .map(|binding| {
+                    binding.keystrokes[0]
+                        .inner()
+                        .unparse(crate::OperatingSystem::Mac)
+                })
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "{:?}", action);
         }
@@ -1124,7 +1132,7 @@ mod tests {
                     binding
                         .keystrokes()
                         .iter()
-                        .map(|keystroke| keystroke.inner().unparse())
+                        .map(|keystroke| keystroke.inner().unparse(crate::OperatingSystem::Mac))
                         .collect::<Vec<_>>()
                         .join(" "),
                     binding.action().name(),

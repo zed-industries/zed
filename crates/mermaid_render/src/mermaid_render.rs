@@ -23,8 +23,7 @@
 //! `<foreignObject>` and CSS/attribute forms that rasterizers do not handle.
 //! Since merman 0.6, that generic cleanup is exposed as merman's raster-safe SVG
 //! pipeline. Zed opts into that pipeline during rendering, then keeps
-//! editor-specific theme and accent color rules in this crate. The [`gpui`]
-//! dependency is only needed for the [`Hsla`] and [`Rgba`] color types.
+//! editor-specific theme and accent color rules in this crate.
 //!
 //! The [`render_to_svg`] function operates in two stages:
 //! - [`render`] the mermaid text to raster-safe SVG using [`merman`].
@@ -67,7 +66,7 @@ mod postprocess;
 mod render;
 
 use anyhow::Result;
-use gpui::{Hsla, Rgba};
+use gpui::{Hsla, Rgba, SvgRenderer};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AccentColor {
@@ -176,8 +175,12 @@ pub use postprocess::util::text_color_for_background;
 
 /// See the [module-level docs][crate] for more info.
 #[ztracing::instrument(skip_all)]
-pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
-    let svg = render::render_mermaid(source, theme)?;
+pub fn render_to_svg(
+    source: &str,
+    theme: &MermaidTheme,
+    svg_renderer: &SvgRenderer,
+) -> Result<String> {
+    let svg = render::render_mermaid(source, theme, svg_renderer)?;
     let svg = postprocess::postprocess(&svg, theme)?;
     Ok(svg)
 }
@@ -195,7 +198,7 @@ mod tests {
 
         let zalgo = "Ne\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030a}d";
         let source = format!("flowchart TD\n  A[\"**{zalgo}** {zalgo}\"]");
-        let svg = render_to_svg(&source, &MermaidTheme::default())
+        let svg = render_to_svg(&source, &MermaidTheme::default(), &svg_renderer())
             .expect("mermaid diagram should render to SVG");
 
         let mut db = usvg::fontdb::Database::new();
@@ -217,7 +220,7 @@ mod tests {
     #[test]
     fn er_multibyte_attribute_does_not_crash() {
         let source = "erDiagram\n顧客 {\n  文字列 名前\n}";
-        let _ = render_to_svg(source, &MermaidTheme::default());
+        let _ = render_to_svg(source, &MermaidTheme::default(), &svg_renderer());
     }
 
     /// A flowchart with mutually nested subgraphs (`A` contains `B` and `B`
@@ -226,7 +229,7 @@ mod tests {
     #[test]
     fn cyclic_subgraphs_do_not_crash() {
         let source = "flowchart TD\n  subgraph A\n    B\n  end\n  subgraph B\n    A\n  end";
-        let result = render_to_svg(source, &MermaidTheme::default());
+        let result = render_to_svg(source, &MermaidTheme::default(), &svg_renderer());
         if let Err(err) = result {
             let message = format!("{err:#}");
             assert!(
@@ -234,5 +237,9 @@ mod tests {
                 "expected a cycle-related error, got: {message}"
             );
         }
+    }
+
+    fn svg_renderer() -> SvgRenderer {
+        SvgRenderer::new(std::sync::Arc::new(()))
     }
 }

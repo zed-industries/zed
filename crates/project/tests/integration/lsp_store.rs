@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs};
 use futures::{FutureExt, StreamExt};
 use gpui::{Entity, TestAppContext, UpdateGlobal as _};
@@ -168,7 +168,7 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
-    let (_visible_buffer, _visible_handle) = project
+    let (visible_buffer, _visible_handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
         })
@@ -186,13 +186,10 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
             .unwrap()
             .0
     });
+    let external_uri = Uri::from_file_path(path!("/the-registry/dep/src/dep.rs")).unwrap();
     let external_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_via_lsp(
-                Uri::from_file_path(path!("/the-registry/dep/src/dep.rs")).unwrap(),
-                server_id,
-                cx,
-            )
+            project.open_local_buffer_via_lsp(external_uri.clone(), server_id, cx)
         })
         .await
         .unwrap();
@@ -226,6 +223,56 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
         );
         assert!(!lsp_store.has_language_server_seed_for_worktree(invisible_worktree_id));
     });
+
+    let external_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(external_uri.clone(), server_id, cx)
+        })
+        .await
+        .unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |store, cx| store.stop_all_language_servers(cx));
+    cx.run_until_parked();
+    let _external_handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&external_buffer, cx)
+    });
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(vec![visible_buffer], HashSet::default(), cx);
+    });
+    cx.run_until_parked();
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 1);
+    });
+    let mut fake_server = fake_servers.next().await.unwrap();
+    assert_ne!(fake_server.server.server_id(), server_id);
+    let document = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .now_or_never()
+        .expect("visible buffer was not reopened")
+        .text_document;
+    assert_eq!(
+        document.uri,
+        Uri::from_file_path(path!("/the-root/main.rs")).unwrap()
+    );
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(
+            vec![external_buffer.clone()],
+            HashSet::default(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    let document = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .now_or_never()
+        .expect("external buffer was not reopened")
+        .text_document;
+    assert_eq!(document.uri, external_uri);
+    assert_eq!(document.text, "pub fn dep() {}");
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 1);
+    });
+    assert!(fake_servers.next().now_or_never().is_none());
 }
 
 #[gpui::test]

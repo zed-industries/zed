@@ -18,7 +18,7 @@ use editor::{
     ActiveDebugLine, Editor, EditorMode, MultiBuffer,
     actions::{self},
 };
-use gpui::{AppContext, BackgroundExecutor, TestAppContext, VisualTestContext};
+use gpui::{AppContext, BackgroundExecutor, TestAppContext, UpdateGlobal, VisualTestContext, px};
 use project::{
     FakeFs, Project,
     debugger::session::{ThreadId, ThreadStatus},
@@ -37,6 +37,39 @@ use util::{path, rel_path::rel_path};
 use workspace::item::SaveOptions;
 use workspace::pane_group::SplitDirection;
 use workspace::{Item, dock::Panel, move_active_item};
+
+#[gpui::test]
+async fn test_debug_panel_default_size(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+
+    workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            assert_eq!(panel.read(cx).default_size(window, cx), px(300.));
+
+            for (dock, expected_size) in [
+                (settings::DockPosition::Left, px(495.)),
+                (settings::DockPosition::Right, px(495.)),
+                (settings::DockPosition::Bottom, px(275.)),
+            ] {
+                settings::SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        let debugger = settings.debugger.get_or_insert_default();
+                        debugger.dock = Some(dock);
+                        debugger.default_width = Some(495.0.into());
+                        debugger.default_height = Some(275.0.into());
+                    });
+                });
+
+                assert_eq!(panel.read(cx).default_size(window, cx), expected_size);
+            }
+        })
+        .unwrap();
+}
 
 #[gpui::test]
 async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut TestAppContext) {

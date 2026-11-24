@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 
 use acp_thread::AgentConnection as _;
 use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore};
-use agent_client_protocol::schema::{v1 as acp, v2 as acp_v2};
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Context, Result};
 use clap::Parser;
 use feature_flags::FeatureFlagAppExt as _;
@@ -480,7 +480,7 @@ fn find_available_model(selected: &SelectedModel, cx: &gpui::App) -> Option<Lang
             model.provider_id() == selected.provider
                 && model_id_matches_selected(&model.provider_id(), &model.id(), &selected.model)
         })
-        .max_by(|left, right| left.id().0.to_string().cmp(&right.id().0.to_string()))
+        .max_by_key(|model| model.id())
 }
 
 fn model_id_matches_selected(
@@ -506,17 +506,11 @@ fn anthropic_model_ids_match(available: &str, selected: &str) -> bool {
     available == selected || anthropic_dated_model_id_matches_base(available, selected)
 }
 
-fn anthropic_model_alias_base(mut model_id: &str) -> &str {
-    if let Some(stripped) = model_id.strip_suffix("-latest") {
-        model_id = stripped;
-    }
-    if let Some(stripped) = model_id.strip_suffix("-thinking") {
-        model_id = stripped;
-    }
-    if let Some(stripped) = model_id.strip_suffix("-1m-context") {
-        model_id = stripped;
-    }
+fn anthropic_model_alias_base(model_id: &str) -> &str {
     model_id
+        .trim_suffix("-latest")
+        .trim_suffix("-thinking")
+        .trim_suffix("-1m-context")
 }
 
 fn anthropic_dated_model_id_matches_base(available: &str, selected: &str) -> bool {
@@ -819,9 +813,8 @@ async fn run_agent(
         instruction.to_string(),
     ))];
 
-    let send_future = acp_thread.update(cx, |acp_thread: &mut acp_thread::AcpThread, cx| {
-        acp_thread.send(message, cx)
-    });
+    let send_future =
+        cx.update(|cx| connection.send_and_wait_for_completion(acp_thread.clone(), message, cx));
 
     let timeout_future = if let Some(timeout_secs) = timeout {
         futures::future::Either::Left(
@@ -843,31 +836,33 @@ async fn run_agent(
 
     let outcome = select_biased! {
         result = send_future.fuse() => match result {
-            Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => {
-                eprintln!("[eval-cli] stopped: {:?}", response.stop_reason);
-                if response.stop_reason == acp::StopReason::MaxTokens {
+            Ok(stop_reason) => {
+                eprintln!("[eval-cli] stopped: {:?}", stop_reason);
+                if let acp_v2::StopReason::Error(details) = stop_reason {
+                    Err(details
+                        .error
+                        .map(|error| anyhow::Error::new(*error))
+                        .unwrap_or_else(|| anyhow::anyhow!("Agent stopped because of an error")))
+                } else if stop_reason == acp_v2::StopReason::MaxTokens {
                     Err(anyhow::anyhow!("Model hit maximum token limit"))
                 } else {
                     Ok(AgentOutcome::Completed)
                 }
             }
-            Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
-                Err(anyhow::anyhow!("Native agent returned acceptance instead of turn completion"))
-            }
-            Ok(None) => {
-                eprintln!("[eval-cli] completed (no response)");
-                Ok(AgentOutcome::Completed)
-            }
             Err(e) => Err(e).context("agent run failed"),
         },
         _ = sigterm_future.fuse() => {
             eprintln!("[eval-cli] received SIGTERM, cancelling...");
-            acp_thread.update(cx, |t: &mut acp_thread::AcpThread, cx| t.cancel(cx)).await;
-            Ok(AgentOutcome::Interrupted)
+            acp_thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| thread.cancel(cx))
+                .await
+                .context("cancelling agent after SIGTERM")
+                .map(|()| AgentOutcome::Interrupted)
         },
         _ = timeout_future.fuse() => {
-            acp_thread.update(cx, |t: &mut acp_thread::AcpThread, cx| t.cancel(cx)).await;
-            Ok(AgentOutcome::Timeout { seconds: timeout.unwrap_or(0) })
+            acp_thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| thread.cancel(cx))
+                .await
+                .context("cancelling agent after timeout")
+                .map(|()| AgentOutcome::Timeout { seconds: timeout.unwrap_or(0) })
         }
     };
 

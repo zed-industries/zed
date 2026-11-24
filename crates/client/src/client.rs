@@ -216,12 +216,10 @@ pub struct Client {
     message_to_client_handlers: Mutex<Vec<MessageToClientHandler>>,
     sign_out_tx: Mutex<Option<mpsc::UnboundedSender<()>>>,
 
-    #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
     authenticate:
         RwLock<Option<Box<dyn 'static + Send + Sync + Fn(&AsyncApp) -> Task<Result<Credentials>>>>>,
 
-    #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
     establish_connection: RwLock<
         Option<
@@ -639,12 +637,6 @@ impl Client {
             + Fn(&Credentials, &AsyncApp) -> Task<Result<Connection, EstablishConnectionError>>,
     {
         *self.establish_connection.write() = Some(Box::new(connect));
-        self
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn override_rpc_url(&self, url: Url) -> &Self {
-        *self.rpc_url.write() = Some(url);
         self
     }
 

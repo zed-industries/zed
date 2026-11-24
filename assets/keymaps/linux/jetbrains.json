@@ -123,7 +123,7 @@
       "shift-f10": "task::Spawn",
       "ctrl-f5": "task::Rerun",
       "ctrl-e": "file_finder::Toggle",
-      "ctrl-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
+      "ctrl-k": "git_panel::FocusEditor",
       "ctrl-shift-n": "file_finder::Toggle",
       "ctrl-alt-n": "file_finder::Toggle",
       "ctrl-n": "project_symbols::Toggle",

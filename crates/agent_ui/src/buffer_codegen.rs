@@ -1323,7 +1323,7 @@ impl CodegenAlternative {
                                 )),
                                 cx,
                             );
-                        } else if matches!(reason, StopReason::MaxTokens | StopReason::Refusal) {
+                        } else if matches!(reason, StopReason::MaxTokens | StopReason::Refusal(_)) {
                             finish_with_status(
                                 CodegenStatus::Error(anyhow!(
                                     "Inline assistant response was interrupted ({reason:?})"
@@ -1356,6 +1356,7 @@ impl CodegenAlternative {
                         | LanguageModelCompletionEvent::Thinking { .. }
                         | LanguageModelCompletionEvent::RedactedThinking { .. }
                         | LanguageModelCompletionEvent::ReasoningDetails(_)
+                        | LanguageModelCompletionEvent::InputTransformations(_)
                         | LanguageModelCompletionEvent::Compaction(_),
                     ) => {}
                     Err(error) => {
@@ -1413,8 +1414,10 @@ impl CodegenAlternative {
                                          `{REWRITE_SECTION_TOOL_NAME}` ({reason:?})"
                                 )
                                 .into()))
-                            } else if matches!(reason, StopReason::MaxTokens | StopReason::Refusal)
-                            {
+                            } else if matches!(
+                                reason,
+                                StopReason::MaxTokens | StopReason::Refusal(_)
+                            ) {
                                 Some(Err(anyhow!(
                                     "Inline assistant response was interrupted ({reason:?})"
                                 )
@@ -1431,6 +1434,7 @@ impl CodegenAlternative {
                             | LanguageModelCompletionEvent::RedactedThinking { .. }
                             | LanguageModelCompletionEvent::StartMessage { .. }
                             | LanguageModelCompletionEvent::ReasoningDetails(_)
+                            | LanguageModelCompletionEvent::InputTransformations(_)
                             | LanguageModelCompletionEvent::Compaction(_),
                         ) => None,
                         Err(error) => Some(Err(error)),

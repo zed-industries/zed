@@ -924,9 +924,6 @@ impl Editor {
                 ))
             })
             .collect::<Vec<_>>();
-        if edits.is_empty() {
-            return None;
-        }
 
         let cursor_position = predicted_cursor_position.and_then(|predicted| {
             let anchor = multibuffer.anchor_in_excerpt(predicted.anchor)?;

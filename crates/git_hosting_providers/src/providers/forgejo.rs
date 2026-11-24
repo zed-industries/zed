@@ -228,6 +228,21 @@ impl GitHostingProvider for Forgejo {
         permalink
     }
 
+    fn build_create_pull_request_url(
+        &self,
+        remote: &ParsedGitRemote,
+        source_branch: &str,
+    ) -> Option<Url> {
+        let ParsedGitRemote { owner, repo } = remote;
+        let mut url = self.base_url();
+        url.path_segments_mut()
+            .ok()?
+            .pop_if_empty()
+            .extend([owner.as_ref(), repo.as_ref(), "compare"])
+            .extend(source_branch.split('/'));
+        Some(url)
+    }
+
     async fn commit_author_avatar_url(
         &self,
         repo_owner: &str,
@@ -316,6 +331,22 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             }
+        );
+    }
+
+    #[test]
+    fn test_build_codeberg_create_pull_request_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+        let url = Forgejo::public_instance()
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .expect("should be able to build pull request url");
+
+        assert_eq!(
+            url.as_str(),
+            "https://codeberg.org/zed-industries/zed/compare/feature/new-feature"
         );
     }
 

@@ -111,7 +111,7 @@ try {
     }
     assert.ok(await evaluate('!!document.querySelector("textarea")'), "Input example did not launch");
     await evaluate(`(async () => {
-        const tests = await import("/font_fallback_test.js");
+        const tests = await import("/font-fallback-test.js");
         await tests.default();
         tests.test_missing_glyph_notifications();
     })()`);

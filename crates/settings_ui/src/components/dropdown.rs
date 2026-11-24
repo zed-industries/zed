@@ -132,6 +132,7 @@ impl RenderOnce for EnumVariantDropdown {
         .when_some(self.tab_index, |elem, tab_index| elem.tab_index(tab_index))
         .trigger_size(ButtonSize::Medium)
         .style(DropdownStyle::Outlined)
+        .attach(gpui::Anchor::BottomRight)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),

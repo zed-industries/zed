@@ -82,8 +82,6 @@ actions!(
         ToggleSelectedChannelFavorite,
         /// Starts moving a channel to a new location.
         StartMoveChannel,
-        /// Moves the selected item to the current location.
-        MoveSelected,
         /// Inserts a space character in the filter input.
         InsertSpace,
         /// Moves the selected channel up in the list.
@@ -2440,7 +2438,7 @@ impl CollabPanel {
     }
 
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::new_with_defaults();
+        let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("CollabPanel");
         dispatch_context.add("menu");
 
@@ -3577,7 +3575,6 @@ impl CollabPanel {
                                     cx.new(|_| JoinChannelTooltip {
                                         channel_store: channel_store.clone(),
                                         channel_id,
-                                        has_notes_notification,
                                     })
                                     .into()
                                 }
@@ -4150,8 +4147,6 @@ impl Render for DraggedChannelView {
 struct JoinChannelTooltip {
     channel_store: Entity<ChannelStore>,
     channel_id: ChannelId,
-    #[allow(unused)]
-    has_notes_notification: bool,
 }
 
 impl Render for JoinChannelTooltip {

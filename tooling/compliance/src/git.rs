@@ -112,7 +112,7 @@ pub struct VersionTag(Version, ReleaseChannel);
 impl VersionTag {
     pub fn parse(input: &str) -> Result<Self, anyhow::Error> {
         // Being a bit more lenient for human inputs
-        let version = input.strip_prefix('v').unwrap_or(input);
+        let version = input.trim_prefix('v');
 
         let (version_str, channel) = version
             .strip_suffix("-pre")

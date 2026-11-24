@@ -1,3 +1,4 @@
+use crate::global_skills::GlobalSkills;
 use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
 use collections::HashMap;
@@ -29,7 +30,7 @@ use project::{
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
-    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
     worktree_store::{WorktreeIdCounter, WorktreeStore},
 };
 use rpc::{
@@ -76,6 +77,7 @@ pub struct HeadlessProject {
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
     pub kernels: HashMap<String, Child>,
+    _global_skills: Entity<GlobalSkills>,
     search_buffer_batches: async_channel::Sender<SearchBufferBatch>,
     _search_buffer_sender: Task<()>,
 }
@@ -132,7 +134,7 @@ impl HeadlessProject {
         if init_worktree_trust {
             project::trusted_worktrees::track_worktree_trust(
                 worktree_store.clone(),
-                None::<RemoteHostLocation>,
+                None,
                 Some((session.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID))),
                 None,
                 cx,
@@ -293,6 +295,8 @@ impl HeadlessProject {
             cx,
         );
 
+        let global_skills = cx.new(|cx| GlobalSkills::new(fs.clone(), session.clone(), cx));
+
         // local_machine -> ssh handlers
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &worktree_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &buffer_store);
@@ -431,6 +435,7 @@ impl HeadlessProject {
             profiling_collector: gpui::ProfilingCollector::new(startup_time),
             _toolchain_store: toolchain_store,
             kernels: Default::default(),
+            _global_skills: global_skills,
             search_buffer_batches,
             _search_buffer_sender: search_buffer_sender,
         }
