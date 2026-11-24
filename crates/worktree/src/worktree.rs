@@ -2684,7 +2684,6 @@ impl Snapshot {
             PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
-                is_ignored: entry.is_ignored,
                 scan_id: 0,
             },
             (),
@@ -2774,7 +2773,6 @@ impl Snapshot {
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
-                is_ignored: entry.is_ignored,
                 scan_id: 0,
             }));
             entries_by_path_edits.push(Edit::Insert(entry));
@@ -3108,7 +3106,6 @@ impl LocalSnapshot {
             PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
-                is_ignored: entry.is_ignored,
                 scan_id,
             },
             (),
@@ -3457,7 +3454,6 @@ impl BackgroundScannerState {
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
-                is_ignored: entry.is_ignored,
                 scan_id: self.snapshot.scan_id,
             }));
             entries_by_path_edits.push(Edit::Insert(entry));
@@ -4423,7 +4419,6 @@ impl sum_tree::ContextLessSummary for EntrySummary {
 struct PathEntry {
     id: ProjectEntryId,
     path: Arc<RelPath>,
-    is_ignored: bool,
     scan_id: usize,
 }
 
@@ -6307,7 +6302,6 @@ impl BackgroundScanner {
             let mut path_entry = path_entry.clone();
             let mut entry = entry.clone();
             path_entry.scan_id = state.snapshot.scan_id;
-            path_entry.is_ignored = is_ignored;
             entry.is_ignored = is_ignored;
             if let Err(index) = state.changed_paths.binary_search(&path) {
                 state.changed_paths.insert(index, path);
@@ -8195,11 +8189,6 @@ mod tests {
             assert!(ignore_jobs.is_empty());
 
             state.snapshot.check_invariants(false);
-            for entry in &expected_entries {
-                let path_entry = state.snapshot.entries_by_id.get(&entry.id, ()).unwrap();
-
-                assert_eq!(path_entry.is_ignored, entry.is_ignored);
-            }
             assert_eq!(
                 state.changed_paths,
                 vec![rel_path("directory/child.txt").into_arc()]
