@@ -5893,14 +5893,15 @@ mod tests {
                 (|cx| cx.ctrl_mouse_move_to(ZED_DEV_PT), None),
                 (|cx| cx.write_output_lines(OUTPUT_ZED_DEV, 8), None),
             ];
-            for (step, expected_hovered_word) in steps {
+            for (index, (step, expected)) in steps.into_iter().enumerate() {
                 update_test_entities(&test_entities, cx, |cx| {
                     step(cx);
                     None
                 });
                 update_test_entities(&test_entities, cx, |cx| {
-                    assert!(cx.terminal.last_content.mode.intersects(Modes::MOUSE_MODE));
-                    cx.assert_hovered_word(expected_hovered_word.as_ref());
+                    let content = &cx.terminal.last_content;
+                    assert!(content.mode.intersects(Modes::MOUSE_MODE), "step {index}");
+                    assert_eq!(content.last_hovered_word, expected, "step {index}");
                     None
                 });
             }
