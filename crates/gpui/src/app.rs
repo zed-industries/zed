@@ -1452,6 +1452,26 @@ impl App {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
+    /// Returns whether a window's last frame read this entity without drawing it as a view.
+    /// Notifying such an entity doesn't redraw the views that read it.
+    ///
+    /// A window that is being updated counts as such a read. `false` covers only the views
+    /// on the path from the entity's view node to the window root. A frame keeps one view
+    /// node per entity, so notifying doesn't redraw other cached views that read the entity
+    /// or draw it a second time.
+    pub fn is_read_without_view(&self, entity_id: EntityId) -> bool {
+        self.tracked_entities
+            .iter()
+            .filter(|(_, entities)| entities.contains(&entity_id))
+            .any(|(window_id, _)| {
+                let Some(Some(window)) = self.windows.get(*window_id) else {
+                    return true;
+                };
+                let dispatch_tree = &window.rendered_frame.dispatch_tree;
+                dispatch_tree.view_path_reversed(entity_id).next().is_none()
+            })
+    }
+
     #[inline(always)]
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
         self.start_update();
