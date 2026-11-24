@@ -591,9 +591,9 @@ async fn test_close_by_path_keeps_multibuffers_and_files_apart(cx: &mut gpui::Te
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-    let file = open_buffer("1.txt", &workspace, cx).await;
-    let references = cx.new_window_entity(|window, cx| {
-        let editor = file.act_as::<Editor>(cx).unwrap();
+    let singleton_editor = open_buffer("1.txt", &workspace, cx).await;
+    let multibuffer_editor = cx.new_window_entity(|window, cx| {
+        let editor = singleton_editor.act_as::<Editor>(cx).unwrap();
         let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(buffer.read(cx).capability());
@@ -601,6 +601,7 @@ async fn test_close_by_path_keeps_multibuffers_and_files_apart(cx: &mut gpui::Te
             multibuffer.set_excerpts_for_buffer(buffer, [range], 0, cx);
             multibuffer
         });
+
         Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
     });
 
@@ -621,22 +622,27 @@ async fn test_close_by_path_keeps_multibuffers_and_files_apart(cx: &mut gpui::Te
         })
     };
 
-    activate(&references, cx);
+    // Closing the multibuffer editor in all panes keeps the singleton editor
+    // for the same file open.
+    activate(&multibuffer_editor, cx);
     close_in_all_panes(cx);
-    assert_eq!(open_items(cx), [file.item_id()]);
+    assert_eq!(open_items(cx), [singleton_editor.item_id()]);
 
-    activate(&references, cx);
-    activate(file.as_ref(), cx);
+    // Closing the singleton editor in all panes keeps the multibuffer editor
+    // for the same file open.
+    activate(&multibuffer_editor, cx);
+    activate(singleton_editor.as_ref(), cx);
     close_in_all_panes(cx);
-    assert_eq!(open_items(cx), [references.item_id()]);
+    assert_eq!(open_items(cx), [multibuffer_editor.item_id()]);
 
-    let file = open_buffer("1.txt", &workspace, cx).await;
-    activate(&references, cx);
+    // Closing the multibuffer editor from the tab switcher, opened with
+    // `OpenInActivePane`, keeps the singleton editor for the same file open.
+    let singleton_editor = open_buffer("1.txt", &workspace, cx).await;
+    activate(&multibuffer_editor, cx);
     let tab_switcher = open_tab_switcher_for_active_pane(&workspace, cx);
     tab_switcher.update(cx, |picker, _| picker.delegate.selected_index = 0);
     cx.dispatch_action(CloseSelectedItem);
-    cx.run_until_parked();
-    assert_eq!(open_items(cx), [file.item_id()]);
+    assert_eq!(open_items(cx), [singleton_editor.item_id()]);
 }
 
 #[gpui::test]

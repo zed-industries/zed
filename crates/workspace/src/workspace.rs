@@ -4603,7 +4603,12 @@ impl Workspace {
         }
     }
 
-    /// Closes the active item across all panes.
+    /// Closes the active item, along with every other singleton item for the
+    /// same project path, across all panes.
+    ///
+    /// Only singleton items with a project path are matched across panes. Any
+    /// other item, such as a multibuffer, whose project path is just the file
+    /// under its cursor, is closed on its own in the active pane.
     pub fn close_item_in_all_panes(
         &mut self,
         action: &CloseItemInAllPanes,
