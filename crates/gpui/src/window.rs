@@ -5773,11 +5773,11 @@ impl Window {
         &mut self,
         style: Style,
         key: K,
-        mut measure: F,
+        measure: F,
     ) -> LayoutId
     where
         K: PartialEq + 'static,
-        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     {
         self.request_keyed_measure(
