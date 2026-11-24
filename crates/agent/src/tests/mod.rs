@@ -610,15 +610,10 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
 
 #[gpui::test]
 async fn test_system_prompt(cx: &mut TestAppContext) {
-    let ThreadTest {
-        fake,
-        thread,
-        project_context,
-        ..
-    } = setup(cx, TestModel::Fake).await;
+    let ThreadTest { fake, thread, .. } = setup(cx, TestModel::Fake).await;
 
-    project_context.update(cx, |project_context, _cx| {
-        project_context.shell = "test-shell".into()
+    let shell = thread.read_with(cx, |thread, cx| {
+        crate::sandboxing::terminal_shell_name(thread.project().read(cx), cx)
     });
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread
@@ -643,7 +638,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
         panic!("Expected text content");
     };
     assert!(
-        system_prompt.contains("test-shell"),
+        system_prompt.contains(&format!("Default Shell: {shell}")),
         "unexpected system message: {:?}",
         system_message
     );
