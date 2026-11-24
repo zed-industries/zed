@@ -2588,6 +2588,21 @@ impl Terminal {
                     }
                 }
             }
+            // A drag that did not start on a link belongs to the app, so
+            // releasing over a link will not open it.
+            if e.pressed_button.is_some()
+                && !self.mouse_down_hyperlink.as_ref().is_some_and(|hyperlink| {
+                    hyperlink.range.contains(grid_point(
+                        position,
+                        self.last_content.terminal_bounds,
+                        self.last_content.display_offset,
+                    ))
+                })
+            {
+                self.clear_hyperlink(cx);
+                cx.notify();
+                return;
+            }
         }
         self.schedule_find_hyperlink(e.modifiers, e.position, mode, cx);
         cx.notify();
@@ -5632,11 +5647,19 @@ mod tests {
             }
 
             fn ctrl_mouse_move_to(&mut self, position: GpuiPoint<Pixels>) {
+                self.ctrl_mouse_move(position, None);
+            }
+
+            fn ctrl_mouse_move(
+                &mut self,
+                position: GpuiPoint<Pixels>,
+                pressed_button: Option<MouseButton>,
+            ) {
                 let modifiers = Modifiers::secondary_key(self.cx);
                 let move_event = MouseMoveEvent {
                     position,
+                    pressed_button,
                     modifiers,
-                    ..default()
                 };
                 self.window.simulate_mouse_move(position, self.cx);
                 self.unthrottle();
@@ -5831,7 +5854,7 @@ mod tests {
         async fn test_ctrl_hover_in_mouse_mode(cx: &mut TestAppContext) {
             let (test_entities, hovered_word, cx) =
                 init_ctrl_hover_hyperlink_test_with_window(cx).await;
-            let steps: [(fn(&mut HyperlinkVisualTestContext), Option<HoveredWord>); 6] = [
+            let steps: [(fn(&mut HyperlinkVisualTestContext), Option<HoveredWord>); 8] = [
                 (
                     |cx| cx.terminal.write_output(b"\x1b[?1002h", cx.cx),
                     Some(hovered_word.clone()),
@@ -5840,6 +5863,17 @@ mod tests {
                 (
                     |cx| cx.ctrl_mouse_move_to(ZED_DEV_PT),
                     Some(hovered_word.with_id(1)),
+                ),
+                (
+                    |cx| cx.ctrl_mouse_move(ZED_DEV_PT, Some(MouseButton::Left)),
+                    None,
+                ),
+                (
+                    |cx| {
+                        ctrl_mouse_down_at(cx.terminal, ZED_DEV_PT, cx.cx);
+                        cx.ctrl_mouse_move(ZED_DEV_PT, Some(MouseButton::Left));
+                    },
+                    Some(hovered_word.with_id(2)),
                 ),
                 (
                     |cx| {
