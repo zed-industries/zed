@@ -490,6 +490,48 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
+  run_sandbox_tests_windows_arm:
+    needs:
+    - orchestrate
+    - check_style
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
+    runs-on: windows-11-arm
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: run_tests::run_sandbox_tests_windows_arm::require_process_security_environment
+      run: |
+        Add-Type -Namespace Zed -Name Kernel32 -MemberDefinition @'
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr LoadLibraryExW(string name, IntPtr file, uint flags);
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+        public static extern IntPtr GetProcAddress(IntPtr module, string name);
+        '@
+        $loadLibrarySearchSystem32 = 0x800
+        $module = [Zed.Kernel32]::LoadLibraryExW("processmodel.dll", [IntPtr]::Zero, $loadLibrarySearchSystem32)
+        if ($module -eq [IntPtr]::Zero) {
+            throw "processmodel.dll could not be loaded on Windows build $([System.Environment]::OSVersion.Version)"
+        }
+        if ([Zed.Kernel32]::GetProcAddress($module, "CreateProcessSecurityEnvironment") -eq [IntPtr]::Zero) {
+            throw "Windows build $([System.Environment]::OSVersion.Version) does not export CreateProcessSecurityEnvironment"
+        }
+      shell: pwsh
+    - name: steps::setup_cargo_config
+      run: |
+        New-Item -ItemType Directory -Path "./../.cargo" -Force
+        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      shell: pwsh
+    - name: run_tests::run_sandbox_tests_windows_arm::run_sandbox_tests
+      run: cargo test --locked --package sandbox
+      shell: pwsh
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+      shell: pwsh
+    timeout-minutes: 60
   miri_scheduler:
     needs:
     - orchestrate
@@ -1017,6 +1059,7 @@ jobs:
     - run_tests_windows
     - run_tests_linux
     - run_tests_mac
+    - run_sandbox_tests_windows_arm
     - miri_scheduler
     - doctests
     - check_workspace_binaries
@@ -1051,6 +1094,7 @@ jobs:
         check_result "run_tests_windows" "$RESULT_RUN_TESTS_WINDOWS"
         check_result "run_tests_linux" "$RESULT_RUN_TESTS_LINUX"
         check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
+        check_result "run_sandbox_tests_windows_arm" "$RESULT_RUN_SANDBOX_TESTS_WINDOWS_ARM"
         check_result "miri_scheduler" "$RESULT_MIRI_SCHEDULER"
         check_result "doctests" "$RESULT_DOCTESTS"
         check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
@@ -1075,6 +1119,7 @@ jobs:
         RESULT_RUN_TESTS_WINDOWS: ${{ needs.run_tests_windows.result }}
         RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
+        RESULT_RUN_SANDBOX_TESTS_WINDOWS_ARM: ${{ needs.run_sandbox_tests_windows_arm.result }}
         RESULT_MIRI_SCHEDULER: ${{ needs.miri_scheduler.result }}
         RESULT_DOCTESTS: ${{ needs.doctests.result }}
         RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
