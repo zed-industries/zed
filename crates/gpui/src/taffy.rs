@@ -151,11 +151,6 @@ fn node_key(id: NodeId) -> DefaultKey {
     KeyData::from_ffi(id.into()).into()
 }
 
-#[cfg(test)]
-thread_local! {
-    static MEASUREMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
 
 impl TaffyLayoutEngine {
@@ -507,8 +502,6 @@ impl TaffyLayoutEngine {
                                 untransform(available_space.height),
                             );
 
-                            #[cfg(test)]
-                            MEASUREMENTS.set(MEASUREMENTS.get() + 1);
                             let final_layout = input.run_mode == taffy::RunMode::PerformLayout;
                             let measured_size = node_context.measure(
                                 known_dimensions,
@@ -1123,8 +1116,19 @@ mod tests {
 
     /// Draws each frame in a window that keeps its layout nodes and in one that rebuilds
     /// them, checking that every element with a debug selector has the same bounds in
-    /// both. Returns how many times the cached window measured text in each frame.
-    fn assert_frames_match_uncached(cx: &mut TestAppContext, frames: Vec<Frame>) -> Vec<usize> {
+    /// both.
+    fn assert_frames_match_uncached(cx: &mut TestAppContext, frames: Vec<Frame>) {
+        assert_frames_match_uncached_with(cx, frames, |_| {}, |_| ());
+    }
+
+    /// Like [`assert_frames_match_uncached`], running `before_cached` before and
+    /// `after_cached` after each cached frame draw and returning the observations.
+    fn assert_frames_match_uncached_with<T>(
+        cx: &mut TestAppContext,
+        frames: Vec<Frame>,
+        mut before_cached: impl FnMut(&Window),
+        mut after_cached: impl FnMut(&Window) -> T,
+    ) -> Vec<T> {
         let frames = Rc::new(frames);
         let frame = Rc::new(Cell::new(0));
         let windows = [false, true].map(|rebuild| {
@@ -1136,17 +1140,19 @@ mod tests {
             });
             (AnyWindowHandle::from(window), rebuild)
         });
-        let mut text_measurements = Vec::new();
+        let mut observations = Vec::new();
         for index in 0..frames.len() {
             frame.set(index);
             let [cached, uncached] = windows.map(|(window, rebuild)| {
                 cx.update_window(window, |_, window, cx| {
                     if rebuild {
                         window.clear_layout_cache();
+                    } else {
+                        before_cached(window);
                     }
-                    let measured_before = MEASUREMENTS.get();
                     window.refresh();
                     window.draw(cx).clear(cx);
+                    let observation = (!rebuild).then(|| after_cached(window));
                     let mut bounds = window
                         .rendered_frame
                         .debug_bounds
@@ -1154,7 +1160,7 @@ mod tests {
                         .map(|(selector, bounds)| (selector.clone(), *bounds))
                         .collect::<Vec<_>>();
                     bounds.sort_by(|a, b| a.0.cmp(&b.0));
-                    (bounds, MEASUREMENTS.get() - measured_before)
+                    (bounds, observation)
                 })
                 .expect("window should remain open")
             });
@@ -1163,9 +1169,9 @@ mod tests {
                 "frame {index} has no debug selectors"
             );
             assert_eq!(cached.0, uncached.0, "frame {index}");
-            text_measurements.push(cached.1);
+            observations.push(cached.1.expect("cached window observation"));
         }
-        text_measurements
+        observations
     }
 
     fn frame(render: impl Fn(&mut Window) -> AnyElement + 'static) -> Frame {
@@ -1174,7 +1180,26 @@ mod tests {
 
     /// A leaf whose size comes from its measure function, which captures it and is keyed
     /// by it.
-    struct MeasuredLeaf(Size<Pixels>);
+    struct MeasuredLeaf {
+        size: Size<Pixels>,
+        measurements: Option<Rc<Cell<usize>>>,
+    }
+
+    impl MeasuredLeaf {
+        fn new(size: Size<Pixels>) -> Self {
+            Self {
+                size,
+                measurements: None,
+            }
+        }
+
+        fn with_counter(size: Size<Pixels>, measurements: Rc<Cell<usize>>) -> Self {
+            Self {
+                size,
+                measurements: Some(measurements),
+            }
+        }
+    }
 
     impl Element for MeasuredLeaf {
         type RequestLayoutState = ();
@@ -1195,11 +1220,17 @@ mod tests {
             window: &mut Window,
             _: &mut App,
         ) -> (LayoutId, ()) {
-            let measured = self.0;
+            let measured = self.size;
+            let measurements = self.measurements.clone();
             let layout_id = window.request_keyed_measured_layout(
                 Style::default(),
                 measured,
-                move |_, _, _, _| measured,
+                move |_, _, _, _| {
+                    if let Some(measurements) = &measurements {
+                        measurements.set(measurements.get() + 1);
+                    }
+                    measured
+                },
             );
             (layout_id, ())
         }
@@ -1301,19 +1332,19 @@ mod tests {
 
     #[crate::test]
     fn measured_leaf_is_measured_again_only_when_its_key_changes(cx: &mut TestAppContext) {
+        let counter = Rc::new(Cell::new(0));
         let measured = |width: f32, height: f32| {
+            let counter = counter.clone();
             frame(move |_| {
                 div()
                     .flex()
-                    .child(
-                        div()
-                            .debug_selector(|| "wrapper".into())
-                            .child(MeasuredLeaf(size(px(width), px(height)))),
-                    )
+                    .child(div().debug_selector(|| "wrapper".into()).child(
+                        MeasuredLeaf::with_counter(size(px(width), px(height)), counter.clone()),
+                    ))
                     .into_any_element()
             })
         };
-        let measurements = assert_frames_match_uncached(
+        let measurements = assert_frames_match_uncached_with(
             cx,
             vec![
                 measured(10., 10.),
@@ -1322,6 +1353,8 @@ mod tests {
                 measured(30., 20.),
                 measured(5., 40.),
             ],
+            |_| counter.set(0),
+            |_| counter.get(),
         );
         // Opening the window draws the first frame, so drawing it again measures nothing.
         let measured = measurements
@@ -1369,7 +1402,7 @@ mod tests {
                         div()
                             .id("reused")
                             .debug_selector(|| "reused".into())
-                            .child(MeasuredLeaf(size(px(12.), px(9.)))),
+                            .child(MeasuredLeaf::new(size(px(12.), px(9.)))),
                     )
                     .into_any_element()
             })
@@ -1439,8 +1472,12 @@ mod tests {
             .iter()
             .map(|(_, measured)| *measured)
             .collect::<Vec<_>>();
-        let measurements =
-            assert_frames_match_uncached(cx, frames.into_iter().map(|(frame, _)| frame).collect());
+        let measurements = assert_frames_match_uncached_with(
+            cx,
+            frames.into_iter().map(|(frame, _)| frame).collect(),
+            |_| {},
+            |window| window.text_system().last_frame_wrapped_line_count(),
+        );
         let measured = measurements
             .iter()
             .map(|count| *count > 0)

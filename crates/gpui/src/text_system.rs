@@ -669,6 +669,11 @@ impl WindowTextSystem {
         self.line_layout_cache.truncate_layouts(index)
     }
 
+    #[cfg(test)]
+    pub(crate) fn last_frame_wrapped_line_count(&self) -> usize {
+        self.line_layout_cache.last_frame_wrapped_line_count()
+    }
+
     /// Shape the given line, at the given font_size, for painting to the screen.
     /// Subsets of the line can be styled independently with the `runs` parameter.
     ///

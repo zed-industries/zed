@@ -1,8 +1,12 @@
 //! A seeded, mutable element tree for benchmarks and tests of GPUI rendering.
 use crate::{
-    AnimationExt as _, AnyElement, AppContext as _, Context, ElementId, Entity, Hsla,
-    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Window, div, px, util::FluentBuilder,
+    AlignItems, AnimationExt as _, AnyElement, App, AppContext as _, AvailableSpace, Bounds,
+    Context, Element, ElementId, Entity, GlobalElementId, HighlightStyle, Hsla, InspectorElementId,
+    InteractiveElement, InteractiveText, IntoElement, JustifyContent, LayoutId, ListAlignment,
+    ListSizingBehavior, ListState, ParentElement, Pixels, Render, Size, StatefulInteractiveElement,
+    StrikethroughStyle, Style, Styled, StyledText, TextAlign, TextOverflow, UnderlineStyle,
+    WhiteSpace, Window, div, fill, list, px, relative, rems, size, uniform_list,
+    util::FluentBuilder,
 };
 use collections::{HashMap, HashSet};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -66,6 +70,7 @@ pub struct RandomizedElementTreeConfig {
     cached_views: bool,
     hover_styles: bool,
     paths: bool,
+    rich_layout: bool,
 }
 
 impl RandomizedElementTreeConfig {
@@ -81,7 +86,18 @@ impl RandomizedElementTreeConfig {
             cached_views: false,
             hover_styles: false,
             paths: true,
+            rich_layout: false,
         }
+    }
+
+    /// Exercises layout-cache edge cases: auto-sized containers, `Display::None`, `rems`
+    /// lengths, margins, flex growth, alignment, aspect ratio, unkeyed elements, varied
+    /// text styles (`StyledText`, `InteractiveText`, truncation, wrapping, alignment),
+    /// keyed and unkeyed measured leaves, and inferred-size `uniform_list` / `list`.
+    /// Off by default so existing benchmarks keep their exact trees and RNG streams.
+    pub fn with_rich_layout(mut self, rich_layout: bool) -> Self {
+        self.rich_layout = rich_layout;
+        self
     }
 
     /// Use definite-size cached entity boundaries in this separate workload variant.
@@ -417,6 +433,16 @@ pub enum RandomizedElementTreeMutationKind {
     /// Change a seeded random descendant's text, adding text to one that had none or
     /// removing it from one that didn't always have it.
     ChildText,
+    /// Toggle `Display::None` on a seeded random descendant (when `rich_layout` is enabled).
+    ChildDisplay,
+    /// Randomize layout properties (`auto` sizing, `rems`, margin, flex grow/shrink,
+    /// direction, wrap, alignment, aspect ratio, unkeyed ID) on a seeded random descendant.
+    ChildLayout,
+    /// Randomize text styling (`color`, `font_size`, `line_height`, `white_space`,
+    /// `text_overflow`, `line_clamp`, `text_align`, runs/interactive text) on a descendant.
+    ChildTextStyle,
+    /// Randomize a descendant's measured leaf or inferred-size list content.
+    ChildMeasuredContent,
     /// Reorder a seeded random descendant among its siblings.
     Reorder,
     /// Insert a generated descendant below a seeded random parent.
@@ -445,6 +471,31 @@ impl RandomizedElementTreeMutationKind {
         Self::ChildClipping,
         Self::ChildVisibility,
         Self::ChildText,
+        Self::Reorder,
+        Self::Insert,
+        Self::Remove,
+        Self::RemoveLeaf,
+    ];
+
+    /// Every mutation kind including those that mutate `rich_layout` fields.
+    pub const ALL_RICH_LAYOUT: [Self; 21] = [
+        Self::RootColor,
+        Self::RootOpacity,
+        Self::RootBorder,
+        Self::RootBounds,
+        Self::RootClipping,
+        Self::RootVisibility,
+        Self::ChildColor,
+        Self::ChildOpacity,
+        Self::ChildBorder,
+        Self::ChildBounds,
+        Self::ChildClipping,
+        Self::ChildVisibility,
+        Self::ChildText,
+        Self::ChildDisplay,
+        Self::ChildLayout,
+        Self::ChildTextStyle,
+        Self::ChildMeasuredContent,
         Self::Reorder,
         Self::Insert,
         Self::Remove,
@@ -499,6 +550,26 @@ pub enum RandomizedElementTreeMutation {
     },
     /// Changed a descendant's text.
     ChildText {
+        /// The stable ID of the mutated element.
+        element_id: u64,
+    },
+    /// Toggled `Display::None` on a descendant.
+    ChildDisplay {
+        /// The stable ID of the mutated element.
+        element_id: u64,
+    },
+    /// Changed a descendant's layout properties.
+    ChildLayout {
+        /// The stable ID of the mutated element.
+        element_id: u64,
+    },
+    /// Changed a descendant's text styling.
+    ChildTextStyle {
+        /// The stable ID of the mutated element.
+        element_id: u64,
+    },
+    /// Changed a descendant's measured leaf or list content.
+    ChildMeasuredContent {
         /// The stable ID of the mutated element.
         element_id: u64,
     },
@@ -561,6 +632,7 @@ pub struct RandomizedElementTree {
     snapshot: Rc<RefCell<RandomizedElementTreeSnapshot>>,
     entities: Rc<RefCell<RandomizedElementEntities>>,
     scroll_handles: Rc<RefCell<HashMap<u64, crate::ScrollHandle>>>,
+    list_states: Rc<RefCell<HashMap<u64, (ListState, u64)>>>,
     work_counters: Rc<RefCell<RandomizedElementTreeWorkCounters>>,
     config: RandomizedElementTreeConfig,
     rng: StdRng,
@@ -612,6 +684,7 @@ impl RandomizedElementTree {
                 cached_views: config.cached_views,
                 hover_styles: config.hover_styles,
                 paths: config.paths,
+                rich_layout: config.rich_layout,
                 id_generation: 0,
             },
             paths_by_element_id: HashMap::default(),
@@ -622,6 +695,7 @@ impl RandomizedElementTree {
             snapshot: Rc::new(RefCell::new(snapshot)),
             entities: Rc::new(RefCell::new(HashMap::default())),
             scroll_handles: Rc::default(),
+            list_states: Rc::default(),
             work_counters: Rc::new(RefCell::new(RandomizedElementTreeWorkCounters::default())),
             config,
             rng,
@@ -635,6 +709,7 @@ impl RandomizedElementTree {
             snapshot: Rc::new(RefCell::new(snapshot)),
             entities: Rc::new(RefCell::new(HashMap::default())),
             scroll_handles: Rc::default(),
+            list_states: Rc::default(),
             work_counters: Rc::new(RefCell::new(RandomizedElementTreeWorkCounters::default())),
             rng: StdRng::seed_from_u64(0),
         }
@@ -827,6 +902,18 @@ impl RandomizedElementTree {
             }
             RandomizedElementTreeMutationKind::ChildText => {
                 self.mutate_random_child(RandomizedChildMutation::Text)
+            }
+            RandomizedElementTreeMutationKind::ChildDisplay => {
+                self.mutate_random_child(RandomizedChildMutation::Display)
+            }
+            RandomizedElementTreeMutationKind::ChildLayout => {
+                self.mutate_random_child(RandomizedChildMutation::Layout)
+            }
+            RandomizedElementTreeMutationKind::ChildTextStyle => {
+                self.mutate_random_child(RandomizedChildMutation::TextStyle)
+            }
+            RandomizedElementTreeMutationKind::ChildMeasuredContent => {
+                self.mutate_random_child(RandomizedChildMutation::MeasuredContent)
             }
             RandomizedElementTreeMutationKind::Reorder => self.reorder_child(),
             RandomizedElementTreeMutationKind::Insert => self.insert_child_internal(),
@@ -1028,6 +1115,26 @@ impl RandomizedElementTree {
                     (node.style.label + self.rng.random_range(1..LABELS.len())) % LABELS.len();
                 RandomizedElementTreeMutation::ChildText { element_id }
             }
+            RandomizedChildMutation::Display => {
+                node.style.rich.display_none = !node.style.rich.display_none;
+                RandomizedElementTreeMutation::ChildDisplay { element_id }
+            }
+            RandomizedChildMutation::Layout => {
+                node.style.vertical = self.rng.random_bool(0.5);
+                node.style.wrap = self.rng.random_bool(0.4);
+                node.style.padding = self.rng.random_range(0.0..12.0);
+                node.style.gap = self.rng.random_range(0.0..10.0);
+                node.style.rich.randomize_layout(&mut self.rng);
+                RandomizedElementTreeMutation::ChildLayout { element_id }
+            }
+            RandomizedChildMutation::TextStyle => {
+                node.style.rich.text.randomize(&mut self.rng);
+                RandomizedElementTreeMutation::ChildTextStyle { element_id }
+            }
+            RandomizedChildMutation::MeasuredContent => {
+                node.style.rich.randomize_measured(&mut self.rng);
+                RandomizedElementTreeMutation::ChildMeasuredContent { element_id }
+            }
         };
         AppliedRandomizedElementTreeMutation {
             mutation,
@@ -1122,6 +1229,7 @@ impl RandomizedElementTree {
                 snapshot: self.snapshot.clone(),
                 entities: weak_entities.clone(),
                 scroll_handles: self.scroll_handles.clone(),
+                list_states: self.list_states.clone(),
                 work_counters: self.work_counters.clone(),
             });
             self.entities.borrow_mut().insert(element_id, entity);
@@ -1173,6 +1281,7 @@ impl Render for RandomizedElementTree {
                     node,
                     &entities,
                     &self.scroll_handles,
+                    &self.list_states,
                     &mut work_counters,
                     snapshot.render_options,
                 )
@@ -1191,6 +1300,7 @@ struct RenderOptions {
     cached_views: bool,
     hover_styles: bool,
     paths: bool,
+    rich_layout: bool,
     id_generation: u64,
 }
 
@@ -1199,6 +1309,7 @@ struct RandomizedElementEntity {
     snapshot: Rc<RefCell<RandomizedElementTreeSnapshot>>,
     entities: Weak<RefCell<RandomizedElementEntities>>,
     scroll_handles: Rc<RefCell<HashMap<u64, crate::ScrollHandle>>>,
+    list_states: Rc<RefCell<HashMap<u64, (ListState, u64)>>>,
     work_counters: Rc<RefCell<RandomizedElementTreeWorkCounters>>,
 }
 
@@ -1217,6 +1328,7 @@ impl Render for RandomizedElementEntity {
                     node,
                     entities.as_deref(),
                     &self.scroll_handles,
+                    &self.list_states,
                     &mut work_counters,
                     snapshot.render_options,
                 )
@@ -1252,13 +1364,16 @@ struct RandomizedElementNode {
 
 impl RandomizedElementNode {
     fn random(id: u64, config: &RandomizedElementTreeConfig, rng: &mut StdRng) -> Self {
-        let style = RandomizedElementStyle::random_child(rng);
+        let mut style = RandomizedElementStyle::random_child(rng);
         let is_entity = rng.random_bool(config.entity_density);
         let mut features = RandomizedElementFeatures::random(config.handler_density, rng);
         // Drawn only when enabled, so trees without animations keep the same RNG stream.
         features.animated = is_entity
             && config.animation_density > 0.0
             && rng.random_bool(config.animation_density);
+        if config.rich_layout {
+            style.rich = RandomizedRichLayout::random(rng);
+        }
         Self {
             id,
             style,
@@ -1320,6 +1435,313 @@ struct RandomizedElementStyle {
     /// Index into [`LABELS`] of the element's text. Not drawn when generating a tree, so
     /// adding it left every seed's tree as it was.
     label: usize,
+    /// Additional layout and measured-content state used when `rich_layout` is enabled.
+    rich: RandomizedRichLayout,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RandomizedRichLayout {
+    display_none: bool,
+    auto_width: bool,
+    auto_height: bool,
+    rem_sized: bool,
+    margin: f32,
+    flex_grow: f32,
+    flex_shrink: f32,
+    align_items: Option<AlignItems>,
+    justify_content: Option<JustifyContent>,
+    aspect_ratio: Option<f32>,
+    unkeyed: bool,
+    text: RandomizedTextStyle,
+    measured: RandomizedMeasuredContent,
+    list_version: u64,
+}
+
+impl Default for RandomizedRichLayout {
+    fn default() -> Self {
+        Self {
+            display_none: false,
+            auto_width: false,
+            auto_height: false,
+            rem_sized: false,
+            margin: 0.0,
+            flex_grow: 0.0,
+            flex_shrink: 0.0,
+            align_items: None,
+            justify_content: None,
+            aspect_ratio: None,
+            unkeyed: false,
+            text: RandomizedTextStyle::default(),
+            measured: RandomizedMeasuredContent::None,
+            list_version: 0,
+        }
+    }
+}
+
+impl RandomizedRichLayout {
+    fn random(rng: &mut StdRng) -> Self {
+        let mut rich = Self {
+            display_none: rng.random_bool(0.08),
+            ..Self::default()
+        };
+        rich.randomize_layout(rng);
+        rich.text.randomize(rng);
+        rich.randomize_measured(rng);
+        rich
+    }
+
+    fn randomize_layout(&mut self, rng: &mut StdRng) {
+        self.auto_width = rng.random_bool(0.45);
+        self.auto_height = rng.random_bool(0.45);
+        self.rem_sized = rng.random_bool(0.35);
+        self.margin = if rng.random_bool(0.4) {
+            rng.random_range(0.0..8.0)
+        } else {
+            0.0
+        };
+        self.flex_grow = if rng.random_bool(0.25) { 1.0 } else { 0.0 };
+        self.flex_shrink = if rng.random_bool(0.5) { 1.0 } else { 0.0 };
+        self.align_items = match rng.random_range(0..5) {
+            0 => Some(AlignItems::FlexStart),
+            1 => Some(AlignItems::Center),
+            2 => Some(AlignItems::FlexEnd),
+            3 => Some(AlignItems::Stretch),
+            _ => None,
+        };
+        self.justify_content = match rng.random_range(0..5) {
+            0 => Some(JustifyContent::FlexStart),
+            1 => Some(JustifyContent::Center),
+            2 => Some(JustifyContent::SpaceBetween),
+            3 => Some(JustifyContent::FlexEnd),
+            _ => None,
+        };
+        self.aspect_ratio = rng.random_bool(0.15).then(|| rng.random_range(0.5..2.5));
+        self.unkeyed = rng.random_bool(0.3);
+    }
+
+    fn randomize_measured(&mut self, rng: &mut StdRng) {
+        self.list_version += 1;
+        let color = random_color(rng);
+        self.measured = match rng.random_range(0..6) {
+            0 => RandomizedMeasuredContent::KeyedLeaf {
+                width: rng.random_range(12.0..96.0),
+                height: rng.random_range(10.0..48.0),
+                color,
+            },
+            1 => RandomizedMeasuredContent::UnkeyedLeaf {
+                width: rng.random_range(12.0..96.0),
+                height: rng.random_range(10.0..48.0),
+                color,
+            },
+            2 => RandomizedMeasuredContent::UniformList {
+                item_count: rng.random_range(0..=4),
+                item_width: rng.random_range(24.0..80.0),
+                item_height: rng.random_range(10.0..24.0),
+                color,
+            },
+            3 => RandomizedMeasuredContent::List {
+                item_count: rng.random_range(0..=4),
+                item_width: rng.random_range(24.0..80.0),
+                item_height: rng.random_range(10.0..24.0),
+                color,
+            },
+            _ => RandomizedMeasuredContent::None,
+        };
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RandomizedTextStyle {
+    color: Hsla,
+    highlight_color: Hsla,
+    highlight_bg: Hsla,
+    size_in_rems: bool,
+    font_size: f32,
+    line_height_relative: bool,
+    line_height: f32,
+    white_space: WhiteSpace,
+    text_overflow: Option<TextOverflow>,
+    line_clamp: Option<usize>,
+    text_align: TextAlign,
+    kind: RandomizedTextKind,
+}
+
+impl Default for RandomizedTextStyle {
+    fn default() -> Self {
+        Self {
+            color: crate::black(),
+            highlight_color: crate::black(),
+            highlight_bg: crate::transparent_black(),
+            size_in_rems: false,
+            font_size: 14.0,
+            line_height_relative: true,
+            line_height: 1.3,
+            white_space: WhiteSpace::Normal,
+            text_overflow: None,
+            line_clamp: None,
+            text_align: TextAlign::Left,
+            kind: RandomizedTextKind::Plain,
+        }
+    }
+}
+
+impl RandomizedTextStyle {
+    fn randomize(&mut self, rng: &mut StdRng) {
+        self.color = random_color(rng);
+        self.highlight_color = random_color(rng);
+        self.highlight_bg = random_color(rng);
+        self.size_in_rems = rng.random_bool(0.5);
+        self.font_size = if self.size_in_rems {
+            rng.random_range(0.75..1.5)
+        } else {
+            rng.random_range(10.0..22.0)
+        };
+        self.line_height_relative = rng.random_bool(0.5);
+        self.line_height = if self.line_height_relative {
+            rng.random_range(1.1..1.8)
+        } else {
+            rng.random_range(0.9..2.0)
+        };
+        self.white_space = if rng.random_bool(0.35) {
+            WhiteSpace::Nowrap
+        } else {
+            WhiteSpace::Normal
+        };
+        self.text_overflow = match rng.random_range(0..5) {
+            0 => Some(TextOverflow::Truncate("...".into())),
+            1 => Some(TextOverflow::TruncateStart("...".into())),
+            2 => Some(TextOverflow::TruncateMiddle("...".into())),
+            _ => None,
+        };
+        self.line_clamp = match rng.random_range(0..4) {
+            0 => Some(1),
+            1 => Some(2),
+            _ => None,
+        };
+        self.text_align = match rng.random_range(0..3) {
+            0 => TextAlign::Left,
+            1 => TextAlign::Center,
+            _ => TextAlign::Right,
+        };
+        self.kind = match rng.random_range(0..3) {
+            0 => RandomizedTextKind::Plain,
+            1 => RandomizedTextKind::StyledRuns,
+            _ => RandomizedTextKind::Interactive,
+        };
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RandomizedTextKind {
+    Plain,
+    StyledRuns,
+    Interactive,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum RandomizedMeasuredContent {
+    None,
+    KeyedLeaf {
+        width: f32,
+        height: f32,
+        color: Hsla,
+    },
+    UnkeyedLeaf {
+        width: f32,
+        height: f32,
+        color: Hsla,
+    },
+    UniformList {
+        item_count: usize,
+        item_width: f32,
+        item_height: f32,
+        color: Hsla,
+    },
+    List {
+        item_count: usize,
+        item_width: f32,
+        item_height: f32,
+        color: Hsla,
+    },
+}
+
+struct RandomizedMeasuredLeaf {
+    width: f32,
+    height: f32,
+    color: Hsla,
+    keyed: bool,
+}
+
+impl Element for RandomizedMeasuredLeaf {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        _: &mut App,
+    ) -> (LayoutId, ()) {
+        let intrinsic = size(px(self.width), px(self.height));
+        let measure = move |known_dimensions: Size<Option<Pixels>>,
+                            available_space: Size<AvailableSpace>,
+                            _: &mut Window,
+                            _: &mut App| {
+            let width = known_dimensions
+                .width
+                .unwrap_or(match available_space.width {
+                    AvailableSpace::Definite(available) => intrinsic.width.min(available),
+                    AvailableSpace::MinContent => intrinsic.width * 0.5,
+                    AvailableSpace::MaxContent => intrinsic.width,
+                });
+            let height = known_dimensions
+                .height
+                .unwrap_or(match available_space.height {
+                    AvailableSpace::Definite(available) => intrinsic.height.min(available),
+                    AvailableSpace::MinContent | AvailableSpace::MaxContent => intrinsic.height,
+                });
+            size(width, height)
+        };
+        let layout_id = if self.keyed {
+            window.request_keyed_measured_layout(Style::default(), intrinsic, measure)
+        } else {
+            window.request_measured_layout(Style::default(), measure)
+        };
+        (layout_id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        _: &mut App,
+    ) {
+        window.paint_quad(fill(bounds, self.color));
+    }
 }
 
 /// The texts an element can show. Elements whose number is 1 more than a multiple of 4
@@ -1348,6 +1770,7 @@ impl RandomizedElementStyle {
             vertical: rng.random_bool(0.5),
             wrap: rng.random_bool(0.7),
             label: 0,
+            rich: RandomizedRichLayout::default(),
         }
     }
 
@@ -1367,6 +1790,7 @@ impl RandomizedElementStyle {
             vertical: rng.random_bool(0.5),
             wrap: rng.random_bool(0.4),
             label: 0,
+            rich: RandomizedRichLayout::default(),
         }
     }
 
@@ -1386,6 +1810,10 @@ enum RandomizedChildMutation {
     Clipping,
     Visibility,
     Text,
+    Display,
+    Layout,
+    TextStyle,
+    MeasuredContent,
 }
 
 #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
@@ -1393,6 +1821,7 @@ fn render_node(
     node: &RandomizedElementNode,
     entities: &RandomizedElementEntities,
     scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
+    list_states: &RefCell<HashMap<u64, (ListState, u64)>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
     options: RenderOptions,
 ) -> AnyElement {
@@ -1409,7 +1838,59 @@ fn render_node(
         return entity.clone().into_any_element();
     }
 
-    render_node_body(node, Some(entities), scroll_handles, work_counters, options)
+    render_node_body(
+        node,
+        Some(entities),
+        scroll_handles,
+        list_states,
+        work_counters,
+        options,
+    )
+}
+
+fn render_rich_text(
+    node_id: u64,
+    label: &'static str,
+    text_style: &RandomizedTextStyle,
+    id_generation: u64,
+) -> AnyElement {
+    let styled_with_highlights = || {
+        let mut highlights = Vec::new();
+        if let Some(first_end) = label.chars().next().map(char::len_utf8) {
+            highlights.push((
+                0..first_end,
+                HighlightStyle {
+                    color: Some(text_style.highlight_color),
+                    background_color: Some(text_style.highlight_bg),
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.0),
+                        color: Some(text_style.highlight_color),
+                        wavy: false,
+                    }),
+                    strikethrough: Some(StrikethroughStyle {
+                        thickness: px(1.0),
+                        color: Some(text_style.color),
+                    }),
+                    ..Default::default()
+                },
+            ));
+        }
+        StyledText::new(label).with_highlights(highlights)
+    };
+
+    match text_style.kind {
+        RandomizedTextKind::Plain => label.into_any_element(),
+        RandomizedTextKind::StyledRuns => styled_with_highlights().into_any_element(),
+        RandomizedTextKind::Interactive => InteractiveText::new(
+            ElementId::NamedInteger(
+                "randomized-interactive-text".into(),
+                node_id | id_generation << ID_GENERATION_SHIFT,
+            ),
+            styled_with_highlights(),
+        )
+        .on_hover(|_, _, _, _| {})
+        .into_any_element(),
+    }
 }
 
 #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
@@ -1417,24 +1898,92 @@ fn render_node_body(
     node: &RandomizedElementNode,
     entities: Option<&RandomizedElementEntities>,
     scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
+    list_states: &RefCell<HashMap<u64, (ListState, u64)>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
     options: RenderOptions,
 ) -> AnyElement {
     work_counters.record_element_render(node.features.handler_count());
     let style = &node.style;
-    div()
-        .id(ElementId::NamedInteger(
-            "randomized-element".into(),
-            node.id | options.id_generation << ID_GENERATION_SHIFT,
-        ))
-        .flex()
-        .flex_shrink_0()
+    let rich = &style.rich;
+    let use_rich = options.rich_layout;
+    let is_scroll = node.id.is_multiple_of(3);
+    let keyed = !use_rich || !rich.unkeyed || is_scroll || node.is_entity;
+
+    let mut base = div();
+    base = if use_rich && rich.display_none {
+        base.hidden()
+    } else {
+        base.flex()
+    };
+    if use_rich {
+        base.style().flex_grow = Some(rich.flex_grow);
+        base.style().flex_shrink = Some(rich.flex_shrink);
+        if let Some(align_items) = rich.align_items {
+            base.style().align_items = Some(align_items);
+        }
+        if let Some(justify_content) = rich.justify_content {
+            base.style().justify_content = Some(justify_content);
+        }
+        if let Some(aspect_ratio) = rich.aspect_ratio {
+            base.style().aspect_ratio = Some(aspect_ratio);
+        }
+        if rich.margin > 0.0 {
+            if rich.rem_sized {
+                base = base.m(rems(rich.margin / 16.0));
+            } else {
+                base = base.m(px(rich.margin));
+            }
+        }
+        if rich.rem_sized {
+            base = base
+                .gap(rems(style.gap / 16.0))
+                .p(rems(style.padding / 16.0));
+        } else {
+            base = base.gap(px(style.gap)).p(px(style.padding));
+        }
+        if !rich.auto_width {
+            if rich.rem_sized {
+                base = base.w(rems(style.width / 16.0));
+            } else {
+                base = base.w(px(style.width));
+            }
+        }
+        if !rich.auto_height {
+            if rich.rem_sized {
+                base = base.h(rems(style.height / 16.0));
+            } else {
+                base = base.h(px(style.height));
+            }
+        }
+        let text = &rich.text;
+        base = base.text_color(text.color);
+        if text.size_in_rems {
+            base = base.text_size(rems(text.font_size));
+        } else {
+            base = base.text_size(px(text.font_size));
+        }
+        if text.line_height_relative {
+            base = base.line_height(relative(text.line_height));
+        } else {
+            base = base.line_height(rems(text.line_height));
+        }
+        let text_refinement = base.text_style();
+        text_refinement.white_space = Some(text.white_space);
+        text_refinement.text_overflow = text.text_overflow.clone();
+        text_refinement.line_clamp = text.line_clamp;
+        text_refinement.text_align = Some(text.text_align);
+    } else {
+        base = base
+            .flex_shrink_0()
+            .gap(px(style.gap))
+            .p(px(style.padding))
+            .w(px(style.width))
+            .h(px(style.height));
+    }
+
+    let base = base
         .when(style.vertical, |element| element.flex_col())
         .when(style.wrap, |element| element.flex_wrap())
-        .gap(px(style.gap))
-        .p(px(style.padding))
-        .w(px(style.width))
-        .h(px(style.height))
         .bg(style.background)
         .when(options.hover_styles, |element| {
             element
@@ -1456,19 +2005,9 @@ fn render_node_body(
         })
         .opacity(style.opacity)
         .when(style.clipped, |element| element.overflow_hidden())
-        .when(node.id.is_multiple_of(3), |element| {
-            let mut handles = scroll_handles.borrow_mut();
-            let handle = handles
-                .entry(node.id)
-                .or_insert_with(crate::ScrollHandle::new);
-            element.overflow_scroll().track_scroll(handle)
-        })
         .when(!style.visible, |element| element.invisible())
         .when(node.features.action_handler, |element| {
             element.on_action(|_: &RandomizedElementTreeAction, _window, _cx| {})
-        })
-        .when(node.features.click_handler, |element| {
-            element.cursor_pointer().on_click(|_event, _window, _cx| {})
         })
         .when(node.features.key_context, |element| {
             element
@@ -1492,9 +2031,91 @@ fn render_node_body(
             )
         })
         .when(node.id % 4 == 1 || style.label != 0, |element| {
-            element
-                .underline()
-                .child(LABELS[style.label % LABELS.len()])
+            let label = LABELS[style.label % LABELS.len()];
+            if use_rich {
+                element.underline().child(render_rich_text(
+                    node.id,
+                    label,
+                    &rich.text,
+                    options.id_generation,
+                ))
+            } else {
+                element.underline().child(label)
+            }
+        })
+        .when(use_rich, |element| match rich.measured {
+            RandomizedMeasuredContent::None => element,
+            RandomizedMeasuredContent::KeyedLeaf {
+                width,
+                height,
+                color,
+            } => element.child(RandomizedMeasuredLeaf {
+                width,
+                height,
+                color,
+                keyed: true,
+            }),
+            RandomizedMeasuredContent::UnkeyedLeaf {
+                width,
+                height,
+                color,
+            } => element.child(RandomizedMeasuredLeaf {
+                width,
+                height,
+                color,
+                keyed: false,
+            }),
+            RandomizedMeasuredContent::UniformList {
+                item_count,
+                item_width,
+                item_height,
+                color,
+            } => element.child(
+                uniform_list(
+                    ElementId::NamedInteger(
+                        "randomized-uniform-list".into(),
+                        node.id | options.id_generation << ID_GENERATION_SHIFT,
+                    ),
+                    item_count,
+                    move |range, _, _| {
+                        range
+                            .map(|_| div().w(px(item_width)).h(px(item_height)).bg(color))
+                            .collect()
+                    },
+                )
+                .with_sizing_behavior(ListSizingBehavior::Infer),
+            ),
+            RandomizedMeasuredContent::List {
+                item_count,
+                item_width,
+                item_height,
+                color,
+            } => {
+                let list_state = {
+                    let mut states = list_states.borrow_mut();
+                    let entry = states.entry(node.id).or_insert_with(|| {
+                        (
+                            ListState::new(item_count, ListAlignment::Top, px(20.0)),
+                            rich.list_version,
+                        )
+                    });
+                    if entry.1 != rich.list_version {
+                        entry.0.reset(item_count);
+                        entry.1 = rich.list_version;
+                    }
+                    entry.0.clone()
+                };
+                element.child(
+                    list(list_state, move |_, _, _| {
+                        div()
+                            .w(px(item_width))
+                            .h(px(item_height))
+                            .bg(color)
+                            .into_any_element()
+                    })
+                    .with_sizing_behavior(ListSizingBehavior::Infer),
+                )
+            }
         })
         .child({
             let color = style.border_color;
@@ -1533,12 +2154,45 @@ fn render_node_body(
         })
         .children(node.children.iter().map(|child| {
             if let Some(entities) = entities {
-                render_node(child, entities, scroll_handles, work_counters, options)
+                render_node(
+                    child,
+                    entities,
+                    scroll_handles,
+                    list_states,
+                    work_counters,
+                    options,
+                )
             } else {
-                render_node_body(child, None, scroll_handles, work_counters, options)
+                render_node_body(
+                    child,
+                    None,
+                    scroll_handles,
+                    list_states,
+                    work_counters,
+                    options,
+                )
             }
-        }))
+        }));
+
+    if keyed {
+        base.id(ElementId::NamedInteger(
+            "randomized-element".into(),
+            node.id | options.id_generation << ID_GENERATION_SHIFT,
+        ))
+        .when(is_scroll, |element| {
+            let mut handles = scroll_handles.borrow_mut();
+            let handle = handles
+                .entry(node.id)
+                .or_insert_with(crate::ScrollHandle::new);
+            element.overflow_scroll().track_scroll(handle)
+        })
+        .when(node.features.click_handler, |element| {
+            element.cursor_pointer().on_click(|_event, _window, _cx| {})
+        })
         .into_any_element()
+    } else {
+        base.into_any_element()
+    }
 }
 
 fn insert_node(
@@ -2071,7 +2725,8 @@ mod tests {
         let config = RandomizedElementTreeConfig::new(seed, element_count)
             .with_entity_density(rng.random_range(0.0..0.5))
             .with_handler_density(0.2)
-            .with_cached_views(rng.random_bool(0.3));
+            .with_cached_views(rng.random_bool(0.3))
+            .with_rich_layout(true);
         let [cached, uncached] = [(); 2].map(|()| {
             let window = cx.open_window(WINDOW_SIZE, move |_, cx| {
                 RandomizedElementTree::new_with_config(config, cx)
@@ -2084,7 +2739,7 @@ mod tests {
 
         // Hiding an ancestor of `.cached()` views can panic on `main` today, with or
         // without the layout cache, so cached-view trees leave it out.
-        let mutations = RandomizedElementTreeMutationKind::ALL
+        let mutations = RandomizedElementTreeMutationKind::ALL_RICH_LAYOUT
             .into_iter()
             .filter(|kind| {
                 !config.cached_views
@@ -2126,10 +2781,36 @@ mod tests {
                 .expect("window should remain open");
             let [cached_frame, uncached_frame] =
                 [&cached, &uncached].map(|(window, _)| draw_window_with_hitboxes(*window, cx));
-            assert_eq!(
-                cached_frame, uncached_frame,
-                "cached layout diverged at step {step} (change {change}) for {config:?}"
-            );
+            if cached_frame != uncached_frame {
+                let first_quad_diff = cached_frame
+                    .0
+                    .quads
+                    .iter()
+                    .zip(&uncached_frame.0.quads)
+                    .enumerate()
+                    .find(|(_, (a, b))| a != b);
+                let first_hitbox_diff = cached_frame
+                    .1
+                    .iter()
+                    .zip(&uncached_frame.1)
+                    .enumerate()
+                    .find(|(_, (a, b))| a != b);
+                panic!(
+                    "cached layout diverged at step {step} (change {change}, mutation {mutation:?}, \
+                     scale_factor {scale_factor}, rem_size {rem_size:?}) for {config:?}\n\
+                     quad counts: cached={} uncached={}\n\
+                     other_primitives counts: cached={} uncached={}\n\
+                     hitbox counts: cached={} uncached={}\n\
+                     first_quad_diff: {first_quad_diff:?}\n\
+                     first_hitbox_diff: {first_hitbox_diff:?}",
+                    cached_frame.0.quads.len(),
+                    uncached_frame.0.quads.len(),
+                    cached_frame.0.other_primitives.len(),
+                    uncached_frame.0.other_primitives.len(),
+                    cached_frame.1.len(),
+                    uncached_frame.1.len(),
+                );
+            }
         }
 
         for (window, _) in [cached, uncached] {

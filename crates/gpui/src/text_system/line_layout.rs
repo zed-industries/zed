@@ -611,6 +611,11 @@ impl LineLayoutCache {
         current_frame.used_wrapped_lines.clear();
     }
 
+    #[cfg(test)]
+    pub(crate) fn last_frame_wrapped_line_count(&self) -> usize {
+        self.state.borrow().previous_frame.used_wrapped_lines.len()
+    }
+
     pub fn layout_wrapped_line<Text>(
         &self,
         text: Text,
