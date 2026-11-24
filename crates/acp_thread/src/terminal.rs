@@ -548,6 +548,7 @@ impl Terminal {
                         this.cache_output(exit_status.clone(), Instant::now(), cx);
                         this.terminal.update(cx, |terminal, _cx| {
                             terminal.release_pty_resources();
+                            terminal.shrink_to_used();
                         });
                         // Free the sandbox (and its network proxy) as soon as
                         // the command finishes, rather than holding it until

@@ -12180,6 +12180,11 @@ mod tests {
                 inner_content
             );
         }
+
+        thread.read_with(cx, |thread, cx| {
+            let terminal = thread.terminals[&terminal_id].read(cx).inner().read(cx);
+            assert_eq!(terminal.shrink_to_used_count(), 1);
+        });
     }
 
     #[gpui::test]

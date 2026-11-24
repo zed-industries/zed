@@ -1077,6 +1077,8 @@ impl TerminalBuilder {
             suppress_hyperlink_throttle_once: false,
             #[cfg(any(test, feature = "test-support"))]
             pty_write_log: Default::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            shrink_to_used_count: 0,
         };
 
         TerminalBuilder {
@@ -1379,6 +1381,8 @@ impl TerminalBuilder {
                 suppress_hyperlink_throttle_once: false,
                 #[cfg(any(test, feature = "test-support"))]
                 pty_write_log: Default::default(),
+                #[cfg(any(test, feature = "test-support"))]
+                shrink_to_used_count: 0,
             };
 
             if !activation_script.is_empty() && no_task {
@@ -1564,6 +1568,8 @@ pub struct Terminal {
     suppress_hyperlink_throttle_once: bool,
     #[cfg(any(test, feature = "test-support"))]
     pty_write_log: std::cell::RefCell<Vec<Vec<u8>>>,
+    #[cfg(any(test, feature = "test-support"))]
+    shrink_to_used_count: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2109,6 +2115,15 @@ impl Terminal {
 
     pub fn shrink_to_used(&mut self) {
         shrink_to_used(&mut self.term.lock());
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.shrink_to_used_count += 1;
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn shrink_to_used_count(&self) -> usize {
+        self.shrink_to_used_count
     }
 
     pub fn scroll_line_up(&mut self) {
