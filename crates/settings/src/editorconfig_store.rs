@@ -164,6 +164,13 @@ impl EditorconfigStore {
         }
     }
 
+    pub(crate) fn has_worktree_state(&self, root_id: WorktreeId) -> bool {
+        self.worktree_state.contains_key(&root_id)
+            || self
+                .local_external_config_discovery_tasks
+                .contains_key(&root_id)
+    }
+
     fn internal_configs(
         &self,
         root_id: WorktreeId,

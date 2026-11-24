@@ -2360,7 +2360,7 @@ mod tests {
             add_display_only_terminal(&project, window_handle, false, true, cx);
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         terminal.update(&mut cx, |terminal, cx| {
-            terminal.write_raw_output(b"\x1b[1 q", cx);
+            terminal.write_output(b"\x1b[1 q", cx);
         });
         cx.run_until_parked();
         assert!(terminal_view.read_with(&cx, |view, _| view.blinking_terminal_enabled));
@@ -2381,7 +2381,7 @@ mod tests {
                 });
             });
             terminal.update(cx, |terminal, cx| {
-                terminal.write_raw_output(b"old", cx);
+                terminal.write_output(b"old", cx);
                 terminal.matches.push(Range::new(
                     terminal::Point::new(0, 0),
                     terminal::Point::new(0, 3),

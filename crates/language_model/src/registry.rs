@@ -482,6 +482,14 @@ impl LanguageModelRegistry {
         })
     }
 
+    pub fn authenticated_default_model(&self, cx: &App) -> Option<LanguageModel> {
+        let model = self.default_model()?;
+        self.visible_providers()
+            .iter()
+            .any(|provider| provider.id() == model.provider_id && provider.is_authenticated(cx))
+            .then_some(model)
+    }
+
     pub fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
         let default_model = self.default_model()?;
         self.provider(&default_model.provider_id)?

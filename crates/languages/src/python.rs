@@ -1145,12 +1145,7 @@ impl PythonContextProvider {
 fn python_module_name_from_relative_path(relative_path: &str) -> Option<String> {
     let rel_path = RelPath::new(relative_path.as_ref(), PathStyle::local()).ok()?;
     let path_with_dots = rel_path.display(PathStyle::Unix).replace('/', ".");
-    Some(
-        path_with_dots
-            .strip_suffix(".py")
-            .map(ToOwned::to_owned)
-            .unwrap_or(path_with_dots),
-    )
+    Some(path_with_dots.trim_suffix(".py").to_owned())
 }
 
 fn is_python_env_global(k: &PythonEnvironmentKind) -> bool {

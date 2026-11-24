@@ -365,7 +365,7 @@ fn find_target(
 }
 
 fn is_numeric_string(s: &str) -> bool {
-    let rest = s.strip_prefix('-').unwrap_or(s);
+    let rest = s.trim_prefix('-');
 
     if rest.is_empty() {
         return false;

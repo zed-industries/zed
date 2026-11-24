@@ -40,9 +40,9 @@ use itertools::Itertools;
 use language::{
     Buffer, BufferEvent, Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticMessage,
     DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter, Language, LanguageAwareStyling,
-    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
-    ManifestQuery, OffsetRangeExt, Point, ToPoint, Toolchain, ToolchainList, ToolchainLister,
-    ToolchainMetadata,
+    LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LineEnding,
+    ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Override, Point, ToPoint,
+    Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata,
     language_settings::{
         Formatter, FormatterList, LanguageSettings, LanguageSettingsContent, LineEndingSetting,
     },
@@ -4414,6 +4414,119 @@ async fn test_updating_lsp_settings_sends_one_did_change_configuration(
     );
 }
 
+#[gpui::test]
+async fn test_removing_worktree_notifies_settings_only_for_local_settings(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "" })).await;
+    fs.insert_tree(path!("/outside"), json!({ "b.rs": "" }))
+        .await;
+    fs.insert_tree(
+        path!("/with_settings"),
+        json!({ ".zed": { "settings.json": r#"{ "tab_size": 8 }"# } }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    let did_change_count = Arc::new(atomic::AtomicUsize::new(0));
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-lsp",
+            initializer: Some(Box::new({
+                let did_change_count = did_change_count.clone();
+                move |fake_server| {
+                    fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+                        |_, _| async move {
+                            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                                lsp::Location::new(
+                                    lsp::Uri::from_file_path(path!("/outside/b.rs")).unwrap(),
+                                    lsp::Range::default(),
+                                ),
+                            )))
+                        },
+                    );
+                    fake_server
+                        .handle_notification::<lsp::notification::DidChangeConfiguration, _>({
+                            let did_change_count = did_change_count.clone();
+                            move |_, _| {
+                                did_change_count.fetch_add(1, atomic::Ordering::Release);
+                            }
+                        });
+                }
+            })),
+            ..Default::default()
+        },
+    );
+    language_registry.add(rust_lang());
+
+    let (rs_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let _fake_rust_server = fake_rust_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+    did_change_count.store(0, atomic::Ordering::Release);
+
+    let definitions = project
+        .update(cx, |project, cx| project.definitions(&rs_buffer, 0, cx))
+        .await
+        .unwrap()
+        .unwrap();
+    cx.executor().run_until_parked();
+    let invisible_worktree_id = cx.update(|cx| {
+        assert_eq!(definitions.len(), 1);
+        let target_worktree_id = definitions[0]
+            .target
+            .buffer
+            .read(cx)
+            .file()
+            .unwrap()
+            .worktree_id(cx);
+        assert!(
+            project
+                .read(cx)
+                .worktree_for_id(target_worktree_id, cx)
+                .is_some_and(|worktree| !worktree.read(cx).is_visible())
+        );
+        target_worktree_id
+    });
+
+    cx.update(|_| drop(definitions));
+    cx.executor().run_until_parked();
+
+    assert!(project.read_with(cx, |project, cx| {
+        project.worktree_for_id(invisible_worktree_id, cx).is_none()
+    }));
+    assert_eq!(did_change_count.load(atomic::Ordering::Acquire), 0);
+
+    let (worktree_with_settings, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/with_settings"), true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_with_settings_id =
+        worktree_with_settings.read_with(cx, |worktree, _| worktree.id());
+    drop(worktree_with_settings);
+    cx.executor().run_until_parked();
+    did_change_count.store(0, atomic::Ordering::Release);
+
+    project.update(cx, |project, cx| {
+        project.remove_worktree(worktree_with_settings_id, cx)
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(did_change_count.load(atomic::Ordering::Acquire), 1);
+}
+
 #[gpui::test(iterations = 3)]
 async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -8614,6 +8727,296 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         completions[0].replace_range.to_offset(&snapshot),
         text.len() - 4..text.len() - 1
     );
+}
+
+#[gpui::test]
+async fn test_completions_without_edit_ranges_after_concurrent_edits(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.ts": "" })).await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .expect("open buffer with the language server");
+    let fake_server = fake_language_servers
+        .next()
+        .await
+        .expect("start the language server");
+    cx.executor().run_until_parked();
+    fake_server.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(lsp::CompletionResponse::Array(vec![
+            lsp::CompletionItem {
+                label: String::from("foobar"),
+                ..lsp::CompletionItem::default()
+            },
+        ])))
+    });
+
+    let long_word = "a".repeat(128);
+    let long_word_continued = format!("{long_word}a");
+    for (text, position, edit, expected_ranges) in [
+        ("keep foo", 8, (4..8, ""), None),
+        ("keep foo bar", 8, (0..0, "x\n"), Some(("foo", "foo"))),
+        ("keep foo bar", 8, (8..8, " baz"), None),
+        ("keep foo bar", 7, (5..5, " "), Some(("foo", "fo"))),
+        ("keep 𝒳oo bar", 11, (5..5, "\t"), Some(("𝒳oo", "𝒳oo"))),
+        ("foobar", 4, (3..4, ""), Some(("fooar", "foo"))),
+        ("foo", 3, (0..1, ""), Some(("oo", "oo"))),
+        ("bar", 3, (0..0, "foo"), Some(("foobar", "foobar"))),
+        ("keep foo bar", 8, (4..5, ""), None),
+        ("keep foo bar", 8, (8..9, ""), Some(("foobar", "foo"))),
+        ("keep   bar", 6, (5..6, ""), None),
+        (
+            long_word.as_str(),
+            128,
+            (128..128, "a"),
+            Some((long_word_continued.as_str(), long_word_continued.as_str())),
+        ),
+        ("foo.", 4, (4..4, "b"), Some(("b", "b"))),
+        ("foo.", 4, (3..4, ""), None),
+    ] {
+        buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+        let completions = project.update(cx, |project, cx| {
+            let completions =
+                project.completions(&buffer, position, DEFAULT_COMPLETION_CONTEXT, cx);
+            buffer.update(cx, |buffer, cx| buffer.edit([edit.clone()], None, cx));
+            completions
+        });
+        let completions = completions.await.expect("request completions");
+        assert_eq!(
+            completion_edit_texts(completions, &buffer, cx),
+            expected_ranges
+                .into_iter()
+                .map(|(replaced, inserted)| (replaced.to_string(), Some(inserted.to_string())))
+                .collect::<Vec<_>>(),
+            "completions in {text:?} after edit {edit:?}",
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_completions_without_edit_ranges_after_reparse(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.ts": "" })).await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: LanguageName::new("TypeScript"),
+                matcher: Arc::new(LanguageMatcher {
+                    path_suffixes: vec![SharedString::from("ts")],
+                    ..LanguageMatcher::default()
+                }),
+                overrides: HashMap::from_iter([(
+                    String::from("string"),
+                    LanguageConfigOverride {
+                        completion_query_characters: Override::Set(HashSet::from_iter(['-'])),
+                        ..LanguageConfigOverride::default()
+                    },
+                )]),
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        )
+        .with_override_query("(string) @string")
+        .expect("parse the override query"),
+    ));
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .expect("open buffer with the language server");
+    let fake_server = fake_language_servers
+        .next()
+        .await
+        .expect("start the language server");
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| buffer.set_sync_parse_timeout(None));
+
+    for (text, edits_before_request, position, edits_after_request, expected) in [
+        (
+            "let a = alpha-bet;",
+            vec![(8..8, "\""), (17..17, "\"")],
+            18,
+            vec![(18..18, "a")],
+            "alpha-beta",
+        ),
+        (
+            "let a = \"alpha-bet \";",
+            vec![(8..9, "")],
+            17,
+            Vec::new(),
+            "bet",
+        ),
+    ] {
+        buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+        cx.executor().run_until_parked();
+        let (respond_tx, respond_rx) = oneshot::channel();
+        let mut respond_rx = Some(respond_rx);
+        fake_server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+            let respond_rx = respond_rx.take();
+            async move {
+                if let Some(respond_rx) = respond_rx {
+                    respond_rx.await?;
+                }
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: String::from("alpha-beta"),
+                        ..lsp::CompletionItem::default()
+                    },
+                ])))
+            }
+        });
+
+        let completions = project.update(cx, |project, cx| {
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits_before_request.clone(), None, cx);
+            });
+            let completions =
+                project.completions(&buffer, position, DEFAULT_COMPLETION_CONTEXT, cx);
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits_after_request.clone(), None, cx);
+            });
+            completions
+        });
+        cx.executor().run_until_parked();
+        respond_tx
+            .send(())
+            .expect("the language server should wait for the response signal");
+        let completions = completions.await.expect("request completions");
+        assert_eq!(
+            completion_edit_texts(completions, &buffer, cx),
+            vec![(String::from(expected), Some(String::from(expected)))],
+            "completions in {text:?}",
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_completions_without_edit_ranges_after_edits_between_servers(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.ts": "" })).await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let [mut fast_servers, mut slow_servers] = ["fast", "slow"].map(|name| {
+        language_registry.register_fake_lsp(
+            "TypeScript",
+            FakeLspAdapter {
+                name,
+                capabilities: lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions::default()),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        )
+    });
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .expect("open buffer with both language servers");
+    let fast_server = fast_servers.next().await.expect("start the fast server");
+    let slow_server = slow_servers.next().await.expect("start the slow server");
+    cx.executor().run_until_parked();
+    fast_server.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(lsp::CompletionResponse::Array(vec![
+            lsp::CompletionItem {
+                label: String::from("kept"),
+                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+                    new_text: String::from("kept"),
+                })),
+                ..lsp::CompletionItem::default()
+            },
+            lsp::CompletionItem {
+                label: String::from("foobar"),
+                ..lsp::CompletionItem::default()
+            },
+        ])))
+    });
+
+    for (edit, expected_edits, expected_incomplete) in [
+        ((5..8, ""), vec![("keep", None)], true),
+        (
+            (5..5, "\t"),
+            vec![("keep", None), ("foo", Some("foo"))],
+            false,
+        ),
+    ] {
+        buffer.update(cx, |buffer, cx| buffer.set_text("keep foo bar", cx));
+        let (respond_tx, respond_rx) = oneshot::channel();
+        let mut respond_rx = Some(respond_rx);
+        slow_server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+            let respond_rx = respond_rx.take();
+            async move {
+                if let Some(respond_rx) = respond_rx {
+                    respond_rx.await?;
+                }
+                Ok(Some(lsp::CompletionResponse::Array(Vec::new())))
+            }
+        });
+        let completions = project.update(cx, |project, cx| {
+            project.completions(&buffer, 8, DEFAULT_COMPLETION_CONTEXT, cx)
+        });
+        cx.executor().run_until_parked();
+        buffer.update(cx, |buffer, cx| buffer.edit([edit.clone()], None, cx));
+        respond_tx
+            .send(())
+            .expect("the slow server should wait for the response signal");
+        let completions = completions.await.expect("request completions");
+        assert_eq!(
+            completions.iter().any(|response| response.is_incomplete),
+            expected_incomplete,
+            "incompleteness after edit {edit:?}",
+        );
+        assert_eq!(
+            completion_edit_texts(completions, &buffer, cx),
+            expected_edits
+                .into_iter()
+                .map(|(replaced, inserted)| (replaced.to_string(), inserted.map(String::from)))
+                .collect::<Vec<_>>(),
+            "completions after edit {edit:?}",
+        );
+    }
 }
 
 #[gpui::test]
@@ -22974,4 +23377,27 @@ async fn code_action_project(
 
 fn alternates(object_dir: &str) -> serde_json::Value {
     json!({ "info": { "alternates": format!("{object_dir}\n") } })
+}
+
+fn completion_edit_texts(
+    responses: Vec<CompletionResponse>,
+    buffer: &Entity<Buffer>,
+    cx: &TestAppContext,
+) -> Vec<(String, Option<String>)> {
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let text_for_range = |range: Range<Anchor>| snapshot.text_for_range(range).collect::<String>();
+    responses
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .map(|completion| {
+            let insert_range = match completion.source {
+                CompletionSource::Lsp { insert_range, .. } => insert_range,
+                _ => None,
+            };
+            (
+                text_for_range(completion.replace_range),
+                insert_range.map(text_for_range),
+            )
+        })
+        .collect()
 }

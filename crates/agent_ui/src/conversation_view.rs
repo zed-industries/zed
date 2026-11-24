@@ -24,7 +24,6 @@ use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
 use file_icons::FileIcons;
-use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, App, ClickEvent, ClipboardItem, CursorStyle, ElementId, Empty,
@@ -97,10 +96,10 @@ use crate::{
     AuthorizeToolCall, ClearMessageQueue, CycleFavoriteModels, CycleModeSelector,
     CycleThinkingEffort, EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread,
     OpenAddContextMenu, OpenAgentDiff, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
-    ScrollOutputLineDown, ScrollOutputLineUp, ScrollOutputPageDown, ScrollOutputPageUp,
-    ScrollOutputToBottom, ScrollOutputToNextMessage, ScrollOutputToPreviousMessage,
-    ScrollOutputToTop, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
-    ToggleProfileSelector, ToggleSteerFirstQueuedMessage, ToggleThinkingEffortMenu,
+    ResetThreadToDefaults, SaveThreadAsDefaults, ScrollOutputLineDown, ScrollOutputLineUp,
+    ScrollOutputPageDown, ScrollOutputPageUp, ScrollOutputToBottom, ScrollOutputToNextMessage,
+    ScrollOutputToPreviousMessage, ScrollOutputToTop, SendImmediately, SendNextQueuedMessage,
+    ToggleFastMode, ToggleProfileSelector, ToggleSteerFirstQueuedMessage, ToggleThinkingEffortMenu,
     ToggleThinkingMode, UndoLastReject,
 };
 
@@ -278,6 +277,16 @@ impl ProfileProvider for Entity<agent::Thread> {
 
     fn model_selected(&self, cx: &App) -> bool {
         self.read(cx).model().is_some()
+    }
+
+    fn pick_profile(&self, profile_id: AgentProfileId, thread_only: bool, cx: &mut App) {
+        self.update(cx, |thread, cx| {
+            if thread_only {
+                thread.mark_thread_only(cx);
+            }
+            thread.set_profile(profile_id, cx);
+            thread.save_default_profile(cx);
+        });
     }
 
     fn is_restricted(&self, cx: &App) -> bool {
@@ -1687,6 +1696,7 @@ impl ConversationView {
             .map(|native_connection| native_available_skills(&native_connection, &session_id, cx))
             .unwrap_or_default();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+            connection.description_format(),
             thread.read(cx).prompt_capabilities().clone(),
             thread.read(cx).available_commands().to_vec(),
             available_skills,
@@ -1815,12 +1825,7 @@ impl ConversationView {
             .and_then(|native_connection| native_connection.thread(&session_id, cx))
             .map(|native_thread| {
                 cx.new(|cx| {
-                    ProfileSelector::new(
-                        <dyn Fs>::global(cx),
-                        Arc::new(native_thread),
-                        self.focus_handle(cx),
-                        cx,
-                    )
+                    ProfileSelector::new(Arc::new(native_thread), self.focus_handle(cx), cx)
                 })
             });
 
@@ -2961,7 +2966,10 @@ impl ConversationView {
                             }
                         })
                         .when_some(method.description(), |this, description| {
-                            this.tooltip(Tooltip::text(description.to_string()))
+                            this.tooltip(crate::ui::description_tooltip(
+                                description.into(),
+                                connection.description_format(),
+                            ))
                         })
                         .on_click({
                             cx.listener(move |this, _, window, cx| {
@@ -4170,11 +4178,18 @@ impl Render for ConversationView {
             .bg(cx.theme().colors().panel_background)
             .child(v_flex().flex_1().min_h_0().child(content))
             .when(self.has_saved_input(), |this| {
+                let unconfirmed = self.saved_submissions.iter()
+                    .chain(self.recovery.iter().flat_map(|recovery| &recovery.submissions))
+                    .any(|submission| matches!(submission.state, acp_thread::SubmissionState::Disconnected { receipt: None }));
                 this.child(
                     h_flex()
                         .p_2()
                         .gap_2()
                         .flex_wrap()
+                        .when(unconfirmed, |this| this.child(
+                            div().debug_selector(|| "saved-input-outcome-unknown".into())
+                                .child(Label::new("Some messages were not confirmed. The agent may already have acted on them. Zed has not sent them again.").size(LabelSize::Small))
+                        ))
                         .child(self.copy_saved_input_button(cx))
                         .when(
                             !self.saved_submissions.is_empty()
@@ -4452,7 +4467,7 @@ pub(crate) mod tests {
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
     use feature_flags::FeatureFlagAppExt as _;
-    use fs::FakeFs;
+    use fs::{FakeFs, Fs};
     use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
     use parking_lot::Mutex;
     use project::Project;
@@ -4685,6 +4700,469 @@ pub(crate) mod tests {
         let weak_view = conversation_view.downgrade();
         drop(conversation_view);
         assert!(!weak_view.is_upgradable());
+    }
+
+    async fn setup_native_thread(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<ConversationView>,
+        Entity<agent::Thread>,
+        Arc<language_model::fake_provider::FakeLanguageModelProvider>,
+        &mut VisualTestContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let (server, fake_provider) = cx.update(|cx| {
+            let fake_provider = language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            (NativeAgentServer::new(fs, thread_store), fake_provider)
+        });
+        let (conversation_view, cx) = setup_conversation_view(server, cx).await;
+        let native_thread = conversation_view
+            .read_with(cx, |view, cx| view.as_native_thread(cx))
+            .expect("native thread");
+        (conversation_view, native_thread, fake_provider, cx)
+    }
+
+    fn thread_model_selection(
+        thread: &Entity<agent::Thread>,
+        cx: &mut VisualTestContext,
+    ) -> serde_json::Value {
+        thread.read_with(cx, |thread, _cx| {
+            let model = thread.model().expect("default model");
+            json!({ "provider": model.provider_id().0, "model": model.id().0 })
+        })
+    }
+
+    async fn write_agent_settings(
+        thread: &Entity<agent::Thread>,
+        agent_settings: serde_json::Value,
+        cx: &mut VisualTestContext,
+    ) -> Arc<dyn Fs> {
+        let fs = thread.read_with(cx, |thread, cx| thread.project().read(cx).fs().clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.write(
+            paths::settings_file(),
+            json!({ "agent": agent_settings }).to_string().as_bytes(),
+        )
+        .await
+        .unwrap();
+        fs
+    }
+
+    async fn saved_agent_settings(fs: &Arc<dyn Fs>) -> serde_json::Value {
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs.load(paths::settings_file()).await.unwrap()).unwrap();
+        settings["agent"].clone()
+    }
+
+    #[gpui::test]
+    async fn test_picking_profile_saves_it_unless_the_thread_is_thread_only(
+        cx: &mut TestAppContext,
+    ) {
+        let (_conversation_view, native_thread, _fake_provider, cx) = setup_native_thread(cx).await;
+        let settings_fs = write_agent_settings(&native_thread, json!({}), cx).await;
+
+        for (profile, thread_only, expected_default_profile, expected_thread_only) in [
+            ("ask", false, "ask", false),
+            ("minimal", true, "ask", true),
+            ("write", false, "ask", true),
+        ] {
+            cx.update(|_window, cx| {
+                native_thread.pick_profile(AgentProfileId(profile.into()), thread_only, cx);
+            });
+            cx.run_until_parked();
+
+            assert_eq!(
+                saved_agent_settings(&settings_fs).await["default_profile"],
+                expected_default_profile
+            );
+            native_thread.read_with(cx, |thread, _cx| {
+                assert_eq!(thread.is_thread_only(), expected_thread_only);
+                assert_eq!(thread.profile().as_str(), profile);
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_picking_thinking_effort_saves_it_unless_the_thread_is_thread_only(
+        cx: &mut TestAppContext,
+    ) {
+        let (conversation_view, native_thread, _fake_provider, cx) = setup_native_thread(cx).await;
+        let model = thread_model_selection(&native_thread, cx);
+        let settings_fs = write_agent_settings(
+            &native_thread,
+            json!({ "default_model": model, "favorite_models": [model] }),
+            cx,
+        )
+        .await;
+        let thread_view = active_thread(&conversation_view, cx);
+
+        for (effort, thread_only, expected_saved_effort, expected_thread_only) in [
+            ("high", false, "high", false),
+            ("low", true, "high", true),
+            ("medium", false, "high", true),
+        ] {
+            thread_view.update(cx, |view, cx| {
+                view.pick_native_agent_thinking_effort(effort.to_string(), thread_only, cx);
+            });
+            cx.run_until_parked();
+
+            let settings = saved_agent_settings(&settings_fs).await;
+            assert_eq!(settings["default_model"]["effort"], expected_saved_effort);
+            assert_eq!(
+                settings["favorite_models"][0]["effort"],
+                expected_saved_effort
+            );
+            native_thread.read_with(cx, |thread, _cx| {
+                assert_eq!(thread.is_thread_only(), expected_thread_only);
+                assert_eq!(thread.thinking_effort().map(String::as_str), Some(effort));
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_picking_thinking_effort_leaves_a_different_default_model_untouched(
+        cx: &mut TestAppContext,
+    ) {
+        let (conversation_view, native_thread, _fake_provider, cx) = setup_native_thread(cx).await;
+        let thread_model = thread_model_selection(&native_thread, cx);
+        let mut default_model = thread_model.clone();
+        default_model["model"] = json!("not-the-thread-model");
+        let settings_fs = write_agent_settings(
+            &native_thread,
+            json!({ "default_model": default_model, "favorite_models": [thread_model] }),
+            cx,
+        )
+        .await;
+        let thread_view = active_thread(&conversation_view, cx);
+
+        thread_view.update(cx, |view, cx| {
+            view.pick_native_agent_thinking_effort("high".to_string(), false, cx);
+        });
+        cx.run_until_parked();
+
+        let settings = saved_agent_settings(&settings_fs).await;
+        assert_eq!(settings["default_model"], default_model);
+        assert_eq!(settings["favorite_models"][0]["effort"], "high");
+        native_thread.read_with(cx, |thread, _cx| assert!(!thread.is_thread_only()));
+    }
+
+    #[gpui::test]
+    async fn test_resetting_thread_only_thread_restores_defaults_in_place(cx: &mut TestAppContext) {
+        let (conversation_view, native_thread, fake_provider, cx) = setup_native_thread(cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let session_id =
+            thread_view.read_with(cx, |view, cx| view.thread.read(cx).session_id().clone());
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Keep this prompt", window, cx);
+        });
+
+        let model_options = |thread: &agent::Thread| {
+            (
+                thread.profile().clone(),
+                thread.model().map(|model| model.id().0.to_string()),
+                thread.thinking_enabled(),
+                thread.thinking_effort().cloned(),
+                thread.speed(),
+            )
+        };
+        let selector_model = |cx: &mut VisualTestContext| {
+            thread_view.read_with(cx, |view, cx| {
+                view.model_selector
+                    .as_ref()
+                    .and_then(|selector| selector.read(cx).active_model(cx))
+                    .map(|model| model.id.clone())
+            })
+        };
+        let defaults = native_thread.read_with(cx, |thread, _cx| model_options(thread));
+        let default_selector_model = selector_model(cx);
+        assert!(default_selector_model.is_some());
+        native_thread.update(cx, |thread, cx| {
+            thread.set_profile(agent_settings::AgentProfileId("ask".into()), cx);
+            thread.set_model(fake_provider.model("other"), cx);
+            thread.set_thinking_enabled(!defaults.2, cx);
+            thread.set_thinking_effort(Some("high".to_string()), cx);
+            thread.set_speed(Some(language_model::Speed::Fast), cx);
+            thread.mark_thread_only(cx);
+        });
+        cx.run_until_parked();
+        assert_ne!(
+            native_thread.read_with(cx, |thread, _cx| model_options(thread)),
+            defaults
+        );
+        assert_ne!(selector_model(cx), default_selector_model);
+
+        native_thread.update(cx, |thread, cx| thread.reset_to_defaults(cx));
+        cx.run_until_parked();
+
+        native_thread.read_with(cx, |thread, _cx| {
+            assert_eq!(model_options(thread), defaults);
+            assert!(!thread.is_thread_only());
+        });
+        assert_eq!(selector_model(cx), default_selector_model);
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).session_id(), &session_id);
+            assert_eq!(view.message_editor.read(cx).text(cx), "Keep this prompt");
+        });
+
+        thread_view.update(cx, |view, cx| {
+            view.thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "Hello".into(), cx);
+            });
+        });
+        let change_options = |thread: &mut agent::Thread, cx: &mut Context<agent::Thread>| {
+            thread.set_model(fake_provider.model("other"), cx);
+            thread.set_thinking_effort(Some("high".to_string()), cx);
+            thread.mark_thread_only(cx);
+        };
+        native_thread.update(cx, change_options);
+        native_thread.update(cx, |thread, cx| thread.reset_to_defaults(cx));
+        cx.run_until_parked();
+        native_thread.read_with(cx, |thread, _cx| {
+            assert_eq!(model_options(thread), defaults);
+            assert!(!thread.is_thread_only());
+        });
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).session_id(), &session_id);
+        });
+
+        cx.update(|_window, cx| {
+            language_model::LanguageModelRegistry::global(cx)
+                .update(cx, |registry, cx| registry.set_default_model(None, cx));
+        });
+        native_thread.update(cx, change_options);
+        let thread_only_options = native_thread.read_with(cx, |thread, _cx| model_options(thread));
+        native_thread.update(cx, |thread, cx| thread.reset_to_defaults(cx));
+        cx.run_until_parked();
+        native_thread.read_with(cx, |thread, _cx| {
+            assert_eq!(model_options(thread), thread_only_options);
+            assert!(thread.is_thread_only());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reset_thread_to_defaults_action_only_resets_thread_only_threads(
+        cx: &mut TestAppContext,
+    ) {
+        let (conversation_view, native_thread, fake_provider, cx) = setup_native_thread(cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        cx.focus(&message_editor);
+
+        let model_options = |thread: &agent::Thread| {
+            (
+                thread.model().map(|model| model.id().0.to_string()),
+                thread.thinking_effort().cloned(),
+            )
+        };
+        let defaults = native_thread.read_with(cx, |thread, _cx| model_options(thread));
+        native_thread.update(cx, |thread, cx| {
+            thread.set_model(fake_provider.model("other"), cx);
+            thread.set_thinking_effort(Some("high".to_string()), cx);
+        });
+        let changed = native_thread.read_with(cx, |thread, _cx| model_options(thread));
+        assert_ne!(changed, defaults);
+
+        cx.dispatch_action(ResetThreadToDefaults);
+        cx.run_until_parked();
+        native_thread.read_with(cx, |thread, _cx| {
+            assert_eq!(model_options(thread), changed);
+        });
+
+        native_thread.update(cx, |thread, cx| thread.mark_thread_only(cx));
+        cx.dispatch_action(ResetThreadToDefaults);
+        cx.run_until_parked();
+        native_thread.read_with(cx, |thread, _cx| {
+            assert_eq!(model_options(thread), defaults);
+            assert!(!thread.is_thread_only());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_save_thread_as_defaults_action_only_saves_thread_only_threads(
+        cx: &mut TestAppContext,
+    ) {
+        let (conversation_view, native_thread, fake_provider, cx) = setup_native_thread(cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        cx.focus(&message_editor);
+
+        let default_model = thread_model_selection(&native_thread, cx);
+        let mut favorite_model = default_model.clone();
+        favorite_model["model"] = json!("other");
+        let saved_settings = json!({
+            "default_profile": "write",
+            "default_model": default_model,
+            "favorite_models": [favorite_model],
+        });
+        let settings_fs = write_agent_settings(&native_thread, saved_settings.clone(), cx).await;
+        native_thread.update(cx, |thread, cx| {
+            thread.set_profile(AgentProfileId("ask".into()), cx);
+            thread.set_model(fake_provider.model("other"), cx);
+            thread.set_thinking_effort(Some("high".to_string()), cx);
+        });
+
+        cx.dispatch_action(SaveThreadAsDefaults);
+        cx.run_until_parked();
+        assert_eq!(saved_agent_settings(&settings_fs).await, saved_settings);
+
+        native_thread.update(cx, |thread, cx| thread.mark_thread_only(cx));
+        cx.dispatch_action(SaveThreadAsDefaults);
+        cx.run_until_parked();
+        let settings = saved_agent_settings(&settings_fs).await;
+        assert_eq!(settings["default_profile"], "ask");
+        assert_eq!(settings["default_model"]["model"], "other");
+        assert_eq!(settings["default_model"]["effort"], "high");
+        assert_eq!(settings["favorite_models"][0]["effort"], "high");
+        native_thread.read_with(cx, |thread, _cx| assert!(!thread.is_thread_only()));
+    }
+
+    #[gpui::test]
+    async fn test_secondary_confirm_in_selectors_makes_thread_thread_only(cx: &mut TestAppContext) {
+        use settings::KeybindSource;
+
+        fn bind_keymap(path: &'static str, source: KeybindSource, cx: &mut App) {
+            let mut bindings =
+                settings::KeymapFile::load_asset_allow_partial_failure(path, cx).unwrap();
+            for binding in &mut bindings {
+                binding.set_meta(source.meta());
+            }
+            cx.bind_keys(bindings);
+        }
+
+        // A popover takes focus two frames after it opens, which tests don't drive,
+        // so remember each menu's focus handle to focus it directly.
+        fn latest_focus_handle<T: Focusable>(cx: &mut App) -> Rc<RefCell<Option<FocusHandle>>> {
+            let focus_handle = Rc::new(RefCell::new(None));
+            cx.observe_new({
+                let focus_handle = focus_handle.clone();
+                move |menu: &mut T, _window, cx| {
+                    *focus_handle.borrow_mut() = Some(menu.focus_handle(cx));
+                }
+            })
+            .detach();
+            focus_handle
+        }
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let (server, model_selector_focus, context_menu_focus) = cx.update(|cx| {
+            let model_selector_focus = latest_focus_handle::<crate::ModelSelector>(cx);
+            let context_menu_focus = latest_focus_handle::<ui::ContextMenu>(cx);
+
+            let fake_provider = language_model::LanguageModelRegistry::test(cx);
+            let model = fake_provider.update_model("fake", |model| {
+                model.supports_tools = true;
+                model.supports_thinking = true;
+                model.supports_disabling_thinking = false;
+                model.supported_effort_levels = [language_model::LanguageModelEffortLevel {
+                    name: "Low".into(),
+                    value: "low".into(),
+                    is_default: true,
+                    supports_disabling_thinking: None,
+                }]
+                .into();
+            });
+            language_model::LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.set_default_model(Some(model), cx)
+            });
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            let server = NativeAgentServer::new(fs, thread_store);
+            (server, model_selector_focus, context_menu_focus)
+        });
+        let (conversation_view, cx) = setup_conversation_view(server, cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let native_thread = conversation_view
+            .read_with(cx, |view, cx| view.as_native_thread(cx))
+            .expect("native thread");
+        let thread_view = active_thread(&conversation_view, cx);
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+
+        // A plain pick would change every value saved here.
+        let saved_settings = json!({
+            "agent": {
+                "default_profile": "write",
+                "default_model": { "provider": "fake", "model": "fake", "effort": "high" },
+            }
+        })
+        .to_string();
+        let settings_fs =
+            native_thread.read_with(cx, |thread, cx| thread.project().read(cx).fs().clone());
+        settings_fs
+            .create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        settings_fs
+            .write(paths::settings_file(), saved_settings.as_bytes())
+            .await
+            .unwrap();
+
+        // The JetBrains keymap rebinds keys in editors, so try with and without it.
+        for (default_keymap, jetbrains_keymap, keystroke) in [
+            ("keymaps/default-linux.json", None, "ctrl-enter"),
+            (
+                "keymaps/default-linux.json",
+                Some("keymaps/linux/jetbrains.json"),
+                "ctrl-enter",
+            ),
+            ("keymaps/default-macos.json", None, "cmd-enter"),
+            (
+                "keymaps/default-macos.json",
+                Some("keymaps/macos/jetbrains.json"),
+                "cmd-enter",
+            ),
+        ] {
+            cx.update(|_window, cx| {
+                cx.clear_key_bindings();
+                bind_keymap(default_keymap, KeybindSource::Default, cx);
+                if let Some(jetbrains_keymap) = jetbrains_keymap {
+                    bind_keymap(jetbrains_keymap, KeybindSource::Base, cx);
+                }
+            });
+            for selector in ["model", "profile", "thinking effort"] {
+                cx.focus(&message_editor);
+                let menu_focus = match selector {
+                    "model" => {
+                        cx.dispatch_action(ToggleModelSelector);
+                        model_selector_focus.borrow().clone()
+                    }
+                    "profile" => {
+                        cx.dispatch_action(ToggleProfileSelector);
+                        thread_view.read_with(cx, |view, cx| {
+                            let profile_selector = view.profile_selector.as_ref()?;
+                            Some(profile_selector.focus_handle(cx))
+                        })
+                    }
+                    _ => {
+                        cx.dispatch_action(ToggleThinkingEffortMenu);
+                        context_menu_focus.borrow().clone()
+                    }
+                }
+                .expect("menu should be built");
+                cx.update(|window, cx| window.focus(&menu_focus, cx));
+                cx.simulate_keystrokes("down");
+                cx.simulate_keystrokes(keystroke);
+                cx.run_until_parked();
+
+                let case = format!("{selector} selector, {default_keymap}, {jetbrains_keymap:?}");
+                let thread_only = native_thread.read_with(cx, |thread, _| thread.is_thread_only());
+                assert!(thread_only, "{case}");
+                let settings = settings_fs.load(paths::settings_file()).await.unwrap();
+                assert_eq!(settings, saved_settings, "{case}");
+
+                native_thread.update(cx, |thread, cx| thread.reset_to_defaults(cx));
+                assert!(!native_thread.read_with(cx, |thread, _cx| thread.is_thread_only()));
+            }
+        }
     }
 
     #[gpui::test]
@@ -7882,7 +8360,7 @@ pub(crate) mod tests {
             assert_eq!(completions.len(), 1);
             let completion = completions.first().expect("replacement command completion");
             assert_eq!(completion.name.as_ref(), "deploy");
-            assert_eq!(completion.description.as_ref(), "Updated command");
+            assert_eq!(completion.documentation.text(), "Updated command");
             assert!(!completion.requires_argument);
         });
 
@@ -8262,6 +8740,7 @@ pub(crate) mod tests {
             assert!(view.recovery.is_some());
         });
         assert!(cx.debug_bounds("copy-saved-agent-input").is_some());
+        assert!(cx.debug_bounds("saved-input-outcome-unknown").is_some());
         conversation_view.update_in(cx, |view, window, cx| view.reset(window, cx));
         cx.run_until_parked();
         let current_view = active_thread(&conversation_view, cx);
@@ -11002,7 +11481,7 @@ pub(crate) mod tests {
                         "_future_login",
                         Self::OTHER_AUTH_METHOD_ID,
                         "Future Login",
-                        std::collections::BTreeMap::from([
+                        agent_client_protocol::schema::IndexMap::from([
                             ("args".into(), json!(["must-not-run"])),
                             ("details".into(), json!({"nested": [1, {"preserve": true}]})),
                             ("description".into(), json!("Not supported by this client")),
@@ -12028,7 +12507,7 @@ pub(crate) mod tests {
         });
         let elicitation_id = elicitation_id.expect("elicitation entry should exist");
 
-        let other_answer = std::collections::BTreeMap::from([(
+        let other_answer = agent_client_protocol::schema::IndexMap::from([(
             "other".to_string(),
             acp_v2::ElicitationContentValue::from("delve into src"),
         )]);
@@ -14137,13 +14616,15 @@ pub(crate) mod tests {
 
         for (update, query, expected_source) in [
             (
-                acp_v2::CompactionUpdate::new("failed", acp_v2::CompactionStatus::Failed)
+                acp_v2::CompactionUpdate::new("failed")
+                    .status(acp_v2::CompactionStatus::Failed)
                     .error("model *still* unavailable <details>"),
                 "model *still* unavailable <details>",
                 Vec::new(),
             ),
             (
-                acp_v2::CompactionUpdate::new("completed", acp_v2::CompactionStatus::Completed)
+                acp_v2::CompactionUpdate::new("completed")
+                    .status(acp_v2::CompactionStatus::Completed)
                     .summary(source.clone()),
                 "retained resource details",
                 source,
@@ -14212,7 +14693,8 @@ pub(crate) mod tests {
                     replacement_query,
                 ))]
             };
-            let replacement = acp_v2::CompactionUpdate::new(compaction_id.clone(), status.clone());
+            let replacement =
+                acp_v2::CompactionUpdate::new(compaction_id.clone()).status(status.clone());
             let replacement = if is_error {
                 replacement.error(replacement_query)
             } else {
@@ -14285,7 +14767,8 @@ pub(crate) mod tests {
             );
             thread.update(cx, |thread, cx| {
                 thread.upsert_context_compaction_update(
-                    acp_v2::CompactionUpdate::new(compaction_id, status)
+                    acp_v2::CompactionUpdate::new(compaction_id)
+                        .status(status)
                         .summary(None::<Vec<acp_v2::ContentBlock>>)
                         .error(None::<String>),
                     cx,
@@ -19419,6 +19902,36 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn v2_permission_description_click_does_not_answer_request(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation.clone(), true, cx);
+        let thread = active_thread(&conversation, cx).read_with(cx, |view, _| view.thread.clone());
+        let source = "**[Read details](https://example.org)**";
+        let request = generic_permission_prompt(&thread, None, cx).description(source);
+        let (id, mut response) = request_test_generic_permission(&thread, request, cx);
+        cx.run_until_parked();
+        let text = cx
+            .debug_bounds("generic-permission-description-**[Read details](https://example.org)**")
+            .expect("permission description");
+        cx.simulate_click(
+            gpui::point(text.left() + px(5.), text.center().y),
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert!(cx.opened_url().is_none());
+        assert!((&mut response).now_or_never().is_none());
+        click_generic_permission(id, Some("reject"), cx);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "reject"
+            ))
+        );
+    }
+
+    #[gpui::test]
     async fn test_generic_permissions_render_without_transcript_anchors(cx: &mut TestAppContext) {
         init_test(cx);
         let (conversation_view, cx) =
@@ -21115,7 +21628,8 @@ pub(crate) mod tests {
     #[gpui::test]
     async fn test_first_message_to_an_acp_subagent_shows_its_card(cx: &mut TestAppContext) {
         init_test(cx);
-        let connection = StubAgentConnection::new();
+        let connection = StubAgentConnection::new()
+            .with_description_format(acp_thread::AgentDescriptionFormat::Markdown);
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
         add_to_workspace_with_size(conversation_view.clone(), true, cx);
@@ -21178,6 +21692,20 @@ pub(crate) mod tests {
         assert!(
             cx.debug_bounds("stop-subagent-0").is_none(),
             "a subagent that does not advertise cancel cannot be stopped"
+        );
+
+        child.update(cx, |child, cx| {
+            child
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").description("Checks the **build**."),
+                    cx,
+                )
+                .expect("child description")
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("subagent-description-0").is_none(),
+            "descriptions do not replace the card title"
         );
 
         let thread_view = active_thread(&conversation_view, cx);
@@ -21269,6 +21797,18 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
         assert!(cx.debug_bounds("subagent-card-0").is_some());
+        assert!(cx.debug_bounds("subagent-description-0").is_some());
+        child.update(cx, |child, cx| {
+            child
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child")
+                        .description(agent_client_protocol::schema::MaybeUndefined::Null),
+                    cx,
+                )
+                .expect("clear child description")
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("subagent-description-0").is_none());
     }
 
     #[gpui::test]

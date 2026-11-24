@@ -47,7 +47,9 @@ pub fn into_google(
                     }
                 }
                 MessageContent::Thinking { .. } => {}
-                MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => {}
+                MessageContent::RedactedThinking(_)
+                | MessageContent::Compaction(_)
+                | MessageContent::ReasoningEffort { .. } => {}
                 MessageContent::Image(image) => {
                     mapped_parts.push(Part::InlineDataPart(InlineDataPart {
                         inline_data: GenerativeContentBlob {
@@ -206,6 +208,7 @@ pub fn into_google(
                 allowed_function_names: None,
             },
         }),
+        continuation_token: None,
     })
 }
 
@@ -253,6 +256,7 @@ impl ThinkingConfig {
 
 pub struct GoogleEventMapper {
     usage: UsageMetadata,
+    previous_hops_usage: Option<UsageMetadata>,
     stop_emitted: bool,
 }
 
@@ -260,6 +264,7 @@ impl GoogleEventMapper {
     pub fn new() -> Self {
         Self {
             usage: UsageMetadata::default(),
+            previous_hops_usage: None,
             stop_emitted: false,
         }
     }
@@ -294,7 +299,10 @@ impl GoogleEventMapper {
         let mut events: Vec<_> = Vec::new();
         let mut wants_to_use_tool = false;
         let mut stop_reason = None;
-        if let Some(usage_metadata) = event.usage_metadata {
+        if let Some(mut usage_metadata) = event.usage_metadata {
+            if let Some(previous_hops_usage) = &self.previous_hops_usage {
+                add_previous_hops_usage(&mut usage_metadata, previous_hops_usage);
+            }
             update_usage(&mut self.usage, &usage_metadata);
             // Streamed chunks carry an empty `usageMetadata` until the final one.
             // Reporting usage before the prompt count is known would show zero context.
@@ -330,7 +338,10 @@ impl GoogleEventMapper {
 
         if let Some(candidates) = event.candidates {
             for candidate in candidates {
-                if let Some(finish_reason) = candidate.finish_reason.as_deref() {
+                if candidate.finish_reason.as_deref() == Some("CONTINUATION") {
+                    // A long decode continues in another request, whose counts start over.
+                    self.previous_hops_usage = Some(self.usage.clone());
+                } else if let Some(finish_reason) = candidate.finish_reason.as_deref() {
                     stop_reason = Some(match finish_reason {
                         "STOP" => StopReason::EndTurn,
                         "MAX_TOKENS" => StopReason::MaxTokens,
@@ -453,6 +464,19 @@ fn refusal_details(
             .map(|rating| rating.category.clone())
             .collect(),
         stage: Some(stage),
+    }
+}
+
+/// Later long decode hops count everything generated so far as input again. That's already in
+/// the output counts, so the first hop's input counts are kept to avoid overstating the context.
+fn add_previous_hops_usage(usage: &mut UsageMetadata, previous_hops_usage: &UsageMetadata) {
+    usage.prompt_token_count = previous_hops_usage.prompt_token_count;
+    usage.cached_content_token_count = previous_hops_usage.cached_content_token_count;
+    if let Some(candidates_token_count) = &mut usage.candidates_token_count {
+        *candidates_token_count += previous_hops_usage.candidates_token_count.unwrap_or(0);
+    }
+    if let Some(thoughts_token_count) = &mut usage.thoughts_token_count {
+        *thoughts_token_count += previous_hops_usage.thoughts_token_count.unwrap_or(0);
     }
 }
 
@@ -804,6 +828,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -901,6 +926,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -980,6 +1006,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -1021,6 +1048,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -1058,6 +1086,7 @@ mod tests {
                 finish_message: None,
                 safety_ratings: None,
                 citation_metadata: None,
+                continuation_token: None,
             }]),
             prompt_feedback: None,
             usage_metadata: None,
@@ -1069,5 +1098,55 @@ mod tests {
         } else {
             panic!("Expected ToolUse event");
         }
+    }
+
+    #[test]
+    fn long_decode_usage_counts_each_generated_token_once() {
+        // Each hop counts output from zero but re-counts earlier output as prompt input.
+        let hops = [
+            (10, 0, 4, 20, "CONTINUATION"),
+            (34, 30, 6, 14, "CONTINUATION"),
+            (54, 50, 5, 1, "STOP"),
+        ];
+        let mut mapper = GoogleEventMapper::new();
+        let events = hops
+            .into_iter()
+            .flat_map(|(prompt, cached, candidates, thoughts, finish_reason)| {
+                mapper.map_event(
+                    serde_json::from_value(json!({
+                        "candidates": [{
+                            "content": {"role": "model", "parts": []},
+                            "finishReason": finish_reason
+                        }],
+                        "usageMetadata": {
+                            "promptTokenCount": prompt,
+                            "cachedContentTokenCount": cached,
+                            "candidatesTokenCount": candidates,
+                            "thoughtsTokenCount": thoughts
+                        }
+                    }))
+                    .unwrap(),
+                )
+            })
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+
+        let usage = |output_tokens| {
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 10,
+                output_tokens,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+        };
+        assert_eq!(
+            events,
+            [
+                usage(24),
+                usage(44),
+                usage(50),
+                LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+            ]
+        );
     }
 }

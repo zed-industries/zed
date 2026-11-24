@@ -471,6 +471,13 @@ pub trait Platform: 'static {
         None
     }
 
+    /// Returns the factor by which text should be scaled, on top of the window's scale factor.
+    fn text_scale_factor(&self) -> f32 {
+        1.0
+    }
+
+    fn on_text_scale_factor_change(&self, _callback: Box<dyn FnMut()>) {}
+
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn register_url_scheme(&self, url: &str) -> Task<Result<()>>;

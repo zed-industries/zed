@@ -194,9 +194,7 @@ fn normalize_hyperlink_match(
                 }
             }
             // Fallback: strip file:// prefix if URL parsing fails
-            let path = maybe_url_or_path
-                .strip_prefix("file://")
-                .unwrap_or(&maybe_url_or_path);
+            let path = maybe_url_or_path.trim_prefix("file://");
             HyperlinkMatch {
                 text: path.to_string(),
                 is_url: false,

@@ -270,7 +270,7 @@ impl GoogleLanguageModelProvider {
                 });
             };
             let request = google_ai::stream_generate_content(
-                http_client.as_ref(),
+                http_client,
                 &api_url,
                 &api_key,
                 request,
@@ -374,7 +374,12 @@ impl LanguageModelClient for GoogleLanguageModelProvider {
         };
         let request_limiter = self.request_limiters.for_model(&model.id);
         let mut request = request;
-        if request.max_output_tokens.is_some() {
+        if google_ai::supports_long_decode(&config.id) {
+            // Long decode only continues past one response's output limit when the budget allows
+            // it. Google accepts the whole context window as that budget.
+            request.max_output_tokens =
+                request.effective_max_output_tokens(Some(config.max_input_tokens));
+        } else if request.max_output_tokens.is_some() {
             request.max_output_tokens =
                 request.effective_max_output_tokens(config.max_output_tokens);
         }
@@ -460,10 +465,13 @@ mod tests {
     #[gpui::test]
     async fn catalog_models_drop_xhigh_effort_unless_supported(cx: &mut TestAppContext) {
         let thinking_configs: Arc<Mutex<Vec<(String, serde_json::Value)>>> = Arc::default();
+        let max_output_tokens: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
         let http_client = FakeHttpClient::create({
             let thinking_configs = thinking_configs.clone();
+            let max_output_tokens = max_output_tokens.clone();
             move |mut request| {
                 let thinking_configs = thinking_configs.clone();
+                let max_output_tokens = max_output_tokens.clone();
                 async move {
                     if request.method() == Method::GET {
                         let models = ["gemini-4-hydrogen", "gemini-4-argon"].map(|id| {
@@ -489,6 +497,9 @@ mod tests {
                         request.uri().path().to_string(),
                         body["generationConfig"]["thinkingConfig"].clone(),
                     ));
+                    max_output_tokens
+                        .lock()
+                        .push(body["generationConfig"]["maxOutputTokens"].clone());
                     Ok(Response::builder().status(200).body(AsyncBody::from(
                         "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n\n",
                     ))?)
@@ -556,6 +567,10 @@ mod tests {
                     json!({"includeThoughts": true}),
                 ),
             ]
+        );
+        assert_eq!(
+            *max_output_tokens.lock(),
+            [json!(1_048_576), json!(1_048_576)]
         );
     }
 }
