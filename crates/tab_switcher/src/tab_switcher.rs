@@ -24,7 +24,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{
     Event as WorkspaceEvent, ModalView, Pane, SaveIntent, Workspace,
-    item::{ItemBufferKind, ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
+    item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
     pane::{render_item_indicator, tab_details},
 };
 
@@ -610,8 +610,7 @@ impl TabSwitcherDelegate {
         };
 
         if self.open_in_active_pane
-            && tab_match.item.buffer_kind(cx) == ItemBufferKind::Singleton
-            && let Some(project_path) = tab_match.item.project_path(cx)
+            && let Some(project_path) = tab_match.item.single_file_project_path(cx)
         {
             let Some(workspace) = self.workspace.upgrade() else {
                 return;
