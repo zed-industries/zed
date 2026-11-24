@@ -5675,16 +5675,6 @@ impl MultiBufferSnapshot {
         Some(excerpts.item()?.range.clone())
     }
 
-    #[cfg(test)]
-    thread_local! {
-        static EXCERPT_BOUNDARY_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_excerpt_boundary_steps() -> usize {
-        Self::EXCERPT_BOUNDARY_STEPS.replace(0)
-    }
-
     pub fn excerpt_boundaries_in_range<R, T>(
         &self,
         range: R,
@@ -5719,6 +5709,10 @@ impl MultiBufferSnapshot {
             value: None,
         });
 
+        // The cursor is on the diff transform that contains `start_offset`. Seek to the
+        // start of its excerpt, so that a range starting on a transform in the middle of
+        // an excerpt is not mistaken for one starting at the excerpt. Otherwise the walk
+        // below would begin with an excerpt that starts before the range, and stop there.
         cursor.seek_to_start_of_current_excerpt();
         if cursor
             .fetch_excerpt_with_range()
@@ -5740,7 +5734,7 @@ impl MultiBufferSnapshot {
             let (next_excerpt, next_range) = cursor.fetch_excerpt_with_range()?;
             cursor.next_excerpt_forwards();
             #[cfg(test)]
-            Self::EXCERPT_BOUNDARY_STEPS.with(|steps| steps.set(steps.get() + 1));
+            multi_buffer_tests::EXCERPT_BOUNDARY_STEPS.with(|steps| steps.set(steps.get() + 1));
             if !bounds.contains(&next_range.start.key) {
                 return None;
             }
