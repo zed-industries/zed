@@ -932,6 +932,7 @@ impl TerminalElement {
                 style,
                 ..text_style.font()
             },
+            font_size: None,
             underline,
             strikethrough,
         };

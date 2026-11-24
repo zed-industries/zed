@@ -8,6 +8,7 @@ use unicode_segmentation::UnicodeSegmentation;
 pub(crate) struct Candidate {
     pub(crate) source: Range<usize>,
     pub(crate) font_id: FontId,
+    pub(crate) font_size: Pixels,
     pub(crate) is_emoji: bool,
     pub(crate) color: bool,
     pub(crate) glyphs: Option<GlyphSpan>,
@@ -40,7 +41,9 @@ pub(crate) fn collect_candidates(
         }
         let Some(run) = font_run else { break };
         // Paint-only run boundaries must not split a fallback grapheme.
-        while let Some(next_run) = font_runs.next_if(|next| next.font_id == run.font_id) {
+        while let Some(next_run) =
+            font_runs.next_if(|next| next.font_id == run.font_id && next.font_size == run.font_size)
+        {
             run_end += next_run.len;
         }
         let end = start + grapheme.len();
@@ -53,6 +56,7 @@ pub(crate) fn collect_candidates(
         candidates.push(Candidate {
             source: start..end,
             font_id: run.font_id,
+            font_size: run.font_size.unwrap_or(layout.font_size),
             is_emoji: fallback.is_emoji,
             color: fallback.emoji_presentation,
             glyphs: None,
@@ -167,6 +171,7 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
     let source_run_count = layout.runs.len();
     layout.runs.resize_with(final_run_count, || ShapedRun {
         font_id: FontId(0),
+        font_size: Pixels::ZERO,
         glyphs: Vec::new(),
     });
 
@@ -191,6 +196,7 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
                 );
                 layout.runs[destination_index] = ShapedRun {
                     font_id: segment.font_id,
+                    font_size: layout.runs[source_index].font_size,
                     glyphs,
                 };
                 glyph_end = glyph_start;
@@ -233,6 +239,7 @@ mod tests {
             &[FontRun {
                 len: text.len(),
                 font_id: FontId(7),
+                font_size: None,
             }],
             &layout,
         );
@@ -270,10 +277,12 @@ mod tests {
             FontRun {
                 len: 3,
                 font_id: FontId(7),
+                font_size: None,
             },
             FontRun {
                 len: 3,
                 font_id: FontId(7),
+                font_size: None,
             },
         ];
         let candidates = collect_candidates(text, &font_runs, &layout);
@@ -306,6 +315,7 @@ mod tests {
             &[FontRun {
                 len: 6,
                 font_id: FontId(7),
+                font_size: None,
             }],
             &layout,
         );
@@ -334,6 +344,7 @@ mod tests {
         let font_runs = [FontRun {
             len: "😀".len(),
             font_id: FontId(7),
+            font_size: None,
         }];
         for (id, color) in [(0, false), (1, false), (0, true), (1, true)] {
             layout.runs[0].glyphs = vec![source_glyph(0, 0.0, id, color)];
@@ -375,6 +386,7 @@ mod tests {
                 index += length;
                 ShapedRun {
                     font_id: FontId(font),
+                    font_size: px(16.0),
                     glyphs,
                 }
             })
@@ -439,6 +451,7 @@ mod tests {
             } else {
                 layout.runs.push(ShapedRun {
                     font_id,
+                    font_size: px(16.0),
                     glyphs: vec![glyph],
                 });
             }

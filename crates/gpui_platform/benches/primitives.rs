@@ -254,6 +254,7 @@ fn paint(rectangle: &Rectangle, window: &mut Window, cx: &mut App) {
                 background_color: None,
                 underline: None,
                 strikethrough: None,
+                font_size: None,
             };
             let line = window
                 .text_system()

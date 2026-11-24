@@ -424,6 +424,7 @@ impl TextSystem {
                 &[FontRun {
                     len: buffer.len(),
                     font_id,
+                    font_size: None,
                 }],
             )
             .width
@@ -762,8 +763,10 @@ impl WindowTextSystem {
                 };
 
                 let font_id = self.resolve_font(&run.font);
+                let run_font_size = run_font_size(run, font_size);
                 if let Some(font_run) = font_runs.last_mut()
                     && font_id == font_run.font_id
+                    && run_font_size == font_run.font_size
                     && !decoration_changed
                 {
                     font_run.len += run_len_within_line;
@@ -771,6 +774,7 @@ impl WindowTextSystem {
                     font_runs.push(FontRun {
                         len: run_len_within_line,
                         font_id,
+                        font_size: run_font_size,
                     });
                 }
 
@@ -861,7 +865,7 @@ impl WindowTextSystem {
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
-        let font_runs = self.font_runs(runs);
+        let font_runs = self.font_runs(runs, font_size);
         let layout = self
             .line_layout_cache
             .layout_line(text, font_size, &font_runs, force_width);
@@ -869,7 +873,7 @@ impl WindowTextSystem {
         layout
     }
 
-    fn font_runs(&self, runs: &[TextRun]) -> Vec<FontRun> {
+    fn font_runs(&self, runs: &[TextRun], font_size: Pixels) -> Vec<FontRun> {
         let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_buffer.take();
         font_runs.clear();
@@ -889,8 +893,10 @@ impl WindowTextSystem {
             };
 
             let font_id = self.resolve_font(&run.font);
+            let run_font_size = run_font_size(run, font_size);
             if let Some(font_run) = font_runs.last_mut()
                 && font_id == font_run.font_id
+                && run_font_size == font_run.font_size
                 && !decoration_changed
             {
                 font_run.len += run.len;
@@ -898,6 +904,7 @@ impl WindowTextSystem {
                 font_runs.push(FontRun {
                     len: run.len,
                     font_id,
+                    font_size: run_font_size,
                 });
             }
         }
@@ -916,6 +923,7 @@ impl WindowTextSystem {
                 &[FontRun {
                     len: buffer.len(),
                     font_id,
+                    font_size: None,
                 }],
                 None,
             )
@@ -926,6 +934,13 @@ impl WindowTextSystem {
     pub fn em_layout_width(&self, font_id: FontId, font_size: Pixels) -> Pixels {
         self.layout_width(font_id, font_size, 'm')
     }
+}
+
+/// The size a run is shaped at, as a [`FontRun`] carries it: `None` when it is the size of the
+/// whole text, so that runs which only restate that size shape and cache as they did before.
+fn run_font_size(run: &TextRun, font_size: Pixels) -> Option<Pixels> {
+    run.font_size
+        .filter(|run_font_size| *run_font_size != font_size)
 }
 
 #[derive(Hash, Eq, PartialEq)]
@@ -1077,6 +1092,11 @@ pub struct TextRun {
     pub len: usize,
     /// The font to use for this run.
     pub font: Font,
+    /// The font size for this run. `None` uses the size the whole text is shaped at.
+    ///
+    /// A line's ascent and descent are the largest of its runs'. The line height is still the
+    /// one the text is laid out with, so it should leave room for the largest run.
+    pub font_size: Option<Pixels>,
     /// The color
     pub color: Hsla,
     /// The background color (if any)
