@@ -256,6 +256,10 @@ gpui = [
 git_ui = ["src/commit_message_prompt.txt"]
 editor = ["../grammars/src/**"]
 edit_prediction = ["license_patterns/**"]
+# Non-debug builds embed these at compile time (`fs_embed!`).
+settings = ["../../assets/settings/*", "../../assets/keymaps/*"]
+assets = ["../../assets/**"]
+grammars = ["src/**"]
 agent_skills = ["builtin/**"]
 agent_settings = ["src/prompts/**"]
 json_schema_store = ["src/schemas/**"]

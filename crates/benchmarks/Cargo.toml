@@ -21,6 +21,9 @@ action_log.workspace = true
 agent = { workspace = true, features = ["test-support"] }
 agent_settings.workspace = true
 assets.workspace = true
+buffer_diff = { workspace = true, features = ["test-support"] }
+client.workspace = true
+collections.workspace = true
 criterion.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
@@ -62,4 +65,8 @@ harness = false
 
 [[bench]]
 name = "markdown_renderer"
+harness = false
+
+[[bench]]
+name = "multibuffer_diff"
 harness = false
