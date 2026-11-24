@@ -5675,6 +5675,18 @@ impl MultiBufferSnapshot {
         Some(excerpts.item()?.range.clone())
     }
 
+    #[cfg(test)]
+    thread_local! {
+        static EXCERPT_BOUNDARY_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Returns how many excerpts `excerpt_boundaries_in_range` has visited on this
+    /// thread since the last call, and resets the count.
+    #[cfg(test)]
+    pub(crate) fn take_excerpt_boundary_steps() -> usize {
+        Self::EXCERPT_BOUNDARY_STEPS.replace(0)
+    }
+
     pub fn excerpt_boundaries_in_range<R, T>(
         &self,
         range: R,
@@ -5731,7 +5743,20 @@ impl MultiBufferSnapshot {
 
                 let (next_excerpt, next_range) = cursor.fetch_excerpt_with_range()?;
                 cursor.next_excerpt_forwards();
-                if !bounds.contains(&next_range.start.key) {
+                #[cfg(test)]
+                Self::EXCERPT_BOUNDARY_STEPS.with(|steps| steps.set(steps.get() + 1));
+                let next_start = next_range.start.key;
+                let is_past_end = match bounds.1 {
+                    Bound::Included(end) => next_start > end,
+                    Bound::Excluded(end) => next_start >= end,
+                    Bound::Unbounded => false,
+                };
+                if is_past_end {
+                    return None;
+                }
+                // The first excerpt can start before the range, when the range starts
+                // at a diff hunk in the middle of that excerpt.
+                if !bounds.contains(&next_start) {
                     prev_excerpt = Some(next_excerpt);
                     continue;
                 }

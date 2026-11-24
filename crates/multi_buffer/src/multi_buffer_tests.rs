@@ -384,6 +384,129 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
 }
 
 #[gpui::test]
+async fn test_excerpt_boundaries_in_subranges_with_diff_hunks(cx: &mut TestAppContext) {
+    let buffer_1 = cx.new(|cx| Buffer::local("a1\na2", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("b1\nB2\nb3\nB4\nb5", cx));
+    let buffer_3 = cx.new(|cx| Buffer::local("c1\nc2", cx));
+    let buffer_4 = cx.new(|cx| Buffer::local("d1", cx));
+    let diff_2 = cx.new(|cx| {
+        BufferDiff::new_with_base_text("b1\nb2\nb3\nb4\nb5", &buffer_2.read(cx).text_snapshot(), cx)
+    });
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        for (index, buffer) in [&buffer_1, &buffer_2, &buffer_3, &buffer_4]
+            .into_iter()
+            .enumerate()
+        {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(index as u64),
+                buffer.clone(),
+                [Point::zero()..buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+        }
+        multibuffer.add_diff(diff_2.clone(), cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
+        multibuffer
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    let all_rows = boundary_rows(&snapshot, MultiBufferOffset(0)..);
+    assert_eq!(all_rows.len(), 4, "text: {:?}", snapshot.text());
+
+    let boundaries = snapshot
+        .excerpt_boundaries_in_range(Point::new(3, 0)..=Point::new(9, 0))
+        .map(|boundary| {
+            (
+                boundary.row.0,
+                boundary.prev.as_ref().map(|prev| prev.buffer_id()),
+                boundary.next.buffer_id(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let buffer_2_id = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
+    let buffer_3_id = buffer_3.read_with(cx, |buffer, _| buffer.remote_id());
+    assert_eq!(boundaries, [(9, Some(buffer_2_id), buffer_3_id)]);
+
+    let max_row = snapshot.max_point().row;
+    for start_row in 0..=max_row {
+        let start = Point::new(start_row, 0);
+        let rows = boundary_rows(&snapshot, start..);
+        let expected = all_rows
+            .iter()
+            .copied()
+            .filter(|row| *row >= start_row)
+            .collect::<Vec<_>>();
+        assert_eq!(rows, expected, "range {start_row}..");
+
+        for end_row in start_row..=max_row {
+            let end = Point::new(end_row, 0);
+            let rows = boundary_rows(&snapshot, start..end);
+            let expected = all_rows
+                .iter()
+                .copied()
+                .filter(|row| *row >= start_row && *row < end_row)
+                .collect::<Vec<_>>();
+            assert_eq!(rows, expected, "range {start_row}..{end_row}");
+
+            let rows = boundary_rows(&snapshot, start..=end);
+            let expected = all_rows
+                .iter()
+                .copied()
+                .filter(|row| *row >= start_row && *row <= end_row)
+                .collect::<Vec<_>>();
+            assert_eq!(rows, expected, "range {start_row}..={end_row}");
+        }
+    }
+}
+
+#[gpui::test]
+fn test_excerpt_boundaries_in_range_stops_at_range_end(cx: &mut App) {
+    let buffer_count = 200;
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        for index in 0..buffer_count {
+            let buffer = cx.new(|cx| Buffer::local(format!("line {index}"), cx));
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(index),
+                buffer.clone(),
+                [Point::zero()..buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+        }
+        multibuffer
+    });
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    assert_eq!(snapshot.max_point().row as u64, buffer_count - 1);
+
+    MultiBufferSnapshot::take_excerpt_boundary_steps();
+    let rows = boundary_rows(&snapshot, Point::new(10, 0)..Point::new(13, 0));
+    let steps = MultiBufferSnapshot::take_excerpt_boundary_steps();
+
+    assert_eq!(rows, [10, 11, 12]);
+    assert!(
+        rows.len() <= steps && steps <= rows.len() + 2,
+        "visited {steps} excerpts for a range that covers {} of {buffer_count}",
+        rows.len()
+    );
+}
+
+fn boundary_rows<T: ToOffset>(
+    snapshot: &MultiBufferSnapshot,
+    range: impl RangeBounds<T>,
+) -> Vec<u32> {
+    snapshot
+        .excerpt_boundaries_in_range(range)
+        .map(|boundary| boundary.row.0)
+        .collect()
+}
+
+#[gpui::test]
 async fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
