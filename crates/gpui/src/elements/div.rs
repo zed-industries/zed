@@ -1443,6 +1443,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Marks this element as disabled for assistive technology (aria-disabled).
+    /// It stays perceivable but is reported as not operable.
+    fn aria_disabled(mut self, disabled: bool) -> Self {
+        self.interactivity().aria.disabled = Some(disabled);
+        self
+    }
+
+    /// Makes this element a live region: assistive technology announces
+    /// changes to its content with the given politeness (aria-live).
+    fn aria_live(mut self, live: accesskit::Live) -> Self {
+        self.interactivity().aria.live = Some(live);
+        self
+    }
+
     /// Set the expanded state for this element.
     fn aria_expanded(mut self, expanded: bool) -> Self {
         self.interactivity().aria.expanded = Some(expanded);
@@ -2199,6 +2213,8 @@ pub(crate) struct AriaProperties {
     pub(crate) description: Option<SharedString>,
     pub(crate) keyshortcuts: Option<SharedString>,
     pub(crate) selected: Option<bool>,
+    pub(crate) disabled: Option<bool>,
+    pub(crate) live: Option<accesskit::Live>,
     pub(crate) expanded: Option<bool>,
     pub(crate) toggled: Option<accesskit::Toggled>,
     pub(crate) numeric_value: Option<f64>,
@@ -3651,6 +3667,12 @@ impl Interactivity {
         }
         if let Some(selected) = self.aria.selected {
             node.set_selected(selected);
+        }
+        if self.aria.disabled == Some(true) {
+            node.set_disabled();
+        }
+        if let Some(live) = self.aria.live {
+            node.set_live(live);
         }
         if let Some(expanded) = self.aria.expanded {
             node.set_expanded(expanded);
@@ -5466,6 +5488,20 @@ mod tests {
         assert_eq!(node.min_numeric_value(), Some(6.0));
         assert_eq!(node.max_numeric_value(), Some(72.0));
         assert_eq!(node.numeric_value_step(), Some(1.0));
+    }
+
+    #[test]
+    fn test_aria_disabled_and_live_builders() {
+        let mut element = div()
+            .id("live-region")
+            .aria_disabled(true)
+            .aria_live(accesskit::Live::Polite);
+        let mut node = accesskit::Node::new(accesskit::Role::Alert);
+
+        element.interactivity().write_a11y_info(&mut node);
+
+        assert!(node.is_disabled());
+        assert_eq!(node.live(), Some(accesskit::Live::Polite));
     }
 
     /// Two focusable, clickable elements ("a" and "b") used to exercise the
