@@ -11,15 +11,15 @@ Zed works without AI features or a subscription. No [authentication](../authenti
 
 ## Plans {#plans}
 
-|                                                          | Free | Pro       | Student       | Business  |
-| -------------------------------------------------------- | ---- | --------- | ------------- | --------- |
-| Zed-hosted AI models                                     | —    | ✓         | GPT Luna only | ✓         |
-| [AI via own API keys](../ai/use-api-access.md)           | ✓    | ✓         | ✓             | ✓         |
-| [External Agents](../ai/external-agents.md)              | ✓    | ✓         | ✓             | ✓         |
-| Edit Predictions                                         | —    | Unlimited | Unlimited     | Unlimited |
-| [Org-wide admin controls](../business/admin-controls.md) | —    | —         | —             | ✓         |
-| Roles & permissions                                      | —    | —         | —             | ✓         |
-| Consolidated billing                                     | —    | —         | —             | ✓         |
+|                                                          | Free | Pro       | Student                          | Business  |
+| -------------------------------------------------------- | ---- | --------- | -------------------------------- | --------- |
+| Zed-hosted AI models                                     | —    | ✓         | GPT-6 Luna and GPT-5.6 Luna only | ✓         |
+| [AI via own API keys](../ai/use-api-access.md)           | ✓    | ✓         | ✓                                | ✓         |
+| [External Agents](../ai/external-agents.md)              | ✓    | ✓         | ✓                                | ✓         |
+| Edit Predictions                                         | —    | Unlimited | Unlimited                        | Unlimited |
+| [Org-wide admin controls](../business/admin-controls.md) | —    | —         | —                                | ✓         |
+| Roles & permissions                                      | —    | —         | —                                | ✓         |
+| Consolidated billing                                     | —    | —         | —                                | ✓         |
 
 ### Zed Free {#free}
 
@@ -39,7 +39,7 @@ For a full feature overview, see [Zed Business](../business/overview.md). For bi
 
 ### Student Plan {#student}
 
-The [Zed Student plan](https://zed.dev/education) includes unlimited [Edit Predictions](../ai/edit-prediction.md) and $10/month in [hosted AI credits](./zed-hosted-models.md) for GPT Luna only. The plan is free for one year for verified university students. New applications are currently paused.
+The [Zed Student plan](https://zed.dev/education) includes unlimited [Edit Predictions](../ai/edit-prediction.md) and $10/month in [hosted AI credits](./zed-hosted-models.md) for GPT-6 Luna and GPT-5.6 Luna only. The plan is free for one year for verified university students. New applications are currently paused.
 
 You can still use your [own API keys](../ai/use-api-access.md) or [External Agents](../ai/external-agents.md) to access other models. These do not use your Student-plan credits.
 
