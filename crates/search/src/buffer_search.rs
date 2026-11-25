@@ -3545,6 +3545,57 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_find_matches_in_line_mode_selections(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let buffer = cx.new(|cx| Buffer::local("aaa bbb aaa\n".repeat(3), cx));
+        let cx = cx.add_empty_window();
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.selections.set_line_mode(true);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([
+                    Point::new(0, 5)..Point::new(1, 5),
+                    Point::new(1, 7)..Point::new(1, 8),
+                ])
+            })
+        });
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            let deploy = Deploy {
+                focus: true,
+                replace_enabled: false,
+                selection_search_enabled: true,
+            };
+            search_bar.deploy(&deploy, None, window, cx);
+        });
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("aaa", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.search_background_highlights(cx),
+                &[
+                    Point::new(0, 0)..Point::new(0, 3),
+                    Point::new(0, 8)..Point::new(0, 11),
+                    Point::new(1, 0)..Point::new(1, 3),
+                    Point::new(1, 8)..Point::new(1, 11),
+                ]
+            );
+        });
+    }
+
     #[perf]
     #[gpui::test]
     async fn test_find_matches_in_selections_multiple_excerpts_buffer_multiple_selections(
