@@ -3148,6 +3148,17 @@ mod tests {
             editor.read_with(cx, |editor, cx| editor.text(cx)),
             "b b b b"
         );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.focus_panel::<TestPanel>(window, cx);
+        });
+        cx.dispatch_action(ReplaceAll);
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "b b b b"
+        );
     }
 
     #[gpui::test]
