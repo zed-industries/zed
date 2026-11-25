@@ -1842,8 +1842,18 @@ pub(crate) type ActionListener =
 /// Construct a new [`Div`] element
 #[track_caller]
 pub fn div() -> Div {
+    #[cold]
+    fn box_interactivity_on_heap() -> crate::ArenaBox<Interactivity> {
+        crate::ArenaBox::from_box(Box::default())
+    }
+
     #[allow(unused_mut)]
-    let mut interactivity = InteractivityBox::new();
+    let mut interactivity = match crate::window::try_with_element_arena(|arena| {
+        arena.alloc(Interactivity::default)
+    }) {
+        Ok(interactivity) => interactivity,
+        Err(_) => box_interactivity_on_heap(),
+    };
     #[cfg(any(feature = "inspector", debug_assertions))]
     {
         interactivity.source_location = Some(core::panic::Location::caller());
@@ -1857,55 +1867,12 @@ pub fn div() -> Div {
     }
 }
 
-/// Where a [`Div`]'s [`Interactivity`] lives. Divs built while a frame is drawn, which is
-/// nearly all of them, use the element arena so they don't each cost a heap allocation;
-/// the arena outlives every element built during the frame.
-enum InteractivityBox {
-    Arena(crate::ArenaBox<Interactivity>),
-    Heap(Box<Interactivity>),
-}
-
-impl InteractivityBox {
-    /// Builds the `Interactivity` in place, since moving one in would copy over a kilobyte.
-    #[inline]
-    fn new() -> Self {
-        if crate::window::draw_in_progress() {
-            Self::Arena(crate::window::with_element_arena(|arena| {
-                arena.alloc(Interactivity::default)
-            }))
-        } else {
-            Self::Heap(Box::default())
-        }
-    }
-}
-
-impl std::ops::Deref for InteractivityBox {
-    type Target = Interactivity;
-
-    #[inline]
-    fn deref(&self) -> &Interactivity {
-        match self {
-            Self::Arena(interactivity) => interactivity,
-            Self::Heap(interactivity) => interactivity,
-        }
-    }
-}
-
-impl std::ops::DerefMut for InteractivityBox {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Interactivity {
-        match self {
-            Self::Arena(interactivity) => interactivity,
-            Self::Heap(interactivity) => interactivity,
-        }
-    }
-}
-
 /// A [`Div`] element, the all-in-one element for building complex UIs in GPUI
 pub struct Div {
     // Kept out of line because builder methods move the `Div` by value on every call,
-    // and `Interactivity` is over a kilobyte.
-    interactivity: InteractivityBox,
+    // and `Interactivity` is over a kilobyte. Divs built during a draw use the element
+    // arena; divs built outside of a draw fall back to a heap `Box` inside `ArenaBox`.
+    interactivity: crate::ArenaBox<Interactivity>,
     children: SmallVec<[StackSafe<AnyElement>; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
     image_cache: Option<Box<dyn ImageCacheProvider>>,

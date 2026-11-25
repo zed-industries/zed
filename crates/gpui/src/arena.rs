@@ -159,6 +159,15 @@ impl Arena {
 
     #[inline(always)]
     pub fn alloc<T>(&mut self, f: impl FnOnce() -> T) -> ArenaBox<T> {
+        self.alloc_mapped(f, |value| value)
+    }
+
+    #[inline(always)]
+    pub fn alloc_mapped<T, U: ?Sized>(
+        &mut self,
+        f: impl FnOnce() -> T,
+        map: impl FnOnce(&mut T) -> &mut U,
+    ) -> ArenaBox<U> {
         #[inline(always)]
         unsafe fn inner_writer<T, F>(ptr: *mut T, f: F)
         where
@@ -179,15 +188,17 @@ impl Arena {
             self.allocate_next_chunk(layout)
         };
 
-        unsafe { inner_writer(ptr.cast(), f) };
+        let typed_ptr = ptr.cast::<T>();
+        unsafe { inner_writer(typed_ptr, f) };
         self.elements.push(ArenaElement {
             value: ptr,
             drop: drop::<T>,
         });
 
+        let mapped = NonNull::from(map(unsafe { &mut *typed_ptr }));
         ArenaBox {
-            ptr: ptr.cast(),
-            valid: self.valid.clone(),
+            ptr: mapped,
+            valid: Some(self.valid.clone()),
         }
     }
 
@@ -216,25 +227,59 @@ impl Arena {
 }
 
 pub struct ArenaBox<T: ?Sized> {
-    ptr: *mut T,
-    valid: Rc<Cell<bool>>,
+    ptr: NonNull<T>,
+    /// `Some` when `ptr` lives in an [`Arena`], whose `force_clear` drops the value;
+    /// `None` when `ptr` owns a heap `Box<T>` directly.
+    valid: Option<Rc<Cell<bool>>>,
 }
 
+const _: () = {
+    assert!(size_of::<ArenaBox<u8>>() == 2 * size_of::<usize>());
+    assert!(size_of::<ArenaBox<dyn std::any::Any>>() == 3 * size_of::<usize>());
+};
+
 impl<T: ?Sized> ArenaBox<T> {
-    #[inline(always)]
-    pub fn map<U: ?Sized>(mut self, f: impl FnOnce(&mut T) -> &mut U) -> ArenaBox<U> {
-        ArenaBox {
-            ptr: f(&mut self),
-            valid: self.valid,
+    #[inline]
+    pub fn from_box(value: Box<T>) -> Self {
+        Self {
+            ptr: Box::into_non_null(value),
+            valid: None,
         }
     }
 
     #[track_caller]
+    #[inline(always)]
     fn validate(&self) {
-        assert!(
-            self.valid.get(),
-            "attempted to dereference an ArenaRef after its Arena was cleared"
-        );
+        if let Some(valid) = &self.valid
+            && !valid.get()
+        {
+            cold_invalid_arena_ref();
+        }
+    }
+}
+
+#[cold]
+#[track_caller]
+fn cold_invalid_arena_ref() -> ! {
+    panic!("attempted to dereference an ArenaRef after its Arena was cleared");
+}
+
+impl<T: ?Sized> Drop for ArenaBox<T> {
+    #[inline]
+    fn drop(&mut self) {
+        if self.valid.is_none() {
+            #[cold]
+            unsafe fn drop_boxed<T: ?Sized>(ptr: NonNull<T>) {
+                // SAFETY: Caller guarantees `ptr` came from `Box::into_raw(Box<T>)`.
+                unsafe {
+                    drop(Box::from_raw(ptr.as_ptr()));
+                }
+            }
+
+            // SAFETY: `self.valid` is `None` only when constructed by `ArenaBox::from_box`,
+            // with `self.ptr` produced by `Box::into_non_null` for the exact type `T`.
+            unsafe { drop_boxed(self.ptr) };
+        }
     }
 }
 
@@ -244,7 +289,7 @@ impl<T: ?Sized> Deref for ArenaBox<T> {
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         self.validate();
-        unsafe { &*self.ptr }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -252,7 +297,7 @@ impl<T: ?Sized> DerefMut for ArenaBox<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.validate();
-        unsafe { &mut *self.ptr }
+        unsafe { self.ptr.as_mut() }
     }
 }
 
@@ -326,8 +371,8 @@ mod tests {
         assert_eq!(*x4, 4);
         assert_eq!(*x5, 5);
 
-        assert_eq!(x1.ptr.align_offset(std::mem::align_of_val(&*x1)), 0);
-        assert_eq!(x2.ptr.align_offset(std::mem::align_of_val(&*x2)), 0);
+        assert_eq!(x1.ptr.as_ptr().align_offset(std::mem::align_of_val(&*x1)), 0);
+        assert_eq!(x2.ptr.as_ptr().align_offset(std::mem::align_of_val(&*x2)), 0);
     }
 
     #[test]
@@ -387,7 +432,31 @@ mod tests {
         let value = arena.alloc(|| 1u64);
         assert_eq!(*value, 1);
         arena.clear();
-        assert!(!value.valid.get());
+        assert!(!value.valid.as_ref().unwrap().get());
+    }
+
+    #[test]
+    fn test_heap_arena_box_drops_on_drop() {
+        struct DropCounter(Rc<Cell<usize>>);
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let drops = Rc::new(Cell::new(0));
+        let mut boxed = ArenaBox::from_box(Box::new((41u64, DropCounter(drops.clone()))));
+        boxed.0 += 1;
+        assert_eq!(boxed.0, 42);
+        assert_eq!(drops.get(), 0);
+        drop(boxed);
+        assert_eq!(drops.get(), 1);
+
+        let unsized_box: ArenaBox<dyn std::any::Any> =
+            ArenaBox::from_box(Box::new(DropCounter(drops.clone())));
+        assert!(unsized_box.downcast_ref::<DropCounter>().is_some());
+        drop(unsized_box);
+        assert_eq!(drops.get(), 2);
     }
 
     #[test]

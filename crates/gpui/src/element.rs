@@ -36,7 +36,7 @@ use crate::InspectorElementPath;
 use crate::{
     A11ySubtreeBuilder, App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId,
     FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
-    util::FluentBuilder, window::with_element_arena,
+    util::FluentBuilder, window::try_with_element_arena,
 };
 use std::{
     any::Any,
@@ -674,8 +674,28 @@ impl AnyElement {
         E: 'static + Element,
         E::RequestLayoutState: Any,
     {
-        let element = with_element_arena(|arena| arena.alloc(|| Drawable::new(element)))
-            .map(|element| element as &mut dyn ElementObject);
+        let element = {
+            #[cold]
+            fn box_element_on_heap<E>(element: E) -> ArenaBox<dyn ElementObject>
+            where
+                E: 'static + Element,
+                E::RequestLayoutState: Any,
+            {
+                ArenaBox::from_box(Box::new(Drawable::new(element)) as Box<dyn ElementObject>)
+            }
+
+            let mut element = Some(element);
+            match try_with_element_arena(|arena| {
+                let element = element.take().expect("arena callback runs once");
+                arena.alloc_mapped(
+                    || Drawable::new(element),
+                    |drawable| drawable as &mut dyn ElementObject,
+                )
+            }) {
+                Ok(element) => element,
+                Err(_) => box_element_on_heap(element.expect("arena callback was not invoked")),
+            }
+        };
         AnyElement(element)
     }
 
@@ -1002,5 +1022,35 @@ mod global_element_id_tests {
             cached.as_nanos() as f64 / n as f64,
             build.as_nanos() as f64 / n as f64,
         );
+    }
+
+    #[test]
+    fn elements_built_outside_draw_drop_without_leaking() {
+        use crate::{
+            InteractiveElement as _, IntoElement as _, ParentElement as _,
+            StatefulInteractiveElement as _, div,
+        };
+        use std::{cell::Cell, rc::Rc};
+
+        struct DropFlag(Rc<Cell<usize>>);
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let drops = Rc::new(Cell::new(0));
+        let flag = DropFlag(drops.clone());
+        let element = div()
+            .id("outside-draw")
+            .on_click(move |_, _, _| {
+                let _ = &flag;
+            })
+            .child(div())
+            .into_any_element();
+
+        assert_eq!(drops.get(), 0);
+        drop(element);
+        assert_eq!(drops.get(), 1);
     }
 }
