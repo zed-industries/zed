@@ -3296,7 +3296,9 @@ fn append_mount_with_target_override(mounts: &mut Vec<MountDefinition>, mount: M
 
 fn mount_definition_from_metadata(value: &serde_json_lenient::Value) -> Option<MountDefinition> {
     match value {
-        serde_json_lenient::Value::String(value) => MountDefinition::parse(value),
+        serde_json_lenient::Value::String(value) => MountDefinition::parse(value)
+            .inspect_err(|error| log::warn!("Skipping image metadata mount: {error}"))
+            .ok(),
         serde_json_lenient::Value::Object(object) => {
             let source = object
                 .get("source")

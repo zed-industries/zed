@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Display, path::Path, sync::Arc};
 
 use crate::{command_json::CommandRunner, devcontainer_api::DevContainerError};
+use anyhow::Context as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
 use util::command::Command;
@@ -85,7 +86,7 @@ pub(crate) struct MountDefinition {
 
 impl MountDefinition {
     /// Parses a `docker run --mount` value.
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> anyhow::Result<Self> {
         let mut mount = Self::default();
         let mut target = None;
         let mut quoted = false;
@@ -113,7 +114,7 @@ impl MountDefinition {
                 ("source" | "src", Some(value)) => mount.source = Some(value.to_string()),
                 ("target" | "dst" | "destination", Some(value)) => target = Some(value.to_string()),
                 ("type", Some(value)) => mount.mount_type = Some(value.to_string()),
-                // Docker's false values; anything else is read-only.
+                // Go's `strconv.ParseBool` false values, which Docker accepted before v29.2.1.
                 ("readonly" | "ro", value) => {
                     mount.read_only =
                         !matches!(value, Some("0" | "f" | "F" | "false" | "False" | "FALSE"))
@@ -122,11 +123,9 @@ impl MountDefinition {
             }
         }
 
-        if quoted {
-            return None;
-        }
-        mount.target = target?;
-        Some(mount)
+        anyhow::ensure!(!quoted, "mount string has an unbalanced quote: {value}");
+        mount.target = target.with_context(|| format!("mount string missing 'target': {value}"))?;
+        Ok(mount)
     }
 }
 
@@ -584,8 +583,7 @@ where
 
     let mount = match item {
         MountItem::Object(mount) => mount,
-        MountItem::String(s) => MountDefinition::parse(&s)
-            .ok_or_else(|| D::Error::custom(format!("mount string missing 'target': {}", s)))?,
+        MountItem::String(s) => MountDefinition::parse(&s).map_err(D::Error::custom)?,
     };
 
     Ok(Some(mount))
@@ -613,9 +611,9 @@ where
     for item in items {
         match item {
             MountItem::Object(mount) => mounts.push(mount),
-            MountItem::String(s) => mounts.push(MountDefinition::parse(&s).ok_or_else(|| {
-                D::Error::custom(format!("mount string missing 'target': {}", s))
-            })?),
+            MountItem::String(s) => {
+                mounts.push(MountDefinition::parse(&s).map_err(D::Error::custom)?)
+            }
         }
     }
 
@@ -1738,6 +1736,21 @@ mod test {
         assert_eq!(
             mount.to_string(),
             r#"type=bind,"source=C:\with,""quotes""",target=/data,readonly,consistency=cached"#
+        );
+    }
+
+    #[test]
+    fn should_report_unbalanced_quote_in_mount_string() {
+        let error = MountDefinition::parse(r#"type=bind,source=/a"b,target=/data"#).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            r#"mount string has an unbalanced quote: type=bind,source=/a"b,target=/data"#
+        );
+
+        let error = MountDefinition::parse("type=bind,source=/a").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "mount string missing 'target': type=bind,source=/a"
         );
     }
 
