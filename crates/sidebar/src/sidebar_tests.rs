@@ -18240,3 +18240,130 @@ fn updated_entries(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) 
     cx.run_until_parked();
     visible_entries_as_strings(sidebar, cx)
 }
+
+#[gpui::test]
+async fn test_dev_container_group_keeps_live_options_after_rebuild(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let local_project = init_test_project("/local", cx).await;
+    cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    let app_state = cx.update(|cx| workspace::AppState::test(cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let local_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let dev_container = |container_id: &str| {
+        remote::RemoteConnectionOptions::Docker(remote::DockerConnectionOptions {
+            container_id: container_id.to_string(),
+            remote_user: "vscode".to_string(),
+            local_folder: Some("/host/project".to_string()),
+            config_file: Some("/host/project/.devcontainer/devcontainer.json".to_string()),
+            ..Default::default()
+        })
+    };
+    let paths = PathList::new(&[PathBuf::from("/project")]);
+    let key_before_rebuild = ProjectGroupKey::new(Some(dev_container("container-before")), paths);
+    let assert_group_uses_rebuilt_container = |cx: &mut VisualTestContext| {
+        let group = multi_workspace.read_with(cx, |mw, _| {
+            mw.project_group_keys()
+                .into_iter()
+                .find(|key| *key == key_before_rebuild)
+                .expect("the dev container group should exist")
+        });
+        assert_eq!(group.host(), Some(&dev_container("container-after")));
+        sidebar.read_with(cx, |sidebar, cx| {
+            assert!(
+                sidebar.workspace_for_group(&group, cx).is_some(),
+                "the group should find the workspace on the rebuilt container"
+            );
+        });
+    };
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.restore_project_groups(
+            vec![workspace::SerializedProjectGroupState {
+                key: key_before_rebuild.clone(),
+                expanded: true,
+            }],
+            cx,
+        );
+    });
+
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree("/project", serde_json::json!({ "src": {} }))
+        .await;
+    let (opts, server_session, _) = remote::RemoteClient::fake_server(cx, server_cx);
+    cx.update(|_, cx| {
+        remote::MockConnection::report_connection_options(
+            &opts,
+            dev_container("container-after"),
+            cx,
+        )
+    });
+    server_cx.update(remote_server::HeadlessProject::init);
+    let server_executor = server_cx.executor();
+    let _headless = server_cx.new(|cx| {
+        remote_server::HeadlessProject::new(
+            remote_server::HeadlessAppState {
+                session: server_session,
+                fs: server_fs.clone(),
+                http_client: Arc::new(http_client::BlockedHttpClient),
+                node_runtime: node_runtime::NodeRuntime::unavailable(),
+                languages: Arc::new(language::LanguageRegistry::new(server_executor)),
+                extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+    let remote_client = remote::RemoteClient::connect_mock(opts, cx).await;
+    let project = cx.update(|_, cx| {
+        let project_client = client::Client::new(
+            Arc::new(clock::FakeSystemClock::new()),
+            http_client::FakeHttpClient::with_404_response(),
+            cx,
+        );
+        let user_store = cx.new(|cx| client::UserStore::new(project_client.clone(), cx));
+        project::Project::remote(
+            remote_client,
+            project_client,
+            node_runtime::NodeRuntime::unavailable(),
+            user_store,
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            false,
+            cx,
+        )
+    });
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/project"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project, window, cx);
+        mw.activate(local_workspace.clone(), None, window, cx);
+    });
+    cx.run_until_parked();
+    assert_group_uses_rebuilt_container(cx);
+
+    // Restoring the persisted groups again must not bring back the removed container.
+    multi_workspace.update(cx, |mw, cx| {
+        mw.restore_project_groups(
+            vec![workspace::SerializedProjectGroupState {
+                key: key_before_rebuild.clone(),
+                expanded: true,
+            }],
+            cx,
+        );
+    });
+    assert_group_uses_rebuilt_container(cx);
+}

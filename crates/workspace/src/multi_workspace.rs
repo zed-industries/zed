@@ -720,7 +720,14 @@ impl MultiWorkspace {
             return;
         }
 
-        if self.project_groups.iter().any(|group| group.key == key) {
+        // Equal keys can still differ in runtime details such as a rebuilt dev
+        // container's ID, so keep the live key.
+        if let Some(group) = self
+            .project_groups
+            .iter_mut()
+            .find(|group| group.key == key)
+        {
+            group.key = key;
             return;
         }
 
@@ -906,8 +913,9 @@ impl MultiWorkspace {
             restored.push(ProjectGroupState { key, expanded });
         }
         for existing in std::mem::take(&mut self.project_groups) {
-            if !restored.iter().any(|group| group.key == existing.key) {
-                restored.push(existing);
+            match restored.iter_mut().find(|group| group.key == existing.key) {
+                Some(group) => group.key = existing.key,
+                None => restored.push(existing),
             }
         }
         self.project_groups = restored;
