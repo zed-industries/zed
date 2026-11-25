@@ -161,6 +161,10 @@ pub trait Fs: Send + Sync {
     async fn is_file(&self, path: &Path) -> bool;
     async fn is_dir(&self, path: &Path) -> bool;
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
+    /// Whether `path` is a symlink, without following it or needing read access to it.
+    /// On Windows, junctions and other name surrogate reparse points (e.g. mount points) count too.
+    /// Errors when `path` does not exist.
+    async fn is_symlink(&self, path: &Path) -> Result<bool>;
     async fn read_link(&self, path: &Path) -> Result<PathBuf>;
     async fn read_dir(
         &self,
@@ -1279,6 +1283,15 @@ impl Fs for RealFs {
             is_executable,
             is_writable: !metadata.permissions().readonly(),
         }))
+    }
+
+    async fn is_symlink(&self, path: &Path) -> Result<bool> {
+        let path = path.to_owned();
+        let metadata = self
+            .executor
+            .spawn(async move { std::fs::symlink_metadata(&path) })
+            .await?;
+        Ok(metadata.file_type().is_symlink())
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
@@ -3679,6 +3692,16 @@ impl Fs for FakeFs {
         } else {
             Ok(None)
         }
+    }
+
+    async fn is_symlink(&self, path: &Path) -> Result<bool> {
+        self.simulate_random_delay().await;
+        let path = normalize_path(path);
+        let mut state = self.state.lock();
+        let (entry, _) = state
+            .try_entry(&path, false)
+            .with_context(|| format!("path does not exist: {path:?}"))?;
+        Ok(entry.is_symlink())
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
