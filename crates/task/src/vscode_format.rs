@@ -120,8 +120,14 @@ impl VsCodeTaskDefinition {
         // Per VSC docs, only `command`, `args` and `options` support variable substitution.
         let command = replacer.replace(&command);
         let args = args.into_iter().map(|arg| replacer.replace(&arg)).collect();
+        let is_background = self
+            .other_attributes
+            .get("isBackground")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
         let mut template = TaskTemplate {
             label: self.label,
+            is_background,
             command,
             args,
             cwd: cwd.map(|cwd| replacer.replace(&cwd)),
@@ -484,6 +490,7 @@ mod tests {
         let expected = vec![
             TaskTemplate {
                 label: "Build Extension in Background".to_string(),
+                is_background: true,
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "watch".to_string()],
                 cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),

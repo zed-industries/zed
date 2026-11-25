@@ -24,6 +24,9 @@ use crate::{
 pub struct TaskTemplate {
     /// Human readable name of the task to display in the UI.
     pub label: String,
+    /// Whether this task runs continuously without exiting on its own.
+    #[serde(skip)]
+    pub is_background: bool,
     /// Executable command to spawn.
     pub command: String,
     /// Arguments to the command.

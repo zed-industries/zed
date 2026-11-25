@@ -1224,6 +1224,7 @@ impl RunningState {
                         )
                     }).await?;
 
+                let workspace_for_warning = weak_workspace.clone();
                 let terminal_view = cx.new_window_entity(|window, cx| {
                     TerminalView::new(
                         terminal.clone(),
@@ -1244,13 +1245,25 @@ impl RunningState {
                     this.refresh_terminal_toolbars(window, cx);
                 })?;
 
-                let exit_status = terminal
-                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
-                    .await
-                    .context("Failed to wait for completed task")?;
+                if task.original_task().is_background {
+                    let label = task.resolved_label.clone();
+                    workspace_for_warning.update_in(cx, |workspace, _window, cx| {
+                        workspace.show_error(
+                            format!(
+                                "Build task '{label}' is a background task; Zed will start debugging without waiting for it to finish."
+                            ),
+                            cx,
+                        );
+                    }).log_err();
+                } else {
+                    let exit_status = terminal
+                        .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
+                        .await
+                        .context("Failed to wait for completed task")?;
 
-                if !exit_status.success() {
-                    anyhow::bail!("Build failed");
+                    if !exit_status.success() {
+                        anyhow::bail!("Build failed");
+                    }
                 }
                 Some((task.resolved.clone(), locator_name, extra_config))
             } else {
