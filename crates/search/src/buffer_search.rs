@@ -686,14 +686,26 @@ impl BufferSearchBar {
             }
         }));
         registrar.register_handler(ForDeployed(|this, action: &ReplaceNext, window, cx| {
-            if this.supported_options(cx).replacement && this.replace_enabled {
+            if this.supported_options(cx).replacement
+                && this.replace_enabled
+                && this
+                    .active_searchable_item
+                    .as_ref()
+                    .is_some_and(|item| item.item_focus_handle(cx).contains_focused(window, cx))
+            {
                 this.replace_next(action, window, cx);
             } else {
                 cx.propagate();
             }
         }));
         registrar.register_handler(ForDeployed(|this, action: &ReplaceAll, window, cx| {
-            if this.supported_options(cx).replacement && this.replace_enabled {
+            if this.supported_options(cx).replacement
+                && this.replace_enabled
+                && this
+                    .active_searchable_item
+                    .as_ref()
+                    .is_some_and(|item| item.item_focus_handle(cx).contains_focused(window, cx))
+            {
                 this.replace_all(action, window, cx);
             } else {
                 cx.propagate();
