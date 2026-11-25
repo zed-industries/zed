@@ -159,7 +159,8 @@ use util::{
 use uuid::Uuid;
 pub use workspace_settings::{
     AccessibleMode, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
-    RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
+    PinnedTabSizing, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
+    WorkspaceSettings,
     closing_last_window_quits_app, observe_accessible_mode,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
@@ -467,6 +468,10 @@ actions!(
         ToggleBottomDock,
         /// Toggles centered layout mode.
         ToggleCenteredLayout,
+        /// Toggles showing pinned tabs in a separate row.
+        TogglePinnedTabsOnSeparateRow,
+        /// Cycles through pinned tab sizing modes.
+        CyclePinnedTabSizing,
         /// Toggles edit prediction feature globally for all files.
         ToggleEditPrediction,
         /// Toggles the left dock.
@@ -8737,6 +8742,8 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(Workspace::toggle_pinned_tabs_on_separate_row))
+            .on_action(cx.listener(Workspace::cycle_pinned_tab_sizing))
             .on_action(cx.listener(Workspace::toggle_editor_zoom))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, action: &pane::ActivateNextItem, window, cx| {
@@ -8991,6 +8998,39 @@ impl Workspace {
             .detach_and_log_err(cx);
         }
         cx.notify();
+    }
+
+    pub fn toggle_pinned_tabs_on_separate_row(
+        &mut self,
+        _: &TogglePinnedTabsOnSeparateRow,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.project().read(cx).fs().clone();
+        let show_pinned_tabs_in_separate_row =
+            TabBarSettings::get_global(cx).show_pinned_tabs_in_separate_row;
+        update_settings_file(fs, cx, move |file, _| {
+            file.tab_bar
+                .get_or_insert_default()
+                .show_pinned_tabs_in_separate_row = Some(!show_pinned_tabs_in_separate_row);
+        });
+    }
+
+    pub fn cycle_pinned_tab_sizing(
+        &mut self,
+        _: &CyclePinnedTabSizing,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.project().read(cx).fs().clone();
+        let next_sizing = match TabBarSettings::get_global(cx).pinned_tab_sizing {
+            PinnedTabSizing::Normal => PinnedTabSizing::Shrink,
+            PinnedTabSizing::Shrink => PinnedTabSizing::Compact,
+            PinnedTabSizing::Compact => PinnedTabSizing::Normal,
+        };
+        update_settings_file(fs, cx, move |file, _| {
+            file.tab_bar.get_or_insert_default().pinned_tab_sizing = Some(next_sizing);
+        });
     }
 
     pub fn clear_bookmarks(&mut self, _: &ClearBookmarks, _: &mut Window, cx: &mut Context<Self>) {
@@ -20265,6 +20305,72 @@ mod tests {
 
         let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
         assert!(settings_text.contains(r#""mode": "light""#));
+    }
+
+    #[gpui::test]
+    async fn test_toggle_pinned_tabs_on_separate_row_and_cycle_sizing(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let settings_fs: Arc<dyn fs::Fs> = fs.clone();
+
+        fs.insert_tree(path!("/root"), json!({ "file.rs": "fn main() {}\n" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        assert!(!cx.read(|cx| TabBarSettings::get_global(cx).show_pinned_tabs_in_separate_row));
+        assert_eq!(
+            cx.read(|cx| TabBarSettings::get_global(cx).pinned_tab_sizing),
+            PinnedTabSizing::Normal
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_pinned_tabs_on_separate_row(
+                &TogglePinnedTabsOnSeparateRow,
+                window,
+                cx,
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        assert!(cx.read(|cx| TabBarSettings::get_global(cx).show_pinned_tabs_in_separate_row));
+        let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+        let parsed: serde_json::Value = settings::parse_json_with_comments(&settings_text).unwrap();
+        assert_eq!(parsed["tab_bar"]["show_pinned_tabs_in_separate_row"], true);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.cycle_pinned_tab_sizing(&CyclePinnedTabSizing, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| TabBarSettings::get_global(cx).pinned_tab_sizing),
+            PinnedTabSizing::Shrink
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.cycle_pinned_tab_sizing(&CyclePinnedTabSizing, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| TabBarSettings::get_global(cx).pinned_tab_sizing),
+            PinnedTabSizing::Compact
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.cycle_pinned_tab_sizing(&CyclePinnedTabSizing, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| TabBarSettings::get_global(cx).pinned_tab_sizing),
+            PinnedTabSizing::Normal
+        );
     }
 
     fn dirty_project_item(id: u64, path: &str, cx: &mut App) -> Entity<TestProjectItem> {

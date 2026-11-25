@@ -1499,6 +1499,15 @@
     // When enabled, pinned tabs appear in a top row and unpinned tabs in a bottom row.
     // When disabled, all tabs appear in a single row (default behavior).
     "show_pinned_tabs_in_separate_row": false,
+    // How to display pinned tabs in the tab bar.
+    //
+    // 1. Display pinned tabs with their full label (default):
+    //     "normal"
+    // 2. Shrink pinned tabs to a fixed width with a truncated label:
+    //     "shrink"
+    // 3. Display only the file icon, or the first character of the label if no icon is shown:
+    //     "compact"
+    "pinned_tab_sizing": "normal",
   },
   // Settings related to the tab switcher (Ctrl-Tab).
   "tab_switcher": {

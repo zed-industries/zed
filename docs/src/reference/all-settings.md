@@ -1981,7 +1981,8 @@ or
     "show": true,
     "show_nav_history_buttons": true,
     "show_tab_bar_buttons": true,
-    "show_pinned_tabs_in_separate_row": false
+    "show_pinned_tabs_in_separate_row": false,
+    "pinned_tab_sizing": "normal"
   }
 }
 ```
@@ -2025,6 +2026,18 @@ or
 **Options**
 
 `boolean` values
+
+### Pinned Tab Sizing {#tab-bar-pinned-tab-sizing}
+
+- Description: How to display pinned tabs in the tab bar.
+- Setting: `pinned_tab_sizing`
+- Default: `normal`
+
+**Options**
+
+- `"normal"`: Pinned tabs display their full label.
+- `"shrink"`: Pinned tabs shrink to a fixed width with a truncated label.
+- `"compact"`: Pinned tabs display only the file icon, or the first character of the label if no icon is shown.
 
 ## Tab Switcher {#tab-switcher}
 

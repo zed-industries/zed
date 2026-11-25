@@ -4775,7 +4775,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn tab_bar_section() -> [SettingsPageItem; 9] {
+    fn tab_bar_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Tab Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4919,6 +4919,29 @@ fn window_and_layout_page() -> SettingsPage {
                             .tab_bar
                             .get_or_insert_default()
                             .show_pinned_tabs_in_separate_row = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Pinned Tab Sizing",
+                description: "How to display pinned tabs in the tab bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("tab_bar.pinned_tab_sizing"),
+                    pick: |settings_content| {
+                        settings_content
+                            .tab_bar
+                            .as_ref()?
+                            .pinned_tab_sizing
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .tab_bar
+                            .get_or_insert_default()
+                            .pinned_tab_sizing = value;
                     },
                 }),
                 metadata: None,

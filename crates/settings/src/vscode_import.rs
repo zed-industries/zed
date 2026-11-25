@@ -832,7 +832,14 @@ impl VsCodeSettings {
             show_tab_bar_buttons: self
                 .read_str("workbench.editor.editorActionsLocation")
                 .and_then(|str| if str == "hidden" { Some(false) } else { None }),
-            show_pinned_tabs_in_separate_row: None,
+            show_pinned_tabs_in_separate_row: self
+                .read_bool("workbench.editor.pinnedTabsOnSeparateRow"),
+            pinned_tab_sizing: self.read_enum("workbench.editor.pinnedTabSizing", |s| match s {
+                "normal" => Some(PinnedTabSizing::Normal),
+                "shrink" => Some(PinnedTabSizing::Shrink),
+                "compact" => Some(PinnedTabSizing::Compact),
+                _ => None,
+            }),
         })
     }
 
@@ -1655,5 +1662,46 @@ mod tests {
             None
         );
         assert_eq!(imported_soft_wrap_indent("{}"), None);
+    }
+
+    #[test]
+    fn test_import_pinned_tab_settings() {
+        let imported_tab_bar = |content: &str| {
+            VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+                .unwrap()
+                .settings_content()
+                .tab_bar
+        };
+
+        assert_eq!(
+            imported_tab_bar(r#"{ "workbench.editor.pinnedTabsOnSeparateRow": true }"#)
+                .and_then(|tab_bar| tab_bar.show_pinned_tabs_in_separate_row),
+            Some(true)
+        );
+        assert_eq!(
+            imported_tab_bar(r#"{ "workbench.editor.pinnedTabsOnSeparateRow": false }"#)
+                .and_then(|tab_bar| tab_bar.show_pinned_tabs_in_separate_row),
+            Some(false)
+        );
+        assert_eq!(
+            imported_tab_bar(r#"{ "workbench.editor.pinnedTabSizing": "normal" }"#)
+                .and_then(|tab_bar| tab_bar.pinned_tab_sizing),
+            Some(PinnedTabSizing::Normal)
+        );
+        assert_eq!(
+            imported_tab_bar(r#"{ "workbench.editor.pinnedTabSizing": "shrink" }"#)
+                .and_then(|tab_bar| tab_bar.pinned_tab_sizing),
+            Some(PinnedTabSizing::Shrink)
+        );
+        assert_eq!(
+            imported_tab_bar(r#"{ "workbench.editor.pinnedTabSizing": "compact" }"#)
+                .and_then(|tab_bar| tab_bar.pinned_tab_sizing),
+            Some(PinnedTabSizing::Compact)
+        );
+        assert_eq!(
+            imported_tab_bar(r#"{ "workbench.editor.pinnedTabSizing": "invalid" }"#),
+            None
+        );
+        assert_eq!(imported_tab_bar("{}"), None);
     }
 }

@@ -12,7 +12,9 @@ use crate::{
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, FocusFollowsMouse, TabBarSettings, WorkspaceSettings},
+    workspace_settings::{
+        AutosaveSetting, FocusFollowsMouse, PinnedTabSizing, TabBarSettings, WorkspaceSettings,
+    },
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -434,6 +436,7 @@ pub struct Pane {
     use_max_tabs: bool,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
+    pinned_tab_bar_scroll_handle: ScrollHandle,
     /// This is set to true if a user scroll has occurred more recently than a system scroll
     /// We want to suppress certain system scrolls when the user has intentionally scrolled
     suppress_scroll: bool,
@@ -594,6 +597,7 @@ impl Pane {
             }))),
             toolbar: cx.new(|_| Toolbar::new()),
             tab_bar_scroll_handle: ScrollHandle::new(),
+            pinned_tab_bar_scroll_handle: ScrollHandle::new(),
             suppress_scroll: false,
             drag_split_direction: None,
             workspace,
@@ -1507,6 +1511,8 @@ impl Pane {
             self.suppress_scroll = false;
             self.tab_bar_scroll_handle
                 .scroll_to_item(index - self.pinned_tab_count);
+        } else {
+            self.pinned_tab_bar_scroll_handle.scroll_to_item(index);
         }
     }
 
@@ -2863,22 +2869,20 @@ impl Pane {
             .map(|id| id == item.item_id())
             .unwrap_or(false);
 
-        let label = item.tab_content(
-            TabContentParams {
-                detail: Some(detail),
-                selected: is_active,
-                preview: is_preview,
-                deemphasized: !self.has_focus(window, cx),
-                max_title_len: None,
-                truncate_title_middle: false,
-            },
-            window,
-            cx,
-        );
+        let tab_content_params = TabContentParams {
+            detail: Some(detail),
+            selected: is_active,
+            preview: is_preview,
+            deemphasized: !self.has_focus(window, cx),
+            max_title_len: None,
+            truncate_title_middle: false,
+        };
+        let label = item.tab_content(tab_content_params, window, cx);
 
         let icon = self.tab_icon_element(item, is_active, window, cx);
 
         let settings = ItemSettings::get_global(cx);
+        let pinned_tab_sizing = TabBarSettings::get_global(cx).pinned_tab_sizing;
         let close_side = &settings.close_position;
         let show_close_button = &settings.show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
@@ -3064,7 +3068,17 @@ impl Pane {
                 });
                 this.end_slot(end_slot)
             })
-            .child(
+            .child({
+                let has_icon = has_file_icon || (can_toggle_read_only && !capability.editable());
+                let tooltip_content = if tab_tooltip_content.is_none()
+                    && is_pinned
+                    && pinned_tab_sizing != PinnedTabSizing::Normal
+                {
+                    Some(TabTooltipContent::Text(item.tab_content_text(detail, cx)))
+                } else {
+                    tab_tooltip_content
+                };
+
                 h_flex()
                     .id(("pane-tab-content", ix))
                     .gap_1()
@@ -3075,8 +3089,31 @@ impl Pane {
                     } else {
                         None
                     })
-                    .child(label)
-                    .map(|this| match tab_tooltip_content {
+                    .map(|this| {
+                        if is_pinned {
+                            match pinned_tab_sizing {
+                                PinnedTabSizing::Normal => this.child(label),
+                                PinnedTabSizing::Shrink => {
+                                    this.child(div().max_w_20().overflow_x_hidden().child(label))
+                                }
+                                PinnedTabSizing::Compact => {
+                                    if !has_icon {
+                                        let tab_text = item.tab_content_text(detail, cx);
+                                        if let Some(first_char) = tab_text.chars().next() {
+                                            return this.child(
+                                                Label::new(first_char.to_string())
+                                                    .color(tab_content_params.text_color()),
+                                            );
+                                        }
+                                    }
+                                    this
+                                }
+                            }
+                        } else {
+                            this.child(label)
+                        }
+                    })
+                    .map(|this| match tooltip_content {
                         Some(TabTooltipContent::Text(text)) => {
                             if capability.editable() {
                                 this.tooltip(Tooltip::text(text))
@@ -3095,8 +3132,8 @@ impl Pane {
                     .when(
                         can_toggle_read_only && capability == Capability::Read && has_file_icon,
                         |this| this.child(read_only_toggle(true)),
-                    ),
-            );
+                    )
+            });
 
         let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
             .then(|| self.items[ix].project_entry_ids(cx).get(0).copied())
@@ -3674,6 +3711,7 @@ impl Pane {
                     .debug_selector(|| "pinned_tabs_row".into())
                     .overflow_x_scroll()
                     .w_full()
+                    .track_scroll(&self.pinned_tab_bar_scroll_handle)
                     .children(pinned_tabs)
                     .child(self.render_pinned_tab_bar_drop_target(cx)),
             );
@@ -5980,6 +6018,96 @@ mod tests {
         assert!(
             pinned_row_bounds.is_none(),
             "Should be single row when disabled again"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pinned_tab_sizing_modes(cx: &mut TestAppContext) {
+        struct LabeledTabItem {
+            label: SharedString,
+            focus_handle: FocusHandle,
+        }
+
+        impl EventEmitter<crate::item::ItemEvent> for LabeledTabItem {}
+        impl Focusable for LabeledTabItem {
+            fn focus_handle(&self, _cx: &App) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+        impl Render for LabeledTabItem {
+            fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+        impl Item for LabeledTabItem {
+            type Event = crate::item::ItemEvent;
+
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                self.label.clone()
+            }
+        }
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let pinned_item = pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(|cx| LabeledTabItem {
+                label: "very_long_pinned_filename_example.rs".into(),
+                focus_handle: cx.focus_handle(),
+            });
+            pane.add_item(Box::new(item.clone()), false, false, None, window, cx);
+            item
+        });
+        pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(|cx| LabeledTabItem {
+                label: "very_long_unpinned_filename_example.rs".into(),
+                focus_handle: cx.focus_handle(),
+            });
+            pane.add_item(Box::new(item), false, false, None, window, cx);
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(pinned_item.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.read(|cx| TabBarSettings::get_global(cx).pinned_tab_sizing),
+            PinnedTabSizing::Normal
+        );
+        let normal_pinned_width = cx.debug_bounds("TAB-0").unwrap().size.width;
+        let normal_unpinned_width = cx.debug_bounds("TAB-1").unwrap().size.width;
+
+        set_pinned_tab_sizing(cx, PinnedTabSizing::Shrink);
+        cx.run_until_parked();
+        let shrink_pinned_width = cx.debug_bounds("TAB-0").unwrap().size.width;
+        let shrink_unpinned_width = cx.debug_bounds("TAB-1").unwrap().size.width;
+        assert!(
+            shrink_pinned_width < normal_pinned_width,
+            "shrink pinned tab ({shrink_pinned_width:?}) should be narrower than normal ({normal_pinned_width:?})"
+        );
+        assert_eq!(
+            shrink_unpinned_width, normal_unpinned_width,
+            "unpinned tab width should not change in shrink mode"
+        );
+
+        set_pinned_tab_sizing(cx, PinnedTabSizing::Compact);
+        cx.run_until_parked();
+        let compact_pinned_width = cx.debug_bounds("TAB-0").unwrap().size.width;
+        let compact_unpinned_width = cx.debug_bounds("TAB-1").unwrap().size.width;
+        assert!(
+            compact_pinned_width < shrink_pinned_width,
+            "compact pinned tab ({compact_pinned_width:?}) should be narrower than shrink ({shrink_pinned_width:?})"
+        );
+        assert_eq!(
+            compact_unpinned_width, normal_unpinned_width,
+            "unpinned tab width should not change in compact mode"
         );
     }
 
@@ -9368,6 +9496,14 @@ mod tests {
                     .tab_bar
                     .get_or_insert_default()
                     .show_pinned_tabs_in_separate_row = Some(enabled);
+            });
+        });
+    }
+
+    fn set_pinned_tab_sizing(cx: &mut TestAppContext, sizing: PinnedTabSizing) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.tab_bar.get_or_insert_default().pinned_tab_sizing = Some(sizing);
             });
         });
     }

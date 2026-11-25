@@ -535,6 +535,31 @@ pub enum RestoreOnStartupBehavior {
     Launchpad,
 }
 
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantNames,
+    strum::VariantArray,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PinnedTabSizing {
+    /// Pinned tabs inherit the look of other tabs.
+    #[default]
+    Normal,
+    /// Pinned tabs shrink to a fixed width, showing a truncated label.
+    Shrink,
+    /// Pinned tabs show only the file icon, or the first character of the label if no icon is shown.
+    Compact,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct TabBarSettingsContent {
@@ -555,6 +580,10 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: false
     pub show_pinned_tabs_in_separate_row: Option<bool>,
+    /// How to display pinned tabs in the tab bar.
+    ///
+    /// Default: normal
+    pub pinned_tab_sizing: Option<PinnedTabSizing>,
 }
 
 #[with_fallible_options]

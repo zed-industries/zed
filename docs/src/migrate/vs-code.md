@@ -122,6 +122,8 @@ The following VS Code settings are automatically imported when you use **Import 
 | `workbench.editor.enablePreviewFromQuickOpen`      | `preview_tabs.enable_preview_from_file_finder`     |
 | `workbench.editor.enablePreviewFromCodeNavigation` | `preview_tabs.enable_preview_from_code_navigation` |
 | `workbench.editor.editorActionsLocation`           | `tab_bar.show_tab_bar_buttons`                     |
+| `workbench.editor.pinnedTabsOnSeparateRow`         | `tab_bar.show_pinned_tabs_in_separate_row`         |
+| `workbench.editor.pinnedTabSizing`                 | `tab_bar.pinned_tab_sizing`                        |
 | `workbench.editor.limit.enabled` / `value`         | `max_tabs`                                         |
 | `workbench.editor.restoreViewState`                | `restore_on_file_reopen`                           |
 | `workbench.statusBar.visible`                      | `status_bar.show`                                  |
