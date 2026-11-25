@@ -192,6 +192,24 @@ fn test_dev_container_project_group_key_survives_rebuilds() {
     );
 }
 
+#[test]
+fn test_ssh_project_group_keys_keep_differing_args_apart() {
+    let paths = PathList::new(&[PathBuf::from(path!("/home/user/project"))]);
+    let ssh = |args: Option<Vec<String>>| {
+        ProjectGroupKey::new(
+            Some(RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+                host: "example.com".into(),
+                args,
+                ..Default::default()
+            })),
+            paths.clone(),
+        )
+    };
+
+    assert_eq!(ssh(None), ssh(None));
+    assert_ne!(ssh(None), ssh(Some(vec!["-J".into(), "jump-host".into()])));
+}
+
 #[gpui::test]
 async fn test_project_group_keys_initial(cx: &mut TestAppContext) {
     init_test(cx);

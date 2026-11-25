@@ -6879,10 +6879,10 @@ impl Project {
 /// Paths are mapped to their main worktree path first so we can group
 /// workspaces by main repos.
 ///
-/// Hosts are compared by [`remote::RemoteConnectionIdentity`] rather than by
-/// their full connection options, because options can carry runtime-only
-/// details (such as a dev container's ID, which changes on every rebuild) that
-/// must not split one project into several groups.
+/// Dev container hosts are compared by [`remote::RemoteConnectionIdentity`],
+/// because their container ID changes on every rebuild and must not split one
+/// project into several groups. Other hosts are compared by their full
+/// connection options.
 #[derive(Clone, Debug, Default)]
 pub struct ProjectGroupKey {
     /// The paths of the main worktrees for this project group.
@@ -6892,7 +6892,18 @@ pub struct ProjectGroupKey {
 
 impl PartialEq for ProjectGroupKey {
     fn eq(&self, other: &Self) -> bool {
-        self.matches_identity(other)
+        if self.paths != other.paths {
+            return false;
+        }
+        match (&self.host, &other.host) {
+            (Some(host), Some(other_host)) => match host.identity() {
+                identity @ RemoteConnectionIdentity::DevContainer { .. } => {
+                    identity == other_host.identity()
+                }
+                _ => host == other_host,
+            },
+            (host, other_host) => host == other_host,
+        }
     }
 }
 
