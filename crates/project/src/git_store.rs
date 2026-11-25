@@ -11706,9 +11706,12 @@ fn blame_at_head(
         {
             return Ok(None);
         }
+        if head.text.is_empty() {
+            return Ok(Some(Blame::default()));
+        }
         text::LineEnding::normalize(&mut head.text);
-        let buffer_text = content.to_string();
-        if head.text != buffer_text
+        let is_unchanged = content.chunks().equals_str(&head.text);
+        if !is_unchanged
             && backend
                 .has_filter_or_ident_attribute(repo_path.clone())
                 .await
@@ -11718,20 +11721,18 @@ fn blame_at_head(
             return Ok(None);
         }
 
-        let Blame {
-            entries,
-            messages,
-            tag_names,
-        } = backend
+        let blame = backend
             .blame_at_revision(repo_path.clone(), revision)
             .await
             .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))?;
-        let entries = map_head_blame_through_diff(&entries, &head.text, &buffer_text);
-        Ok(entries.map(|entries| Blame {
-            entries,
-            messages,
-            tag_names,
-        }))
+        if is_unchanged {
+            let head_row_count = head.text.split_inclusive('\n').count() as u32;
+            let blamed_row_count = blame.entries.iter().map(|entry| entry.range.end).max();
+            return Ok((blamed_row_count == Some(head_row_count)).then_some(blame));
+        }
+        let buffer_text = content.to_string();
+        let entries = map_head_blame_through_diff(&blame.entries, &head.text, &buffer_text);
+        Ok(entries.map(|entries| Blame { entries, ..blame }))
     })
 }
 
