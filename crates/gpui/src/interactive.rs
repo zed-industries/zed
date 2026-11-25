@@ -824,6 +824,85 @@ pub enum PlatformInput {
 }
 
 impl PlatformInput {
+    /// The event in a window drawn at `zoom` times its natural size: the platform's
+    /// positions and pixel distances divided by `zoom`.
+    pub(crate) fn zoomed_out(self, zoom: f32) -> Self {
+        if zoom == 1. {
+            return self;
+        }
+        match self {
+            PlatformInput::KeyDown(_)
+            | PlatformInput::KeyUp(_)
+            | PlatformInput::ModifiersChanged(_) => self,
+            PlatformInput::MouseDown(event) => PlatformInput::MouseDown(MouseDownEvent {
+                position: event.position / zoom,
+                ..event
+            }),
+            PlatformInput::MouseUp(event) => PlatformInput::MouseUp(MouseUpEvent {
+                position: event.position / zoom,
+                ..event
+            }),
+            PlatformInput::MousePressure(event) => {
+                PlatformInput::MousePressure(MousePressureEvent {
+                    position: event.position / zoom,
+                    ..event
+                })
+            }
+            PlatformInput::MouseMove(event) => PlatformInput::MouseMove(MouseMoveEvent {
+                position: event.position / zoom,
+                ..event
+            }),
+            PlatformInput::MouseExited(event) => PlatformInput::MouseExited(MouseExitEvent {
+                position: event.position / zoom,
+                ..event
+            }),
+            PlatformInput::Scroll(event) => PlatformInput::Scroll(ScrollEvent {
+                position: event.position / zoom,
+                delta: match event.delta {
+                    ScrollDelta::Pixels(delta) => ScrollDelta::Pixels(delta / zoom),
+                    lines @ ScrollDelta::Lines(_) => lines,
+                },
+                ..event
+            }),
+            PlatformInput::Pinch(event) => PlatformInput::Pinch(PinchEvent {
+                position: event.position / zoom,
+                ..event
+            }),
+            PlatformInput::LongPress(event) => PlatformInput::LongPress(LongPressEvent {
+                start_position: event.start_position / zoom,
+                position: event.position / zoom,
+                ..event
+            }),
+            PlatformInput::TouchDrag(event) => PlatformInput::TouchDrag(TouchDragEvent {
+                start_position: event.start_position / zoom,
+                position: event.position / zoom,
+                ..event
+            }),
+            PlatformInput::BackGesture(event) => PlatformInput::BackGesture(BackGestureEvent {
+                start_position: event.start_position / zoom,
+                ..event
+            }),
+            PlatformInput::FileDrop(event) => PlatformInput::FileDrop(match event {
+                FileDropEvent::Entered { position, paths } => FileDropEvent::Entered {
+                    position: position / zoom,
+                    paths,
+                },
+                FileDropEvent::Pending { position } => FileDropEvent::Pending {
+                    position: position / zoom,
+                },
+                FileDropEvent::Submit { position } => FileDropEvent::Submit {
+                    position: position / zoom,
+                },
+                FileDropEvent::Exited | FileDropEvent::Ended => event,
+            }),
+            PlatformInput::Touch(event) => PlatformInput::Touch(TouchEvent {
+                position: event.position / zoom,
+                predicted_position: event.predicted_position.map(|p| p / zoom),
+                ..event
+            }),
+        }
+    }
+
     pub(crate) fn mouse_event(&self) -> Option<&dyn Any> {
         match self {
             PlatformInput::KeyDown { .. } => None,
