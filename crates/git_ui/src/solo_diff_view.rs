@@ -30,7 +30,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{DiffStat, Divider, Tooltip, prelude::*};
+use ui::{ContextMenu, DiffStat, Divider, PopoverMenu, Tooltip, prelude::*};
 use util::paths::{PathExt as _, PathStyle};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -348,6 +348,32 @@ impl SoloDiffView {
         }
     }
 
+    fn open_diff_base(
+        solo_diff: &Entity<Self>,
+        diff_base: DiffBase,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let solo_diff = solo_diff.read(cx);
+        let Some(status_entry) = solo_diff
+            .repository
+            .read(cx)
+            .status_for_path(&solo_diff.repo_path)
+        else {
+            return;
+        };
+        let entry = GitStatusEntry {
+            repo_path: solo_diff.repo_path.clone(),
+            status: status_entry.status,
+            staging: status_entry.status.staging(),
+            diff_stat: status_entry.diff_stat,
+        };
+        let repository = solo_diff.repository.clone();
+        let workspace = solo_diff.workspace.clone();
+        Self::open_or_focus(entry, repository, diff_base, workspace.clone(), window, cx)
+            .detach_and_notify_err(workspace, window, cx);
+    }
+
     /// Returns the project path of the buffer's file, if it has one. Unlike
     /// `Buffer::file` + `File::as_local`, this also works for remote files.
     fn buffer_project_path(buffer: &Entity<Buffer>, cx: &App) -> Option<ProjectPath> {
@@ -498,8 +524,9 @@ impl Item for SoloDiffView {
                     .into_owned()
             });
         match self.diff_base {
-            DiffBase::Index => format!("{file_name} (Unstaged)").into(),
-            DiffBase::Staged => format!("{file_name} (Staged)").into(),
+            DiffBase::Index | DiffBase::Staged => {
+                format!("{file_name} ({})", diff_base_label(&self.diff_base)).into()
+            }
             DiffBase::Head | DiffBase::Merge { .. } => file_name.into(),
         }
     }
@@ -1042,7 +1069,98 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             assert!(crate::file_diff_entry(workspace, cx).is_some());
         });
+
+        cx.update(|window, cx| {
+            SoloDiffView::open_diff_base(&staged_view, DiffBase::Index, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item_as::<SoloDiffView>(cx),
+                Some(unstaged_view.clone())
+            );
+            assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 2);
+        });
+
+        cx.update(|window, cx| {
+            SoloDiffView::open_diff_base(&unstaged_view, DiffBase::Head, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let view = workspace
+                .active_item_as::<SoloDiffView>(cx)
+                .expect("a solo diff should be active");
+            assert_eq!(view.read(cx).diff_base, DiffBase::Head);
+            assert_eq!(view.read(cx).tab_content_text(0, cx), "partial.rs");
+            assert!(
+                view.read(cx)
+                    .editor
+                    .read(cx)
+                    .rhs_editor()
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .all_diff_hunks_expanded()
+            );
+            assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 3);
+        });
     }
+}
+
+fn diff_base_label(diff_base: &DiffBase) -> &'static str {
+    match diff_base {
+        DiffBase::Head | DiffBase::Merge { .. } => "Uncommitted",
+        DiffBase::Index => "Unstaged",
+        DiffBase::Staged => "Staged",
+    }
+}
+
+fn render_diff_base_picker(solo_diff: &Entity<SoloDiffView>, cx: &App) -> impl IntoElement {
+    let selected_diff_base = solo_diff.read(cx).diff_base.clone();
+    let solo_diff = solo_diff.downgrade();
+    PopoverMenu::new("solo-diff-base-picker")
+        .menu(move |window, cx| {
+            let solo_diff = solo_diff.upgrade()?;
+            let (selected_diff_base, stage_status) = {
+                let solo_diff = solo_diff.read(cx);
+                let stage_status = solo_diff
+                    .repository
+                    .read(cx)
+                    .status_for_path(&solo_diff.repo_path)
+                    .map(|entry| entry.status.staging());
+                (solo_diff.diff_base.clone(), stage_status)
+            };
+            Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                for diff_base in [DiffBase::Head, DiffBase::Index, DiffBase::Staged] {
+                    let has_changes = stage_status.is_some_and(|stage_status| match diff_base {
+                        DiffBase::Index => stage_status.has_unstaged(),
+                        DiffBase::Staged => stage_status.has_staged(),
+                        DiffBase::Head | DiffBase::Merge { .. } => true,
+                    });
+                    let is_selected = diff_base == selected_diff_base;
+                    let solo_diff = solo_diff.clone();
+                    menu = menu.toggleable_entry_disabled_when(
+                        diff_base_label(&diff_base),
+                        is_selected,
+                        !is_selected && !has_changes,
+                        IconPosition::Start,
+                        None,
+                        move |window, cx| {
+                            SoloDiffView::open_diff_base(&solo_diff, diff_base.clone(), window, cx);
+                        },
+                    );
+                }
+                menu
+            }))
+        })
+        .trigger_with_tooltip(
+            Button::new("solo-diff-base", diff_base_label(&selected_diff_base)).end_icon(
+                Icon::new(IconName::ChevronDown)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
+            ),
+            Tooltip::text("Select Diff Base"),
+        )
 }
 
 impl Render for SoloDiffGitToolbar {
@@ -1052,6 +1170,7 @@ impl Render for SoloDiffGitToolbar {
         };
 
         let focus_handle = solo_diff.focus_handle(cx);
+        let diff_base_picker = render_diff_base_picker(&solo_diff, cx);
         let solo_diff = solo_diff.read(cx);
         let button_states = solo_diff.button_states(cx);
         let status_entry = solo_diff
@@ -1073,6 +1192,8 @@ impl Render for SoloDiffGitToolbar {
                 DiffStat::new("solo-diff-stat", stat.added as usize, stat.deleted as usize)
             }))
             .child(Divider::vertical().ml_1())
+            .child(diff_base_picker)
+            .child(Divider::vertical())
             .child(
                 h_group_sm()
                     .child(
