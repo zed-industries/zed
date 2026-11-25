@@ -2946,19 +2946,6 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let diff_base = Self::diff_base_for_section(
-            self.selected_entry
-                .and_then(|index| self.section_for_entry_index(index)),
-        );
-        self.open_solo_diffs(diff_base, window, cx);
-    }
-
-    fn open_solo_diffs(
-        &mut self,
-        diff_base: DiffBase,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
         // A file diff shows uncommitted changes, so branch rows open the
         // branch diff instead.
         if self.is_branch_mode() {
@@ -2968,6 +2955,10 @@ impl GitPanel {
         let Some(repository) = self.active_repository.clone() else {
             return;
         };
+        let diff_base = Self::diff_base_for_section(
+            self.selected_entry
+                .and_then(|index| self.section_for_entry_index(index)),
+        );
         for entry in self.effective_status_entries() {
             SoloDiffView::open_or_focus(
                 entry,
@@ -9010,7 +9001,6 @@ impl GitPanel {
         let has_tracked = !all_created;
         let plural = file_count > 1;
         let titles = EntryMenuTitles::new(file_count);
-        let git_panel = cx.weak_entity();
         ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .context(self.focus_handle.clone())
@@ -9045,15 +9035,7 @@ impl GitPanel {
                     context_menu
                         .separator()
                         .action(titles.open_diff, menu::Confirm.boxed_clone())
-                        // Opens the uncommitted diff like `git::OpenFileDiff` from a file editor,
-                        // regardless of the selected section.
-                        .entry(titles.open_file_diff, None, move |window, cx| {
-                            git_panel
-                                .update(cx, |git_panel, cx| {
-                                    git_panel.open_solo_diffs(DiffBase::Head, window, cx);
-                                })
-                                .ok();
-                        })
+                        .action(titles.open_file_diff, menu::SecondaryConfirm.boxed_clone())
                         .action(titles.view_file, ViewFile.boxed_clone())
                 })
                 .when(is_file_or_bulk && has_tracked, |context_menu| {
