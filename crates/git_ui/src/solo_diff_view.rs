@@ -5,8 +5,8 @@ use crate::{
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkSecondaryStatus;
 use editor::{
-    DiffHunkRenderer, DiffStyleControls, Direction, Editor, EditorEvent, EditorSettings,
-    SplittableEditor, ToggleSplitDiff,
+    DefaultDiffHunkRenderer, DiffHunkRenderer, DiffStyleControls, Direction, Editor, EditorEvent,
+    EditorSettings, SplittableEditor, ToggleSplitDiff,
     actions::{GoToHunk, GoToPreviousHunk},
     file_status_label_color,
 };
@@ -15,8 +15,8 @@ use git::{
     repository::RepoPath, status::StageStatus,
 };
 use gpui::{
-    Action, App, AppContext as _, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    HighlightStyle, IntoElement, Render, Subscription, Task, WeakEntity, Window,
+    Action, App, AppContext as _, AsyncApp, Context, Empty, Entity, EventEmitter, FocusHandle,
+    Focusable, HighlightStyle, IntoElement, Render, Subscription, Task, WeakEntity, Window,
 };
 use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
@@ -45,6 +45,8 @@ pub struct SoloDiffView {
     repository_id: RepositoryId,
     repo_path: RepoPath,
     diff_base: DiffBase,
+    // The worktree buffer, even for staged views: GitStore drops the diff state
+    // once it is released, and unlike the index buffer's file it follows renames.
     buffer: Entity<Buffer>,
     display_buffer: Entity<Buffer>,
     diff: Entity<buffer_diff::BufferDiff>,
@@ -94,41 +96,14 @@ impl SoloDiffView {
 
         let project = workspace_entity.read(cx).project().clone();
         let repo_path = entry.repo_path;
-        let diff_base_clone = diff_base.clone();
         window.spawn(cx, async move |cx| {
             let buffer = project
                 .update(cx, |project, cx| {
                     project.open_buffer(project_path.clone(), cx)
                 })
                 .await?;
-            let (display_buffer, diff, renderer) = match diff_base_clone {
-                DiffBase::Head | DiffBase::Merge { .. } => {
-                    let diff = project
-                        .update(cx, |project, cx| {
-                            project.open_uncommitted_diff(buffer.clone(), cx)
-                        })
-                        .await?;
-                    (buffer.clone(), diff, None)
-                }
-                DiffBase::Index => {
-                    let diff = project
-                        .update(cx, |project, cx| {
-                            project.open_unstaged_diff(buffer.clone(), cx)
-                        })
-                        .await?;
-                    let renderer: Arc<dyn DiffHunkRenderer> = Arc::new(UnstagedDiffHunkRenderer);
-                    (buffer.clone(), diff, Some(renderer))
-                }
-                DiffBase::Staged => {
-                    let (diff, index_buffer) = project
-                        .update(cx, |project, cx| {
-                            project.open_staged_diff(buffer.clone(), cx)
-                        })
-                        .await?;
-                    let renderer: Arc<dyn DiffHunkRenderer> = Arc::new(StagedDiffHunkRenderer);
-                    (index_buffer, diff, Some(renderer))
-                }
-            };
+            let (display_buffer, diff) =
+                Self::buffer_diff_for_diff_base(&project, buffer.clone(), &diff_base, cx).await?;
 
             workspace_entity.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = cx.entity();
@@ -141,7 +116,6 @@ impl SoloDiffView {
                         buffer,
                         display_buffer,
                         diff,
-                        renderer,
                         workspace_handle,
                         window,
                         cx,
@@ -154,6 +128,48 @@ impl SoloDiffView {
         })
     }
 
+    async fn buffer_diff_for_diff_base(
+        project: &Entity<Project>,
+        worktree_buffer: Entity<Buffer>,
+        diff_base: &DiffBase,
+        cx: &mut AsyncApp,
+    ) -> Result<(Entity<Buffer>, Entity<buffer_diff::BufferDiff>)> {
+        match diff_base {
+            DiffBase::Head | DiffBase::Merge { .. } => {
+                let diff = project
+                    .update(cx, |project, cx| {
+                        project.open_uncommitted_diff(worktree_buffer.clone(), cx)
+                    })
+                    .await?;
+                Ok((worktree_buffer, diff))
+            }
+            DiffBase::Index => {
+                let diff = project
+                    .update(cx, |project, cx| {
+                        project.open_unstaged_diff(worktree_buffer.clone(), cx)
+                    })
+                    .await?;
+                Ok((worktree_buffer, diff))
+            }
+            DiffBase::Staged => {
+                let (diff, index_buffer) = project
+                    .update(cx, |project, cx| {
+                        project.open_staged_diff(worktree_buffer, cx)
+                    })
+                    .await?;
+                Ok((index_buffer, diff))
+            }
+        }
+    }
+
+    fn diff_hunk_renderer_for_diff_base(diff_base: &DiffBase) -> Arc<dyn DiffHunkRenderer> {
+        match diff_base {
+            DiffBase::Head | DiffBase::Merge { .. } => Arc::new(DefaultDiffHunkRenderer),
+            DiffBase::Index => Arc::new(UnstagedDiffHunkRenderer),
+            DiffBase::Staged => Arc::new(StagedDiffHunkRenderer),
+        }
+    }
+
     fn new(
         project: Entity<Project>,
         repository: Entity<Repository>,
@@ -162,7 +178,6 @@ impl SoloDiffView {
         buffer: Entity<Buffer>,
         display_buffer: Entity<Buffer>,
         diff: Entity<buffer_diff::BufferDiff>,
-        renderer: Option<Arc<dyn DiffHunkRenderer>>,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -173,6 +188,7 @@ impl SoloDiffView {
             Self::build_multibuffer(display_buffer.clone(), diff.clone(), showing_full_file, cx)
         });
         let is_read_only = diff_base == DiffBase::Staged;
+        let renderer = Self::diff_hunk_renderer_for_diff_base(&diff_base);
         let editor = cx.new(|cx| {
             let editor = SplittableEditor::new(
                 EditorSettings::get_global(cx).diff_view_style,
@@ -182,7 +198,7 @@ impl SoloDiffView {
                 window,
                 cx,
             );
-            editor.set_diff_hunk_renderer(renderer, cx);
+            editor.set_diff_hunk_renderer(Some(renderer), cx);
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_read_only(is_read_only);
                 editor.set_should_serialize(false, cx);
@@ -319,8 +335,6 @@ impl SoloDiffView {
             && &self.diff_base == diff_base
     }
 
-    /// Returns the diff base this view shows for `repo_path` in `repository`,
-    /// if it is displaying that file.
     pub fn diff_base_for_repo_path(
         &self,
         repository: &Entity<Repository>,
@@ -954,7 +968,6 @@ mod tests {
         unstaged_view.read_with(cx, |view, cx| {
             assert_eq!(view.diff_base, DiffBase::Index);
             assert_eq!(view.tab_content_text(0, cx), "partial.rs (Unstaged)");
-            // The unstaged view diffs the worktree buffer against the index.
             assert_eq!(
                 view.display_buffer.read(cx).text(),
                 "worktree one\nworktree two\nworktree three\n"
@@ -984,7 +997,6 @@ mod tests {
         staged_view.read_with(cx, |view, cx| {
             assert_eq!(view.diff_base, DiffBase::Staged);
             assert_eq!(view.tab_content_text(0, cx), "partial.rs (Staged)");
-            // The staged view diffs the index buffer against HEAD.
             assert_eq!(
                 view.display_buffer.read(cx).text(),
                 "index one\nindex two\n"
