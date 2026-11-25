@@ -450,6 +450,12 @@ impl SoloDiffView {
             .status_for_path(&self.repo_path)
             .map(|entry| entry.status.staging())
             .unwrap_or(StageStatus::Unstaged);
+        let stage_file = stage_status.has_unstaged();
+        let show_stage_file = match self.diff_base {
+            DiffBase::Index => true,
+            DiffBase::Staged => false,
+            DiffBase::Head | DiffBase::Merge { .. } => stage_file,
+        };
 
         SoloDiffButtonStates {
             stage,
@@ -458,8 +464,9 @@ impl SoloDiffView {
             restore: (stage || unstage) && self.diff_base != DiffBase::Staged,
             prev_next,
             selection,
-            stage_file: stage_status.has_unstaged(),
+            stage_file,
             unstage_file: stage_status.has_staged(),
+            show_stage_file,
         }
     }
 
@@ -860,6 +867,7 @@ struct SoloDiffButtonStates {
     selection: bool,
     stage_file: bool,
     unstage_file: bool,
+    show_stage_file: bool,
 }
 
 #[cfg(test)]
@@ -1018,6 +1026,9 @@ mod tests {
                 Some("index one\nindex two\n")
             );
             assert!(!view.editor.read(cx).rhs_editor().read(cx).read_only(cx));
+            let button_states = view.button_states(cx);
+            assert!(button_states.show_stage_file);
+            assert!(button_states.stage_file);
         });
 
         let staged_view = cx
@@ -1051,7 +1062,10 @@ mod tests {
                 Some("head one\nhead two\nhead three\nhead four\n")
             );
             assert!(view.editor.read(cx).rhs_editor().read(cx).read_only(cx));
-            assert!(!view.button_states(cx).restore);
+            let button_states = view.button_states(cx);
+            assert!(!button_states.restore);
+            assert!(!button_states.show_stage_file);
+            assert!(button_states.unstage_file);
         });
 
         let project_path = project.read_with(cx, |project, cx| {
@@ -1300,7 +1314,7 @@ impl Render for SoloDiffGitToolbar {
                     ),
             )
             .child(Divider::vertical())
-            .child(h_group_sm().child(if button_states.stage_file {
+            .child(h_group_sm().child(if button_states.show_stage_file {
                 Button::new("stage-file", "Stage All")
                     .width(rems_from_px(80_f32))
                     .disabled(!button_states.stage_file)
