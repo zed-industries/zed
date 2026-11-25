@@ -49,7 +49,7 @@ The only exception are the ID restrictions: since an extension's ID cannot chang
 
 ## Do I have to maintain my extension? {#do-i-have-to-maintain-my-extension}
 
-No. After your extension has been published, there are no further requirements from our side. Thank you for enriching the Zed extension collection, we really appreciate it!
+No. After your extension has been published, there are no further requirements from your side. Thank you for enriching the Zed extension collection, we really appreciate it!
 
 That said, no extension is perfect on day one - bugs may surface and improvement requests may come in. While maintenance is never required, it helps everyone if you respond to those reports within a reasonable timeframe.
 
