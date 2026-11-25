@@ -3154,8 +3154,12 @@ mod tests {
             panel
         });
         cx.dispatch_action(ReplaceAll);
+        cx.dispatch_action(ToggleReplace);
+        assert!(search_bar.read_with(cx, |search_bar, _| search_bar.replace_enabled));
         panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
         cx.dispatch_action(ReplaceAll);
+        cx.dispatch_action(ToggleReplace);
+        assert!(search_bar.read_with(cx, |search_bar, _| search_bar.replace_enabled));
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
             "b b b b"
