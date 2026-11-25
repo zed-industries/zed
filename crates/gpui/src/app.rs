@@ -4,7 +4,7 @@ use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     ffi::OsString,
     marker::PhantomData,
-    mem,
+    mem::{self, DropGuard},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -1450,6 +1450,26 @@ impl App {
     /// multiple times in an update cycle and still result in a single redraw.
     pub fn refresh_windows(&mut self) {
         self.pending_effects.push_back(Effect::RefreshWindows);
+    }
+
+    /// Returns whether a window's last frame read this entity without drawing it as a view.
+    /// Notifying such an entity doesn't redraw the views that read it.
+    ///
+    /// A window that is being updated counts as such a read. `false` covers only the views
+    /// on the path from the entity's view node to the window root. A frame keeps one view
+    /// node per entity, so notifying doesn't redraw other cached views that read the entity
+    /// or draw it a second time.
+    pub fn is_read_without_view(&self, entity_id: EntityId) -> bool {
+        self.tracked_entities
+            .iter()
+            .filter(|(_, entities)| entities.contains(&entity_id))
+            .any(|(window_id, _)| {
+                let Some(Some(window)) = self.windows.get(*window_id) else {
+                    return true;
+                };
+                let dispatch_tree = &window.rendered_frame.dispatch_tree;
+                dispatch_tree.view_path_reversed(entity_id).next().is_none()
+            })
     }
 
     #[inline(always)]
@@ -3771,8 +3791,7 @@ impl HttpClient for NullHttpClient {
 
 /// A mutable reference to an entity owned by GPUI
 pub struct GpuiBorrow<'a, T> {
-    inner: Option<Lease<T>>,
-    app: &'a mut App,
+    guard: DropGuard<(Lease<T>, &'a mut App), fn((Lease<T>, &'a mut App))>,
 }
 
 impl<'a, T: 'static> GpuiBorrow<'a, T> {
@@ -3780,21 +3799,24 @@ impl<'a, T: 'static> GpuiBorrow<'a, T> {
         app.start_update();
         let lease = app.entities.lease(&inner);
         Self {
-            inner: Some(lease),
-            app,
+            guard: DropGuard::new((lease, app), |(lease, app)| {
+                app.notify(lease.id);
+                app.entities.end_lease(lease);
+                app.finish_update();
+            }),
         }
     }
 }
 
 impl<'a, T: 'static> std::borrow::Borrow<T> for GpuiBorrow<'a, T> {
     fn borrow(&self) -> &T {
-        self.inner.as_ref().unwrap().borrow()
+        &self.guard.0
     }
 }
 
 impl<'a, T: 'static> std::borrow::BorrowMut<T> for GpuiBorrow<'a, T> {
     fn borrow_mut(&mut self) -> &mut T {
-        self.inner.as_mut().unwrap().borrow_mut()
+        &mut self.guard.0
     }
 }
 
@@ -3802,22 +3824,13 @@ impl<'a, T: 'static> std::ops::Deref for GpuiBorrow<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.inner.as_ref().unwrap()
+        &self.guard.0
     }
 }
 
 impl<'a, T: 'static> std::ops::DerefMut for GpuiBorrow<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
-        self.inner.as_mut().unwrap()
-    }
-}
-
-impl<'a, T> Drop for GpuiBorrow<'a, T> {
-    fn drop(&mut self) {
-        let lease = self.inner.take().unwrap();
-        self.app.notify(lease.id);
-        self.app.entities.end_lease(lease);
-        self.app.finish_update();
+        &mut self.guard.0
     }
 }
 

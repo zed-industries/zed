@@ -214,6 +214,21 @@ pub enum SandboxNetPolicy {
         /// is rejected. Only the macOS backend can enforce this; the Linux and
         /// Windows backends reject any policy that lists a port.
         allowed_tcp_ports: Vec<u16>,
+        /// Whether the command may also talk to the macOS system services that
+        /// programs use for network configuration and TLS trust evaluation
+        /// (`configd`, `networkd`, `SecurityServer`, `trustd`, and `ocspd`).
+        ///
+        /// Programs that verify certificates through the system's Security
+        /// framework need them. But these services run outside the sandbox
+        /// with unrestricted network access, and `trustd` fetches the URLs
+        /// named in a certificate it is asked to evaluate, so a command that
+        /// can reach it can send data to any host, whatever `allowed_domains`
+        /// says. Pass `false` when nothing the command does may leave the
+        /// allowlist, for example when the allowlist is empty and the proxy
+        /// exists only to report what the command attempted.
+        ///
+        /// Only macOS has these services; other platforms ignore this.
+        allow_system_network_services: bool,
     },
 }
 
@@ -576,14 +591,17 @@ impl SandboxNetPolicy {
                 SandboxNetPolicy::Restricted {
                     allowed_domains: domains_a,
                     allowed_tcp_ports: ports_a,
+                    allow_system_network_services: services_a,
                 },
                 SandboxNetPolicy::Restricted {
                     allowed_domains: domains_b,
                     allowed_tcp_ports: ports_b,
+                    allow_system_network_services: services_b,
                 },
             ) => SandboxNetPolicy::Restricted {
                 allowed_domains: merge_unique(domains_a, domains_b),
                 allowed_tcp_ports: merge_unique(ports_a, ports_b),
+                allow_system_network_services: services_a || services_b,
             },
         }
     }
@@ -698,6 +716,8 @@ enum NetSetup {
         /// a non-empty list in [`Sandbox::new`].
         #[cfg(target_os = "macos")]
         allowed_tcp_ports: Vec<u16>,
+        #[cfg(target_os = "macos")]
+        allow_system_network_services: bool,
     },
 }
 
@@ -859,7 +879,12 @@ impl Sandbox {
             SandboxNetPolicy::Restricted {
                 allowed_domains,
                 allowed_tcp_ports,
-            } => resolve_restricted_network(&allowed_domains, &allowed_tcp_ports)?,
+                allow_system_network_services,
+            } => resolve_restricted_network(
+                &allowed_domains,
+                &allowed_tcp_ports,
+                allow_system_network_services,
+            )?,
         };
 
         Ok(Self {
@@ -1142,21 +1167,26 @@ impl Sandbox {
         let mut env = command.env.clone();
         let proxy = self.ensure_restricted_proxy(&mut env)?;
 
-        let (network, allowed_tcp_ports): (_, &[u16]) = match &self.network {
-            NetSetup::Unrestricted => (macos_seatbelt::NetworkAccess::All, &[]),
-            NetSetup::Blocked => (macos_seatbelt::NetworkAccess::None, &[]),
-            NetSetup::Restricted {
-                allowed_tcp_ports, ..
-            } => (
-                macos_seatbelt::NetworkAccess::LocalhostPort(
-                    proxy.as_ref().map(|(port, _)| *port).unwrap_or(0),
+        let (network, allowed_tcp_ports, allow_system_network_services): (_, &[u16], _) =
+            match &self.network {
+                NetSetup::Unrestricted => (macos_seatbelt::NetworkAccess::All, &[], true),
+                NetSetup::Blocked => (macos_seatbelt::NetworkAccess::None, &[], false),
+                NetSetup::Restricted {
+                    allowed_tcp_ports,
+                    allow_system_network_services,
+                    ..
+                } => (
+                    macos_seatbelt::NetworkAccess::LocalhostPort(
+                        proxy.as_ref().map(|(port, _)| *port).unwrap_or(0),
+                    ),
+                    allowed_tcp_ports,
+                    *allow_system_network_services,
                 ),
-                allowed_tcp_ports,
-            ),
-        };
+            };
 
         let permissions = macos_seatbelt::SandboxPermissions {
             network,
+            allow_system_network_services,
             allow_fs_write: self.fs.allow_fs_write,
         };
         let protected_paths = self.protected_paths();
@@ -1278,6 +1308,8 @@ pub fn run_sandbox_launcher_if_invoked() {
 #[cfg(target_os = "windows")]
 #[doc(hidden)]
 pub use windows_psec::run_launcher_if_invoked as run_windows_sandbox_launcher_if_invoked;
+#[cfg(target_os = "windows")]
+pub use windows_psec::set_launcher_path as set_windows_sandbox_launcher_path;
 
 // The createability probe only needs to know whether a sandbox *can* be built
 // (namespaces, `bwrap` availability); it does not enforce any grant, so it runs
@@ -1287,6 +1319,7 @@ pub use windows_psec::run_launcher_if_invoked as run_windows_sandbox_launcher_if
 fn resolve_restricted_network(
     allowed_domains: &[String],
     allowed_tcp_ports: &[u16],
+    allow_system_network_services: bool,
 ) -> Result<NetSetup, SandboxError> {
     let mut patterns = Vec::with_capacity(allowed_domains.len());
     for domain in allowed_domains {
@@ -1300,10 +1333,14 @@ fn resolve_restricted_network(
             "TCP port 0 is not a valid destination port".to_string(),
         ));
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = allow_system_network_services;
     Ok(NetSetup::Restricted {
         allowlist: Allowlist::from_patterns(patterns),
         #[cfg(target_os = "macos")]
         allowed_tcp_ports: allowed_tcp_ports.to_vec(),
+        #[cfg(target_os = "macos")]
+        allow_system_network_services,
     })
 }
 
@@ -1611,6 +1648,7 @@ mod tests {
         let hosts = |list: &[&str]| SandboxNetPolicy::Restricted {
             allowed_domains: list.iter().map(|s| s.to_string()).collect(),
             allowed_tcp_ports: Vec::new(),
+            allow_system_network_services: true,
         };
         assert_eq!(
             hosts(&["a.com", "b.com"]).merge(hosts(&["b.com", "c.com"])),
@@ -1619,6 +1657,7 @@ mod tests {
         let ports = |list: &[u16]| SandboxNetPolicy::Restricted {
             allowed_domains: Vec::new(),
             allowed_tcp_ports: list.to_vec(),
+            allow_system_network_services: true,
         };
         assert_eq!(ports(&[22]).merge(ports(&[5432, 22])), ports(&[22, 5432]));
         assert_eq!(
@@ -1691,6 +1730,7 @@ mod tests {
             network: SandboxNetPolicy::Restricted {
                 allowed_domains: Vec::new(),
                 allowed_tcp_ports: vec![0],
+                allow_system_network_services: true,
             },
             allowed_unix_sockets: Vec::new(),
         });
@@ -1702,45 +1742,52 @@ mod tests {
 
     #[test]
     fn network_events_report_denied_hosts() {
-        let policy = SandboxPolicy {
-            fs: unrestricted_fs(),
-            network: SandboxNetPolicy::Restricted {
-                allowed_domains: vec!["allowed.example".to_string()],
-                allowed_tcp_ports: Vec::new(),
-            },
-            allowed_unix_sockets: Vec::new(),
-        };
-        if !host_can_run_sandbox(&policy) {
-            return;
+        // The proxy reports what it refused with or without the system
+        // network services, so a caller can leave them out and still learn
+        // which hosts a command tried.
+        for allow_system_network_services in [true, false] {
+            let policy = SandboxPolicy {
+                fs: unrestricted_fs(),
+                network: SandboxNetPolicy::Restricted {
+                    allowed_domains: vec!["allowed.example".to_string()],
+                    allowed_tcp_ports: Vec::new(),
+                    allow_system_network_services,
+                },
+                allowed_unix_sockets: Vec::new(),
+            };
+            if !host_can_run_sandbox(&policy) {
+                return;
+            }
+            let (events_sender, events) = futures::channel::mpsc::unbounded();
+            let mut sandbox =
+                Sandbox::with_network_events(policy, events_sender).expect("create sandbox");
+
+            // The proxy denies the host before resolving it, so this needs no
+            // network access.
+            run_sandboxed(
+                &mut sandbox,
+                "/usr/bin/curl",
+                &["--silent", "--max-time", "10", "https://denied.example/"],
+            );
+            sandbox.drop_on_current_thread();
+
+            let events: Vec<ProxyEvent> = futures::executor::block_on(events.collect());
+            assert!(matches!(events.first(), Some(ProxyEvent::Ready { .. })));
+            assert!(
+                events.iter().any(|event| matches!(
+                    event,
+                    ProxyEvent::RequestAttempt {
+                        host,
+                        outcome: RequestOutcome::Denied {
+                            reason: DenyReason::HostNotInAllowlist { .. }
+                        },
+                        ..
+                    } if host == "denied.example"
+                )),
+                "expected a denied attempt for denied.example with \
+                 allow_system_network_services: {allow_system_network_services}, got {events:?}"
+            );
         }
-        let (events_sender, events) = futures::channel::mpsc::unbounded();
-        let mut sandbox =
-            Sandbox::with_network_events(policy, events_sender).expect("create sandbox");
-
-        // The proxy denies the host before resolving it, so this needs no
-        // network access.
-        run_sandboxed(
-            &mut sandbox,
-            "/usr/bin/curl",
-            &["--silent", "--max-time", "10", "https://denied.example/"],
-        );
-        sandbox.drop_on_current_thread();
-
-        let events: Vec<ProxyEvent> = futures::executor::block_on(events.collect());
-        assert!(matches!(events.first(), Some(ProxyEvent::Ready { .. })));
-        assert!(
-            events.iter().any(|event| matches!(
-                event,
-                ProxyEvent::RequestAttempt {
-                    host,
-                    outcome: RequestOutcome::Denied {
-                        reason: DenyReason::HostNotInAllowlist { .. }
-                    },
-                    ..
-                } if host == "denied.example"
-            )),
-            "expected a denied attempt for denied.example, got {events:?}"
-        );
     }
 
     #[test]
@@ -1767,6 +1814,7 @@ mod tests {
                 network: SandboxNetPolicy::Restricted {
                     allowed_domains: vec!["example.com".to_string()],
                     allowed_tcp_ports: vec![granted_port],
+                    allow_system_network_services: true,
                 },
                 allowed_unix_sockets: Vec::new(),
             },
@@ -1828,6 +1876,7 @@ mod tests {
             SandboxNetPolicy::Restricted {
                 allowed_domains: Vec::new(),
                 allowed_tcp_ports: Vec::new(),
+                allow_system_network_services: true,
             },
         ] {
             let Some(mut sandbox) = enforced_or_refused(Sandbox::new(SandboxPolicy {

@@ -678,6 +678,156 @@ async fn test_project_menu_of_a_group_with_delta_checkouts(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_project_menu_opens_the_worktree_picker_of_its_group(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let delta_clone = |branch: &str| {
+        serde_json::json!({
+            "repo.git": {
+                "HEAD": format!("ref: refs/heads/{branch}\n"),
+                "config": "[core]\n\tbare = false\n",
+                "delta": { "copy-baseline": "" },
+                "objects": {
+                    "info": {
+                        "alternates": format!("{}\n", util::path!("/repo/.git/objects")),
+                    },
+                },
+            },
+        })
+    };
+    let delta_checkout = |namespace: &str| {
+        serde_json::json!({
+            "repo": {
+                ".git": format!(
+                    "gitdir: {}/{namespace}/repo.git\n",
+                    util::path!("/repo/.delta/clones")
+                ),
+            },
+        })
+    };
+    fs.insert_tree(
+        util::path!("/repo"),
+        serde_json::json!({
+            ".delta": {
+                "clones": { "a": delta_clone("feature"), "b": delta_clone("feature-b") },
+                "worktrees": { "a": delta_checkout("a"), "b": delta_checkout("b") },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(util::path!("/other"), serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let mut projects = Vec::new();
+    for root in [
+        util::path!("/other"),
+        util::path!("/repo/.delta/worktrees/a/repo"),
+        util::path!("/repo"),
+        util::path!("/repo/.delta/worktrees/b/repo"),
+    ] {
+        let project = project::Project::test(fs.clone(), [Path::new(root)], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        projects.push(project);
+    }
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(projects[0].clone(), window, cx));
+    let checkout_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(projects[1].clone(), window, cx)
+    });
+    let source_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(projects[2].clone(), window, cx)
+    });
+    let second_checkout_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(projects[3].clone(), window, cx)
+    });
+    let other_workspace = multi_workspace.read_with(cx, |multi_workspace, _| {
+        multi_workspace.workspaces().next().unwrap().clone()
+    });
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.activate(source_workspace.clone(), None, window, cx);
+        multi_workspace.activate(other_workspace.clone(), None, window, cx);
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    let project_group_key =
+        checkout_workspace.read_with(cx, |workspace, cx| workspace.project_group_key(cx));
+    let other_group_key =
+        other_workspace.read_with(cx, |workspace, cx| workspace.project_group_key(cx));
+    assert_eq!(
+        multi_workspace.read_with(cx, |multi_workspace, cx| {
+            (
+                source_workspace.read(cx).project_group_key(cx) == project_group_key,
+                worktree_picker_workspace(multi_workspace, &project_group_key, cx),
+                worktree_picker_workspace(multi_workspace, &other_group_key, cx),
+            )
+        }),
+        (true, Some(checkout_workspace.clone()), None),
+        "the group's last active workspace has no repository, so its checkout is used; \
+         a group without a Git repository gets no worktree picker row"
+    );
+    checkout_workspace.update_in(cx, |workspace, window, cx| {
+        let project = workspace.project().clone();
+        let workspace_handle = workspace.weak_handle();
+        workspace.toggle_modal(window, cx, |window, cx| {
+            WorktreePicker::new_modal(project, workspace_handle, None, window, cx)
+        });
+    });
+    cx.run_until_parked();
+    let stale_picker = checkout_workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_modal::<WorktreePicker>(cx)
+            .map(|picker| picker.entity_id())
+    });
+    let menu_handle = project_menu_handle(&sidebar, &project_group_key, cx);
+    let is_menu_open = confirm_project_menu_row(&menu_handle, 5, cx);
+    cx.run_until_parked();
+    assert_eq!(
+        (
+            is_menu_open,
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone()),
+            checkout_workspace.read_with(cx, |workspace, cx| {
+                let picker = workspace
+                    .active_modal::<WorktreePicker>(cx)
+                    .map(|picker| picker.entity_id());
+                picker.is_some() && picker != stale_picker
+            }),
+        ),
+        (false, checkout_workspace, true),
+        "the group's own workspace is activated and shows the worktree picker"
+    );
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.activate(second_checkout_workspace.clone(), None, window, cx);
+        multi_workspace.activate(other_workspace.clone(), None, window, cx);
+    });
+    let host_of_last_active_checkout = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        worktree_picker_workspace(multi_workspace, &project_group_key, cx)
+    });
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings
+                .git
+                .get_or_insert_default()
+                .enabled
+                .get_or_insert_default()
+                .enable_status = Some(false);
+        });
+    });
+    let host_without_git_status = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        worktree_picker_workspace(multi_workspace, &project_group_key, cx)
+    });
+    assert_eq!(
+        (host_of_last_active_checkout, host_without_git_status),
+        (Some(second_checkout_workspace), None),
+        "the group's last active checkout hosts the picker; without Git status there is no row"
+    );
+}
+
+#[gpui::test]
 async fn test_key_change_keeps_the_group_of_closed_rows_that_stay_listed(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());

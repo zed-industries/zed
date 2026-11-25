@@ -1,5 +1,4 @@
 [package]
-authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
 edition.workspace = true
 name = "collab"
