@@ -1993,6 +1993,7 @@ impl Editor {
                         annotation_range: outline_item.annotation_range.and_then(|range| {
                             multi_buffer.buffer_anchor_range_to_anchor_range(range)
                         }),
+                        kind: outline_item.kind,
                     })
                 })
                 .collect()

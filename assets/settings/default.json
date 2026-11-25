@@ -1473,6 +1473,14 @@
   // - "on": Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
   "document_symbols": "off",
 
+  // Symbol kinds to hide from the outline panel.
+  // Uses the same names as LSP symbol kinds, for example "field", "struct",
+  // or "enum_member". Hiding a kind also hides its children.
+  // Add kinds for a single language under `languages.<Language>.hidden_symbol_kinds`;
+  // language kinds are added to this list, so they cannot re-show a kind hidden here.
+  // Default: [] (all symbols are shown)
+  "hidden_symbol_kinds": [],
+
   // When to automatically save edited buffers. This setting can
   // take four values.
   //

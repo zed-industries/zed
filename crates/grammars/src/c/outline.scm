@@ -11,22 +11,22 @@
 
 (struct_specifier
   "struct" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.struct
 
 (union_specifier
   "union" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.struct
 
 (enum_specifier
   "enum" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.enum
 
 (enumerator
-  name: (_) @name) @item
+  name: (_) @name) @item @item.enum_member
 
 (field_declaration
   type: (_) @context
-  declarator: (field_identifier) @name) @item
+  declarator: (field_identifier) @name) @item @item.field
 
 (type_definition
   "typedef" @context
@@ -57,7 +57,7 @@
           parameters: (parameter_list
             "(" @context
             ")" @context))))
-  ]) @item
+  ]) @item @item.function
 
 (function_definition
   (type_qualifier)? @context
@@ -84,6 +84,6 @@
           parameters: (parameter_list
             "(" @context
             ")" @context))))
-  ]) @item
+  ]) @item @item.function
 
 (comment) @annotation

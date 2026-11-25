@@ -6580,6 +6580,7 @@ impl MultiBufferSnapshot {
                     annotation_range: item.annotation_range.map(|annotation_range| {
                         Anchor::range_in_buffer(path_key_index, annotation_range)
                     }),
+                    kind: item.kind,
                 })
                 .collect(),
         ))
@@ -6627,6 +6628,7 @@ impl MultiBufferSnapshot {
                         annotation_range: item.annotation_range.map(|body_range| {
                             Anchor::range_in_buffer(excerpt.path_key_index, body_range)
                         }),
+                        kind: item.kind,
                     })
                 })
                 .collect(),

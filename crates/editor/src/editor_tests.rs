@@ -28605,6 +28605,7 @@ async fn test_go_to_symbol_after_edit(cx: &mut TestAppContext) {
                         name_ranges: Vec::new(),
                         body_range: None,
                         annotation_range: None,
+                        kind: None,
                     }
                 })
                 .collect::<Vec<_>>();

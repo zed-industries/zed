@@ -1,10 +1,11 @@
 use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::{App, Pixels};
-pub use settings::{DockSide, FolderIndicator, Settings, ShowIndentGuides};
+use language::SymbolKind;
+pub use settings::{DockSide, FolderIndicator, OutlineSymbolKind, Settings, ShowIndentGuides};
 use settings::{IntoGpui, RegisterSetting};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
-#[derive(Debug, Clone, Copy, PartialEq, RegisterSetting)]
+#[derive(Debug, Clone, PartialEq, RegisterSetting)]
 pub struct OutlinePanelSettings {
     pub button: bool,
     pub default_width: Pixels,
@@ -19,6 +20,43 @@ pub struct OutlinePanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub expand_outlines_with_depth: usize,
     pub multi_buffer_hide_symbols: bool,
+}
+
+pub(crate) trait OutlineSymbolKindExt {
+    fn to_symbol_kind(self) -> SymbolKind;
+}
+
+impl OutlineSymbolKindExt for OutlineSymbolKind {
+    fn to_symbol_kind(self) -> SymbolKind {
+        match self {
+            Self::File => SymbolKind::File,
+            Self::Module => SymbolKind::Module,
+            Self::Namespace => SymbolKind::Namespace,
+            Self::Package => SymbolKind::Package,
+            Self::Class => SymbolKind::Class,
+            Self::Method => SymbolKind::Method,
+            Self::Property => SymbolKind::Property,
+            Self::Field => SymbolKind::Field,
+            Self::Constructor => SymbolKind::Constructor,
+            Self::Enum => SymbolKind::Enum,
+            Self::Interface => SymbolKind::Interface,
+            Self::Function => SymbolKind::Function,
+            Self::Variable => SymbolKind::Variable,
+            Self::Constant => SymbolKind::Constant,
+            Self::String => SymbolKind::String,
+            Self::Number => SymbolKind::Number,
+            Self::Boolean => SymbolKind::Boolean,
+            Self::Array => SymbolKind::Array,
+            Self::Object => SymbolKind::Object,
+            Self::Key => SymbolKind::Key,
+            Self::Null => SymbolKind::Null,
+            Self::EnumMember => SymbolKind::EnumMember,
+            Self::Struct => SymbolKind::Struct,
+            Self::Event => SymbolKind::Event,
+            Self::Operator => SymbolKind::Operator,
+            Self::TypeParameter => SymbolKind::TypeParameter,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -78,6 +116,29 @@ impl Settings for OutlinePanelSettings {
             },
             expand_outlines_with_depth: panel.expand_outlines_with_depth.unwrap(),
             multi_buffer_hide_symbols: panel.multi_buffer_hide_symbols.unwrap(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use strum::VariantArray;
+
+    #[test]
+    fn outline_symbol_kind_names_match_language_symbol_kinds() {
+        for kind in OutlineSymbolKind::VARIANTS {
+            let language_kind = kind.to_symbol_kind();
+            assert_eq!(
+                kind.as_ref(),
+                language_kind.as_ref(),
+                "settings and language symbol kind names should match for {kind:?}"
+            );
+            assert_eq!(
+                kind.as_ref().parse::<SymbolKind>().unwrap(),
+                language_kind,
+                "outline grammar capture names should parse to the same symbol kind"
+            );
         }
     }
 }

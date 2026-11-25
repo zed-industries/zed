@@ -203,7 +203,10 @@ This query captures object keys for the outline structure.
 | @item          | Captures the entire key-value pair                                                   |
 | @context       | Captures elements that provide context for the outline item                          |
 | @context.extra | Captures additional contextual information for the outline item                      |
+| @item.<kind>   | Optionally classifies the outline item by symbol kind, for example `@item.field`     |
 | @annotation    | Captures nodes that annotate outline item (doc comments, attributes, decorators)[^1] |
+
+Valid `<kind>` values match LSP symbol kinds in snake_case, such as `class`, `field`, `function`, `method`, `struct`, `enum`, and `enum_member`.
 
 [^1]: These annotations are used by Assistant when generating code modification steps.
 

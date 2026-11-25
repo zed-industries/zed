@@ -1066,15 +1066,19 @@ mod tests {
                 outline
                     .items
                     .iter()
-                    .map(|item| (item.text.as_str(), item.depth))
+                    .map(|item| (item.text.as_str(), item.depth, item.kind))
                     .collect::<Vec<_>>(),
                 &[
-                    ("function a()", 0),
-                    ("let a1", 1),
-                    ("async function a2()", 1),
-                    ("let b", 0),
-                    ("function getB()", 0),
-                    ("const d", 0),
+                    ("function a()", 0, Some(language::SymbolKind::Function)),
+                    ("let a1", 1, Some(language::SymbolKind::Variable)),
+                    (
+                        "async function a2()",
+                        1,
+                        Some(language::SymbolKind::Function)
+                    ),
+                    ("let b", 0, Some(language::SymbolKind::Variable)),
+                    ("function getB()", 0, Some(language::SymbolKind::Function)),
+                    ("const d", 0, Some(language::SymbolKind::Variable)),
                 ]
             );
         }

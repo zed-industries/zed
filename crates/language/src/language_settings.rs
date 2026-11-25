@@ -13,7 +13,9 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::Itertools;
-use settings::{DelayMs, DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
+use settings::{
+    DelayMs, DocumentFoldingRanges, DocumentSymbols, IntoGpui, OutlineSymbolKind, SemanticTokens,
+};
 
 pub use settings::{
     AutoIndentMode, CompletionSettingsContent, ConfiguredLanguageServer,
@@ -112,6 +114,10 @@ pub struct LanguageSettings {
     pub document_folding_ranges: DocumentFoldingRanges,
     /// Controls the source of document symbols used for outlines and breadcrumbs.
     pub document_symbols: DocumentSymbols,
+    /// Symbol kinds to hide from the outline panel for this language.
+    ///
+    /// Includes the root-level kinds plus any kinds set for this language.
+    pub hidden_symbol_kinds: Vec<OutlineSymbolKind>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already
@@ -872,6 +878,7 @@ impl settings::Settings for AllLanguageSettings {
                 semantic_tokens: settings.semantic_tokens.unwrap(),
                 document_folding_ranges: settings.document_folding_ranges.unwrap(),
                 document_symbols: settings.document_symbols.unwrap(),
+                hidden_symbol_kinds: settings.hidden_symbol_kinds.unwrap(),
                 allow_rewrap: settings.allow_rewrap.unwrap(),
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),
                 edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap().0,
@@ -932,6 +939,24 @@ impl settings::Settings for AllLanguageSettings {
         for (language_name, settings) in &all_languages.languages.0 {
             let mut language_settings = all_languages.defaults.clone();
             settings::merge_from::MergeFrom::merge_from(&mut language_settings, settings);
+
+            // Per-language hidden symbol kinds add to the root-level kinds rather
+            // than replacing them, so a language can hide more symbols but cannot
+            // re-show a kind that the default hides.
+            if let Some(default_hidden_symbol_kinds) =
+                all_languages.defaults.hidden_symbol_kinds.as_ref()
+            {
+                let hidden_symbol_kinds = language_settings
+                    .hidden_symbol_kinds
+                    .get_or_insert_with(Vec::new);
+                let missing: Vec<_> = default_hidden_symbol_kinds
+                    .iter()
+                    .copied()
+                    .filter(|kind| !hidden_symbol_kinds.contains(kind))
+                    .collect();
+                hidden_symbol_kinds.extend(missing);
+            }
+
             languages.insert(
                 LanguageName(language_name.clone().into()),
                 Arc::new(load_from_content(language_settings)),
@@ -1172,6 +1197,51 @@ mod tests {
                 "language settings: {language_settings}"
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_hidden_symbol_kinds_per_language(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
+
+        let settings = store.get::<AllLanguageSettings>(None);
+        assert!(settings.defaults.hidden_symbol_kinds.is_empty());
+
+        store
+            .set_user_settings(
+                &serde_json::json!({
+                    "hidden_symbol_kinds": ["variable"],
+                    "languages": {
+                        "Rust": {"hidden_symbol_kinds": ["field"]},
+                        "Python": {"hidden_symbol_kinds": []},
+                    },
+                })
+                .to_string(),
+                cx,
+            )
+            .expect("user settings should load");
+
+        let settings = store.get::<AllLanguageSettings>(None);
+        assert_eq!(
+            settings.defaults.hidden_symbol_kinds,
+            vec![OutlineSymbolKind::Variable]
+        );
+        assert_eq!(
+            settings
+                .languages
+                .get(&LanguageName::from("Rust"))
+                .expect("Rust settings should load")
+                .hidden_symbol_kinds,
+            vec![OutlineSymbolKind::Field, OutlineSymbolKind::Variable]
+        );
+        assert_eq!(
+            settings
+                .languages
+                .get(&LanguageName::from("Python"))
+                .expect("Python settings should load")
+                .hidden_symbol_kinds,
+            vec![OutlineSymbolKind::Variable]
+        );
     }
 
     #[gpui::test]

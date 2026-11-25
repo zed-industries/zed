@@ -176,6 +176,24 @@ impl ContextMenuEntry {
         self
     }
 
+    /// Adds a secondary action rendered as an icon at the end of the entry.
+    ///
+    /// The menu must also set an `end_slot_action` for the icon to render; that
+    /// action is used for the tooltip and to invoke the icon's handler from the
+    /// keyboard.
+    pub fn end_slot(
+        mut self,
+        icon: IconName,
+        title: impl Into<SharedString>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.end_slot_icon = Some(icon);
+        self.end_slot_title = Some(title.into());
+        self.end_slot_handler = Some(Rc::new(move |_, window, cx| handler(window, cx)));
+        self.show_end_slot_on_hover = false;
+        self
+    }
+
     pub fn secondary_handler(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.secondary_handler = Some(Rc::new(move |_, window, cx| handler(window, cx)));
         self

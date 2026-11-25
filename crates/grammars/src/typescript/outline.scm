@@ -1,10 +1,10 @@
 (internal_module
   "namespace" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.namespace
 
 (enum_declaration
   "enum" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.enum
 
 (type_alias_declaration
   "type" @context
@@ -16,7 +16,7 @@
   name: (_) @name
   parameters: (formal_parameters
     "(" @context
-    ")" @context)) @item
+    ")" @context)) @item @item.function
 
 (generator_function_declaration
   "async"? @context
@@ -25,11 +25,11 @@
   name: (_) @name
   parameters: (formal_parameters
     "(" @context
-    ")" @context)) @item
+    ")" @context)) @item @item.function
 
 (interface_declaration
   "interface" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.interface
 
 (export_statement
   (lexical_declaration
@@ -38,7 +38,7 @@
       "const"
     ] @context
     (variable_declarator
-      name: (identifier) @name) @item))
+      name: (identifier) @name) @item)) @item.variable
 
 ; Exported array destructuring
 (export_statement
@@ -50,11 +50,11 @@
     (variable_declarator
       name: (array_pattern
         [
-          (identifier) @name @item
+          (identifier) @name @item @item.variable
           (assignment_pattern
-            left: (identifier) @name @item)
+            left: (identifier) @name @item @item.variable)
           (rest_pattern
-            (identifier) @name @item)
+            (identifier) @name @item @item.variable)
         ]))))
 
 ; Exported object destructuring
@@ -67,14 +67,14 @@
     (variable_declarator
       name: (object_pattern
         [
-          (shorthand_property_identifier_pattern) @name @item
+          (shorthand_property_identifier_pattern) @name @item @item.variable
           (pair_pattern
-            value: (identifier) @name @item)
+            value: (identifier) @name @item @item.variable)
           (pair_pattern
             value: (assignment_pattern
-              left: (identifier) @name @item))
+              left: (identifier) @name @item @item.variable))
           (rest_pattern
-            (identifier) @name @item)
+            (identifier) @name @item @item.variable)
         ]))))
 
 (program
@@ -84,7 +84,7 @@
       "const"
     ] @context
     (variable_declarator
-      name: (identifier) @name) @item))
+      name: (identifier) @name) @item)) @item.variable
 
 ; Top-level array destructuring
 (program
@@ -96,11 +96,11 @@
     (variable_declarator
       name: (array_pattern
         [
-          (identifier) @name @item
+          (identifier) @name @item @item.variable
           (assignment_pattern
-            left: (identifier) @name @item)
+            left: (identifier) @name @item @item.variable)
           (rest_pattern
-            (identifier) @name @item)
+            (identifier) @name @item @item.variable)
         ]))))
 
 ; Top-level object destructuring
@@ -113,24 +113,24 @@
     (variable_declarator
       name: (object_pattern
         [
-          (shorthand_property_identifier_pattern) @name @item
+          (shorthand_property_identifier_pattern) @name @item @item.variable
           (pair_pattern
-            value: (identifier) @name @item)
+            value: (identifier) @name @item @item.variable)
           (pair_pattern
             value: (assignment_pattern
-              left: (identifier) @name @item))
+              left: (identifier) @name @item @item.variable))
           (rest_pattern
-            (identifier) @name @item)
+            (identifier) @name @item @item.variable)
         ]))))
 
 (class_declaration
   "class" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.class
 
 (abstract_class_declaration
   "abstract" @context
   "class" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.class
 
 ; Method definitions in classes (not in object literals)
 (class_body
@@ -148,7 +148,7 @@
     name: (_) @name
     parameters: (formal_parameters
       "(" @context
-      ")" @context)) @item)
+      ")" @context)) @item) @item.method
 
 ; Object literal methods (including nested objects)
 (object
@@ -162,7 +162,7 @@
     name: (_) @name
     parameters: (formal_parameters
       "(" @context
-      ")" @context)) @item)
+      ")" @context)) @item) @item.method
 
 (public_field_definition
   [
@@ -172,7 +172,7 @@
     "static"
     (accessibility_modifier)
   ]* @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.field
 
 ; Add support for (node:test, bun:test and Jest) runnable
 ; Also matches direct modifiers: .skip, .todo, .only, .failing (Jest, Bun, Vitest)
@@ -232,7 +232,7 @@
       (string_fragment) @name)
     (number) @name
     (computed_property_name) @name
-  ]) @item
+  ]) @item @item.property
 
 ; Nested variables in function bodies
 (statement_block
@@ -242,7 +242,7 @@
       "const"
     ] @context
     (variable_declarator
-      name: (identifier) @name) @item))
+      name: (identifier) @name) @item)) @item.variable
 
 ; Nested array destructuring in functions
 (statement_block
@@ -254,11 +254,11 @@
     (variable_declarator
       name: (array_pattern
         [
-          (identifier) @name @item
+          (identifier) @name @item @item.variable
           (assignment_pattern
-            left: (identifier) @name @item)
+            left: (identifier) @name @item @item.variable)
           (rest_pattern
-            (identifier) @name @item)
+            (identifier) @name @item @item.variable)
         ]))))
 
 ; Nested object destructuring in functions
@@ -271,14 +271,14 @@
     (variable_declarator
       name: (object_pattern
         [
-          (shorthand_property_identifier_pattern) @name @item
+          (shorthand_property_identifier_pattern) @name @item @item.variable
           (pair_pattern
-            value: (identifier) @name @item)
+            value: (identifier) @name @item @item.variable)
           (pair_pattern
             value: (assignment_pattern
-              left: (identifier) @name @item))
+              left: (identifier) @name @item @item.variable))
           (rest_pattern
-            (identifier) @name @item)
+            (identifier) @name @item @item.variable)
         ]))))
 
 (comment) @annotation

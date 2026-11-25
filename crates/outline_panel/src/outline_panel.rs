@@ -23,8 +23,13 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
     uniform_list,
 };
-use language::{Anchor, BufferId, BufferSnapshot, DiskState, OffsetRangeExt, OutlineItem};
-use language::{LanguageAwareStyling, language_settings::LanguageSettings};
+use language::{
+    Anchor, BufferId, BufferSnapshot, DiskState, OffsetRangeExt, OutlineItem, SymbolKind,
+};
+use language::{
+    LanguageAwareStyling,
+    language_settings::{AllLanguageSettings, LanguageSettings},
+};
 
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use std::{
@@ -43,7 +48,7 @@ use outline_panel_settings::{DockSide, FolderIndicator, OutlinePanelSettings, Sh
 use project::{File, Fs, Project, ProjectPath};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsLocation, SettingsStore};
 use theme::{GlobalTheme, SyntaxTheme};
 use theme_settings::ThemeSettings;
 use ui::{
@@ -60,7 +65,9 @@ use workspace::{
 };
 use worktree::{PathProgress, PathTarget, WorktreeId};
 
-use crate::outline_panel_settings::OutlinePanelSettingsScrollbarProxy;
+use crate::outline_panel_settings::{
+    OutlinePanelSettingsScrollbarProxy, OutlineSymbolKindExt as _,
+};
 
 actions!(
     outline_panel,
@@ -356,6 +363,7 @@ enum CollapsedEntry {
 struct BufferOutlines {
     excerpts: Vec<ExcerptRange<Anchor>>,
     outlines: OutlineState,
+    hidden_symbol_kinds: Vec<SymbolKind>,
 }
 
 struct IndexedOutline<'a> {
@@ -370,6 +378,50 @@ struct ExcerptOutlines<'a> {
     expanded: bool,
     visible: Vec<&'a Outline>,
     children_to_cache: Vec<usize>,
+}
+
+/// Removes outlines whose kind is hidden, along with their descendants.
+///
+/// Outlines are ordered depth-first, so descendants of a hidden outline
+/// immediately follow it with a greater depth.
+fn filter_hidden_outlines<'a>(
+    outlines: impl IntoIterator<Item = &'a Outline>,
+    hidden_symbol_kinds: &[SymbolKind],
+) -> Vec<&'a Outline> {
+    let mut hidden_ancestor_depth = None;
+    let mut visible = Vec::new();
+    for outline in outlines {
+        if let Some(depth) = hidden_ancestor_depth {
+            if outline.depth > depth {
+                continue;
+            }
+            hidden_ancestor_depth = None;
+        }
+        if outline
+            .kind
+            .is_some_and(|kind| hidden_symbol_kinds.contains(&kind))
+        {
+            hidden_ancestor_depth = Some(outline.depth);
+            continue;
+        }
+        visible.push(outline);
+    }
+    visible
+}
+
+fn hidden_symbol_kinds_for_snapshot(snapshot: &BufferSnapshot, cx: &App) -> Vec<SymbolKind> {
+    let location = snapshot.file().map(|file| SettingsLocation {
+        worktree_id: file.worktree_id(cx),
+        path: file.path().as_ref(),
+    });
+    let language_name = snapshot.language().map(|language| language.name());
+    AllLanguageSettings::get(location, cx)
+        .language(location, language_name.as_ref(), cx)
+        .hidden_symbol_kinds
+        .iter()
+        .copied()
+        .map(|kind| kind.to_symbol_kind())
+        .collect()
 }
 
 impl IndexedOutline<'_> {
@@ -1124,7 +1176,7 @@ impl OutlinePanel {
                     panel.update_contents(Some(UPDATE_DEBOUNCE), window, cx);
                 });
 
-            let mut outline_panel_settings = *OutlinePanelSettings::get_global(cx);
+            let mut outline_panel_settings = OutlinePanelSettings::get_global(cx).clone();
             let mut current_theme = ThemeSettings::get_global(cx).clone();
             let mut document_symbols_by_buffer = HashMap::default();
             let settings_subscription =
@@ -1133,9 +1185,10 @@ impl OutlinePanel {
                     let new_theme = ThemeSettings::get_global(cx);
                     let auto_fold_dirs_changed =
                         outline_panel_settings.auto_fold_dirs != new_settings.auto_fold_dirs;
+                    let hidden_symbol_kinds_changed = outline_panel.refresh_hidden_symbol_kinds(cx);
                     let mut outlines_invalidated = false;
                     if &current_theme != new_theme {
-                        outline_panel_settings = *new_settings;
+                        outline_panel_settings = new_settings.clone();
                         current_theme = new_theme.clone();
                         outline_panel.outline_fetch_tasks.clear();
                         for buffer in outline_panel.buffers.values_mut() {
@@ -1146,12 +1199,23 @@ impl OutlinePanel {
                             outline_panel.selected_entry.invalidate();
                         }
                         outline_panel.update_contents(Some(UPDATE_DEBOUNCE), window, cx);
-                    } else if &outline_panel_settings != new_settings {
+                    } else if &outline_panel_settings != new_settings || hidden_symbol_kinds_changed
+                    {
                         let old_expansion_depth = outline_panel_settings.expand_outlines_with_depth;
                         let old_hide_symbols = outline_panel_settings.multi_buffer_hide_symbols;
-                        outline_panel_settings = *new_settings;
+                        outline_panel_settings = new_settings.clone();
 
                         let mut update_cached_entries = false;
+                        if hidden_symbol_kinds_changed {
+                            outline_panel.outline_children_cache.clear();
+                            if matches!(
+                                outline_panel.selected_entry(),
+                                Some(PanelEntry::Outline(_))
+                            ) {
+                                outline_panel.selected_entry.invalidate();
+                            }
+                            update_cached_entries = true;
+                        }
                         if old_hide_symbols != outline_panel_settings.multi_buffer_hide_symbols {
                             outline_panel.hide_symbols_override = None;
                             outline_panel.update_non_fs_items(window, cx);
@@ -2857,6 +2921,7 @@ impl OutlinePanel {
                     .unwrap_or_default(),
                 name_ranges: search_data.search_match_indices.clone(),
                 body_range: Some(search_data.context_range.clone()),
+                kind: None,
             },
             match_ranges.iter().cloned(),
             cx,
@@ -3220,6 +3285,7 @@ impl OutlinePanel {
                             BufferOutlines {
                                 outlines,
                                 excerpts: Vec::new(),
+                                hidden_symbol_kinds: hidden_symbol_kinds_for_snapshot(buffer, cx),
                             }
                         })
                         .excerpts
@@ -3617,7 +3683,9 @@ impl OutlinePanel {
             .buffers
             .get(&selection_anchor.buffer_id)
             .into_iter()
-            .flat_map(|buffer| buffer.iter_outlines())
+            .flat_map(|buffer| {
+                filter_hidden_outlines(buffer.iter_outlines(), &buffer.hidden_symbol_kinds)
+            })
             .flat_map(|outline| {
                 let snapshot = buffer_snapshot?;
                 let (start, end) = if outline
@@ -4002,6 +4070,24 @@ impl OutlinePanel {
                 .read(cx)
                 .snapshot(),
         )
+    }
+
+    fn refresh_hidden_symbol_kinds(&mut self, cx: &App) -> bool {
+        let buffer_ids = self.buffers.keys().copied().collect::<Vec<_>>();
+        let mut hidden_symbol_kinds_changed = false;
+        for buffer_id in buffer_ids {
+            let Some(snapshot) = self.buffer_snapshot_for_id(buffer_id, cx) else {
+                continue;
+            };
+            let hidden_symbol_kinds = hidden_symbol_kinds_for_snapshot(&snapshot, cx);
+            if let Some(buffer) = self.buffers.get_mut(&buffer_id)
+                && buffer.hidden_symbol_kinds != hidden_symbol_kinds
+            {
+                buffer.hidden_symbol_kinds = hidden_symbol_kinds;
+                hidden_symbol_kinds_changed = true;
+            }
+        }
+        hidden_symbol_kinds_changed
     }
 
     fn abs_path(&self, entry: &PanelEntry, cx: &App) -> Option<PathBuf> {
@@ -4935,7 +5021,8 @@ impl OutlinePanel {
         let expanded_excerpts = excerpts.iter().filter(|excerpt| excerpt.expanded).count();
         if expanded_excerpts > 0 {
             let children = self.outline_children_cache.entry(buffer_id).or_default();
-            let outlines = buffer.iter_outlines().collect::<Vec<_>>();
+            let outlines =
+                filter_hidden_outlines(buffer.iter_outlines(), &buffer.hidden_symbol_kinds);
             if let Some(snapshot) = snapshot
                 && expanded_excerpts > 1
                 && !outlines.is_empty()
@@ -6030,6 +6117,7 @@ mod tests {
                     BufferOutlines {
                         excerpts: Vec::new(),
                         outlines: OutlineState::Outlines(Vec::new()),
+                        hidden_symbol_kinds: Vec::new(),
                     },
                 );
             }
@@ -9952,6 +10040,28 @@ outline: struct OutlineEntryExcerpt
         });
     }
 
+    fn update_language_settings(
+        cx: &mut VisualTestContext,
+        language: &str,
+        update: impl FnOnce(&mut settings::LanguageSettingsContent),
+    ) {
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    update(
+                        settings
+                            .project
+                            .all_languages
+                            .languages
+                            .0
+                            .entry(language.to_string())
+                            .or_default(),
+                    );
+                });
+            });
+        });
+    }
+
     fn assert_tree(
         outline_panel: &Entity<OutlinePanel>,
         project: &Entity<Project>,
@@ -12059,6 +12169,181 @@ outline: struct Foo  <==== selected
         });
         wait_for_outline_tasks(&outline_panel, cx).await;
         assert_eq!(notifications.next().now_or_never(), None);
+    }
+
+    #[gpui::test]
+    async fn test_outline_panel_hidden_symbol_kinds(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let root = path!("/root");
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            root,
+            json!({
+                "src": {
+                    "lib.rs": indoc!(
+                        "
+                        struct Foo {
+                            bar: u32,
+                            baz: String,
+                        }
+                        "
+                    ),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new(root)], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/root/src/lib.rs")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..OpenOptions::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("Failed to open Rust source file")
+            .downcast::<Editor>()
+            .expect("Should open an editor for Rust source file");
+
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                outline: struct Foo  <==== selected
+                  outline: bar
+                  outline: baz"
+            ),
+            cx,
+        );
+
+        // Hiding kinds for another language does not affect this buffer.
+        update_language_settings(cx, "Python", |language| {
+            language.hidden_symbol_kinds = Some(vec![settings::OutlineSymbolKind::Field]);
+        });
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                outline: struct Foo  <==== selected
+                  outline: bar
+                  outline: baz"
+            ),
+            cx,
+        );
+
+        update_language_settings(cx, "Rust", |language| {
+            language.hidden_symbol_kinds = Some(vec![settings::OutlineSymbolKind::Field]);
+        });
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                outline: struct Foo  <==== selected"
+            ),
+            cx,
+        );
+
+        // Auto-reveal falls back to the nearest visible ancestor when the
+        // symbol at the cursor is hidden.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([language::Point::new(1, 8)..language::Point::new(1, 8)]);
+            });
+        });
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        outline_panel.read_with(cx, |panel, _| {
+            assert_eq!(
+                panel.selected_entry().and_then(|entry| match entry {
+                    PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
+                        Some(outline.text.as_ref())
+                    }
+                    _ => None,
+                }),
+                Some("struct Foo")
+            );
+        });
+
+        // Hiding a kind also hides its descendants.
+        update_language_settings(cx, "Rust", |language| {
+            language.hidden_symbol_kinds = Some(vec![settings::OutlineSymbolKind::Struct]);
+        });
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        outline_panel.read_with(cx, |panel, _| {
+            assert!(panel.cached_entries.iter().all(|entry| {
+                !matches!(
+                    &entry.entry,
+                    PanelEntry::Outline(OutlineEntry::Outline(outline))
+                        if matches!(outline.text.as_ref(), "struct Foo" | "bar" | "baz")
+                )
+            }));
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([language::Point::new(0, 0)..language::Point::new(0, 0)]);
+            });
+        });
+        update_language_settings(cx, "Rust", |language| {
+            language.hidden_symbol_kinds = Some(Vec::new());
+        });
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                outline: struct Foo  <==== selected
+                  outline: bar
+                  outline: baz"
+            ),
+            cx,
+        );
+
+        // Language kinds are added to the default kinds rather than replacing
+        // them, so a language's empty list cannot re-show a default-hidden kind.
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.hidden_symbol_kinds =
+                        Some(vec![settings::OutlineSymbolKind::Field]);
+                    settings
+                        .project
+                        .all_languages
+                        .languages
+                        .0
+                        .entry("Rust".to_string())
+                        .or_default()
+                        .hidden_symbol_kinds = Some(Vec::new());
+                });
+            });
+        });
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                outline: struct Foo  <==== selected"
+            ),
+            cx,
+        );
     }
 
     #[gpui::test]

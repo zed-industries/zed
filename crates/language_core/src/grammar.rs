@@ -1,6 +1,7 @@
 use crate::{
     CaptureId, HighlightId, HighlightMap, LanguageConfig, LanguageConfigOverride, LanguageName,
-    LanguageQueries, highlight_cache::TextHighlightCache, language_config::BracketPairConfig,
+    LanguageQueries, SymbolKind, highlight_cache::TextHighlightCache,
+    language_config::BracketPairConfig,
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -124,6 +125,9 @@ pub struct OutlineConfig {
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
     pub annotation_capture_ix: Option<u32>,
+    /// Captures named `@item.<symbol_kind>` classify the outline entry they
+    /// belong to, allowing the outline panel to filter entries by kind.
+    pub symbol_kind_by_capture_ix: HashMap<u32, SymbolKind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -521,7 +525,7 @@ impl Grammar {
             &query,
             language_name,
             "outline",
-            &[],
+            &["item."],
             &mut [
                 Capture::Required("item", &mut item_capture_ix),
                 Capture::Required("name", &mut name_capture_ix),
@@ -532,6 +536,24 @@ impl Grammar {
                 Capture::Optional("annotation", &mut annotation_capture_ix),
             ],
         ) {
+            let mut symbol_kind_by_capture_ix = HashMap::default();
+            for (ix, name) in query.capture_names().iter().enumerate() {
+                let Some(kind_name) = name.strip_prefix("item.") else {
+                    continue;
+                };
+                match kind_name.parse::<SymbolKind>() {
+                    Ok(kind) => {
+                        symbol_kind_by_capture_ix.insert(ix as u32, kind);
+                    }
+                    Err(_) => {
+                        log::warn!(
+                            "unrecognized symbol kind '{}' in outline {} TreeSitter query",
+                            kind_name,
+                            language_name,
+                        );
+                    }
+                }
+            }
             self.outline_config = Some(OutlineConfig {
                 query,
                 item_capture_ix,
@@ -541,6 +563,7 @@ impl Grammar {
                 open_capture_ix,
                 close_capture_ix,
                 annotation_capture_ix,
+                symbol_kind_by_capture_ix,
             });
         }
         Ok(self)

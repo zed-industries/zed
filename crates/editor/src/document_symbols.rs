@@ -125,6 +125,7 @@ impl Editor {
                                 ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
                         )
                     }),
+                    kind: item.kind,
                 })
             })
             .collect::<Vec<_>>();
@@ -498,6 +499,7 @@ mod tests {
                 name_ranges: vec![name_range.clone()],
                 body_range: None,
                 annotation_range: None,
+                kind: None,
             };
             let label_start = Point::new(0, prefix.len() as u32);
             let label_end = Point::new(0, (prefix.len() + label.len()) as u32);
@@ -624,6 +626,7 @@ mod tests {
                 name_ranges: vec![0..label.len()],
                 body_range: None,
                 annotation_range: None,
+                kind: None,
             };
             let multibuffer = cx.new(|cx| {
                 let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);

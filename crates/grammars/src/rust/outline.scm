@@ -5,16 +5,16 @@
 (struct_item
   (visibility_modifier)? @context
   "struct" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.struct
 
 (enum_item
   (visibility_modifier)? @context
   "enum" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.enum
 
 (enum_variant
   (visibility_modifier)? @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.enum_member
 
 (impl_item
   "impl" @context
@@ -29,7 +29,7 @@
 (trait_item
   (visibility_modifier)? @context
   "trait" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.interface
 
 (function_item
   (visibility_modifier)? @context
@@ -39,13 +39,13 @@
   body: (_
     .
     "{" @open
-    "}" @close .)) @item
+    "}" @close .)) @item @item.function
 
 (function_signature_item
   (visibility_modifier)? @context
   (function_modifiers)? @context
   "fn" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.function
 
 (macro_definition
   .
@@ -55,7 +55,7 @@
 (mod_item
   (visibility_modifier)? @context
   "mod" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.module
 
 (type_item
   (visibility_modifier)? @context
@@ -69,13 +69,13 @@
 (const_item
   (visibility_modifier)? @context
   "const" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.constant
 
 (static_item
   (visibility_modifier)? @context
   "static" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.constant
 
 (field_declaration
   (visibility_modifier)? @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.field

@@ -12,7 +12,7 @@
 (namespace_definition
   "inline"? @context
   "namespace" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.namespace
 
 (type_definition
   "typedef" @context
@@ -20,11 +20,11 @@
 
 (struct_specifier
   "struct" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.struct
 
 (class_specifier
   "class" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.class
 
 (enum_specifier
   "enum" @context
@@ -32,14 +32,14 @@
     "class"
     "struct"
   ]? @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.enum
 
 (union_specifier
   "union" @context
-  name: (_) @name) @item
+  name: (_) @name) @item @item.struct
 
 (enumerator
-  name: (_) @name) @item
+  name: (_) @name) @item @item.enum_member
 
 (concept_definition
   "concept" @context
@@ -57,7 +57,7 @@
     (init_declarator
       declarator: (_) @item @name)
     (identifier) @item @name
-  ] @item)
+  ] @item @item.variable)
 
 (function_definition
   [
@@ -98,7 +98,7 @@
           "(" @context
           ")" @context)))
   ]
-  (type_qualifier)? @context) @item
+  (type_qualifier)? @context) @item @item.function
 
 (declaration
   [
@@ -189,7 +189,7 @@
           ")" @context)))
     ; Fields declarations may define multiple fields, and so @item is on the
     ; declarator so they each get distinct ranges.
-  ] @item
+  ] @item @item.field
   (type_qualifier)? @context)
 
 (comment) @annotation

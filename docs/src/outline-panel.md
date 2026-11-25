@@ -27,6 +27,30 @@ This also works for collapsed folders and compacted folder paths.
 When symbols are hidden in a multibuffer, file rows have no expand/collapse arrows because they have no children in the panel.
 Folder arrows remain available, and clicking any row still navigates without changing its folded state.
 
+## Filtering symbols {#filtering-symbols}
+
+You can hide outline entries by symbol kind, removing noise such as struct fields, local variables, or enum members. Hidden kinds are configured per language, so you can hide Rust fields without hiding fields in other languages.
+
+In the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux and Windows), open **Panels → Outline Panel**, choose `Default` or a language from the “Hidden Symbol Kinds” picker, and turn on the kinds you want to hide. Languages that add their own kinds show a reset button in the picker. Or add this to your settings.json:
+
+```json [settings]
+{
+  "hidden_symbol_kinds": ["variable"],
+  "languages": {
+    "Rust": {
+      "hidden_symbol_kinds": ["field"]
+    }
+  }
+}
+```
+
+Language-specific kinds are added to the root-level `hidden_symbol_kinds`. In the example above, Rust hides both variables and fields, while other languages hide only variables.
+
+Values use the same names as LSP symbol kinds: `file`, `module`, `namespace`, `package`, `class`, `method`, `property`, `field`, `constructor`, `enum`, `interface`, `function`, `variable`, `constant`, `string`, `number`, `boolean`, `array`, `object`, `key`, `null`, `enum_member`, `struct`, `event`, `operator`, `type_parameter`.
+Use the language names shown in Zed, such as `"Rust"`, `"TypeScript"`, or `"TSX"`.
+
+Hiding a kind also hides its children. Kind information comes from the language server when `document_symbols` is set to `"on"`, or from the language's tree-sitter outline query. Symbols whose kind is unknown stay visible.
+
 ## Usage with multibuffers
 
 File rows follow the order of the files in the multibuffer.

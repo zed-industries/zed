@@ -4859,6 +4859,7 @@ impl BufferSnapshot {
                         ..Point::new(annotation_range.end, self.line_len(annotation_range.end));
                     range_callback(self, point_range)
                 }),
+                kind: item.kind,
             });
             item_ends_stack.push(item.range.end);
         }
@@ -4988,6 +4989,13 @@ impl BufferSnapshot {
             last_buffer_range_end = buffer_range.end;
         }
 
+        let kind = mat.captures.iter().find_map(|capture| {
+            config
+                .symbol_kind_by_capture_ix
+                .get(&capture.index)
+                .copied()
+        });
+
         Some(OutlineItem {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
@@ -4998,6 +5006,7 @@ impl BufferSnapshot {
             name_ranges,
             body_range: open_point.zip(close_point).map(|(start, end)| start..end),
             annotation_range: None,
+            kind,
         })
     }
 

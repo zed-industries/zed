@@ -1,4 +1,4 @@
-use crate::{BufferSnapshot, Language, Point, ToPoint, ToTreeSitterPoint};
+use crate::{BufferSnapshot, Language, Point, SymbolKind, ToPoint, ToTreeSitterPoint};
 use fuzzy_nucleo::{MaxResults, StringMatch, StringMatchCandidate, StringMatchOptions};
 use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
 use std::{ops::Range, sync::Arc};
@@ -27,6 +27,9 @@ pub struct OutlineItem<T> {
     pub name_ranges: Vec<Range<usize>>,
     pub body_range: Option<Range<T>>,
     pub annotation_range: Option<Range<T>>,
+    /// The kind of symbol this entry represents, when known. Used by the
+    /// outline panel to filter entries by kind.
+    pub kind: Option<SymbolKind>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,6 +91,7 @@ impl<T: ToPoint> OutlineItem<T> {
                 .annotation_range
                 .as_ref()
                 .map(|r| r.start.to_point(buffer)..r.end.to_point(buffer)),
+            kind: self.kind,
         }
     }
 
@@ -337,6 +341,7 @@ mod tests {
             name_ranges: Vec::new(),
             body_range: None,
             annotation_range: None,
+            kind: None,
         };
 
         assert_eq!(item.body_range(&snapshot), None);
@@ -355,6 +360,7 @@ mod tests {
                 name_ranges: vec![6..9],
                 body_range: None,
                 annotation_range: None,
+                kind: None,
             },
             OutlineItem {
                 depth: 0,
@@ -366,6 +372,7 @@ mod tests {
                 name_ranges: vec![],
                 body_range: None,
                 annotation_range: None,
+                kind: None,
             },
         ]);
         assert!(
@@ -398,6 +405,7 @@ mod tests {
                 name_ranges: vec![3..10],
                 body_range: None,
                 annotation_range: None,
+                kind: None,
             },
             OutlineItem {
                 depth: 0,
@@ -409,6 +417,7 @@ mod tests {
                 name_ranges: vec![7..20],
                 body_range: None,
                 annotation_range: None,
+                kind: None,
             },
         ]);
         assert_eq!(

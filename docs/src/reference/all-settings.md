@@ -4025,6 +4025,7 @@ The following settings can be overridden for each specific language:
 - [`format_on_save`](#format-on-save)
 - [`formatter`](#formatter)
 - [`hard_tabs`](#hard-tabs)
+- [`hidden_symbol_kinds`](#hidden-symbol-kinds)
 - [`preferred_line_length`](#preferred-line-length)
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
 - [`semantic_tokens`](#semantic-tokens)
@@ -4063,6 +4064,34 @@ Example:
   }
 }
 ```
+
+### Hidden Symbol Kinds
+
+- Description: Symbol kinds to hide from the outline panel for this language.
+- Setting: `hidden_symbol_kinds`
+- Default: `[]`
+
+**Options**
+
+Uses the same names as LSP symbol kinds, such as `"field"`, `"struct"`, `"enum"`, `"function"`, or `"variable"`.
+Hiding a kind also hides its children.
+Language-specific kinds are added to the root-level `hidden_symbol_kinds`, so they cannot re-show a kind that the root setting hides.
+In the Settings Editor, **Panels → Outline Panel → Hidden Symbol Kinds** lets you choose a language and toggle these kinds. Languages that add their own kinds show a reset button in the picker.
+
+Example:
+
+```json [settings]
+{
+  "hidden_symbol_kinds": ["variable"],
+  "languages": {
+    "Rust": {
+      "hidden_symbol_kinds": ["field"]
+    }
+  }
+}
+```
+
+In this example, Rust hides both variables and fields, while other languages hide only variables.
 
 ## Language Servers {#language-servers}
 

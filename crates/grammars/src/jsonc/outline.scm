@@ -1,3 +1,3 @@
 (pair
   key: (string
-    (string_content) @name)) @item
+    (string_content) @name)) @item @item.property

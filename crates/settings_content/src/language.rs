@@ -7,8 +7,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
 use crate::{
-    DelayMs, DocumentFoldingRanges, DocumentSymbols, ExtendingSet, SemanticTokens, SplicingVec,
-    merge_from,
+    DelayMs, DocumentFoldingRanges, DocumentSymbols, ExtendingSet, OutlineSymbolKind,
+    SemanticTokens, SplicingVec, merge_from,
 };
 
 /// The state of the modifier keys at some point in time
@@ -674,6 +674,18 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: "off"
     pub document_symbols: Option<DocumentSymbols>,
+    /// Symbol kinds to hide from the outline panel for this language.
+    ///
+    /// Uses the same names as LSP symbol kinds, for example `"field"`,
+    /// `"struct"`, `"enum_member"`, or `"function"`.
+    /// Hiding a kind also hides its children.
+    ///
+    /// Language-specific kinds are added to the root-level
+    /// `hidden_symbol_kinds`, so they cannot re-show a kind that the root
+    /// setting hides.
+    ///
+    /// Default: [] (no additional symbols are hidden)
+    pub hidden_symbol_kinds: Option<Vec<OutlineSymbolKind>>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already

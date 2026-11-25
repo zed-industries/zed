@@ -15,15 +15,17 @@ use gpui::{
     WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, actions, container_query, div,
     list, point, prelude::*, px, uniform_list,
 };
+use heck::ToTitleCase as _;
 
-use language::Buffer;
+use language::{Buffer, LanguageName, language_settings::AllLanguageSettings};
 use platform_title_bar::PlatformTitleBar;
 use project::{DisableAiSettings, Project, ProjectPath, Worktree, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{
-    IntoGpui, Settings, SettingsContent, SettingsStore, initial_project_settings_content,
+    IntoGpui, Settings, SettingsContent, SettingsLocation, SettingsStore,
+    initial_project_settings_content,
 };
 use std::{
     any::{Any, TypeId, type_name},
@@ -38,9 +40,9 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
-    KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem, WithScrollbar,
-    prelude::*,
+    Banner, ContextMenu, ContextMenuEntry, Divider, DropdownMenu, DropdownStyle, IconButtonShape,
+    KeyBinding, KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem,
+    WithScrollbar, prelude::*,
 };
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -548,6 +550,7 @@ fn init_renderers(cx: &mut App) {
                 )
             },
         )
+        .add_renderer::<Vec<settings::OutlineSymbolKind>>(render_hidden_symbol_kinds)
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
         .add_basic_renderer::<SharedString>(render_text_field)
@@ -985,6 +988,11 @@ pub struct SettingsWindow {
     list_state: ListState,
     bottom_spacer_height: Pixels,
     shown_errors: HashSet<String>,
+    /// The language selected in the outline panel's hidden symbol kinds setting.
+    /// `None` means the inherited default.
+    hidden_symbol_kinds_language: Option<String>,
+    /// Whether the hidden symbol kinds matrix is expanded.
+    hidden_symbol_kinds_expanded: bool,
     pub(crate) hidden_deleted_skills: HashSet<crate::pages::DeletedSkill>,
     pub(crate) regex_validation_error: Option<String>,
     pub(crate) sandbox_host_validation_error: Option<String>,
@@ -1468,15 +1476,18 @@ fn render_settings_item_layout(
                 ),
         )
         .child(control)
-        .when(settings_window.sub_page_stack.is_empty(), |this| {
-            this.child(render_settings_item_link(
-                description,
-                json_path,
-                sub_field,
-                settings_window,
-                cx,
-            ))
-        })
+        .when(
+            settings_window.sub_page_stack.is_empty() && json_path.is_some(),
+            |this| {
+                this.child(render_settings_item_link(
+                    description,
+                    json_path,
+                    sub_field,
+                    settings_window,
+                    cx,
+                ))
+            },
+        )
 }
 
 fn render_settings_item(
@@ -2029,6 +2040,8 @@ impl SettingsWindow {
                 .tab_stop(false),
             search_index: None,
             shown_errors: HashSet::default(),
+            hidden_symbol_kinds_language: None,
+            hidden_symbol_kinds_expanded: false,
             hidden_deleted_skills: HashSet::default(),
             regex_validation_error: None,
             sandbox_host_validation_error: None,
@@ -5140,6 +5153,434 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .into_any_element()
 }
 
+fn outline_symbol_kind_label(kind: settings::OutlineSymbolKind) -> SharedString {
+    kind.as_ref().to_title_case().into()
+}
+
+fn hidden_symbol_kinds_after_toggle(
+    current: &[settings::OutlineSymbolKind],
+    kind: settings::OutlineSymbolKind,
+    hidden: bool,
+) -> Vec<settings::OutlineSymbolKind> {
+    let mut next = current.to_vec();
+    next.retain(|existing| *existing != kind);
+    if hidden {
+        next.push(kind);
+    }
+
+    <settings::OutlineSymbolKind as strum::VariantArray>::VARIANTS
+        .iter()
+        .copied()
+        .filter(|variant| next.contains(variant))
+        .collect()
+}
+
+fn write_hidden_symbol_kinds(
+    settings: &mut SettingsContent,
+    language: Option<&str>,
+    kinds: Vec<settings::OutlineSymbolKind>,
+) {
+    match language {
+        Some(language) => {
+            settings
+                .project
+                .all_languages
+                .languages
+                .0
+                .entry(language.to_string())
+                .or_default()
+                .hidden_symbol_kinds = Some(kinds);
+        }
+        None => {
+            settings.project.all_languages.defaults.hidden_symbol_kinds = Some(kinds);
+        }
+    }
+}
+
+fn reset_hidden_symbol_kinds(settings: &mut SettingsContent, language: Option<&str>) {
+    match language {
+        Some(language) => {
+            let languages = &mut settings.project.all_languages.languages.0;
+            let remove_entry = if let Some(language_settings) = languages.get_mut(language) {
+                language_settings.hidden_symbol_kinds = None;
+                language_settings == &settings::LanguageSettingsContent::default()
+            } else {
+                false
+            };
+            if remove_entry {
+                languages.remove(language);
+            }
+        }
+        None => {
+            settings.project.all_languages.defaults.hidden_symbol_kinds = None;
+        }
+    }
+}
+
+fn hidden_symbol_kinds_has_own_toggles_in_file(
+    file: &SettingsUiFile,
+    language: Option<&str>,
+    default_hidden_symbol_kinds: &[settings::OutlineSymbolKind],
+    cx: &App,
+) -> bool {
+    let Some(content) = SettingsStore::global(cx).get_content_for_file(file.to_settings()) else {
+        return false;
+    };
+
+    let kinds = match language {
+        Some(language) => content
+            .project
+            .all_languages
+            .languages
+            .0
+            .get(language)
+            .and_then(|language_settings| language_settings.hidden_symbol_kinds.as_ref()),
+        None => content
+            .project
+            .all_languages
+            .defaults
+            .hidden_symbol_kinds
+            .as_ref(),
+    };
+
+    kinds.is_some_and(|kinds| {
+        kinds
+            .iter()
+            .any(|kind| !default_hidden_symbol_kinds.contains(kind))
+    })
+}
+
+fn own_hidden_symbol_kinds(
+    hidden_symbol_kinds: &[settings::OutlineSymbolKind],
+    default_hidden_symbol_kinds: &[settings::OutlineSymbolKind],
+    language: Option<&str>,
+) -> Vec<settings::OutlineSymbolKind> {
+    if language.is_none() {
+        return hidden_symbol_kinds.to_vec();
+    }
+
+    hidden_symbol_kinds
+        .iter()
+        .copied()
+        .filter(|kind| !default_hidden_symbol_kinds.contains(kind))
+        .collect()
+}
+
+fn settings_location_for_file(file: &SettingsUiFile) -> Option<SettingsLocation<'_>> {
+    match file {
+        SettingsUiFile::Project((worktree_id, path)) => Some(SettingsLocation {
+            worktree_id: *worktree_id,
+            path: path.as_ref(),
+        }),
+        _ => None,
+    }
+}
+
+fn render_hidden_symbol_kinds_language_picker(
+    selected_language: Option<String>,
+    default_hidden_symbol_kinds: Vec<settings::OutlineSymbolKind>,
+    file: SettingsUiFile,
+    json_path: Option<&'static str>,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let mut language_names = all_language_names(cx);
+    language_names.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+
+    let settings_window = cx.entity();
+    let menu_selected_language = selected_language.clone();
+    let menu_file = file;
+    let menu = ContextMenu::build_persistent(window, cx, move |mut menu, _, menu_cx| {
+        menu = menu
+            .keep_open_on_confirm(false)
+            .end_slot_action(Box::new(menu::SecondaryConfirm))
+            .header("Language");
+
+        let menu_handle = menu_cx.weak_entity();
+
+        let default_entry = ContextMenuEntry::new("Default")
+            .toggle(IconPosition::Start, menu_selected_language.is_none())
+            .handler({
+                let settings_window = settings_window.clone();
+                move |_window, cx| {
+                    settings_window.update(cx, |this, cx| {
+                        this.hidden_symbol_kinds_language = None;
+                        cx.notify();
+                    });
+                }
+            });
+
+        let default_entry =
+            if hidden_symbol_kinds_has_own_toggles_in_file(&menu_file, None, &[], menu_cx) {
+                let reset_file = menu_file.clone();
+                let menu_handle = menu_handle.clone();
+                default_entry.end_slot(IconName::Undo, "Reset to Default", move |window, cx| {
+                    let reset_file = reset_file.clone();
+                    update_settings_file(reset_file, json_path, window, cx, move |settings, _| {
+                        reset_hidden_symbol_kinds(settings, None);
+                    })
+                    .log_err();
+                    menu_handle
+                        .update(cx, |_, cx| cx.emit(gpui::DismissEvent))
+                        .log_err();
+                })
+            } else {
+                default_entry
+            };
+
+        menu = menu.item(default_entry);
+
+        for language_name in &language_names {
+            let is_selected = menu_selected_language.as_deref() == Some(language_name.as_ref());
+            let language = language_name.to_string();
+            let entry = ContextMenuEntry::new(language_name.clone())
+                .toggle(IconPosition::Start, is_selected)
+                .handler({
+                    let language = language.clone();
+                    let settings_window = settings_window.clone();
+                    move |_window, cx| {
+                        let language = language.clone();
+                        settings_window.update(cx, |this, cx| {
+                            this.hidden_symbol_kinds_language = Some(language);
+                            cx.notify();
+                        });
+                    }
+                });
+
+            let entry = if hidden_symbol_kinds_has_own_toggles_in_file(
+                &menu_file,
+                Some(&language),
+                &default_hidden_symbol_kinds,
+                menu_cx,
+            ) {
+                let reset_file = menu_file.clone();
+                let reset_language = language;
+                let menu_handle = menu_handle.clone();
+                entry.end_slot(IconName::Undo, "Reset to Default", move |window, cx| {
+                    let reset_file = reset_file.clone();
+                    let reset_language = reset_language.clone();
+                    update_settings_file(reset_file, json_path, window, cx, move |settings, _| {
+                        reset_hidden_symbol_kinds(settings, Some(&reset_language));
+                    })
+                    .log_err();
+                    menu_handle
+                        .update(cx, |_, cx| cx.emit(gpui::DismissEvent))
+                        .log_err();
+                })
+            } else {
+                entry
+            };
+
+            menu = menu.item(entry);
+        }
+
+        menu
+    });
+
+    let selected_label = selected_language.unwrap_or_else(|| "Default".to_string());
+
+    DropdownMenu::new("hidden-symbol-kinds-language", selected_label, menu)
+        .style(DropdownStyle::Outlined)
+        .trigger_size(ButtonSize::Medium)
+        .aria_label("Language for hidden symbol kinds")
+        .into_any_element()
+}
+
+fn render_hidden_symbol_kinds(
+    settings_window: &SettingsWindow,
+    item: &SettingItem,
+    field: SettingField<Vec<settings::OutlineSymbolKind>>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    _sub_field: bool,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> Stateful<Div> {
+    let selected_language = settings_window.hidden_symbol_kinds_language.clone();
+    let is_expanded = settings_window.hidden_symbol_kinds_expanded;
+
+    let location = settings_location_for_file(&file);
+    let all_language_settings = AllLanguageSettings::get(location, cx);
+    let language_name = selected_language
+        .as_ref()
+        .map(|language| LanguageName::from(SharedString::from(language.clone())));
+    let language_settings = all_language_settings.language(location, language_name.as_ref(), cx);
+    let effective_hidden_symbol_kinds = language_settings.hidden_symbol_kinds.clone();
+    let default_hidden_symbol_kinds = all_language_settings
+        .language(location, None, cx)
+        .hidden_symbol_kinds
+        .clone();
+    let own_hidden_symbol_kinds = own_hidden_symbol_kinds(
+        &effective_hidden_symbol_kinds,
+        &default_hidden_symbol_kinds,
+        selected_language.as_deref(),
+    );
+
+    let control = h_flex()
+        .gap_2()
+        .when(!effective_hidden_symbol_kinds.is_empty(), |this| {
+            this.child(
+                Label::new(format!("{} hidden", effective_hidden_symbol_kinds.len()))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+        })
+        .child(render_hidden_symbol_kinds_language_picker(
+            selected_language.clone(),
+            default_hidden_symbol_kinds.clone(),
+            file.clone(),
+            field.json_path,
+            window,
+            cx,
+        ))
+        .child(
+            Button::new(
+                "configure-hidden-symbol-kinds",
+                if is_expanded { "Done" } else { "Configure" },
+            )
+            .aria_label("Configure hidden symbol kinds")
+            .aria_expanded(is_expanded)
+            .style(ButtonStyle::Outlined)
+            .size(ButtonSize::Medium)
+            .tab_index(0_isize)
+            .end_icon(
+                Icon::new(if is_expanded {
+                    IconName::ChevronUp
+                } else {
+                    IconName::ChevronDown
+                })
+                .size(IconSize::Small)
+                .color(Color::Muted),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.hidden_symbol_kinds_expanded = !this.hidden_symbol_kinds_expanded;
+                this.list_state.remeasure();
+                cx.notify();
+            })),
+        )
+        .into_any_element();
+
+    let row = render_settings_item_layout(
+        settings_window,
+        item.title,
+        item.description,
+        control,
+        None,
+        None,
+        None,
+        false,
+        cx,
+    );
+
+    let mut container = v_flex().id("hidden-symbol-kinds").w_full().child(row);
+
+    if is_expanded {
+        let hint = if selected_language.is_some() && !default_hidden_symbol_kinds.is_empty() {
+            "Turn on a kind to hide it from the outline panel. Kinds hidden by Default stay hidden for every language."
+        } else {
+            "Turn on a kind to hide it from the outline panel."
+        };
+
+        let matrix = v_flex()
+            .gap_2()
+            .pt_4()
+            .child(Label::new(hint).size(LabelSize::Small).color(Color::Muted))
+            .child(
+                h_flex().flex_wrap().gap_x_4().gap_y_2().children(
+                    <settings::OutlineSymbolKind as strum::VariantArray>::VARIANTS
+                        .iter()
+                        .copied()
+                        .map(|kind| {
+                            render_hidden_symbol_kind_toggle(
+                                kind,
+                                &own_hidden_symbol_kinds,
+                                &effective_hidden_symbol_kinds,
+                                selected_language.as_deref(),
+                                selected_language.is_some()
+                                    && default_hidden_symbol_kinds.contains(&kind),
+                                file.clone(),
+                                field.json_path,
+                            )
+                        }),
+                ),
+            );
+
+        container = container.child(matrix);
+    }
+
+    container
+}
+
+fn render_hidden_symbol_kind_toggle(
+    kind: settings::OutlineSymbolKind,
+    current: &[settings::OutlineSymbolKind],
+    effective: &[settings::OutlineSymbolKind],
+    language: Option<&str>,
+    inherited: bool,
+    file: SettingsUiFile,
+    json_path: Option<&'static str>,
+) -> AnyElement {
+    let label = outline_symbol_kind_label(kind);
+    let toggle_state = if effective.contains(&kind) {
+        ToggleState::Selected
+    } else {
+        ToggleState::Unselected
+    };
+    let current = current.to_vec();
+    let language = language.map(|language| language.to_string());
+    let language_key = language.clone().unwrap_or_else(|| "default".to_string());
+    let id = SharedString::from(format!("hidden-symbol-kind-{language_key}-{kind:?}"));
+
+    let mut switch = Switch::new(id, toggle_state)
+        .tab_index(0_isize)
+        .aria_label(format!("Hide {label} in the outline panel"))
+        .disabled(inherited);
+
+    if !inherited {
+        switch = switch.on_click(move |state, window, cx| {
+            telemetry::event!(
+                "Settings Change",
+                setting = json_path,
+                type = file.setting_type()
+            );
+
+            let hidden = *state == ToggleState::Selected;
+            let next = hidden_symbol_kinds_after_toggle(&current, kind, hidden);
+            let language = language.clone();
+            update_settings_file(
+                file.clone(),
+                json_path,
+                window,
+                cx,
+                move |settings, _app| {
+                    write_hidden_symbol_kinds(settings, language.as_deref(), next);
+                },
+            )
+            .log_err();
+        });
+    }
+
+    let switch = if inherited {
+        div()
+            .id(SharedString::from(format!(
+                "hidden-symbol-kind-inherited-{language_key}-{kind:?}"
+            )))
+            .tooltip(Tooltip::text("Hidden by the default settings"))
+            .child(switch)
+            .into_any_element()
+    } else {
+        switch.into_any_element()
+    };
+
+    h_flex()
+        .w_48()
+        .justify_between()
+        .gap_2()
+        .child(Label::new(label).size(LabelSize::Small))
+        .child(switch)
+        .into_any_element()
+}
+
 fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
@@ -5503,6 +5944,8 @@ pub mod test {
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 bottom_spacer_height: px(0.),
                 shown_errors: HashSet::default(),
+                hidden_symbol_kinds_language: None,
+                hidden_symbol_kinds_expanded: false,
                 hidden_deleted_skills: HashSet::default(),
                 regex_validation_error: None,
                 sandbox_host_validation_error: None,
@@ -5538,6 +5981,273 @@ pub mod test {
         editor::init(cx);
         menu::init();
         language_model::init(cx);
+    }
+
+    #[gpui::test]
+    fn test_hidden_symbol_kinds_matrix_renders(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            AppState::set_global(AppState::test(cx), cx);
+            init_renderers(cx);
+
+            let mut settings_window = settings_window_with_items(
+                vec![
+                    SettingsPageItem::SectionHeader("Outline Panel"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Hidden Symbol Kinds",
+                        description: "Symbol kinds to hide from the outline panel.",
+                        field: Box::new(SettingField::<Vec<settings::OutlineSymbolKind>> {
+                            organization_override: None,
+                            json_path: Some("languages.$(language).hidden_symbol_kinds"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .project
+                                    .all_languages
+                                    .defaults
+                                    .hidden_symbol_kinds
+                                    .as_ref()
+                            },
+                            write: |settings_content, value, _| {
+                                settings_content
+                                    .project
+                                    .all_languages
+                                    .defaults
+                                    .hidden_symbol_kinds = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER | PROJECT,
+                    }),
+                ],
+                window,
+                cx,
+            );
+            settings_window.hidden_symbol_kinds_expanded = true;
+            settings_window
+        });
+
+        cx.simulate_resize(gpui::size(px(900.), px(700.)));
+        let view = cx.update(|_, cx| cx.new(|_| TestSettingsPage(settings_window.clone())));
+        draw_settings_page(&view, px(900.), px(700.), cx);
+    }
+
+    #[test]
+    fn test_hidden_symbol_kinds_after_toggle_keeps_variant_order() {
+        use settings::OutlineSymbolKind;
+
+        assert_eq!(
+            hidden_symbol_kinds_after_toggle(&[], OutlineSymbolKind::Field, true),
+            vec![OutlineSymbolKind::Field]
+        );
+        assert_eq!(
+            hidden_symbol_kinds_after_toggle(
+                &[OutlineSymbolKind::Variable],
+                OutlineSymbolKind::Field,
+                true
+            ),
+            vec![OutlineSymbolKind::Field, OutlineSymbolKind::Variable]
+        );
+        assert_eq!(
+            hidden_symbol_kinds_after_toggle(
+                &[OutlineSymbolKind::Field, OutlineSymbolKind::Variable],
+                OutlineSymbolKind::Field,
+                false
+            ),
+            vec![OutlineSymbolKind::Variable]
+        );
+        assert_eq!(
+            hidden_symbol_kinds_after_toggle(
+                &[OutlineSymbolKind::Field],
+                OutlineSymbolKind::Field,
+                true
+            ),
+            vec![OutlineSymbolKind::Field]
+        );
+    }
+
+    #[test]
+    fn test_own_hidden_symbol_kinds_excludes_defaults() {
+        use settings::OutlineSymbolKind;
+
+        assert_eq!(
+            own_hidden_symbol_kinds(
+                &[OutlineSymbolKind::Field, OutlineSymbolKind::Variable],
+                &[OutlineSymbolKind::Variable],
+                None,
+            ),
+            vec![OutlineSymbolKind::Field, OutlineSymbolKind::Variable]
+        );
+        assert_eq!(
+            own_hidden_symbol_kinds(
+                &[OutlineSymbolKind::Field, OutlineSymbolKind::Variable],
+                &[OutlineSymbolKind::Variable],
+                Some("Rust"),
+            ),
+            vec![OutlineSymbolKind::Field]
+        );
+        assert_eq!(
+            own_hidden_symbol_kinds(
+                &[OutlineSymbolKind::Variable],
+                &[OutlineSymbolKind::Variable],
+                Some("Rust"),
+            ),
+            Vec::<OutlineSymbolKind>::new()
+        );
+    }
+
+    #[gpui::test]
+    fn test_hidden_symbol_kinds_reset_icon_is_only_for_own_toggles(cx: &mut gpui::TestAppContext) {
+        use gpui::UpdateGlobal;
+        use settings::OutlineSymbolKind;
+
+        cx.update(|cx| {
+            register_settings(cx);
+            AppState::set_global(AppState::test(cx), cx);
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let all_languages = &mut settings.project.all_languages;
+                    all_languages.defaults.hidden_symbol_kinds =
+                        Some(vec![OutlineSymbolKind::Variable]);
+                    all_languages
+                        .languages
+                        .0
+                        .entry("Rust".to_string())
+                        .or_default()
+                        .hidden_symbol_kinds = Some(vec![OutlineSymbolKind::Field]);
+                    all_languages
+                        .languages
+                        .0
+                        .entry("Python".to_string())
+                        .or_default()
+                        .hidden_symbol_kinds = Some(vec![OutlineSymbolKind::Variable]);
+                    all_languages
+                        .languages
+                        .0
+                        .entry("Go".to_string())
+                        .or_default()
+                        .hidden_symbol_kinds = Some(Vec::new());
+                });
+            });
+
+            let file = SettingsUiFile::User;
+            let default_kinds = [OutlineSymbolKind::Variable];
+
+            assert!(hidden_symbol_kinds_has_own_toggles_in_file(
+                &file,
+                None,
+                &[],
+                cx
+            ));
+            assert!(hidden_symbol_kinds_has_own_toggles_in_file(
+                &file,
+                Some("Rust"),
+                &default_kinds,
+                cx
+            ));
+            // This language only repeats the inherited default kind.
+            assert!(!hidden_symbol_kinds_has_own_toggles_in_file(
+                &file,
+                Some("Python"),
+                &default_kinds,
+                cx
+            ));
+            // An explicit empty entry contributes nothing.
+            assert!(!hidden_symbol_kinds_has_own_toggles_in_file(
+                &file,
+                Some("Go"),
+                &default_kinds,
+                cx
+            ));
+            // No entry at all.
+            assert!(!hidden_symbol_kinds_has_own_toggles_in_file(
+                &file,
+                Some("Ruby"),
+                &default_kinds,
+                cx
+            ));
+        });
+    }
+
+    #[test]
+    fn test_write_hidden_symbol_kinds_updates_selected_language() {
+        use settings::OutlineSymbolKind;
+
+        let mut settings = SettingsContent::default();
+        write_hidden_symbol_kinds(&mut settings, Some("Rust"), vec![OutlineSymbolKind::Field]);
+        write_hidden_symbol_kinds(&mut settings, None, vec![OutlineSymbolKind::Variable]);
+
+        assert_eq!(
+            settings
+                .project
+                .all_languages
+                .languages
+                .0
+                .get("Rust")
+                .and_then(|language| language.hidden_symbol_kinds.clone()),
+            Some(vec![OutlineSymbolKind::Field])
+        );
+        assert_eq!(
+            settings.project.all_languages.defaults.hidden_symbol_kinds,
+            Some(vec![OutlineSymbolKind::Variable])
+        );
+        assert!(
+            !settings
+                .project
+                .all_languages
+                .languages
+                .0
+                .contains_key("Python")
+        );
+    }
+
+    #[test]
+    fn test_reset_hidden_symbol_kinds_removes_only_the_override() {
+        use settings::OutlineSymbolKind;
+
+        let mut settings = SettingsContent::default();
+        write_hidden_symbol_kinds(&mut settings, Some("Rust"), vec![OutlineSymbolKind::Field]);
+        reset_hidden_symbol_kinds(&mut settings, Some("Rust"));
+        assert!(
+            !settings
+                .project
+                .all_languages
+                .languages
+                .0
+                .contains_key("Rust")
+        );
+
+        let rust = settings
+            .project
+            .all_languages
+            .languages
+            .0
+            .entry("Rust".to_string())
+            .or_default();
+        rust.tab_size = NonZeroU32::new(2);
+        rust.hidden_symbol_kinds = Some(vec![OutlineSymbolKind::Field]);
+        reset_hidden_symbol_kinds(&mut settings, Some("Rust"));
+
+        let rust = settings
+            .project
+            .all_languages
+            .languages
+            .0
+            .get("Rust")
+            .expect("other Rust settings should remain");
+        assert!(rust.hidden_symbol_kinds.is_none());
+        assert_eq!(rust.tab_size, NonZeroU32::new(2));
+
+        write_hidden_symbol_kinds(&mut settings, None, vec![OutlineSymbolKind::Variable]);
+        reset_hidden_symbol_kinds(&mut settings, None);
+        assert!(
+            settings
+                .project
+                .all_languages
+                .defaults
+                .hidden_symbol_kinds
+                .is_none()
+        );
     }
 
     fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
@@ -5643,6 +6353,8 @@ pub mod test {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             bottom_spacer_height: px(0.),
             shown_errors: HashSet::default(),
+            hidden_symbol_kinds_language: None,
+            hidden_symbol_kinds_expanded: false,
             hidden_deleted_skills: HashSet::default(),
             regex_validation_error: None,
             sandbox_host_validation_error: None,

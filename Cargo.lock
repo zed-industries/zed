@@ -12645,6 +12645,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "strum 0.28.0",
  "theme",
  "theme_settings",
  "ui",

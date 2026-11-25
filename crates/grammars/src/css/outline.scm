@@ -8,7 +8,7 @@
     .
     (_) @name
     ("," @name
-      (_) @name)*)) @item
+      (_) @name)*)) @item @item.class
 
 (media_statement
   "@media" @context

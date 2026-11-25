@@ -363,6 +363,7 @@ fn flatten_document_symbols(
             name_ranges,
             body_range: None,
             annotation_range: None,
+            kind: Some(symbol.kind),
         });
 
         if !symbol.children.is_empty() {
@@ -509,6 +510,7 @@ mod tests {
 
         assert_eq!(items[0].depth, 0);
         assert_eq!(items[0].text, "struct Foo");
+        assert_eq!(items[0].kind, Some(language::SymbolKind::Struct));
         assert_eq!(items[0].name_ranges, vec![7..10]);
         assert_eq!(
             items[0].selection_range.to_point(&snapshot),
@@ -517,6 +519,7 @@ mod tests {
 
         assert_eq!(items[1].depth, 1);
         assert_eq!(items[1].text, "bar");
+        assert_eq!(items[1].kind, Some(language::SymbolKind::Field));
         assert_eq!(items[1].name_ranges, vec![0..3]);
         assert_eq!(
             items[1].selection_range.to_point(&snapshot),
@@ -525,6 +528,7 @@ mod tests {
 
         assert_eq!(items[2].depth, 1);
         assert_eq!(items[2].text, "baz");
+        assert_eq!(items[2].kind, Some(language::SymbolKind::Field));
         assert_eq!(items[2].name_ranges, vec![0..3]);
         assert_eq!(
             items[2].selection_range.to_point(&snapshot),
@@ -541,6 +545,7 @@ mod tests {
 
         assert_eq!(items[4].depth, 1);
         assert_eq!(items[4].text, "fn new");
+        assert_eq!(items[4].kind, Some(language::SymbolKind::Function));
         assert_eq!(items[4].name_ranges, vec![3..6]);
         assert_eq!(
             items[4].selection_range.to_point(&snapshot),

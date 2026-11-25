@@ -1,7 +1,10 @@
 use crate::highlight_map::HighlightId;
 use std::ops::Range;
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(
+    Debug, Eq, PartialEq, Copy, Clone, Hash, strum::EnumString, strum::AsRefStr, strum::VariantArray,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum SymbolKind {
     File,
     Module,

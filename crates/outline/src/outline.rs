@@ -106,6 +106,7 @@ fn outline_for_editor(
                                 ..multibuffer.anchor_in_buffer(r.end)?,
                         )
                     }),
+                    kind: item.kind,
                 })
             })
             .collect()

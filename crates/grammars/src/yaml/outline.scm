@@ -4,4 +4,4 @@
       (string_scalar) @name))
   value: (flow_node
     (plain_scalar
-      (string_scalar) @context))?) @item
+      (string_scalar) @context))?) @item @item.property

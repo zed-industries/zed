@@ -6326,7 +6326,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn outline_panel_section() -> [SettingsPageItem; 12] {
+    fn outline_panel_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Outline Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6564,6 +6564,31 @@ fn panels_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hidden Symbol Kinds",
+                description: "Symbol kinds to hide from the outline panel. Choose a language, then turn on the kinds to hide. Language choices add to the Default selection.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("languages.$(language).hidden_symbol_kinds"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .hidden_symbol_kinds
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .hidden_symbol_kinds = value;
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
         ]
     }
@@ -11848,6 +11873,23 @@ fn write_helix_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_hidden_symbol_kinds_is_only_on_panels_page() {
+        let has_hidden_symbol_kinds = |items: &[SettingsPageItem]| {
+            items.iter().any(|item| {
+                matches!(
+                    item,
+                    SettingsPageItem::SettingItem(item) if item.title == "Hidden Symbol Kinds"
+                )
+            })
+        };
+
+        assert!(has_hidden_symbol_kinds(&panels_page().items));
+        assert!(!has_hidden_symbol_kinds(
+            &non_editor_language_settings_data()
+        ));
+    }
 
     #[test]
     fn test_write_vim_helix_mode() {

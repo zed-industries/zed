@@ -604,6 +604,7 @@ impl VsCodeSettings {
             }),
             formatter: None,
             hard_tabs: self.read_bool("editor.insertSpaces").map(|v| !v),
+            hidden_symbol_kinds: None,
             indent_guides: skip_default(IndentGuideSettingsContent {
                 enabled: self.read_bool("editor.guides.indentation"),
                 ..Default::default()
