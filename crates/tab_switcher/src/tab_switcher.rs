@@ -473,12 +473,9 @@ impl TabSwitcherDelegate {
 
         if self.open_in_active_pane {
             let mut seen_paths: HashSet<project::ProjectPath> = HashSet::default();
-            matches.retain(|tab| {
-                if let Some(path) = tab.item.project_path(cx) {
-                    seen_paths.insert(path)
-                } else {
-                    true
-                }
+            matches.retain(|tab| match tab.item.single_file_project_path(cx) {
+                Some(path) => seen_paths.insert(path),
+                None => true,
             });
         }
 

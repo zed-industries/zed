@@ -577,6 +577,61 @@ async fn test_open_in_active_pane_closes_file_in_all_panes(cx: &mut gpui::TestAp
 }
 
 #[gpui::test]
+async fn test_open_in_active_pane_lists_multibuffer_and_its_files(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({"rick_astley.txt": "Never Gonna Give You Up"}),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    // With the file open, we'll also open a multibuffer for the same file,
+    // ensuring we have two tab items open that both report the same
+    // `ProjectPath` for `ItemHandle::project_path`.
+    let singleton_editor = open_buffer("rick_astley.txt", &workspace, cx).await;
+    let multibuffer_editor = cx.new_window_entity(|window, cx| {
+        let editor = singleton_editor.act_as::<Editor>(cx).unwrap();
+        let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(buffer.read(cx).capability());
+            let range = Default::default()..buffer.read(cx).max_point();
+            multibuffer.set_excerpts_for_buffer(buffer, [range], 0, cx);
+            multibuffer
+        });
+
+        Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
+    });
+
+    let pane = workspace.read_with(cx, |workspace, _cx| workspace.active_pane().clone());
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(
+            multibuffer_editor.boxed_clone(),
+            true,
+            true,
+            None,
+            window,
+            cx,
+        )
+    });
+
+    assert_eq!(pane.read_with(cx, |pane, _cx| pane.items_len()), 2);
+
+    let tab_switcher = open_tab_switcher_for_active_pane(&workspace, cx);
+    tab_switcher.read_with(cx, |picker, _cx| {
+        assert_match_at_position(picker, 0, multibuffer_editor.boxed_clone());
+        assert_match_at_position(picker, 1, singleton_editor.boxed_clone());
+    });
+}
+
+#[gpui::test]
 async fn test_close_by_path_keeps_multibuffers_and_files_apart(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
     app_state
