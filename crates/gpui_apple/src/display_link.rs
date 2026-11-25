@@ -1,42 +1,57 @@
 use objc2::{
-    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send,
+    DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send,
     rc::Retained,
-    runtime::{AnyClass, ProtocolObject},
+    runtime::{AnyClass, AnyObject},
+    sel,
 };
 use objc2_foundation::{NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes};
-use objc2_quartz_core::{
-    CAMetalDisplayLink, CAMetalDisplayLinkDelegate, CAMetalDisplayLinkUpdate, CAMetalLayer,
+use objc2_quartz_core::CADisplayLink;
+use std::{
+    cell::{Cell, RefCell},
+    time::{Duration, Instant},
 };
 
-struct MetalDisplayLinkDelegateIvars {
-    callback: Box<dyn Fn(&CAMetalDisplayLinkUpdate)>,
+const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
+
+/// Timing reported by a `CADisplayLink` tick.
+#[derive(Debug, Clone, Copy)]
+pub struct DisplayLinkTick {
+    pub duration: Option<Duration>,
+}
+
+struct DisplayLinkTargetIvars {
+    callback: Box<dyn Fn(DisplayLinkTick)>,
 }
 
 define_class!(
     // SAFETY: `NSObject` has no subclassing requirements.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[ivars = MetalDisplayLinkDelegateIvars]
-    struct MetalDisplayLinkDelegate;
+    #[ivars = DisplayLinkTargetIvars]
+    struct DisplayLinkTarget;
 
-    unsafe impl NSObjectProtocol for MetalDisplayLinkDelegate {}
+    unsafe impl NSObjectProtocol for DisplayLinkTarget {}
 
-    unsafe impl CAMetalDisplayLinkDelegate for MetalDisplayLinkDelegate {
-        #[unsafe(method(metalDisplayLink:needsUpdate:))]
-        fn needs_update(&self, _link: &CAMetalDisplayLink, update: &CAMetalDisplayLinkUpdate) {
-            // The callback may destroy its frame source, releasing our owner's retain.
-            let delegate = self.retain();
-            (delegate.ivars().callback)(update);
+    impl DisplayLinkTarget {
+        #[unsafe(method(displayLinkFired:))]
+        fn display_link_fired(&self, link: &CADisplayLink) {
+            // The callback may drop its `DisplayLink`, which calls `invalidate`
+            // and releases the link's strong reference to `self`.
+            let target = self.retain();
+            let duration = Duration::try_from_secs_f64(link.duration())
+                .ok()
+                .filter(|duration| !duration.is_zero());
+            (target.ivars().callback)(DisplayLinkTick { duration });
         }
     }
 );
 
-impl MetalDisplayLinkDelegate {
+impl DisplayLinkTarget {
     fn new(
         main_thread: MainThreadMarker,
-        callback: impl Fn(&CAMetalDisplayLinkUpdate) + 'static,
+        callback: impl Fn(DisplayLinkTick) + 'static,
     ) -> Retained<Self> {
-        let this = Self::alloc(main_thread).set_ivars(MetalDisplayLinkDelegateIvars {
+        let this = Self::alloc(main_thread).set_ivars(DisplayLinkTargetIvars {
             callback: Box::new(callback),
         });
         // SAFETY: `NSObject`'s `init` is its designated initializer.
@@ -44,50 +59,93 @@ impl MetalDisplayLinkDelegate {
     }
 }
 
-/// A main-run-loop source of Metal drawables on macOS 14+ and iOS/iPadOS 17+.
+/// A main-run-loop `CADisplayLink` shared across Apple platforms (macOS 14+ and
+/// iOS/iPadOS).
 ///
-/// Callbacks run on the run loop the link is registered with:
-/// <https://developer.apple.com/documentation/quartzcore/cametaldisplaylink>.
-/// This wrapper uses the main run loop because GPUI renders on the foreground thread.
-pub struct MetalFrameSource {
-    link: Retained<CAMetalDisplayLink>,
-    // The link holds its delegate weakly.
-    _delegate: Retained<MetalDisplayLinkDelegate>,
+/// Unlike `CAMetalDisplayLink`, `CADisplayLink` only paces frames: the renderer
+/// acquires drawables from `CAMetalLayer` and presents them immediately instead
+/// of queuing them for a `targetPresentationTimestamp` several refreshes ahead.
+pub struct DisplayLink {
+    link: Retained<CADisplayLink>,
+    _target: Retained<DisplayLinkTarget>,
     _main_thread: MainThreadMarker,
 }
 
-impl MetalFrameSource {
-    /// Whether this system has `CAMetalDisplayLink` (macOS 14+, iOS/iPadOS 17+).
-    pub fn is_available() -> bool {
-        AnyClass::get(c"CAMetalDisplayLink").is_some()
+impl DisplayLink {
+    /// Whether instances of `class` (such as `NSView`, `NSWindow`, `NSScreen`
+    /// on macOS 14+, or `UIWindowScene` / `UIView` on iOS) vend a display-tracking
+    /// `CADisplayLink` via `-displayLinkWithTarget:selector:`.
+    pub fn supports_source(class: &AnyClass) -> bool {
+        // SAFETY: `instancesRespondToSelector:` takes only a `SEL`.
+        unsafe {
+            msg_send![
+                class,
+                instancesRespondToSelector: sel!(displayLinkWithTarget:selector:)
+            ]
+        }
     }
 
-    /// Starts delivering updates for `layer`, or returns `None` where
-    /// `CAMetalDisplayLink` is unavailable.
-    pub fn new(
-        layer: &CAMetalLayer,
+    /// Starts delivering vsync ticks for `source` (an `NSView`, `NSWindow`,
+    /// `NSScreen`, `UIWindowScene`, or `UIView`) on the main run loop in common
+    /// modes, or returns `None` if `source` does not support creating one.
+    ///
+    /// # Safety
+    ///
+    /// `source` must be a valid Objective-C object whose
+    /// `-displayLinkWithTarget:selector:` returns a `CADisplayLink *`.
+    pub unsafe fn for_source(
+        source: &AnyObject,
         main_thread: MainThreadMarker,
-        callback: impl Fn(&CAMetalDisplayLinkUpdate) + 'static,
+        callback: impl Fn(DisplayLinkTick) + 'static,
     ) -> Option<Self> {
-        if !Self::is_available() {
+        let responds: bool = unsafe {
+            msg_send![
+                source,
+                respondsToSelector: sel!(displayLinkWithTarget:selector:)
+            ]
+        };
+        if !responds {
             return None;
         }
-        let delegate = MetalDisplayLinkDelegate::new(main_thread, callback);
-        let link = CAMetalDisplayLink::initWithMetalLayer(CAMetalDisplayLink::alloc(), layer);
-        link.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-        // The default range follows the display and system power policy:
-        // https://developer.apple.com/documentation/quartzcore/cametaldisplaylink/preferredframeraterange
-        // SAFETY: the retained marker confines the source to the main thread,
-        // and the main run loop outlives the source.
+        let target = DisplayLinkTarget::new(main_thread, callback);
+        let link: Option<Retained<CADisplayLink>> = unsafe {
+            msg_send![
+                source,
+                displayLinkWithTarget: &*target,
+                selector: sel!(displayLinkFired:)
+            ]
+        };
+        let link = link?;
+        // SAFETY: `MainThreadMarker` confines `Self` to the main thread, and
+        // the main run loop outlives the source.
         unsafe { link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes) };
         Some(Self {
             link,
-            _delegate: delegate,
+            _target: target,
             _main_thread: main_thread,
         })
     }
 
-    /// A paused link delivers no updates and acquires no drawables.
+    /// Starts delivering vsync ticks for the main display on iOS/iPadOS.
+    #[cfg(target_os = "ios")]
+    pub fn for_main_display(
+        main_thread: MainThreadMarker,
+        callback: impl Fn(DisplayLinkTick) + 'static,
+    ) -> Self {
+        let target = DisplayLinkTarget::new(main_thread, callback);
+        // SAFETY: `DisplayLinkTarget` implements `displayLinkFired:`.
+        let link = unsafe {
+            CADisplayLink::displayLinkWithTarget_selector(&target, sel!(displayLinkFired:))
+        };
+        // SAFETY: `MainThreadMarker` confines `Self` to the main thread.
+        unsafe { link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes) };
+        Self {
+            link,
+            _target: target,
+            _main_thread: main_thread,
+        }
+    }
+
     pub fn set_paused(&self, paused: bool) {
         self.link.setPaused(paused);
     }
@@ -97,8 +155,239 @@ impl MetalFrameSource {
     }
 }
 
-impl Drop for MetalFrameSource {
+impl Drop for DisplayLink {
     fn drop(&mut self) {
         self.link.invalidate();
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DisplayLinkDebugState {
+    pub attached: bool,
+    pub active: bool,
+    pub paused: Option<bool>,
+    pub woken: bool,
+    pub refresh_interval: Option<Duration>,
+}
+
+/// Demand-driven `CADisplayLink` frame state shared with GPUI's frame waker so
+/// that waking a paused link does not need to acquire a platform window lock.
+///
+/// The link pauses after any tick in which GPUI neither presented nor asked for
+/// another frame, so an idle window receives no callbacks.
+#[derive(Default)]
+pub struct DisplayLinkFrames {
+    link: RefCell<Option<DisplayLink>>,
+    /// Whether the owner currently permits display-link ticks (e.g. visible and
+    /// not inside a synchronous transaction draw).
+    active: Cell<bool>,
+    /// Whether GPUI asked for a frame since the current tick began.
+    woken: Cell<bool>,
+    /// Whether GPUI presented since the current tick began.
+    presented: Cell<bool>,
+    last_present: Cell<Option<Instant>>,
+    refresh_interval: Cell<Option<Duration>>,
+}
+
+impl DisplayLinkFrames {
+    /// Resumes the link, calling `build` to create it on first start.
+    pub fn start_with(&self, build: impl FnOnce() -> Option<DisplayLink>) {
+        self.active.set(true);
+        let mut slot = self.link.borrow_mut();
+        if let Some(link) = slot.as_ref() {
+            link.set_paused(false);
+            return;
+        }
+        *slot = build();
+    }
+
+    pub fn stop(&self) {
+        self.active.set(false);
+        self.pause();
+    }
+
+    fn pause(&self) {
+        if let Ok(link) = self.link.try_borrow()
+            && let Some(link) = link.as_ref()
+        {
+            link.set_paused(true);
+        }
+    }
+
+    pub fn invalidate(&self) {
+        self.active.set(false);
+        drop(self.link.borrow_mut().take());
+    }
+
+    pub fn reset_refresh_interval(&self) {
+        self.refresh_interval.set(None);
+    }
+
+    pub fn wake(&self) {
+        self.woken.set(true);
+        // The link is only borrowed mutably while being created in `start_with`,
+        // where a new link already begins unpaused.
+        if self.active.get()
+            && let Ok(link) = self.link.try_borrow()
+            && let Some(link) = link.as_ref()
+        {
+            link.set_paused(false);
+        }
+    }
+
+    pub fn has_pending_wake(&self) -> bool {
+        self.woken.get()
+    }
+
+    pub fn clear_pending_wake(&self) {
+        self.woken.set(false);
+    }
+
+    pub fn did_present(&self) {
+        self.presented.set(true);
+        self.last_present.set(Some(Instant::now()));
+    }
+
+    /// Whether an input-triggered draw can present immediately without
+    /// exceeding roughly one present per display refresh.
+    pub fn can_draw_early(&self) -> bool {
+        self.active.get()
+            && can_draw_early(
+                self.last_present.get(),
+                self.refresh_interval.get(),
+                Instant::now(),
+            )
+    }
+
+    pub fn begin_frame(&self, tick: DisplayLinkTick) {
+        self.woken.set(false);
+        self.presented.set(false);
+        if let Some(duration) = tick.duration {
+            self.refresh_interval.set(Some(duration));
+        }
+    }
+
+    /// Ends a tick, pausing the link if GPUI neither presented nor asked for
+    /// another frame while it ran. Returns whether it paused.
+    pub fn end_frame(&self) -> bool {
+        let pause = !self.presented.get() && !self.woken.get();
+        if pause {
+            self.pause();
+        }
+        pause
+    }
+
+    pub fn debug_state(&self) -> DisplayLinkDebugState {
+        let paused = self
+            .link
+            .try_borrow()
+            .ok()
+            .and_then(|link| link.as_ref().map(DisplayLink::is_paused));
+        DisplayLinkDebugState {
+            attached: paused.is_some(),
+            active: self.active.get(),
+            paused,
+            woken: self.woken.get(),
+            refresh_interval: self.refresh_interval.get(),
+        }
+    }
+}
+
+fn can_draw_early(
+    last_present: Option<Instant>,
+    refresh_interval: Option<Duration>,
+    now: Instant,
+) -> bool {
+    match last_present {
+        None => true,
+        Some(last_present) => {
+            now.saturating_duration_since(last_present)
+                >= refresh_interval.unwrap_or(DEFAULT_REFRESH_INTERVAL)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_pause_only_when_gpui_neither_presents_nor_asks_again() {
+        let frames = DisplayLinkFrames::default();
+        let tick = DisplayLinkTick {
+            duration: Some(Duration::from_secs_f64(1.0 / 120.0)),
+        };
+
+        frames.begin_frame(tick);
+        frames.did_present();
+        assert!(
+            !frames.end_frame(),
+            "a frame that presented keeps the link running"
+        );
+
+        frames.begin_frame(tick);
+        frames.wake();
+        assert!(
+            !frames.end_frame(),
+            "a wake during the tick, like a throttled frame's retry, keeps it running"
+        );
+
+        frames.wake();
+        frames.begin_frame(tick);
+        assert!(
+            frames.end_frame(),
+            "a wake before the tick was served by it"
+        );
+
+        frames.did_present();
+        frames.begin_frame(tick);
+        assert!(
+            frames.end_frame(),
+            "a present before the tick, like an input-driven frame, was not this tick's"
+        );
+
+        frames.begin_frame(tick);
+        assert!(frames.end_frame(), "an idle tick pauses the link");
+    }
+
+    #[test]
+    fn drawing_early_keeps_presents_to_about_one_per_refresh() {
+        let now = Instant::now();
+        let refresh_interval = Some(Duration::from_millis(8));
+        let presented = |ago: u64| Some(now - Duration::from_millis(ago));
+
+        assert!(
+            can_draw_early(None, None, now),
+            "the first frame has no prior present in flight"
+        );
+        assert!(
+            can_draw_early(presented(8), refresh_interval, now),
+            "the last present was a full refresh ago"
+        );
+        assert!(
+            !can_draw_early(presented(3), refresh_interval, now),
+            "a second keystroke within the same refresh waits for the next tick"
+        );
+        assert!(
+            can_draw_early(presented(16), None, now),
+            "falls back to a 60 Hz floor before the link reports its refresh interval"
+        );
+        assert!(
+            !can_draw_early(presented(10), None, now),
+            "respects the 60 Hz floor when the display interval is not yet known"
+        );
+    }
+
+    #[test]
+    fn stopped_frames_ignore_early_draws() {
+        let frames = DisplayLinkFrames::default();
+        assert!(
+            !frames.can_draw_early(),
+            "an inactive link does not draw early"
+        );
+        frames.active.set(true);
+        assert!(frames.can_draw_early());
+        frames.stop();
+        assert!(!frames.can_draw_early());
     }
 }
