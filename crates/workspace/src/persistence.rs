@@ -5263,7 +5263,7 @@ mod tests {
     async fn test_dev_container_connection_round_trips_labels() {
         let db =
             WorkspaceDb::open_test_db("test_dev_container_connection_round_trips_labels").await;
-        let options = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+        let docker = DockerConnectionOptions {
             name: "project".to_string(),
             container_id: "container-123".to_string(),
             remote_user: "vscode".to_string(),
@@ -5272,7 +5272,8 @@ mod tests {
             use_podman: false,
             remote_env: BTreeMap::default(),
             upload_binary_over_docker_exec: false,
-        });
+        };
+        let options = RemoteConnectionOptions::Docker(docker.clone());
 
         let connection_id = db
             .get_or_create_remote_connection(options.clone())
@@ -5284,6 +5285,24 @@ mod tests {
             db.remote_connections().unwrap().get(&connection_id),
             Some(&options)
         );
+
+        let other_config = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            config_file: Some(
+                "/home/user/project/.devcontainer/backend/devcontainer.json".to_string(),
+            ),
+            ..docker.clone()
+        });
+        let without_labels = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            local_folder: None,
+            config_file: None,
+            ..docker.clone()
+        });
+        for other in [other_config, without_labels] {
+            assert_ne!(
+                db.get_or_create_remote_connection(other).await.unwrap(),
+                connection_id
+            );
+        }
     }
 
     #[gpui::test]

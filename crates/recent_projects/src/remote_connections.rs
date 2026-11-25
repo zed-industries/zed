@@ -640,6 +640,88 @@ mod tests {
         assert_eq!(found.map(|target| target.window), Some(window));
     }
 
+    fn dev_container_connection(container_id: &str, config_file: &str) -> Connection {
+        Connection::DevContainer(DevContainerConnection {
+            name: "project".to_string(),
+            remote_user: "vscode".to_string(),
+            container_id: container_id.to_string(),
+            local_folder: "/host/project".to_string(),
+            config_file: config_file.to_string(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn test_dev_container_connection_identity_uses_labels() {
+        let config_file = "/host/project/.devcontainer/devcontainer.json";
+        let options = RemoteConnectionOptions::from(dev_container_connection(
+            "container-before",
+            config_file,
+        ));
+
+        assert_eq!(
+            options.identity(),
+            remote::RemoteConnectionIdentity::DevContainer {
+                config_file: config_file.into(),
+                remote_user: "vscode".into(),
+            }
+        );
+    }
+
+    // After a rebuild, "Open Dev Container" reports a new container ID for the same config file.
+    #[gpui::test]
+    async fn test_rebuilt_dev_container_finds_existing_workspace(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let (opts, _headless) = init_remote_server(cx, server_cx).await;
+        let config_file = "/host/project/.devcontainer/devcontainer.json";
+        let before_rebuild = dev_container_connection("container-before", config_file).into();
+        cx.update(|cx| {
+            remote::MockConnection::report_connection_options(&opts, before_rebuild, cx)
+        });
+        let mut async_cx = cx.to_async();
+        let window = open_remote_project(
+            opts,
+            vec![PathBuf::from(path!("/project"))],
+            app_state,
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+
+        let find = |connection: Connection, cx: &mut gpui::AsyncApp| {
+            find_existing_workspace(
+                &[PathBuf::from(path!("/project"))],
+                &workspace::OpenOptions::default(),
+                &ProjectHost::Remote(&connection.into()),
+                cx,
+            )
+            .map(|target| target.window)
+        };
+
+        assert_eq!(
+            find(
+                dev_container_connection("container-after", config_file),
+                &mut async_cx
+            ),
+            Some(window)
+        );
+        assert_eq!(
+            find(
+                dev_container_connection(
+                    "container-after",
+                    "/host/project/.devcontainer/backend/devcontainer.json"
+                ),
+                &mut async_cx
+            ),
+            None
+        );
+    }
+
     // A retained workspace on a Windows host matches the requested host, which now answers with a
     // Unix path style, as when an SSH alias is repointed. Its style must not leak into the paths
     // sent over the fresh connection. It stays connected because the mock disconnect looks the
