@@ -80,6 +80,10 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn starts_open(&self, _window: &Window, _cx: &App) -> bool {
         false
     }
+    /// Allows the dock to defer its startup choice until asynchronous metadata arrives.
+    fn starts_open_pending(&self, _window: &Window, _cx: &App) -> bool {
+        false
+    }
     fn set_zoomed(&mut self, _zoomed: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn set_active(&mut self, _active: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn pane(&self) -> Option<Entity<Pane>> {
@@ -280,6 +284,7 @@ pub struct Dock {
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
     restoration: DockRestoreState,
+    startup_open_state: StartupOpenState,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
@@ -287,6 +292,13 @@ pub struct Dock {
 
 enum DockRestoreState {
     Restoring { pending: Option<DockData> },
+    Finished,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StartupOpenState {
+    Initial,
+    Pending(EntityId),
     Finished,
 }
 
@@ -447,6 +459,7 @@ impl Dock {
                 focus_handle: focus_handle.clone(),
                 _subscriptions: [focus_subscription, zoom_subscription],
                 restoration: DockRestoreState::Restoring { pending: None },
+                startup_open_state: StartupOpenState::Initial,
                 zoom_layer_open: false,
                 modal_layer,
             }
@@ -566,6 +579,7 @@ impl Dock {
     }
 
     pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.startup_open_state = StartupOpenState::Finished;
         if open != self.is_open {
             self.restoration.discard_pending();
         }
@@ -590,6 +604,7 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.startup_open_state = StartupOpenState::Finished;
         for entry in &mut self.panel_entries {
             if entry.panel.panel_id() == panel.entity_id() {
                 if zoomed != entry.panel.is_zoomed(window, cx) {
@@ -624,7 +639,25 @@ impl Dock {
         cx: &mut Context<Self>,
     ) -> usize {
         let subscriptions = [
-            cx.observe(&panel, |_, _, cx| cx.notify()),
+            cx.observe_in(&panel, window, |this, panel, window, cx| {
+                let panel_id = panel.entity_id();
+                if this.startup_open_state == StartupOpenState::Pending(panel_id) {
+                    if panel.read(cx).starts_open(window, cx) {
+                        this.startup_open_state = StartupOpenState::Finished;
+                        if let Some(index) = this
+                            .panel_entries
+                            .iter()
+                            .position(|entry| entry.panel.panel_id() == panel_id)
+                        {
+                            this.activate_panel_internal(index, window, cx);
+                            this.set_open_internal(true, window, cx);
+                        }
+                    } else if !panel.read(cx).starts_open_pending(window, cx) {
+                        this.startup_open_state = StartupOpenState::Finished;
+                    }
+                }
+                cx.notify();
+            }),
             cx.observe_global_in::<SettingsStore>(window, {
                 let workspace = workspace.clone();
                 let panel = panel.clone();
@@ -809,6 +842,10 @@ impl Dock {
         if panel.read(cx).starts_open(window, cx) {
             self.activate_panel_internal(index, window, cx);
             self.set_open_internal(true, window, cx);
+        } else if self.startup_open_state == StartupOpenState::Initial
+            && panel.read(cx).starts_open_pending(window, cx)
+        {
+            self.startup_open_state = StartupOpenState::Pending(panel.entity_id());
         }
 
         cx.notify();
@@ -821,6 +858,7 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.startup_open_state = StartupOpenState::Finished;
         match &mut self.restoration {
             DockRestoreState::Restoring { pending } => {
                 *pending = Some(serialized);
@@ -880,6 +918,10 @@ impl Dock {
 
     pub(crate) fn finish_restoration(&mut self) {
         self.restoration = DockRestoreState::Finished;
+        // Remote root metadata can arrive after every panel has finished loading.
+        if self.startup_open_state == StartupOpenState::Initial {
+            self.startup_open_state = StartupOpenState::Finished;
+        }
     }
 
     pub fn remove_panel<T: Panel>(
@@ -888,6 +930,9 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.startup_open_state == StartupOpenState::Pending(panel.entity_id()) {
+            self.startup_open_state = StartupOpenState::Finished;
+        }
         if let Some(panel_ix) = self
             .panel_entries
             .iter()
@@ -920,6 +965,7 @@ impl Dock {
     }
 
     pub fn activate_panel(&mut self, panel_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.startup_open_state = StartupOpenState::Finished;
         if Some(panel_ix) != self.active_panel_index {
             self.restoration.discard_pending();
         }
@@ -1610,6 +1656,8 @@ pub mod test {
         pub default_size: Pixels,
         pub flexible: bool,
         pub activation_priority: u32,
+        pub starts_open: bool,
+        pub starts_open_pending: bool,
     }
     actions!(test_only, [ToggleTestPanel]);
 
@@ -1627,6 +1675,8 @@ pub mod test {
                 default_size: px(300.),
                 flexible: false,
                 activation_priority,
+                starts_open: false,
+                starts_open_pending: false,
             }
         }
 
@@ -1747,6 +1797,14 @@ pub mod test {
 
         fn activation_priority(&self) -> u32 {
             self.activation_priority
+        }
+
+        fn starts_open(&self, _window: &Window, _cx: &App) -> bool {
+            self.starts_open
+        }
+
+        fn starts_open_pending(&self, _window: &Window, _cx: &App) -> bool {
+            self.starts_open_pending
         }
     }
 
