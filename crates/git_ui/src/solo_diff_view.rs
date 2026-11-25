@@ -22,7 +22,10 @@ use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use project::{
     Project, ProjectPath,
-    git_store::{Repository, RepositoryId, diff_buffer_list::DiffBase},
+    git_store::{
+        Repository, RepositoryId,
+        diff_buffer_list::{DiffBase, LoadedDiffBuffer},
+    },
 };
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::{
@@ -45,11 +48,10 @@ pub struct SoloDiffView {
     repository_id: RepositoryId,
     repo_path: RepoPath,
     diff_base: DiffBase,
-    // The worktree buffer, even for staged views: GitStore drops the diff state
-    // once it is released, and unlike the index buffer's file it follows renames.
-    buffer: Entity<Buffer>,
-    display_buffer: Entity<Buffer>,
-    diff: Entity<buffer_diff::BufferDiff>,
+    // `main_buffer` is the worktree buffer, even for staged views: GitStore drops
+    // the diff state once it is released, and unlike the index buffer's file it
+    // follows renames.
+    loaded_diff_buffer: LoadedDiffBuffer,
     editor: Entity<SplittableEditor>,
     workspace: WeakEntity<Workspace>,
     showing_full_file: bool,
@@ -102,8 +104,8 @@ impl SoloDiffView {
                     project.open_buffer(project_path.clone(), cx)
                 })
                 .await?;
-            let (display_buffer, diff) =
-                Self::buffer_diff_for_diff_base(&project, buffer.clone(), &diff_base, cx).await?;
+            let loaded_diff_buffer =
+                Self::buffer_diff_for_diff_base(&project, buffer, &diff_base, cx).await?;
 
             workspace_entity.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = cx.entity();
@@ -113,9 +115,7 @@ impl SoloDiffView {
                         repository,
                         repo_path,
                         diff_base,
-                        buffer,
-                        display_buffer,
-                        diff,
+                        loaded_diff_buffer,
                         workspace_handle,
                         window,
                         cx,
@@ -133,15 +133,15 @@ impl SoloDiffView {
         worktree_buffer: Entity<Buffer>,
         diff_base: &DiffBase,
         cx: &mut AsyncApp,
-    ) -> Result<(Entity<Buffer>, Entity<buffer_diff::BufferDiff>)> {
-        match diff_base {
+    ) -> Result<LoadedDiffBuffer> {
+        let (display_buffer, diff) = match diff_base {
             DiffBase::Head | DiffBase::Merge { .. } => {
                 let diff = project
                     .update(cx, |project, cx| {
                         project.open_uncommitted_diff(worktree_buffer.clone(), cx)
                     })
                     .await?;
-                Ok((worktree_buffer, diff))
+                (worktree_buffer.clone(), diff)
             }
             DiffBase::Index => {
                 let diff = project
@@ -149,17 +149,23 @@ impl SoloDiffView {
                         project.open_unstaged_diff(worktree_buffer.clone(), cx)
                     })
                     .await?;
-                Ok((worktree_buffer, diff))
+                (worktree_buffer.clone(), diff)
             }
             DiffBase::Staged => {
                 let (diff, index_buffer) = project
                     .update(cx, |project, cx| {
-                        project.open_staged_diff(worktree_buffer, cx)
+                        project.open_staged_diff(worktree_buffer.clone(), cx)
                     })
                     .await?;
-                Ok((index_buffer, diff))
+                (index_buffer, diff)
             }
-        }
+        };
+        Ok(LoadedDiffBuffer {
+            display_buffer,
+            main_buffer: worktree_buffer,
+            diff,
+            conflict_set: None,
+        })
     }
 
     fn diff_hunk_renderer_for_diff_base(diff_base: &DiffBase) -> Arc<dyn DiffHunkRenderer> {
@@ -175,9 +181,7 @@ impl SoloDiffView {
         repository: Entity<Repository>,
         repo_path: RepoPath,
         diff_base: DiffBase,
-        buffer: Entity<Buffer>,
-        display_buffer: Entity<Buffer>,
-        diff: Entity<buffer_diff::BufferDiff>,
+        loaded_diff_buffer: LoadedDiffBuffer,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -185,7 +189,12 @@ impl SoloDiffView {
         let repository_id = repository.read(cx).id;
         let showing_full_file = EditorSettings::get_global(cx).file_diff.show_full_file;
         let multibuffer = cx.new(|cx| {
-            Self::build_multibuffer(display_buffer.clone(), diff.clone(), showing_full_file, cx)
+            Self::build_multibuffer(
+                loaded_diff_buffer.display_buffer.clone(),
+                loaded_diff_buffer.diff.clone(),
+                showing_full_file,
+                cx,
+            )
         });
         let is_read_only = diff_base == DiffBase::Staged;
         let renderer = Self::diff_hunk_renderer_for_diff_base(&diff_base);
@@ -236,9 +245,7 @@ impl SoloDiffView {
             repository_id,
             repo_path,
             diff_base,
-            buffer,
-            display_buffer,
-            diff,
+            loaded_diff_buffer,
             editor,
             workspace: workspace.downgrade(),
             showing_full_file,
@@ -299,9 +306,10 @@ impl SoloDiffView {
             return;
         }
 
-        let display_buffer = self.display_buffer.clone();
+        let display_buffer = self.loaded_diff_buffer.display_buffer.clone();
+        let diff = self.loaded_diff_buffer.diff.clone();
         let (ranges, context_line_count) =
-            Self::excerpt_ranges(&display_buffer, &self.diff, showing_full_file, cx);
+            Self::excerpt_ranges(&display_buffer, &diff, showing_full_file, cx);
 
         self.editor.update(cx, |editor, cx| {
             let path = PathKey::for_buffer(&display_buffer, cx);
@@ -311,7 +319,7 @@ impl SoloDiffView {
                 display_buffer,
                 ranges,
                 context_line_count,
-                self.diff.clone(),
+                diff,
                 cx,
             );
             editor.rhs_editor().update(cx, |editor, cx| {
@@ -506,7 +514,8 @@ impl Item for SoloDiffView {
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let file_name = self
-            .buffer
+            .loaded_diff_buffer
+            .main_buffer
             .read(cx)
             .file()
             .and_then(|file| {
@@ -533,7 +542,8 @@ impl Item for SoloDiffView {
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         Some(
-            self.buffer
+            self.loaded_diff_buffer
+                .main_buffer
                 .read(cx)
                 .file()
                 .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
@@ -592,7 +602,7 @@ impl Item for SoloDiffView {
         self.editor
             .read(cx)
             .active_project_path(cx)
-            .or_else(|| Self::buffer_project_path(&self.buffer, cx))
+            .or_else(|| Self::buffer_project_path(&self.loaded_diff_buffer.main_buffer, cx))
     }
 
     fn set_nav_history(
@@ -996,11 +1006,15 @@ mod tests {
             assert_eq!(view.diff_base, DiffBase::Index);
             assert_eq!(view.tab_content_text(0, cx), "partial.rs (Unstaged)");
             assert_eq!(
-                view.display_buffer.read(cx).text(),
+                view.loaded_diff_buffer.display_buffer.read(cx).text(),
                 "worktree one\nworktree two\nworktree three\n"
             );
             assert_eq!(
-                view.diff.read(cx).base_text_string(cx).as_deref(),
+                view.loaded_diff_buffer
+                    .diff
+                    .read(cx)
+                    .base_text_string(cx)
+                    .as_deref(),
                 Some("index one\nindex two\n")
             );
             assert!(!view.editor.read(cx).rhs_editor().read(cx).read_only(cx));
@@ -1025,11 +1039,15 @@ mod tests {
             assert_eq!(view.diff_base, DiffBase::Staged);
             assert_eq!(view.tab_content_text(0, cx), "partial.rs (Staged)");
             assert_eq!(
-                view.display_buffer.read(cx).text(),
+                view.loaded_diff_buffer.display_buffer.read(cx).text(),
                 "index one\nindex two\n"
             );
             assert_eq!(
-                view.diff.read(cx).base_text_string(cx).as_deref(),
+                view.loaded_diff_buffer
+                    .diff
+                    .read(cx)
+                    .base_text_string(cx)
+                    .as_deref(),
                 Some("head one\nhead two\nhead three\nhead four\n")
             );
             assert!(view.editor.read(cx).rhs_editor().read(cx).read_only(cx));
@@ -1046,7 +1064,8 @@ mod tests {
             assert_eq!(view.active_project_path(cx), Some(project_path.clone()));
         });
 
-        let buffer = staged_view.read_with(cx, |view, _| view.buffer.clone());
+        let buffer =
+            staged_view.read_with(cx, |view, _| view.loaded_diff_buffer.main_buffer.clone());
         buffer.update(cx, |buffer, cx| {
             let mut file = project::File::from_dyn(buffer.file())
                 .expect("worktree buffer should have a project file")
@@ -1057,7 +1076,8 @@ mod tests {
 
         staged_view.read_with(cx, |view, cx| {
             assert!(
-                view.buffer
+                view.loaded_diff_buffer
+                    .main_buffer
                     .read(cx)
                     .file()
                     .expect("file should exist")
