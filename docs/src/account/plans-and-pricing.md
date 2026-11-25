@@ -45,7 +45,7 @@ You can still use your [own API keys](../ai/use-api-access.md) or [External Agen
 
 ## Usage {#usage}
 
-Usage of Zed's hosted models is measured on a token basis, converted to dollars at the rates listed on [Zed-Hosted Models](./zed-hosted-models.md) (list price from the provider, +10%).
+Usage of Zed's hosted models is measured on a token basis, converted to dollars at the Zed rates listed on [Zed-Hosted Models](./zed-hosted-models.md). These generally include a 10% markup on the provider's base price. See that page's pricing notes for exceptions and promotional rates.
 
 Monthly included credit resets on your monthly billing date. To view your current usage, navigate to the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev). Usage data from our metering provider, Orb, is embedded on that page.
 

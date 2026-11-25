@@ -50,7 +50,7 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 | Claude Sonnet 5.5 | Anthropic | Input               | $2.00                        | $2.20                   |
 |                   | Anthropic | Output              | $10.00                       | $11.00                  |
 |                   | Anthropic | Input - Cache Write | $2.50                        | $2.75                   |
-|                   | Anthropic | Input - Cache Read  | $0.20                        | $0.22                   |
+|                   | Anthropic | Input - Cache Read  | $0.10                        | $0.22                   |
 | Claude Sonnet 5   | Anthropic | Input               | $2.00                        | $2.20                   |
 |                   | Anthropic | Output              | $10.00                       | $11.00                  |
 |                   | Anthropic | Input - Cache Write | $2.50                        | $2.75                   |
@@ -181,13 +181,32 @@ Zed no longer offers the models below:
 
 Any usage of a Zed-hosted model will be billed at the Zed Price (rightmost column above). See [Plans & Pricing](./plans-and-pricing.md) for details on Zed's plans and limits for use of hosted models.
 
-For Claude Fable 5.2, the cache-write rate above is for the 5-minute cache. The 1-hour cache costs $16.00 per 1M tokens from Anthropic, or $17.60 through Zed. Fast mode doubles all Fable 5.2 token rates, including cache writes and reads.
+The Zed column shows the rates used to bill hosted-model usage. These usually include a 10% markup on the provider's base rate. For Claude Sonnet 5.5 cache reads, the current Zed rate is $0.22 per 1M tokens, while [Anthropic's current provider price](https://platform.claude.com/docs/en/about-claude/pricing#model-pricing) is $0.10. This differs from the usual markup.
 
-Fast mode for GPT-6.2 Astra and Sol is available on Zed Pro and Zed Business. It doubles all token rates, including cache writes and reads.
+Anthropic cache-write rates in the table are for the 5-minute cache. A 1-hour cache write costs 1.6 times the listed cache-write rate. For example, a 1-hour Claude Fable 5.2 cache write costs $16.00 per 1M tokens from Anthropic, or $17.60 through Zed. OpenAI cache-write rows use the 30-minute cache rate.
+
+Fast mode is available on Zed Pro and Zed Business for the models below. The multiplier applies to all token rates, including cache writes and reads.
+
+| Models                                                                           | Fast-mode price multiplier |
+| -------------------------------------------------------------------------------- | -------------------------- |
+| Claude Fable 5.2, Claude Opus 5.5, Claude Opus 5, Claude Opus 4.8                | 2×                         |
+| GPT-6, GPT-6.1, GPT-6.2, and GPT-5.6 models listed above; GPT-5.4; GPT-5.3-Codex | 2×                         |
+| GPT-5.5                                                                          | 2.5×                       |
 
 Zed bills implicit cache hits for Gemini 4 at the cached-input rates above. Gemini 3 models do not use Google context caching and are billed only as input and output tokens, which preserves zero-data-retention behavior for those requests. For background, see Google's Vertex AI documentation on [context caching](https://cloud.google.com/vertex-ai/generative-ai/docs/context-cache/context-cache-overview) and [zero data retention](https://cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention).
 
-Gemini 4 Argon's prices above are introductory rates through November 30, 2026.
+Gemini 4 Carbon uses Google's standard rates in the table above. Google's temporary 50% promotional credits are not reflected in Carbon's Zed price.
+
+The following provider offers have published end dates. The table above shows current Zed rates; a provider's promotion ending does not itself change the rates listed here.
+
+| Model            | Provider pricing offer                           | Provider offer ends |
+| ---------------- | ------------------------------------------------ | ------------------- |
+| Gemini 4 Carbon  | 50% promotional credits; Zed uses standard rates | November 30, 2026   |
+| Gemini 4 Argon   | Introductory rates used in the table             | November 30, 2026   |
+| GPT-5.6 Sol      | Promotional rates used in the table              | November 30, 2026   |
+| Gemini 3.8 Flash | Introductory rates used in the table             | December 31, 2026   |
+
+See the current pricing from [Anthropic](https://platform.claude.com/docs/en/about-claude/pricing), [OpenAI](https://developers.openai.com/api/docs/pricing), and [Google Cloud](https://cloud.google.com/model-garden/pricing) for provider rates, promotional terms, and regional pricing.
 
 ### Estimating Gemini Costs {#estimating-gemini-costs}
 
