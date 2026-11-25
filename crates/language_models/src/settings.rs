@@ -103,6 +103,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 ),
                 region: bedrock.region,
                 endpoint: bedrock.endpoint_url, // todo(should be api_url)
+                mantle_endpoint: bedrock.mantle_endpoint_url,
                 profile_name: bedrock.profile,
                 role_arn: None, // todo(was never a setting for this...)
                 authentication_method: bedrock.authentication_method.map(Into::into),

@@ -268,7 +268,7 @@ To send Bedrock Converse requests to a proxy or gateway instead of AWS, set `end
 }
 ```
 
-[Mantle models](#bedrock-mantle-models), including the built-in GPT-5.6, GPT-5.5, GPT-5.4, and Grok 4.3 models and any models in `mantle_available_models`, are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
+[Mantle models](#bedrock-mantle-models), including the built-in GPT-5.6, GPT-5.5, GPT-5.4, and Grok 4.3 models and any models in `mantle_available_models`, are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS unless you also set [`mantle_endpoint_url`](#bedrock-mantle-endpoint).
 
 If your gateway serves one of those models over the Converse API, add it as a [custom Bedrock model](#bedrock-custom-models) so Zed calls it through `endpoint_url`. Use the model ID your gateway expects as `name`:
 
@@ -299,6 +299,23 @@ Don't use an ID that a Mantle model already uses as `name`, whether it's built i
 Some models, such as the GPT-5.6 family (Sol, Terra, and Luna), GPT-5.5, GPT-5.4, and Grok 4.3, aren't available through Bedrock's Converse API and are only reachable through `bedrock-mantle`, AWS's OpenAI-compatible inference endpoint. Zed routes these models through `bedrock-mantle` automatically; they appear alongside the rest of the Bedrock models in the model picker once you're authenticated, with no extra configuration required.
 
 Mantle models require IAM permissions for the `bedrock-mantle` endpoint (for example via the `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever permissions your existing Bedrock credentials already have, and `bedrock-mantle` is only available in [some AWS Regions](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html#regions). Zed surfaces an error naming the current Region and the supported ones if you try to use a Mantle model outside of them.
+
+#### Bedrock Mantle Endpoint {#bedrock-mantle-endpoint}
+
+Mantle requests go to AWS directly. `endpoint_url` redirects only the Converse API, so a proxy configured there does not receive Mantle traffic. To send Mantle requests elsewhere, set `mantle_endpoint_url` as well:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "endpoint_url": "https://gateway.example.com/bedrock",
+      "mantle_endpoint_url": "https://gateway.example.com/openai/v1"
+    }
+  }
+}
+```
+
+The two settings are independent because they address separate services with different request shapes; an endpoint that exposes one does not necessarily expose the other. When `endpoint_url` is set and `mantle_endpoint_url` isn't, a Mantle model that fails to authorize reports that instead of asking you to update your API key.
 
 #### Custom Bedrock Mantle Models {#bedrock-mantle-custom-models}
 
