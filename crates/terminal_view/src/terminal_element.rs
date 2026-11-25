@@ -509,7 +509,6 @@ impl TerminalElement {
                 if cell.is_wide_char_spacer() {
                     continue;
                 }
-                // Tabs leave '\t' in the blank cell they start from, which shapes with no width.
                 let character = match cell.character() {
                     '\t' => ' ',
                     character => character,
