@@ -3087,6 +3087,28 @@ mod tests {
             editor.read_with(cx, |editor, cx| editor.text(cx)),
             "b b b b"
         );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_replace(&ToggleReplace, window, cx);
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("a", window, cx);
+            });
+        });
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("b", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+        editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx)
+        });
+        cx.dispatch_action(ReplaceNext);
+        cx.dispatch_action(ReplaceAll);
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "b b b b"
+        );
     }
 
     #[gpui::test]
